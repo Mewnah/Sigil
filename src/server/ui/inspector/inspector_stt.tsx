@@ -1,7 +1,8 @@
 import { STT_Backends, STT_State } from "@/server/services/stt/schema";
 import { ServiceNetworkState } from "@/types";
 import { invoke } from "@tauri-apps/api/tauri";
-import { FC } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { FC, useState, useEffect } from "react";
 import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";
 import { SiGooglechrome, SiMicrosoftedge } from "react-icons/si";
 import { useSnapshot } from "valtio";
@@ -14,10 +15,10 @@ import Modal from "../Modal";
 import { useTranslation } from 'react-i18next';
 
 const Native: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.native);
   const updateLanguage = (value: { group: string, option: string }) => {
-    window.ApiServer.state.services.stt.data.native.language       = value.option;
+    window.ApiServer.state.services.stt.data.native.language = value.option;
     window.ApiServer.state.services.stt.data.native.language_group = value.group;
   };
   return <>
@@ -37,7 +38,7 @@ const Native: FC = () => {
 }
 
 const Browser: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const handleOpen = () => {
     invoke("plugin:web|open_browser", {
       data: {
@@ -61,24 +62,24 @@ const Browser: FC = () => {
   };
   return <>
     <Inspector.SubHeader>{t('stt.browser_title')}</Inspector.SubHeader>
-    <button className="btn btn-sm btn-neutral gap-2" onClick={handleOpen}><SiGooglechrome/> Open Chrome</button>
-    <button className="btn btn-sm btn-neutral gap-2" onClick={handleOpenEdge}><SiMicrosoftedge/> Open Edge</button>
+    <button className="btn btn-sm btn-neutral gap-2" onClick={handleOpen}><SiGooglechrome /> Open Chrome</button>
+    <button className="btn btn-sm btn-neutral gap-2" onClick={handleOpenEdge}><SiMicrosoftedge /> Open Edge</button>
   </>
 }
 
 
 const Azure: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.azure);
   const up = <K extends keyof STT_State["azure"]>(key: K, v: STT_State["azure"][K]) => window.ApiServer.state.services.stt.data.azure[key] = v;
 
   const updateLanguage = (value: { group: string, option: string }) => {
-    window.ApiServer.state.services.stt.data.azure.language       = value.option;
+    window.ApiServer.state.services.stt.data.azure.language = value.option;
     window.ApiServer.state.services.stt.data.azure.language_group = value.group;
   };
 
   const updateSecondaryLanguage = (value: { group: string, option: string }) => {
-    window.ApiServer.state.services.stt.data.azure.secondary_language       = value.option;
+    window.ApiServer.state.services.stt.data.azure.secondary_language = value.option;
     window.ApiServer.state.services.stt.data.azure.secondary_language_group = value.group;
   };
 
@@ -87,7 +88,7 @@ const Azure: FC = () => {
     <InputText label="stt.azure_key" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
     <InputText label="stt.azure_location" value={pr.location} onChange={e => up("location", e.target.value)} />
 
-    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device"/>
+    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
 
     <div className=" divider"></div>
     <InputMappedGroupSelect
@@ -106,7 +107,7 @@ const Azure: FC = () => {
         library={azureLanguages} />
     </Inspector.Switchable>
 
-    <InputSelect 
+    <InputSelect
       label="stt.azure_profanity"
       options={[
         { label: t('stt.azure_profanity_masked'), value: 'masked' },
@@ -122,12 +123,12 @@ const Azure: FC = () => {
 }
 
 const Deepgram: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.deepgram);
   const up = <K extends keyof STT_State["deepgram"]>(key: K, v: STT_State["deepgram"][K]) => window.ApiServer.state.services.stt.data.deepgram[key] = v;
 
   const updateLanguage = (value: { group: string, option: string }) => {
-    window.ApiServer.state.services.stt.data.deepgram.language       = value.option;
+    window.ApiServer.state.services.stt.data.deepgram.language = value.option;
     window.ApiServer.state.services.stt.data.deepgram.language_group = value.group;
   };
 
@@ -135,7 +136,7 @@ const Deepgram: FC = () => {
     <Inspector.SubHeader>{t('stt.deepgram_title')}</Inspector.SubHeader>
     <InputText label="stt.deepgram_key" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
 
-    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device"/>
+    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
     <InputMappedGroupSelect
       labelGroup="common.field_language"
       labelOption="common.field_dialect"
@@ -161,19 +162,98 @@ const Deepgram: FC = () => {
 }
 
 const Speechly: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.speechly);
   const up = <K extends keyof STT_State["speechly"]>(key: K, v: STT_State["speechly"][K]) => window.ApiServer.state.services.stt.data.speechly[key] = v;
 
   return <>
     <Inspector.SubHeader>{t('stt.speechly_title')}</Inspector.SubHeader>
-    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device"/>
+    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
     <InputText label="stt.speechly_appid" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
   </>
 }
 
+const Whisper: FC = () => {
+  const { t } = useTranslation();
+  const [downloadProgress, setDownloadProgress] = useState<{ file: string, progress: number } | null>(null);
+  const pr = useSnapshot(window.ApiServer.state.services.stt.data.whisper);
+  const up = <K extends keyof STT_State["whisper"]>(key: K, v: STT_State["whisper"][K]) => window.ApiServer.state.services.stt.data.whisper[key] = v;
+
+  useEffect(() => {
+    const unlisten = listen("whisper:download_progress", (event) => {
+      const payload = event.payload as { file: string; progress: number };
+      setDownloadProgress(payload);
+    });
+    return () => {
+      unlisten.then(f => f());
+    }
+  }, []);
+
+  return <>
+    <Inspector.SubHeader>OpenAI Whisper</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">
+      Runs locally using whisper.cpp. First run will download the model (~140MB).
+    </div>
+    {downloadProgress && (
+      <div className="flex flex-col gap-1 mb-2">
+        <div className="flex justify-between text-xs">
+          <span>Downloading {downloadProgress.file}...</span>
+          <span>{downloadProgress.progress.toFixed(0)}%</span>
+        </div>
+        <progress className="progress progress-primary w-full" value={downloadProgress.progress} max="100"></progress>
+      </div>
+    )}
+
+    <div className="divider"></div>
+    <Inspector.SubHeader>Voice Activity Detection</Inspector.SubHeader>
+    <InputCheckbox
+      label="Enable VAD (Auto-transcribe on silence)"
+      onChange={e => up("vadEnabled", e)}
+      value={pr.vadEnabled}
+    />
+    <Inspector.Description>
+      When enabled, transcription triggers automatically when you pause speaking. Disable for manual control.
+    </Inspector.Description>
+
+    <Inspector.Switchable visible={pr.vadEnabled}>
+      <InputText
+        type="number"
+        step="1"
+        label="Silence Threshold (dB)"
+        value={pr.silenceThresholdDb}
+        onChange={e => up("silenceThresholdDb", e.target.value)}
+      />
+      <Inspector.Description>
+        RMS threshold in dB (-60 to -20). Lower = more sensitive. Default: -40dB
+      </Inspector.Description>
+
+      <InputText
+        type="number"
+        step="100"
+        label="Silence Duration (ms)"
+        value={pr.silenceDurationMs}
+        onChange={e => up("silenceDurationMs", e.target.value)}
+      />
+      <Inspector.Description>
+        How long to wait in silence before transcribing (500-3000ms). Default: 1500ms
+      </Inspector.Description>
+
+      <InputText
+        type="number"
+        step="100"
+        label="Minimum Chunk Duration (ms)"
+        value={pr.minChunkDurationMs}
+        onChange={e => up("minChunkDurationMs", e.target.value)}
+      />
+      <Inspector.Description>
+        Minimum audio length before VAD can trigger (500-2000ms). Default: 1000ms
+      </Inspector.Description>
+    </Inspector.Switchable>
+  </>
+}
+
 const WordsReplacementModal: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const data = useSnapshot(window.ApiServer.state.services.stt);
 
   const up = <K extends keyof STT_State>(key: K, v: STT_State[K]) => window.ApiServer.patchService("stt", s => s.data[key] = v);
@@ -182,12 +262,12 @@ const WordsReplacementModal: FC = () => {
     <Modal.Header>{t('word_replacements.title')}</Modal.Header>
     <Modal.Content>
       <div className="p-4 flex flex-col space-y-2">
-        <InputCheckbox label="word_replacements.field_ignore_case" value={data.data.replaceWordsIgnoreCase} onChange={v => up("replaceWordsIgnoreCase", v)}/>
+        <InputCheckbox label="word_replacements.field_ignore_case" value={data.data.replaceWordsIgnoreCase} onChange={v => up("replaceWordsIgnoreCase", v)} />
         {data.data.replaceWordsIgnoreCase && <>
-          <InputCheckbox label="word_replacements.field_preserve_capitalization" value={data.data.replaceWordsPreserveCase} onChange={v => up("replaceWordsPreserveCase", v)}/>
+          <InputCheckbox label="word_replacements.field_preserve_capitalization" value={data.data.replaceWordsPreserveCase} onChange={v => up("replaceWordsPreserveCase", v)} />
           <Inspector.Description>{t('word_replacements.field_preserve_capitalization_desc')}</Inspector.Description>
         </>}
-        <InputMapObject keyPlaceholder={t('word_replacements.label_dictionary_key')} valuePlaceholder={t('word_replacements.label_dictionary_value')} addLabel={t('common.btn_add')} value={{...data.data.replaceWords}} onChange={e => up("replaceWords", e)} label="" />
+        <InputMapObject keyPlaceholder={t('word_replacements.label_dictionary_key')} valuePlaceholder={t('word_replacements.label_dictionary_value')} addLabel={t('common.btn_add')} value={{ ...data.data.replaceWords }} onChange={e => up("replaceWords", e)} label="" />
       </div>
     </Modal.Content>
   </Modal.Body>
@@ -195,7 +275,7 @@ const WordsReplacementModal: FC = () => {
 NiceModal.register('stt-replacements', (props) => <Modal.Base {...props}><WordsReplacementModal /></Modal.Base>);
 
 const Inspector_STT: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const data = useSnapshot(window.ApiServer.state.services.stt);
   const state = useSnapshot(window.ApiServer.stt.serviceState);
 
@@ -212,20 +292,22 @@ const Inspector_STT: FC = () => {
       <InputCheckbox label="common.field_action_bar" onChange={handleStart} value={data.showActionButton} />
       <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
       <InputCheckbox label="stt.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
-      <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm" onClick={handleShowReplacements}><RiCharacterRecognitionFill/>{t('common.btn_edit_replacements')}</span>
+      <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm" onClick={handleShowReplacements}><RiCharacterRecognitionFill />{t('common.btn_edit_replacements')}</span>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
-          { label: "Browser", value: STT_Backends.browser },
+          // { label: "Browser", value: STT_Backends.browser },
           { label: "Azure", value: STT_Backends.azure },
           { label: "Deepgram", value: STT_Backends.deepgram },
-          { label: "Speechly", value: STT_Backends.speechly }
+          { label: "Speechly", value: STT_Backends.speechly },
+          { label: "Whisper (Local)", value: STT_Backends.whisper }
         ]} label="common.field_service" value={data.data.backend} onValueChange={e => up("backend", e as STT_Backends)} />
 
-        {data.data.backend === STT_Backends.browser && <Browser />}
+        {/* {data.data.backend === STT_Backends.browser && <Browser />} */}
         {data.data.backend === STT_Backends.azure && <Azure />}
         {data.data.backend === STT_Backends.deepgram && <Deepgram />}
         {data.data.backend === STT_Backends.speechly && <Speechly />}
+        {data.data.backend === STT_Backends.whisper && <Whisper />}
         {data.data.backend === STT_Backends.native && <Native />}
       </Inspector.Deactivatable>
 

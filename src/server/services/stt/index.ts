@@ -8,7 +8,8 @@ import { STT_AzureService } from "./services/azure";
 import { STT_DeepgramService } from "./services/deepgram";
 import { STT_NativeService } from "./services/native";
 import { STT_SpeechlyService } from "./services/speechly";
-import {invoke} from "@tauri-apps/api/tauri";
+import { STT_WhisperService } from "./services/whisper";
+import { invoke } from "@tauri-apps/api/tauri";
 import {
   ISTTReceiver,
   ISTTServiceConstructor,
@@ -23,7 +24,8 @@ const backends: {
   [STT_Backends.browser]: undefined,
   [STT_Backends.azure]: STT_AzureService,
   [STT_Backends.deepgram]: STT_DeepgramService,
-  [STT_Backends.speechly]: STT_SpeechlyService
+  [STT_Backends.speechly]: STT_SpeechlyService,
+  [STT_Backends.whisper]: STT_WhisperService
 };
 
 class Service_STT implements IServiceInterface, ISTTReceiver {
@@ -36,7 +38,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   #_wordReplacementsCache!: WordReplacementsCache;
 
   updateLastMessage(value: string, isInterim: boolean) {
-    this.#lastMessageState = {value, isInterim};
+    this.#lastMessageState = { value, isInterim };
   }
 
   serviceState = proxy({
@@ -64,7 +66,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
       this.tryCancelSentence();
       this.serviceState.muted = SttMuteState.muted;
     }
-    else if (this.serviceState.muted === SttMuteState.muted){
+    else if (this.serviceState.muted === SttMuteState.muted) {
       // set pending if unmuting during interim results
       if (this.#lastMessageState.isInterim) {
         this.serviceState.muted = SttMuteState.pendingUnmute;
@@ -73,7 +75,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
         this.serviceState.muted = SttMuteState.unmuted;
       }
     }
-    else 
+    else
       this.serviceState.muted = SttMuteState.unmuted;
   }
 
@@ -97,7 +99,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
         if (this.data.replaceWordsPreserveCase) {
           const isUppercase = v[0] === v[0].toUpperCase();
           let replacement = this.#_wordReplacementsCache.map[_v];
-          
+
           const vCase = isUppercase ? replacement[0].toUpperCase() : replacement[0].toLowerCase();
           replacement = vCase + replacement.slice(1);
           return replacement;
@@ -122,7 +124,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
         this.stop();
       }
     });
-    
+
     // native is bugged
     if (this.data.autoStart && this.data.backend !== STT_Backends.native)
       this.start();
@@ -147,15 +149,15 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   async #sendFinal(sentence: string) {
     let value = sentence;
     if (this.data.uwu) {
-      value = await invoke<string>("plugin:uwu|translate", {value: sentence});
+      value = await invoke<string>("plugin:uwu|translate", { value: sentence });
     }
 
     value = this.runReplacements(value);
     !this.isMuted() &&
-    window.ApiShared.pubsub.publishText(TextEventSource.stt, {
-      value,
-      type: TextEventType.final,
-    });
+      window.ApiShared.pubsub.publishText(TextEventSource.stt, {
+        value,
+        type: TextEventType.final,
+      });
 
     this.updateLastMessage(value, false);
 
@@ -166,14 +168,14 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   async #sendInterim(sentence: string) {
     let value = sentence;
     if (this.data.uwu) {
-      value = await invoke<string>("plugin:uwu|translate", {value: sentence});
+      value = await invoke<string>("plugin:uwu|translate", { value: sentence });
     }
     value = this.runReplacements(value);
     !this.isMuted() &&
-    window.ApiShared.pubsub.publishText(TextEventSource.stt, {
-      value,
-      type: TextEventType.interim,
-    });
+      window.ApiShared.pubsub.publishText(TextEventSource.stt, {
+        value,
+        type: TextEventType.interim,
+      });
     this.updateLastMessage(value, true);
   }
 

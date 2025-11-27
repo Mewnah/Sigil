@@ -30,7 +30,7 @@ struct NativeFeatures {
 #[command]
 fn get_native_features() -> NativeFeatures {
     NativeFeatures {
-        background_input: cfg!(feature="background_input")
+        background_input: cfg!(feature = "background_input"),
     }
 }
 
@@ -87,6 +87,7 @@ fn main() {
         .plugin(services::uberduck_tts::init())
         .plugin(services::keyboard::init())
         .plugin(services::uwu::init())
+        .plugin(services::whisper::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

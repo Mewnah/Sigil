@@ -1,9 +1,9 @@
 import * as Y from "yjs";
-import { proxy }             from "valtio";
-import { IServiceInterface }                       from "@/types";
-import { GetArrayDiff }                            from "@/utils";
+import { proxy } from "valtio";
+import { IServiceInterface } from "@/types";
+import { GetArrayDiff } from "@/utils";
 import { createDocumentFile, FileState, FileType } from "./schema";
-import { fileOpen }                                from "browser-fs-access";
+import { fileOpen } from "browser-fs-access";
 import { nanoid } from "nanoid";
 import { toast } from "react-toastify";
 import { save, open } from "@tauri-apps/api/dialog";
@@ -46,10 +46,10 @@ class Service_Files implements IServiceInterface {
   async loadFonts() {
     try {
       const resp = await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=REDACTED_GOOGLE_FONTS_KEY');
-      const data = await resp.json() as {items: GoogleFont[]};
+      const data = await resp.json() as { items: GoogleFont[] };
       this.fontsList = data.items;
       this.fontsLoaded = true;
-    } catch (error) {}
+    } catch (error) { }
   }
 
   public async installFont(fontName: string) {
@@ -124,7 +124,7 @@ class Service_Files implements IServiceInterface {
       const metaIndex = filesMeta.findIndex((m) => m.id === id)!;
       const meta = filesMeta[metaIndex]!;
       const rawFile = window.ApiClient.document.fileArray.get(metaIndex);
-      const blob = new Blob([rawFile], { type: meta.type });
+      const blob = new Blob([rawFile as any], { type: meta.type });
       this.fileUrls[id] = URL.createObjectURL(blob);
 
       if (meta.type.startsWith("font/")) {
@@ -135,7 +135,7 @@ class Service_Files implements IServiceInterface {
         if (!this.ui.fontFamilies.includes(fontMeta.family))
           this.ui.fontFamilies.push(fontMeta.family);
 
-        new FontFace(fontMeta.family, rawFile, fontMeta).load().then(font => {
+        new FontFace(fontMeta.family, rawFile as any, fontMeta).load().then(font => {
           document.fonts.add(font);
         });
       }

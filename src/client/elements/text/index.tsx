@@ -18,7 +18,7 @@ type SentenceState = {
 }
 
 class TextController {
-  constructor(private id: string) {}
+  constructor(private id: string) { }
   private disposed: boolean = false;
 
   private boxElement!: HTMLElement
@@ -46,24 +46,24 @@ class TextController {
 
   onShow() {
     if (this.currentState.soundEnable && this.currentState.soundFileOnShow) {
-      window.ApiClient.sound.playFile(this.currentState.soundFileOnShow, {volume: this.currentState.soundVolume ?? 1});
+      window.ApiClient.sound.playFile(this.currentState.soundFileOnShow, { volume: this.currentState.soundVolume ?? 1 });
     }
   }
   onHide() {
     if (this.currentState.soundEnable && this.currentState.soundFileOnHide) {
-      window.ApiClient.sound.playFile(this.currentState.soundFileOnHide, {volume: this.currentState.soundVolume ?? 1});
+      window.ApiClient.sound.playFile(this.currentState.soundFileOnHide, { volume: this.currentState.soundVolume ?? 1 });
     }
   }
-  onNewSentence() {}
+  onNewSentence() { }
 
   onActivity() {
     try {
       const rect = this.textEndElement.getBoundingClientRect();
-  
+
       if (this.currentState.animateEvent) {
         window.ApiShared.pubsub.publishLocally({ topic: `element.${this.id}` });
       }
-  
+
       if (rect && this.currentState.particlesEnable) {
         //TODO cache particle config
         window.ApiClient.particles.emit(rect, {
@@ -86,7 +86,7 @@ class TextController {
           particlesRotationMax: parseFloat(this.currentState.particlesRotationMax) || 0,
         });
       }
-  
+
       if (this.currentState.soundEnable && this.currentState.soundFile) {
         window.ApiClient.sound.playFile(this.currentState.soundFile, {
           volume: this.currentState.soundVolume ?? 1,
@@ -97,7 +97,7 @@ class TextController {
         });
       }
     } catch (error) {
-      
+
     }
   }
 
@@ -108,7 +108,7 @@ class TextController {
     clearTimeout(this.activityTimerDelayClearHandle);
 
     // const previewEnabled = this.currentState.previewMode;
-    
+
 
     if (!this.boxElement.classList.contains("active")) {
       this.onShow();
@@ -151,8 +151,10 @@ class TextController {
       sentence.isAnimated = true;
       this.isPlayingAnimation = false;
       this.tryAnimateNextSentence();
-      // add space in the end
-      sentence.element.innerHTML += " ";
+      // add space in the end ONLY if final
+      if (sentence.type === TextEventType.final) {
+        sentence.element.innerHTML += " ";
+      }
       return;
     }
 
@@ -166,14 +168,14 @@ class TextController {
       const maskStr: string = this.currentState.textProfanityMask;
 
       if (this.currentState.animateDelayChar === 0) {
-        sentence.element.innerHTML += `<span class="profanity">${maskStr}</span>`; 
+        sentence.element.innerHTML += `<span class="profanity">${maskStr}</span>`;
         this.moveCursorToSpaceOrEnd(sentence);
       }
       else {
-        sentence.element.innerHTML += `<span class="profanity">${maskStr[sentence.cursorProfanity]}</span>`; 
-  
+        sentence.element.innerHTML += `<span class="profanity">${maskStr[sentence.cursorProfanity]}</span>`;
+
         // finish mask stepping
-        if (sentence.cursorProfanity +1 >= maskStr.length) {
+        if (sentence.cursorProfanity + 1 >= maskStr.length) {
           this.moveCursorToSpaceOrEnd(sentence);
           sentence.cursorProfanity = 0;
         }
@@ -199,69 +201,127 @@ class TextController {
       // animate single char
       else {
         sentence.element.innerHTML += sentence.text[sentence.cursor];
-        sentence.cursor ++;
+        sentence.cursor++;
       }
     }
 
-    setTimeout(() => this.stepSentenceAnimation(sentence), sentence.text[sentence.cursor] === " " ? 
+    const delay = sentence.text[sentence.cursor] === " " ?
       this.currentState.animateDelayWord - this.currentState.animateDelayChar :
-      this.currentState.animateDelayChar);
+      this.currentState.animateDelayChar;
+
+    // console.log("[TextElement] stepSentenceAnimation", { cursor: sentence.cursor, textLen: sentence.text.length, delay });
+
+    setTimeout(() => this.stepSentenceAnimation(sentence), delay);
   }
 
   tryAnimateNextSentence() {
+    console.log("[TextElement] tryAnimateNextSentence", { isPlaying: this.isPlayingAnimation, queueLen: this.sentenceQueue.length });
     if (this.isPlayingAnimation) {
       return;
     }
 
     const interimIndex = this.sentenceQueue.findIndex(s => !s.isAnimated); // todo cache index
     if (interimIndex !== -1) {
+      console.log("[TextElement] Starting animation for sentence", { index: interimIndex, text: this.sentenceQueue[interimIndex].text });
       // run animation
       this.stepSentenceAnimation(this.sentenceQueue[interimIndex]);
+    } else {
+      console.log("[TextElement] No non-animated sentences found");
     }
   }
 
   enqueueSentence(event: TextEvent) {
+    console.log("[TextElement] enqueueSentence called", JSON.stringify({
+      value: event.value,
+      type: event.type,
+      sourceInterim: this.currentState.sourceInterim,
+      animateEnable: this.currentState.animateEnable
+    }));
+
     if (!this.currentState.sourceInterim && event?.type === TextEventType.interim) {
       return;
     }
 
-    // insert animated text
+    // insert animated text (ONLY for final events)
     if (this.currentState.animateEnable) {
-      // ignore interim
-      if (event.type === TextEventType.interim) {
-        return;
-      }
 
-      const sentenceState: SentenceState = {
-        type: event.type,
-        element: document.createElement("span"),
-        text: event.value,
-        cursor: 0,
-        cursorProfanity: 0,
-        profanityCursorList: {},
-        isAnimated: false,
-        emotes: event.emotes
-      }
+      const interimIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim);
 
-      // find profanity
-      const maskedValue = event.value.matchAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi);
-      for(let v of maskedValue) {
-        sentenceState.profanityCursorList[v.index as number] = true;
-      }
+      if (interimIndex !== -1) {
+        // Update existing interim sentence
+        const sentence = this.sentenceQueue[interimIndex];
+        const oldText = sentence.text;
+        const newText = event.value;
 
-      this.sentenceQueue.push(sentenceState);
-      this.textElement.insertBefore(sentenceState.element, this.textEndElement);
-      this.tryAnimateNextSentence();
+        // Check for divergence (correction)
+        // If the new text doesn't start with what we've already displayed, we need to reset
+        const displayedText = oldText.substring(0, sentence.cursor);
+        if (!newText.startsWith(displayedText)) {
+          console.log("[TextElement] Divergence detected, resetting animation", { displayed: displayedText, new: newText });
+          sentence.cursor = 0;
+          sentence.element.innerHTML = "";
+          sentence.cursorProfanity = 0;
+        }
+
+        sentence.text = newText;
+        sentence.type = event.type;
+        sentence.emotes = event.emotes;
+
+        // Update profanity mask list for new text
+        const maskedValue = newText.matchAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi);
+        sentence.profanityCursorList = {};
+        for (let v of maskedValue) {
+          sentence.profanityCursorList[v.index as number] = true;
+        }
+
+        if (event.type === TextEventType.final) {
+          sentence.element.classList.remove("interim");
+          console.log("[TextElement] Finalizing interim sentence", { text: newText });
+        }
+
+        // If we have more content to animate, ensure animation is running
+        if (sentence.cursor < sentence.text.length) {
+          sentence.isAnimated = false;
+          this.tryAnimateNextSentence();
+        }
+
+      } else {
+        // Create new sentence
+        console.log("[TextElement] Creating new sentence", { type: event.type, text: event.value });
+        const sentenceState: SentenceState = {
+          type: event.type,
+          element: document.createElement("span"),
+          text: event.value,
+          cursor: 0,
+          cursorProfanity: 0,
+          profanityCursorList: {},
+          isAnimated: false,
+          emotes: event.emotes
+        }
+
+        // find profanity
+        const maskedValue = event.value.matchAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi);
+        for (let v of maskedValue) {
+          sentenceState.profanityCursorList[v.index as number] = true;
+        }
+
+        this.sentenceQueue.push(sentenceState);
+        if (event.type === TextEventType.interim) {
+          sentenceState.element.classList.add("interim");
+        }
+        this.textElement.insertBefore(sentenceState.element, this.textEndElement);
+        this.tryAnimateNextSentence();
+      }
 
     }
-    // insert static text
+    // insert static text (OR interim text for animation mode)
     else {
       const interimIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim); // todo cache index
-      
+
       let filteredText = event.value.replaceAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi, `<span class="${event.type === TextEventType.interim ? 'interim' : ''} profanity">${this.currentState.textProfanityMask}</span>`);
       for (let emoteKey in event.emotes) {
         // ignore cursors
-        if (typeof emoteKey === "string") {          
+        if (typeof emoteKey === "string") {
           filteredText = filteredText.replaceAll(emoteKey, `<img src="${event.emotes[emoteKey]}" />`)
         }
       }
@@ -323,7 +383,7 @@ class TextController {
   }
 
   // copy state for faster access
-  onStateChange(){
+  onStateChange() {
     // detect changes
     const scene = window.ApiClient.scenes.state.activeScene;
     const storedState = window.ApiClient.document.fileBinder.get().elements[this.id].scenes[scene].data as Element_TextState;
@@ -381,7 +441,7 @@ class TextController {
     this.textObserver = new ResizeObserver(e => this.onResize());
     this.textObserver.observe(this.textElement);
     this.textObserver.observe(this.scrollContainerElement);
-    
+
     // subscribe to store updates
     this.sceneChangeEventCancelToken = subscribe(window.ApiClient.scenes.state, () => this.onStateChange());
     this.storeEventCancelToken = window.ApiClient.document.fileBinder.subscribe(data => this.onStateChange());
@@ -401,7 +461,7 @@ class TextController {
 // state.previewMode
 const Element_Text: FC<{ id: string }> = memo(({ id }) => {
   const controller = useRef(new TextController(id));
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const state = useGetState(state => (state.elements[id].scenes[activeScene].data as Element_TextState));
 
   useEffect(() => {

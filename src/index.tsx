@@ -1,12 +1,12 @@
 // import "./wdyr"
-import ReactDOM           from "react-dom/client";
+import ReactDOM from "react-dom/client";
 import "./style.css";
-import ApiServer          from "./server";
-import ApiClient          from "./client";
-import ClientView         from "./client/ui/view";
-import React, {ReactNode, Suspense} from "react";
-import AppConfiguration   from "@/config";
-import ApiShared          from "@/shared";
+import ApiServer from "./server";
+import ApiClient from "./client";
+import ClientView from "./client/ui/view";
+import React, { ReactNode, Suspense } from "react";
+import AppConfiguration from "@/config";
+import ApiShared from "@/shared";
 import ClientLoadingView from "./client/ui/view_loading";
 
 declare global {
@@ -47,46 +47,58 @@ function renderView(view: ReactNode) {
 const LazyServerView = React.lazy(() => import("./server/ui/editor-view"));
 
 (async function () {
-  window.Config = new AppConfiguration();
-  window.ApiShared = new ApiShared();
-  window.ApiClient = new ApiClient();
+  try {
+    window.Config = new AppConfiguration();
+    window.ApiShared = new ApiShared();
+    window.ApiClient = new ApiClient();
 
-  await window.Config.init();
-  await window.ApiShared.init();
-  
-  if (window.Config.isClient()) {
-    if('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'classic' }).then((sw) => {
-        sw.addEventListener("updatefound", async _ => {
-          console.log("found update");
-          await sw.update();
-          location.reload();
-        } )
-      });
+    await window.Config.init();
+    await window.ApiShared.init();
+
+    if (window.Config.isClient()) {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'classic' }).then((sw) => {
+          sw.addEventListener("updatefound", async _ => {
+            console.log("found update");
+            await sw.update();
+            location.reload();
+          })
+        });
+      }
+    }
+
+    if (window.Config.isClient())
+      renderView(<ClientLoadingView />);
+    // else
+    //   renderView(<LazyServerView/>);
+
+    // always load client api
+    await window.ApiClient.init();
+
+    // load server api only in app
+    if (window.Config.isServer()) {
+      const serverApi = await import("./server");
+      window.ApiServer = new serverApi.default();
+      await window.ApiServer.init();
+    }
+
+
+    if (window.Config.isServer())
+      document.documentElement.className = "host";
+
+    if (window.Config.isClient())
+      renderView(<ClientView />);
+    else
+      renderView(<LazyServerView />);
+  } catch (error: any) {
+    console.error("App initialization failed:", error);
+    if (root_ele) {
+      root_ele.innerHTML = `
+        <div style="padding: 20px; color: red; background: #333; height: 100vh;">
+          <h1>Application Failed to Start</h1>
+          <pre>${error?.message || String(error)}\n${error?.stack || ''}</pre>
+        </div>
+      `;
     }
   }
-
-  if (window.Config.isClient())
-    renderView(<ClientLoadingView/>);
-  // else
-  //   renderView(<LazyServerView/>);
-
-  // always load client api
-  await window.ApiClient.init();
-
-  // load server api only in app
-  if (window.Config.isServer()) {
-    const serverApi  = await import("./server");
-    window.ApiServer = new serverApi.default();
-    await window.ApiServer.init();
-  }
-
-
-  if (window.Config.isServer())
-    document.documentElement.className = "host";
-
-  if (window.Config.isClient())
-    renderView(<ClientView/>);
-  else
-    renderView(<LazyServerView/>);
 })();

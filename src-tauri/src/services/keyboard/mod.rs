@@ -1,12 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    os::raw::c_int,
-    sync::RwLock,
-};
+use std::{os::raw::c_int, sync::RwLock};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
-    Manager, Runtime, State,
+    Runtime, State,
 };
 use tokio::sync::mpsc;
 use windows::Win32::{
@@ -21,11 +18,13 @@ use windows::Win32::{
     },
 };
 
+#[allow(dead_code)]
 struct BgInput {
     tx: mpsc::UnboundedSender<String>,
     listen_hook_id: RwLock<Option<HHOOK>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum KeyCommand {
     Escape,
@@ -35,8 +34,10 @@ enum KeyCommand {
     Key(String),
 }
 
+#[allow(dead_code, static_mut_refs)]
 static mut GLOBAL_CALLBACK: Option<Box<dyn FnMut(KeyCommand)>> = None;
 
+#[allow(dead_code)]
 unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARAM) -> LRESULT {
     if code as u32 != HC_ACTION {
         return CallNextHookEx(None, code, param, lpdata);
@@ -52,7 +53,7 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
             _ => {
                 let window_thread_id = GetWindowThreadProcessId(GetForegroundWindow(), None);
                 let thread_id = GetCurrentThreadId();
-                
+
                 let mut kb_state = [0_u8; 256_usize];
                 if AttachThreadInput(thread_id, window_thread_id, true).as_bool() {
                     GetKeyboardState(&mut kb_state);
@@ -60,13 +61,13 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
                 } else {
                     GetKeyboardState(&mut kb_state);
                 }
-                
+
                 if kb_state[VK_LCONTROL.0 as usize] > 1 {
                     None
                 } else {
                     let kb_layout = GetKeyboardLayout(window_thread_id);
                     let code = MapVirtualKeyExW(vkCode, MAPVK_VK_TO_VSC_EX, kb_layout) << 16;
-    
+
                     let mut name = [0_u16; 32];
                     let res_size = ToUnicodeEx(vkCode, code, &kb_state, &mut name, 0, kb_layout);
                     if res_size > 0 {
@@ -79,11 +80,11 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
                         None
                     }
                 }
-
             }
         };
 
         if m.is_some() {
+            #[allow(static_mut_refs)]
             if let Some(cb) = &mut GLOBAL_CALLBACK {
                 cb(m.unwrap());
             }
@@ -94,6 +95,7 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
     CallNextHookEx(None, code, param, lpdata)
 }
 
+#[allow(dead_code)]
 #[command]
 fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
     {
@@ -102,7 +104,7 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
             return Err("Already active".into());
         }
     }
-    
+
     let tx = state.tx.clone();
     unsafe {
         GLOBAL_CALLBACK = Some(Box::new(move |cmd| {
@@ -115,7 +117,7 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
             tx.send(rpc).unwrap();
         }));
     }
-    let Ok(hook) = (unsafe {SetWindowsHookExA(WH_KEYBOARD_LL, Some(raw_callback), None, 0)}) else {
+    let Ok(hook) = (unsafe { SetWindowsHookExA(WH_KEYBOARD_LL, Some(raw_callback), None, 0) }) else {
         return Err("Could not start listener".into());
     };
     let mut wr = state.listen_hook_id.write().unwrap();
@@ -123,6 +125,7 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 #[command]
 fn stop_tracking(state: State<BgInput>) {
     let mut wr = state.listen_hook_id.write().unwrap();
@@ -134,12 +137,13 @@ fn stop_tracking(state: State<BgInput>) {
     *wr = None;
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct HotkeyBinding {
-    name: String
+    name: String,
 }
 
-#[cfg(feature="background_input")]
+#[cfg(feature = "background_input")]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let (pubsub_output_tx, mut pubsub_output_rx) = mpsc::unbounded_channel::<String>(); // to js
     Builder::new("keyboard")
@@ -162,7 +166,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
-#[cfg(not(feature="background_input"))]
+#[cfg(not(feature = "background_input"))]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("keyboard").build()
 }
