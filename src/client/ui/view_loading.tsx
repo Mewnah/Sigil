@@ -1,4 +1,4 @@
-import Logo from "@/server/ui/logo";
+import Logo from "@/core/ui/logo";
 import style from "./loading.module.css";
 
 export default function ClientLoadingView() {

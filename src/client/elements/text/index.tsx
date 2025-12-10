@@ -5,6 +5,7 @@ import { useGetState } from "../..";
 import { TextEvent, TextEventSource, TextEventType } from "../../../types";
 import { Element_TextState } from "./schema";
 import { buildStateStyle, elementStyle } from "./style";
+import { escapeHTML } from "@/utils";
 
 type SentenceState = {
   type: TextEventType
@@ -43,6 +44,7 @@ class TextController {
 
   private activityTimerHandle: number = -1;
   private activityTimerDelayClearHandle: number = -1;
+  private animationTimerHandle: number = -1;
 
   onShow() {
     if (this.currentState.soundEnable && this.currentState.soundFileOnShow) {
@@ -65,7 +67,6 @@ class TextController {
       }
 
       if (rect && this.currentState.particlesEnable) {
-        //TODO cache particle config
         window.ApiClient.particles.emit(rect, {
           imageIds: [
             this.currentState.particlesSpriteFileIdFirst,
@@ -153,7 +154,7 @@ class TextController {
       this.tryAnimateNextSentence();
       // add space in the end ONLY if final
       if (sentence.type === TextEventType.final) {
-        sentence.element.innerHTML += " ";
+        sentence.element.insertAdjacentHTML("beforeend", " ");
       }
       return;
     }
@@ -168,11 +169,11 @@ class TextController {
       const maskStr: string = this.currentState.textProfanityMask;
 
       if (this.currentState.animateDelayChar === 0) {
-        sentence.element.innerHTML += `<span class="profanity">${maskStr}</span>`;
+        sentence.element.insertAdjacentHTML("beforeend", `<span class="profanity">${maskStr}</span>`);
         this.moveCursorToSpaceOrEnd(sentence);
       }
       else {
-        sentence.element.innerHTML += `<span class="profanity">${maskStr[sentence.cursorProfanity]}</span>`;
+        sentence.element.insertAdjacentHTML("beforeend", `<span class="profanity">${maskStr[sentence.cursorProfanity]}</span>`);
 
         // finish mask stepping
         if (sentence.cursorProfanity + 1 >= maskStr.length) {
@@ -186,7 +187,7 @@ class TextController {
     }
     // insert emote
     else if (sentence.cursor in sentence.emotes) {
-      sentence.element.innerHTML += `<img src=${sentence.emotes[sentence.cursor]} />`;
+      sentence.element.insertAdjacentHTML("beforeend", `<img src=${sentence.emotes[sentence.cursor]} />`);
       this.moveCursorToSpaceOrEnd(sentence);
     }
     // insert text
@@ -196,11 +197,11 @@ class TextController {
         // skip to next word
         const wordStart = sentence.cursor;
         this.moveCursorToSpaceOrEnd(sentence);
-        sentence.element.innerHTML += sentence.text.substring(wordStart, sentence.cursor);
+        sentence.element.insertAdjacentHTML("beforeend", sentence.text.substring(wordStart, sentence.cursor));
       }
       // animate single char
       else {
-        sentence.element.innerHTML += sentence.text[sentence.cursor];
+        sentence.element.insertAdjacentHTML("beforeend", sentence.text[sentence.cursor]);
         sentence.cursor++;
       }
     }
@@ -209,35 +210,22 @@ class TextController {
       this.currentState.animateDelayWord - this.currentState.animateDelayChar :
       this.currentState.animateDelayChar;
 
-    // console.log("[TextElement] stepSentenceAnimation", { cursor: sentence.cursor, textLen: sentence.text.length, delay });
-
-    setTimeout(() => this.stepSentenceAnimation(sentence), delay);
+    this.animationTimerHandle = setTimeout(() => this.stepSentenceAnimation(sentence), delay) as unknown as number;
   }
 
   tryAnimateNextSentence() {
-    console.log("[TextElement] tryAnimateNextSentence", { isPlaying: this.isPlayingAnimation, queueLen: this.sentenceQueue.length });
     if (this.isPlayingAnimation) {
       return;
     }
 
     const interimIndex = this.sentenceQueue.findIndex(s => !s.isAnimated); // todo cache index
     if (interimIndex !== -1) {
-      console.log("[TextElement] Starting animation for sentence", { index: interimIndex, text: this.sentenceQueue[interimIndex].text });
       // run animation
       this.stepSentenceAnimation(this.sentenceQueue[interimIndex]);
-    } else {
-      console.log("[TextElement] No non-animated sentences found");
     }
   }
 
   enqueueSentence(event: TextEvent) {
-    console.log("[TextElement] enqueueSentence called", JSON.stringify({
-      value: event.value,
-      type: event.type,
-      sourceInterim: this.currentState.sourceInterim,
-      animateEnable: this.currentState.animateEnable
-    }));
-
     if (!this.currentState.sourceInterim && event?.type === TextEventType.interim) {
       return;
     }
@@ -257,7 +245,6 @@ class TextController {
         // If the new text doesn't start with what we've already displayed, we need to reset
         const displayedText = oldText.substring(0, sentence.cursor);
         if (!newText.startsWith(displayedText)) {
-          console.log("[TextElement] Divergence detected, resetting animation", { displayed: displayedText, new: newText });
           sentence.cursor = 0;
           sentence.element.innerHTML = "";
           sentence.cursorProfanity = 0;
@@ -276,7 +263,6 @@ class TextController {
 
         if (event.type === TextEventType.final) {
           sentence.element.classList.remove("interim");
-          console.log("[TextElement] Finalizing interim sentence", { text: newText });
         }
 
         // If we have more content to animate, ensure animation is running
@@ -287,7 +273,6 @@ class TextController {
 
       } else {
         // Create new sentence
-        console.log("[TextElement] Creating new sentence", { type: event.type, text: event.value });
         const sentenceState: SentenceState = {
           type: event.type,
           element: document.createElement("span"),
@@ -318,7 +303,7 @@ class TextController {
     else {
       const interimIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim); // todo cache index
 
-      let filteredText = event.value.replaceAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi, `<span class="${event.type === TextEventType.interim ? 'interim' : ''} profanity">${this.currentState.textProfanityMask}</span>`);
+      let filteredText = escapeHTML(event.value).replaceAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi, `<span class="${event.type === TextEventType.interim ? 'interim' : ''} profanity">${this.currentState.textProfanityMask}</span>`);
       for (let emoteKey in event.emotes) {
         // ignore cursors
         if (typeof emoteKey === "string") {
@@ -456,6 +441,7 @@ class TextController {
     this.storeEventCancelToken?.();
     window.ApiShared.pubsub.unsubscribe(this.eventTextRef);
     window.ApiShared.pubsub.unsubscribe(this.eventTextInputRef);
+    clearTimeout(this.animationTimerHandle);
   }
 }
 // state.previewMode

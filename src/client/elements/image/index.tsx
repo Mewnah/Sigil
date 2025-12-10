@@ -7,7 +7,7 @@ import { Element_ImageState } from "./schema";
 import { useSnapshot } from "valtio";
 
 const Element_Image: FC<{ id: string }> = memo(({ id }) => {
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const state = useGetState(state => (state.elements[id].scenes[activeScene].data as Element_ImageState));
   const attributeController = useRef<StyleToEventController>();
 
@@ -21,13 +21,16 @@ const Element_Image: FC<{ id: string }> = memo(({ id }) => {
 
   const [active, setActive] = useState(false);
 
-  const timeoutN = useRef(-1 as any);
+  const activeDurationRef = useRef(state.activeDuration);
+  activeDurationRef.current = state.activeDuration;
+
+  const timeoutN = useRef<number>(-1);
   const debounce = useCallback(() => {
     setActive(true);
     clearTimeout(timeoutN.current);
     if (document.visibilityState === "visible")
-      timeoutN.current = setTimeout(() => setActive(false), state.activeDuration);
-  }, [state.activeDuration])
+      timeoutN.current = setTimeout(() => setActive(false), activeDurationRef.current) as unknown as number;
+  }, [])
 
   useEffect(() => {
     const hasEvent = !!state.activeEvent;
@@ -35,7 +38,7 @@ const Element_Image: FC<{ id: string }> = memo(({ id }) => {
       const sub = window.ApiShared.pubsub.subscribe(state.activeEvent, _ => debounce());
       return () => window.ApiShared.pubsub.unsubscribe(sub);
     }
-  }, [state.activeEvent, state.activeDuration]);
+  }, [state.activeEvent, debounce]);
 
   useEffect(() => {
     attributeController.current?.OnStyleChange(state.styleCss)
@@ -66,7 +69,7 @@ const Element_Image: FC<{ id: string }> = memo(({ id }) => {
       `}
     </style>
     <style>{state.styleCss}</style>
-    <div {...attributes} className={classNames("image", {active})} />
+    <div {...attributes} className={classNames("image", { active })} />
   </>
 });
 

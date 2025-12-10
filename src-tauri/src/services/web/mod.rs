@@ -37,7 +37,7 @@ struct WebConfig {
 #[command]
 async fn config(config: State<'_, AppConfiguration>) -> Result<WebConfig, String> {
     let Ok(ip) = local_ip() else {
-        return Err("Error retrieving local IP".to_string())
+        return Err("Error retrieving local IP".to_string());
     };
     return Ok(WebConfig {
         local_ip: ip.to_string(),
@@ -54,11 +54,21 @@ struct OpenBrowserCommand {
 }
 #[command]
 fn open_browser(data: OpenBrowserCommand) {
+    // Validate URL scheme to prevent arbitrary command execution
+    if !data.url.starts_with("http://") && !data.url.starts_with("https://") {
+        return;
+    }
+
     if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(&["/C", format!("start {} {}", &data.browser, &data.url).as_str()])
-            .output()
-            .ok();
+        let browser_path = match data.browser.as_str() {
+            "chrome" => "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "edge" => "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+            _ => "", // Default to system default if unknown
+        };
+
+        if !browser_path.is_empty() {
+            Command::new(browser_path).arg(&data.url).spawn().ok();
+        }
     }
 }
 
@@ -74,23 +84,26 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
             let app_port = app.state::<AppConfiguration>().port;
 
+            let app_handle = app.app_handle();
             let a = Arc::new(app.asset_resolver());
             tauri::async_runtime::spawn(async move {
                 let routes = warp::path!("ping")
                     .map(|| format!("pong"))
                     .or(peer::path())
-                    .or(pubsub::path(pubsub_input_rx, pubsub_output_tx))
+                    .or(pubsub::path(pubsub_input_rx, pubsub_output_tx, app_handle))
                     .or(assets::path(a));
 
                 loop {
-                    warp::serve(routes.clone()).run(([0, 0, 0, 0], app_port)).await
+                    warp::serve(routes.clone())
+                        .run(([127, 0, 0, 1], app_port))
+                        .await
                 }
             });
             let handle = app.app_handle();
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Some(output) = pubsub_output_rx.recv().await {
-                        handle.emit_all("pubsub", output).unwrap();
+                        handle.emit_all("pubsub", output).ok();
                     }
                 }
             });

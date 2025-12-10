@@ -218,3 +218,6 @@ fieldset > input[type="color"]::-webkit-color-swatch {
   height: inherit;
   border-radius: 0;
 } */
+.field-width .field-width { width: auto !important; flex: 1 1 0% !important; min-width: 0 !important; }
+
+.field-width .field-width { width: auto !important; flex: 1 1 0% !important; min-width: 0 !important; }

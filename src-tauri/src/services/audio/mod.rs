@@ -4,20 +4,24 @@ use rodio::{
     cpal::{self, traits::HostTrait},
     Decoder, DeviceTrait, OutputStream, OutputStreamHandle, Sink,
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
     Runtime,
 };
 
-fn get_output_stream(device_name: &str) -> Option<(OutputStream, OutputStreamHandle)> {
-    let host = cpal::default_host();
-    let mut devices = host.output_devices().unwrap();
-    if let Some(device) = devices.find(|device| device.name().unwrap() == device_name) {
-        OutputStream::try_from_device(&device).ok()
+fn get_output_stream(device_name: &str) -> Result<(OutputStream, OutputStreamHandle), String> {
+    if device_name == "default" {
+        OutputStream::try_default().map_err(|e| e.to_string())
     } else {
-        None
+        let host = cpal::default_host();
+        let devices = host.output_devices().map_err(|e| e.to_string())?;
+        let device = devices
+            .into_iter()
+            .find(|d| d.name().unwrap_or_default() == device_name)
+            .ok_or("Device not found")?;
+        OutputStream::try_from_device(&device).map_err(|e| e.to_string())
     }
 }
 
@@ -26,27 +30,20 @@ pub struct RpcAudioPlayAsync {
     pub device_name: String,
     pub data: Vec<u8>,
     pub volume: f32, // 1 - base
-    pub rate: f32, // 1 - base
+    pub rate: f32,   // 1 - base
 }
 
 #[command]
 pub async fn play_async(data: RpcAudioPlayAsync) -> Result<(), String> {
-    if let Some((_stream, stream_handle)) = get_output_stream(data.device_name.as_str()) {
-        // let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        let sink = Sink::try_new(&stream_handle).unwrap();
-        sink.set_volume(data.volume);
-        sink.set_speed(data.rate);
-        if let Ok(source) = Decoder::new(Cursor::new(data.data)) {
-            sink.append(source);
-            sink.sleep_until_end();
-            Ok(())
-        } else {
-            Err("Unable to play file".into())
-        }
-    }
-    else {
-        Err("Invalid device".into())
-    }
+    let (_stream, stream_handle) = get_output_stream(&data.device_name)?;
+    let sink = Sink::try_new(&stream_handle).map_err(|e| e.to_string())?;
+    sink.set_volume(data.volume);
+    sink.set_speed(data.rate);
+
+    let source = Decoder::new(Cursor::new(data.data)).map_err(|e| e.to_string())?;
+    sink.append(source);
+    sink.sleep_until_end();
+    Ok(())
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

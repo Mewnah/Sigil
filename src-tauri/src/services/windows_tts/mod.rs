@@ -78,7 +78,7 @@ impl WindowsTTSPlugin {
 }
 
 fn into_speech_tokens(tokens: ISpeechObjectTokens) -> Option<Vec<ISpeechToken>> {
-    let i_m = unsafe { tokens.Count() }.unwrap();
+    let i_m = unsafe { tokens.Count() }.ok()?;
     let ll = (0..i_m)
         .into_iter()
         .map(|i| {

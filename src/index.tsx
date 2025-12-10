@@ -1,7 +1,7 @@
 // import "./wdyr"
 import ReactDOM from "react-dom/client";
 import "./style.css";
-import ApiServer from "./server";
+import ApiServer from "./core";
 import ApiClient from "./client";
 import ClientView from "./client/ui/view";
 import React, { ReactNode, Suspense } from "react";
@@ -44,7 +44,7 @@ function renderView(view: ReactNode) {
   root && root.render(view);
 }
 
-const LazyServerView = React.lazy(() => import("./server/ui/editor-view"));
+const LazyServerView = React.lazy(() => import("./core/ui/editor-view"));
 
 (async function () {
   try {
@@ -77,7 +77,7 @@ const LazyServerView = React.lazy(() => import("./server/ui/editor-view"));
 
     // load server api only in app
     if (window.Config.isServer()) {
-      const serverApi = await import("./server");
+      const serverApi = await import("./core");
       window.ApiServer = new serverApi.default();
       await window.ApiServer.init();
     }

@@ -1,4 +1,4 @@
-import {invoke} from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/tauri";
 
 enum AppMode {
   server,
@@ -30,8 +30,8 @@ type ServerNetwork = {
 }
 
 class AppConfiguration {
-  mode: AppMode            = AppMode.server;
-  platform: AppPlatform    = AppPlatform.app;
+  mode: AppMode = AppMode.server;
+  platform: AppPlatform = AppPlatform.app;
   clientInitialState?: InitialData;
   features: NativeFeatures = {
     background_input: false
@@ -39,15 +39,15 @@ class AppConfiguration {
   serverNetwork!: ServerNetwork;
   clientNetwork!: ClientNetwork;
 
-  public isApp    = () => window.Config.platform === AppPlatform.app;
-  public isWeb    = () => window.Config.platform === AppPlatform.web;
+  public isApp = () => window.Config.platform === AppPlatform.app;
+  public isWeb = () => window.Config.platform === AppPlatform.web;
   public isClient = () => window.Config.mode === AppMode.client;
   public isServer = () => window.Config.mode === AppMode.server;
 
   // region ---INITIALIZERS---
   private loadBase() {
     this.platform = window.__TAURI_METADATA__ ? AppPlatform.app : AppPlatform.web;
-    this.mode     = window.location.pathname.startsWith('/client') ? AppMode.client : AppMode.server;
+    this.mode = window.location.pathname.startsWith('/client') ? AppMode.client : AppMode.server;
   }
 
   private async loadFeatures() {
@@ -60,20 +60,20 @@ class AppConfiguration {
     // client is always web
     // load network params from url query
     if (this.isClient()) {
-      const q            = new URLSearchParams(window.location.search.substring(1));
+      const q = new URLSearchParams(window.location.search.substring(1));
       this.clientNetwork = {
         serverId: q.get("id") ?? "",
-        host:     q.get("host") ?? location.hostname,
-        port:     q.get("port") ?? location.port
+        host: q.get("host") ?? location.hostname,
+        port: q.get("port") ?? location.port
       }
     }
-      // server is always app
+    // server is always app
     // load network params from rust
     else {
-      const appConfig    = await invoke<any>("plugin:web|config");
+      const appConfig = await invoke<any>("plugin:web|config");
       this.serverNetwork = {
-        ip:   appConfig.local_ip,
-        host: "localhost",
+        ip: appConfig.local_ip,
+        host: "127.0.0.1",
         port: appConfig.port
       }
     }

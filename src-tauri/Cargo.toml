@@ -2,7 +2,7 @@
 name = "curses"
 version = "0.0.19"
 description = "A very cool app"
-authors = ["mmpneo@gmail.com"]
+authors = ["Curses"]
 license = ""
 repository = ""
 edition = "2021"

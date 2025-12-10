@@ -1,6 +1,6 @@
 import z from "zod";
 import { ElementType } from "./client/elements/schema";
-import { Services } from "./server";
+import { Services } from "./core";
 
 export type MappedGroupDictionary<Options = any> = Record<string, ([string] | [string, string] | [string, string, Options])[]>
 
@@ -43,6 +43,7 @@ export enum TextEventSource {
   textfield = "text.textfield",
   stt = "text.stt",
   translation = "text.translation",
+  transform = "text.transform",
 }
 
 // todo rename

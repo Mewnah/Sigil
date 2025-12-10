@@ -1,0 +1,91 @@
+import OpenAI from "openai";
+import { Service_Transform_Schema } from "../schema";
+import { ITransformReceiver, ITransformService } from "../types";
+import { TextEvent } from "@/types";
+import { z } from "zod";
+
+type TransformData = z.infer<typeof Service_Transform_Schema>;
+
+export class Transform_LLMService implements ITransformService {
+    private openai: OpenAI | null = null;
+    private systemPrompt: string = "";
+    private model: string = "gpt-3.5-turbo";
+
+    constructor(private receiver: ITransformReceiver) { }
+
+    start(data: TransformData): void {
+        let apiKey = "";
+        let baseURL = "";
+        let model = "";
+
+        // Resolve Config based on Provider
+        switch (data.provider) {
+            case "openrouter":
+                apiKey = data.openRouterKey || data.openaiKey; // fallback for legacy
+                baseURL = data.openRouterUrl;
+                model = data.openRouterModel;
+                break;
+            case "custom":
+                apiKey = data.customKey;
+                baseURL = data.customUrl;
+                model = data.customModel;
+                break;
+            case "openai":
+            default:
+                apiKey = data.openaiKey;
+                baseURL = data.openaiUrl;
+                model = data.openaiModel;
+                break;
+        }
+
+        if (!apiKey) {
+            // Allow dummy key if custom (local LLM might not need it, but SDK requires string)
+            if (data.provider !== "custom") {
+                this.receiver.onStop(`API Key missing for ${data.provider}`);
+                return;
+            }
+            apiKey = "dummy";
+        }
+
+        try {
+            this.openai = new OpenAI({
+                apiKey: apiKey,
+                baseURL: baseURL || undefined,
+                dangerouslyAllowBrowser: true
+            });
+            this.systemPrompt = data.systemPrompt;
+            this.model = model;
+
+            this.receiver.onStart();
+        } catch (error: any) {
+            this.receiver.onStop(`Failed to initialize LLM: ${error.message}`);
+        }
+    }
+
+    stop(): void {
+        this.openai = null;
+        this.receiver.onStop();
+    }
+
+    async transform(id: number, e: TextEvent): Promise<void> {
+        if (!this.openai || !e.value.trim()) return;
+
+        try {
+            const response = await this.openai.chat.completions.create({
+                model: this.model,
+                messages: [
+                    { role: "system", content: this.systemPrompt },
+                    { role: "user", content: e.value },
+                ],
+                max_tokens: 100,
+            });
+
+            const result = response.choices[0]?.message?.content?.trim();
+            if (result) {
+                this.receiver.onTransform(id, e, result);
+            }
+        } catch (error: any) {
+            console.error("LLM Transform Error:", error);
+        }
+    }
+}

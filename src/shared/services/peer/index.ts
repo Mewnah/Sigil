@@ -12,7 +12,7 @@ class Service_Peer implements IServiceInterface {
 
   getClientLink(): string {
     const n = window.Config.serverNetwork;
-    return `${n.host}:${n.port}/client`;
+    return `http://${n.host}:${n.port}/client`;
   }
 
   copyClientLink() {
@@ -24,7 +24,7 @@ class Service_Peer implements IServiceInterface {
     this.#initializePeer();
     this.#provider?.addEventListener("on_client_connected", e => {
       if (e instanceof CustomEvent) {
-        this.#provider?.broadcastPubSubSingle(e.detail, {topic: "peers:init_data", data: window.ApiClient.getInitialConfig()});
+        this.#provider?.broadcastPubSubSingle(e.detail, { topic: "peers:init_data", data: window.ApiClient.getInitialConfig() });
       }
     });
 
@@ -49,7 +49,7 @@ class Service_Peer implements IServiceInterface {
       }
     });
     await this.#provider?.connectClient({
-      id:   "server",
+      id: "server",
       host: window.Config.clientNetwork.host,
       port: window.Config.clientNetwork.port,
     });

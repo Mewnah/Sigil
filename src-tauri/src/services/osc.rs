@@ -1,12 +1,11 @@
-use std::net::{SocketAddr, UdpSocket};
 use rosc::{encoder, OscMessage, OscPacket, OscType};
 use serde::{Deserialize, Serialize};
+use std::net::{SocketAddr, UdpSocket};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
 };
-
 
 pub struct OscPlugin {
     socket: Option<UdpSocket>,
@@ -31,19 +30,17 @@ impl OscPlugin {
         let args: Vec<OscType> = rpc
             .args
             .iter()
-            .map(|arg| {
-                let tt = match arg {
-                    OscValue::Bool(v) => OscType::from(*v),
-                    OscValue::Float(v) => OscType::Float(*v as f32),
-                    OscValue::Int(v) => OscType::Int(*v as i32),
-                    OscValue::String(v) => OscType::from(v.to_string())
-                };
-                tt
+            .map(|arg| match arg {
+                OscValue::Bool(v) => OscType::Bool(*v),
+                OscValue::Float(v) => OscType::Float(*v as f32),
+                OscValue::Int(v) => OscType::Int(*v as i32),
+                OscValue::String(v) => OscType::String(v.clone()),
             })
             .collect();
 
-        let msg_buf = encoder::encode(&OscPacket::Message(OscMessage { addr: rpc.path, args })).unwrap();
-        socket.send_to(&msg_buf, addr).unwrap();
+        if let Ok(msg_buf) = encoder::encode(&OscPacket::Message(OscMessage { addr: rpc.path, args })) {
+            socket.send_to(&msg_buf, addr).ok();
+        }
     }
 }
 

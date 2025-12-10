@@ -27,8 +27,9 @@ struct VadConfig {
     min_chunk_duration_ms: u64,
 }
 
+#[derive(Clone)]
 pub struct WhisperState {
-    stop_sender: Mutex<Option<Sender<()>>>,
+    stop_sender: Arc<Mutex<Option<Sender<()>>>>,
     audio_buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: Arc<Mutex<u32>>,
     channels: Arc<Mutex<u16>>,
@@ -41,7 +42,7 @@ pub struct WhisperState {
 impl WhisperState {
     fn new() -> Self {
         Self {
-            stop_sender: Mutex::new(None),
+            stop_sender: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
             sample_rate: Arc::new(Mutex::new(16000)),
             channels: Arc::new(Mutex::new(1)),
@@ -172,7 +173,7 @@ fn transcribe_chunk<R: Runtime>(app: &AppHandle<R>, audio_data: Vec<f32>, sample
 
     // Convert stereo to mono if needed
     let mono_data = if channels == 2 {
-        eprintln!("[Whisper] Converting stereo to mono ({} samples)", audio_data.len());
+        // eprintln!("[Whisper] Converting stereo to mono ({} samples)", audio_data.len());
         audio_data
             .chunks_exact(2)
             .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
@@ -181,11 +182,11 @@ fn transcribe_chunk<R: Runtime>(app: &AppHandle<R>, audio_data: Vec<f32>, sample
         audio_data
     };
 
-    eprintln!("[Whisper] Mono data: {} samples", mono_data.len());
+    // eprintln!("[Whisper] Mono data: {} samples", mono_data.len());
 
     // Resample to 16kHz if needed
     let resampled_data = if sample_rate != 16000 {
-        eprintln!("[Whisper] Resampling from {}Hz to 16000Hz", sample_rate);
+        // eprintln!("[Whisper] Resampling from {}Hz to 16000Hz", sample_rate);
         let ratio = 16000.0 / sample_rate as f32;
         let target_len = (mono_data.len() as f32 * ratio) as usize;
         let mut resampled = Vec::with_capacity(target_len);
@@ -201,14 +202,14 @@ fn transcribe_chunk<R: Runtime>(app: &AppHandle<R>, audio_data: Vec<f32>, sample
         mono_data
     };
 
-    eprintln!("[Whisper] Final audio: {} samples at 16kHz mono", resampled_data.len());
+    // eprintln!("[Whisper] Final audio: {} samples at 16kHz mono", resampled_data.len());
 
     // Check audio levels
     let final_rms = calculate_rms_db(&resampled_data);
-    eprintln!("[Whisper] Final audio RMS: {:.2} dB", final_rms);
+    // eprintln!("[Whisper] Final audio RMS: {:.2} dB", final_rms);
 
     if final_rms < -60.0 {
-        eprintln!("[Whisper] WARNING: Audio is very quiet (< -60dB), likely silence!");
+        // eprintln!("[Whisper] WARNING: Audio is very quiet (< -60dB), likely silence!");
     }
 
     // Save as WAV (16-bit PCM as required by Whisper)
@@ -229,20 +230,28 @@ fn transcribe_chunk<R: Runtime>(app: &AppHandle<R>, audio_data: Vec<f32>, sample
     writer.finalize().map_err(|e| e.to_string())?;
 
     // Run whisper
-    let whisper_dir = whisper_exe.parent().unwrap();
+    let whisper_dir = whisper_exe.parent().ok_or("Failed to get whisper dir")?;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let output = Command::new(&whisper_exe)
         .current_dir(whisper_dir)
-        .args(&["-m", model_path.to_str().unwrap(), "-f", temp_wav.to_str().unwrap(), "-nt", "-l", "en"])
+        .args(&[
+            "-m",
+            model_path.to_str().ok_or("Invalid model path")?,
+            "-f",
+            temp_wav.to_str().ok_or("Invalid wav path")?,
+            "-nt",
+            "-l",
+            "en",
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("Failed to run whisper: {}", e))?;
 
     fs::remove_file(&temp_wav).ok();
 
-    eprintln!("[Whisper] Exit status: {}", output.status);
-    eprintln!("[Whisper] Stdout: {}", String::from_utf8_lossy(&output.stdout));
-    eprintln!("[Whisper] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+    // eprintln!("[Whisper] Exit status: {}", output.status);
+    // eprintln!("[Whisper] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+    // eprintln!("[Whisper] Stderr: {}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
         return Err(format!("Whisper failed: {}", String::from_utf8_lossy(&output.stderr)));
@@ -260,28 +269,47 @@ async fn start_recording<R: Runtime>(
     silence_threshold_db: f32,
     silence_duration_ms: u64,
     min_chunk_duration_ms: u64,
+    capture_local: bool,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or("No input device available")?;
+    // 1. Initialize State (Common for both local and remote)
 
-    let config = device.default_input_config().map_err(|e| e.to_string())?;
-    eprintln!("[Whisper] Default input config: {:?}", config);
+    // Store default sample rate/channels for remote if local is skipped.
+    // Ideally, remote sources tells us this, but for now we default to 16k/mono or keep existing.
+    // If capture_local is true, we get it from the device.
 
-    // Store the actual sample rate and channels
+    let mut config_sample_rate = 16000;
+    let mut config_channels = 1;
+
+    let device_opt = if capture_local {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or("No input device available")?;
+        let config = device.default_input_config().map_err(|e| e.to_string())?;
+
+        config_sample_rate = config.sample_rate().0;
+        config_channels = config.channels();
+        Some((device, config))
+    } else {
+        None
+    };
+
+    // Store sample rate and channels
     {
-        let mut sr = state.sample_rate.lock().unwrap();
-        *sr = config.sample_rate().0;
+        let mut sr = state
+            .sample_rate
+            .lock()
+            .expect("Failed to lock sample_rate");
+        *sr = config_sample_rate;
     }
     {
-        let mut ch = state.channels.lock().unwrap();
-        *ch = config.channels();
+        let mut ch = state.channels.lock().expect("Failed to lock channels");
+        *ch = config_channels;
     }
 
     // Update VAD config
     {
-        let mut vad_cfg = state.vad_config.lock().unwrap();
+        let mut vad_cfg = state.vad_config.lock().expect("Failed to lock vad_config");
         *vad_cfg = VadConfig {
             enabled: vad_enabled,
             silence_threshold_db,
@@ -292,180 +320,275 @@ async fn start_recording<R: Runtime>(
 
     // Clear buffer and reset VAD state
     {
-        let mut buffer = state.audio_buffer.lock().unwrap();
+        let mut buffer = state
+            .audio_buffer
+            .lock()
+            .expect("Failed to lock audio_buffer");
         buffer.clear();
     }
     {
-        let mut silent_frames = state.consecutive_silent_frames.lock().unwrap();
+        let mut silent_frames = state
+            .consecutive_silent_frames
+            .lock()
+            .expect("Failed to lock silent_frames");
         *silent_frames = 0;
     }
     {
-        let mut last_trans = state.last_transcription_time.lock().unwrap();
+        let mut last_trans = state
+            .last_transcription_time
+            .lock()
+            .expect("Failed to lock last_transcription_time");
         *last_trans = Instant::now();
     }
 
     // Set recording flag to true
     {
-        let mut is_rec = state.is_recording.lock().unwrap();
+        let mut is_rec = state
+            .is_recording
+            .lock()
+            .expect("Failed to lock is_recording");
         *is_rec = true;
     }
 
     // Create stop channel
     let (tx, rx) = channel();
     {
-        let mut stop_sender = state.stop_sender.lock().unwrap();
+        let mut stop_sender = state
+            .stop_sender
+            .lock()
+            .expect("Failed to lock stop_sender");
         *stop_sender = Some(tx);
     }
 
-    let buffer_clone = state.audio_buffer.clone();
-    let sample_rate_clone = state.sample_rate.clone();
-    let channels_clone = state.channels.clone();
-    let is_recording_clone = state.is_recording.clone();
-    let vad_config_clone = state.vad_config.clone();
-    let silent_frames_clone = state.consecutive_silent_frames.clone();
-    let last_transcription_clone = state.last_transcription_time.clone();
-    let app_clone = app.clone();
+    // 2. Start Local Capture (if requested)
+    if capture_local {
+        let (device, config) = device_opt.unwrap();
+        let err_fn = move |err| {
+            eprintln!("[Whisper] Audio stream error: {}", err);
+        };
 
-    let last_chunk_time = Arc::new(Mutex::new(Instant::now()));
-    let last_chunk_time_clone = last_chunk_time.clone();
+        let state_clone_for_callback = state.inner().clone();
+        let app_clone_for_callback = app.clone();
 
-    let err_fn = move |err| {
-        eprintln!("[Whisper] Audio stream error: {}", err);
-    };
-
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => device.build_input_stream(
-            &config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let is_recording = *is_recording_clone.lock().unwrap();
-                if !is_recording {
+        // Spawn a thread to manage the stream lifetime
+        thread::spawn(move || {
+            let stream = match config.sample_format() {
+                cpal::SampleFormat::F32 => device.build_input_stream(
+                    &config.into(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        process_audio_chunk(&state_clone_for_callback, &app_clone_for_callback, data.to_vec());
+                    },
+                    err_fn,
+                    None,
+                ),
+                _ => {
+                    eprintln!("[Whisper] Unsupported sample format");
                     return;
                 }
+            };
 
-                {
-                    let mut buffer = buffer_clone.lock().unwrap();
-                    buffer.extend_from_slice(data);
+            if let Ok(stream) = stream {
+                if let Err(e) = stream.play() {
+                    eprintln!("[Whisper] Failed to play stream: {}", e);
+                    return;
                 }
-
-                let vad_config = vad_config_clone.lock().unwrap().clone();
-                let sample_rate = *sample_rate_clone.lock().unwrap();
-                let channels = *channels_clone.lock().unwrap();
-
-                let should_process = if vad_config.enabled {
-                    let rms_db = calculate_rms_db(data);
-                    let is_silent = rms_db < vad_config.silence_threshold_db;
-
-                    if is_silent {
-                        let mut silent_frames = silent_frames_clone.lock().unwrap();
-                        *silent_frames += 1;
-                    } else {
-                        let mut silent_frames = silent_frames_clone.lock().unwrap();
-                        *silent_frames = 0;
-                    }
-
-                    let silent_frames_count = *silent_frames_clone.lock().unwrap();
-                    let callback_duration_ms = (data.len() as f32 / channels as f32 / sample_rate as f32 * 1000.0) as u64;
-                    let silent_duration_ms = silent_frames_count as u64 * callback_duration_ms;
-
-                    let last_trans_time = last_transcription_clone.lock().unwrap();
-                    let time_since_last_trans = last_trans_time.elapsed().as_millis() as u64;
-                    drop(last_trans_time);
-
-                    if silent_duration_ms >= vad_config.silence_duration_ms && time_since_last_trans >= vad_config.min_chunk_duration_ms {
-                        let mut silent_frames = silent_frames_clone.lock().unwrap();
-                        *silent_frames = 0;
-
-                        let mut last_trans = last_transcription_clone.lock().unwrap();
-                        *last_trans = Instant::now();
-
-                        eprintln!(
-                            "[Whisper VAD] Silence detected after {}ms, triggering transcription",
-                            time_since_last_trans
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    let mut last_time = last_chunk_time_clone.lock().unwrap();
-                    if last_time.elapsed().as_secs() >= CHUNK_DURATION_SECS {
-                        *last_time = Instant::now();
-                        true
-                    } else {
-                        false
-                    }
-                };
-
-                if should_process {
-                    let is_still_recording = *is_recording_clone.lock().unwrap();
-                    if !is_still_recording {
-                        eprintln!("[Whisper] Recording stopped, not processing chunk");
-                        return;
-                    }
-
-                    let chunk = {
-                        let mut buffer = buffer_clone.lock().unwrap();
-                        let chunk = buffer.clone();
-                        buffer.clear();
-                        chunk
-                    };
-
-                    if chunk.len() < 3200 {
-                        eprintln!("[Whisper] Skipping small chunk ({} samples)", chunk.len());
-                        return;
-                    }
-
-                    let app_handle = app_clone.clone();
-                    let sample_rate = *sample_rate_clone.lock().unwrap();
-                    let channels = *channels_clone.lock().unwrap();
-
-                    thread::spawn(move || match transcribe_chunk(&app_handle, chunk, sample_rate, channels) {
-                        Ok(text) if !text.trim().is_empty() => {
-                            eprintln!("[Whisper] Emitting partial result: {}", text);
-                            let _ = app_handle.emit_all("whisper:partial_result", text);
-                        }
-                        Ok(_) => {
-                            eprintln!("[Whisper] Empty transcription");
-                        }
-                        Err(e) => {
-                            eprintln!("[Whisper] Transcription error: {}", e);
-                        }
-                    });
-                }
-            },
-            err_fn,
-            None,
-        ),
-        _ => {
-            return Err("Unsupported sample format".to_string());
-        }
+                // Wait for stop signal
+                let _ = rx.recv();
+                // Stream is dropped here, stopping recording
+            }
+        });
+    } else {
+        // For remote mode, we just spawn a thread to wait for the stop signal
+        // so we can clean up cleanly when stop_recording is called.
+        thread::spawn(move || {
+            let _ = rx.recv();
+            // Just exit thread when stopped
+        });
     }
-    .map_err(|e| e.to_string())?;
 
-    stream.play().map_err(|e| e.to_string())?;
+    Ok(())
+}
 
-    thread::spawn(move || {
-        let _ = rx.recv();
-        eprintln!("[Whisper] Stop signal received");
-    });
+// Public helper to process audio chunks (used by both local and remote)
+pub fn process_audio_chunk<R: Runtime>(state: &WhisperState, app: &AppHandle<R>, data: Vec<f32>) {
+    // eprintln!("[Whisper] Processing chunk: {} samples", data.len());
+    let is_recording = *state
+        .is_recording
+        .lock()
+        .expect("Failed to lock is_recording");
 
-    std::mem::forget(stream);
+    if !is_recording {
+        // Ignore chunks if we are not explicitly recording (state initialized)
+        return;
+    }
 
-    eprintln!("[Whisper] Recording started");
+    {
+        let mut buffer = state
+            .audio_buffer
+            .lock()
+            .expect("Failed to lock audio_buffer");
+        buffer.extend_from_slice(&data);
+    }
+
+    let vad_config = state
+        .vad_config
+        .lock()
+        .expect("Failed to lock vad_config")
+        .clone();
+    let sample_rate = *state
+        .sample_rate
+        .lock()
+        .expect("Failed to lock sample_rate");
+    let channels = *state.channels.lock().expect("Failed to lock channels");
+
+    let should_process = if vad_config.enabled {
+        let rms_db = calculate_rms_db(&data);
+        let is_silent = rms_db < vad_config.silence_threshold_db;
+
+        eprintln!(
+            "[Whisper] RMS: {:.2} dB, Silent: {}, Threshold: {:.2} dB",
+            rms_db, is_silent, vad_config.silence_threshold_db
+        );
+
+        if is_silent {
+            let mut silent_frames = state
+                .consecutive_silent_frames
+                .lock()
+                .expect("Failed to lock silent_frames");
+            *silent_frames += 1;
+        } else {
+            let mut silent_frames = state
+                .consecutive_silent_frames
+                .lock()
+                .expect("Failed to lock silent_frames");
+            *silent_frames = 0;
+        }
+
+        let silent_frames_count = *state
+            .consecutive_silent_frames
+            .lock()
+            .expect("Failed to lock silent_frames");
+        // Estimate duration based on chunk size. data.len() is samples.
+        // Duration = samples / channels / sample_rate
+        let chunk_duration_ms = (data.len() as f32 / channels as f32 / sample_rate as f32 * 1000.0) as u64;
+
+        // We approximate silent duration by counting consecutive silent chunks.
+        // This assumes chunks are roughly equal size, which is true for cpal but might vary for remote.
+        // A better approach would be to accumulate actual time.
+        // For now, we'll use the current chunk's duration * count.
+        let silent_duration_ms = silent_frames_count as u64 * chunk_duration_ms;
+
+        let last_trans_time = state
+            .last_transcription_time
+            .lock()
+            .expect("Failed to lock last_transcription_time");
+        let time_since_last_trans = last_trans_time.elapsed().as_millis() as u64;
+        drop(last_trans_time);
+
+        eprintln!(
+            "[Whisper] Silent Duration: {} ms, Time Since Last: {} ms",
+            silent_duration_ms, time_since_last_trans
+        );
+
+        if silent_duration_ms >= vad_config.silence_duration_ms && time_since_last_trans >= vad_config.min_chunk_duration_ms {
+            eprintln!("[Whisper] Triggering transcription (VAD)");
+            let mut silent_frames = state
+                .consecutive_silent_frames
+                .lock()
+                .expect("Failed to lock silent_frames");
+            *silent_frames = 0;
+
+            let mut last_trans = state
+                .last_transcription_time
+                .lock()
+                .expect("Failed to lock last_transcription_time");
+            *last_trans = Instant::now();
+            true
+        } else {
+            false
+        }
+    } else {
+        // For non-VAD, we need a different trigger.
+        // The original code used a timer in the closure.
+        // Here we can check buffer size or time since last transcription.
+        let last_trans_time = state
+            .last_transcription_time
+            .lock()
+            .expect("Failed to lock last_transcription_time");
+        if last_trans_time.elapsed().as_secs() >= CHUNK_DURATION_SECS {
+            drop(last_trans_time);
+            let mut last_trans = state
+                .last_transcription_time
+                .lock()
+                .expect("Failed to lock last_transcription_time");
+            *last_trans = Instant::now();
+            true
+        } else {
+            false
+        }
+    };
+
+    if should_process {
+        let is_still_recording = *state
+            .is_recording
+            .lock()
+            .expect("Failed to lock is_recording");
+        if !is_still_recording {
+            return;
+        }
+
+        let chunk = {
+            let mut buffer = state
+                .audio_buffer
+                .lock()
+                .expect("Failed to lock audio_buffer");
+            let chunk = buffer.clone();
+            buffer.clear();
+            chunk
+        };
+
+        if chunk.len() < 3200 {
+            // 0.2s at 16kHz
+            return;
+        }
+
+        let app_handle = app.clone();
+
+        thread::spawn(move || match transcribe_chunk(&app_handle, chunk, sample_rate, channels) {
+            Ok(text) if !text.trim().is_empty() => {
+                let _ = app_handle.emit_all("whisper:partial_result", text);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[Whisper] Transcription error: {}", e);
+            }
+        });
+    }
+}
+
+#[command]
+async fn feed_audio_chunk<R: Runtime>(app: AppHandle<R>, state: State<'_, WhisperState>, chunk: Vec<f32>) -> Result<(), String> {
+    process_audio_chunk(&state, &app, chunk);
     Ok(())
 }
 
 #[command]
 async fn stop_recording<R: Runtime>(_app: AppHandle<R>, state: State<'_, WhisperState>) -> Result<String, String> {
-    eprintln!("[Whisper] Stopping recording...");
+    // eprintln!("[Whisper] Stopping recording...");
 
     {
-        let mut is_rec = state.is_recording.lock().unwrap();
+        let mut is_rec = state
+            .is_recording
+            .lock()
+            .expect("Failed to lock is_recording");
         *is_rec = false;
     }
 
     {
-        let mut stop_sender = state.stop_sender.lock().unwrap();
+        let mut stop_sender = state
+            .stop_sender
+            .lock()
+            .expect("Failed to lock stop_sender");
         if let Some(tx) = stop_sender.take() {
             let _ = tx.send(());
         } else {
@@ -476,11 +599,14 @@ async fn stop_recording<R: Runtime>(_app: AppHandle<R>, state: State<'_, Whisper
     thread::sleep(std::time::Duration::from_millis(200));
 
     {
-        let mut buffer = state.audio_buffer.lock().unwrap();
+        let mut buffer = state
+            .audio_buffer
+            .lock()
+            .expect("Failed to lock audio_buffer");
         buffer.clear();
     }
 
-    eprintln!("[Whisper] Recording stopped");
+    // eprintln!("[Whisper] Recording stopped");
     Ok(String::new())
 }
 
@@ -490,6 +616,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             app.manage(WhisperState::new());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ensure_dependencies, start_recording, stop_recording])
+        .invoke_handler(tauri::generate_handler![
+            ensure_dependencies,
+            start_recording,
+            stop_recording,
+            feed_audio_chunk
+        ])
         .build()
 }

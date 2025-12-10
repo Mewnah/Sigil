@@ -27,9 +27,11 @@
       "globalShortcut": {
         "all": true
       },
-      "fs":{
+      "fs": {
         "all": true,
-        "scope": ["$APPDATA/**"]
+        "scope": [
+          "$APPDATA/**"
+        ]
       }
     },
     "bundle": {
@@ -59,7 +61,7 @@
       }
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: https: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https: http://localhost:*;"
     },
     "updater": {
       "active": false

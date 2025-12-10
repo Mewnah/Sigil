@@ -1,7 +1,9 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>mic</title>
   <script>
     const chromeLangs = [
@@ -20,6 +22,7 @@
       ['Dansk', ['da-DK']],
       ['Deutsch', ['de-DE']],
       ['English',
+        ['en-US', 'United States'],
         ['en-AU', 'Australia'],
         ['en-CA', 'Canada'],
         ['en-IN', 'India'],
@@ -30,8 +33,7 @@
         ['en-NG', 'Nigeria'],
         ['en-ZA', 'South Africa'],
         ['en-PH', 'Philippines'],
-        ['en-GB', 'United Kingdom'],
-        ['en-US', 'United States']],
+        ['en-GB', 'United Kingdom']],
       ['Español', ['es-AR', 'Argentina'],
         ['es-BO', 'Bolivia'],
         ['es-CL', 'Chile'],
@@ -110,121 +112,6 @@
       ['日本語', ['ja-JP']],
       ['हिन्दी', ['hi-IN']],
       ['ภาษาไทย', ['th-TH']]];
-    const edgeLangs = [
-      // ['Afrikaans', ['af-ZA']],
-      // ['አማርኛ', ['am-ET']],
-      // ['Azərbaycanca', ['az-AZ']],
-      // ['বাংলা',
-      //   ['bn-BD', 'বাংলাদেশ'],
-      //   ['bn-IN', 'ভারত']],
-      // ['Bahasa Indonesia', ['id-ID']],
-      // ['Bahasa Melayu', ['ms-MY']],
-      // ['Català', ['ca-ES']],
-      // ['Čeština', ['cs-CZ']],
-      ['Dansk', ['da-DK']],
-      ['Deutsch', ['de-DE']],
-      ['English',
-        ['en-AU', 'Australia'],
-        ['en-CA', 'Canada'],
-        ['en-IN', 'India'],
-        // ['en-KE', 'Kenya'],
-        // ['en-TZ', 'Tanzania'],
-        // ['en-GH', 'Ghana'],
-        // ['en-IE', 'Ireland'],
-        // ['en-NZ', 'New Zealand'],
-        // ['en-NG', 'Nigeria'],
-        // ['en-ZA', 'South Africa'],
-        // ['en-PH', 'Philippines'],
-        ['en-GB', 'United Kingdom'],
-        ['en-US', 'United States']],
-      ['Español',
-        // ['es-AR', 'Argentina'],
-        // ['es-BO', 'Bolivia'],
-        // ['es-CL', 'Chile'],
-        // ['es-CO', 'Colombia'],
-        // ['es-CR', 'Costa Rica'],
-        // ['es-EC', 'Ecuador'],
-        // ['es-SV', 'El Salvador'],
-        ['es-ES', 'España'],
-        // ['es-US', 'Estados Unidos'],
-        // ['es-GT', 'Guatemala'],
-        // ['es-HN', 'Honduras'],
-        ['es-MX', 'México'],
-        // ['es-NI', 'Nicaragua'],
-        // ['es-PA', 'Panamá'],
-        // ['es-PY', 'Paraguay'],
-        // ['es-PE', 'Perú'],
-        // ['es-PR', 'Puerto Rico'],
-        // ['es-DO', 'República Dominicana'],
-        // ['es-UY', 'Uruguay'],
-        // ['es-VE', 'Venezuela']
-      ],
-      // ['Euskara', ['eu-ES']],
-      // ['Filipino', ['fil-PH']],
-      ['Français', ['fr-FR']],
-      // ['Basa Jawa', ['jv-ID']],
-      // ['Galego', ['gl-ES']],
-      // ['ગુજરાતી', ['gu-IN']],
-      // ['Hrvatski', ['hr-HR']],
-      // ['IsiZulu', ['zu-ZA']],
-      // ['Íslenska', ['is-IS']],
-      ['Italiano', ['it-IT']],
-      // ['it-IT', 'Italia'],
-      // ['it-CH', 'Svizzera']],
-      // ['ಕನ್ನಡ', ['kn-IN']],
-      // ['ភាសាខ្មែរ', ['km-KH']],
-      // ['Latviešu', ['lv-LV']],
-      // ['Lietuvių', ['lt-LT']],
-      // ['മലയാളം', ['ml-IN']],
-      // ['मराठी', ['mr-IN']],
-      // ['Magyar', ['hu-HU']],
-      // ['ລາວ', ['lo-LA']],
-      ['Nederlands', ['nl-NL']],
-      // ['नेपाली भाषा', ['ne-NP']],
-      ['Norsk bokmål', ['nb-NO']],
-      ['Polski', ['pl-PL']],
-      ['Português',
-        ['pt-BR', 'Brasil'],
-        ['pt-PT', 'Portugal']],
-      // ['Română', ['ro-RO']],
-      // ['සිංහල', ['si-LK']],
-      // ['Slovenščina', ['sl-SI']],
-      // ['Basa Sunda', ['su-ID']],
-      // ['Slovenčina', ['sk-SK']],
-      ['Suomi', ['fi-FI']],
-      ['Svenska', ['sv-SE']],
-      // ['Kiswahili',
-      //   ['sw-TZ', 'Tanzania'],
-      //   ['sw-KE', 'Kenya']],
-      // ['ქართული', ['ka-GE']],
-      // ['Հայերեն', ['hy-AM']],
-      // ['தமிழ்',
-      //   ['ta-IN', 'இந்தியா'],
-      //   ['ta-SG', 'சிங்கப்பூர்'],
-      //   ['ta-LK', 'இலங்கை'],
-      //   ['ta-MY', 'மலேசியா']],
-      // ['తెలుగు', ['te-IN']],
-      // ['Tiếng Việt', ['vi-VN']],
-      // ['Türkçe', ['tr-TR']],
-      // ['اُردُو',
-      //   ['ur-PK', 'پاکستان'],
-      //   ['ur-IN', 'بھارت']],
-      // ['Ελληνικά', ['el-GR']],
-      // ['български', ['bg-BG']],
-      ['Pусский', ['ru-RU']],
-      // ['Српски', ['sr-RS']],
-      // ['Українська', ['uk-UA']],
-      ['한국어', ['ko-KR']],
-      ['中文', ['cmn-Hans-CN']
-        // ['cmn-Hans-CN', '普通话 (中国大陆)'],
-        // ['cmn-Hans-HK', '普通话 (香港)'],
-        // ['cmn-Hant-TW', '中文 (台灣)'],
-        // ['yue-Hant-HK', '粵語 (香港)']],
-      ],
-      ['日本語', ['ja-JP']],
-      ['हिन्दी', ['hi-IN']],
-      ['ภาษาไทย', ['th-TH']]
-    ];
     const langs = chromeLangs;
   </script>
 
@@ -232,6 +119,7 @@
     * {
       margin: 0;
       padding: 0;
+      -webkit-user-select: none;
       user-select: none;
       font-family: "Segoe UI", Arial, sans-serif;
     }
@@ -359,155 +247,144 @@
   <div class="actionbar">
     <div class="logo">Curses remote microphone</div>
     <div class="actions">
-      <select value="English" id="select-lang"></select>
-      <select id="select-dial"></select>
+      <select value="English" id="select-lang" title="Language"></select>
+      <select id="select-dial" title="Dialect"></select>
       <button id="button-start" @click="pog()">Start</button>
     </div>
   </div>
   <script>
     (async () => {
-      let selectedDial = 'en-Us';
-      const selectLang = document.getElementById("select-lang");
-      const selectDial = document.getElementById("select-dial");
       const buttonStart = document.getElementById("button-start");
       const listElement = document.getElementById("list");
+      const selectLang = document.getElementById("select-lang");
+      const selectDial = document.getElementById("select-dial");
 
       let host = location.hostname;
       let port = location.port;
       const q = new URLSearchParams(window.location.search.substring(1));
-      if (q.has("host"))
-        host = q.get("host");
-      if (q.has("port"))
-        port = q.get("port");
+      if (q.has("host")) host = q.get("host");
+      if (q.has("port")) port = q.get("port");
 
-      selectLang.oninput = e => handleSelectLang(e.target.value);
-      selectDial.oninput = e => handleSelectDial(e.target.value);
-      buttonStart.onclick = startSTT;
-
-      function getDialectList(list, langGroup) {
-        const langIndex = list.findIndex(l => l[0] === langGroup);
-        if (langIndex < 0)
-          return [];
-        const l = [...langs[langIndex]]
-        l.shift();
-        return l;
-      }
-
-
-      let sttInstance = null
-      let isStarted = false;
+      let recognition = null;
+      let isStreaming = false;
 
       const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=${Math.random()}-${Date.now()}`);
-      ws.onopen = () => console.log("opened");
+      ws.onopen = () => console.log("Connected to WebSocket");
       ws.onmessage = (msg) => {
-        try {
-          const { topic, data } = JSON.parse(msg.data);
-          if (topic !== "inputfield.final" && topic !== "stt.final" || typeof data !== "string")
-            return;
-          addRowNode(data, topic);
+        // Handle incoming messages if any
+      };
 
-        } catch (error) {}
+      buttonStart.onclick = toggleStreaming;
+
+      function toggleStreaming() {
+        if (isStreaming) {
+          stopStreaming();
+        } else {
+          startStreaming();
+        }
       }
-      
 
-      function addRowNode(value, event) {
+      function startStreaming() {
+        if (!('webkitSpeechRecognition' in window)) {
+          addLog("Web Speech API not supported in this browser.");
+          return;
+        }
+
+        recognition = new webkitSpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = selectDial.value || selectLang.value || 'en-US';
+
+        recognition.onstart = () => {
+          isStreaming = true;
+          buttonStart.textContent = "Stop Streaming";
+          buttonStart.style.backgroundColor = "firebrick";
+          addLog("Recognition started");
+        };
+
+        recognition.onerror = (event) => {
+          addLog(`Error: ${event.error}`);
+        };
+
+        recognition.onend = () => {
+          if (isStreaming) {
+            recognition.start(); // Auto-restart
+          } else {
+            buttonStart.textContent = "Start Streaming";
+            buttonStart.style.backgroundColor = "seagreen";
+            addLog("Recognition stopped");
+          }
+        };
+
+        recognition.onresult = (event) => {
+          let interimTranscript = '';
+          let finalTranscript = '';
+
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+
+          if (finalTranscript || interimTranscript) {
+            // Send text over WebSocket
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                final: finalTranscript,
+                interim: interimTranscript
+              }));
+            }
+          }
+        };
+
+        recognition.start();
+      }
+
+      function stopStreaming() {
+        isStreaming = false;
+        if (recognition) {
+          recognition.stop();
+        }
+      }
+
+      function addLog(message) {
         if (listElement.childElementCount >= 20)
-          listElement.firstChild.remove()
+          listElement.firstChild.remove();
         const newDiv = document.createElement("div");
-        newDiv.innerHTML = `
-      <span class="event">${event}</span>
-      <span class="value">${value}</span>
-      `
+        newDiv.innerHTML = `<span class="event">System</span><span class="value">${message}</span>`;
         listElement.append(newDiv);
       }
 
-      // add languages
-      function addOption(label, value, to) {
-        const option = document.createElement("option");
-        option.value = value;
-        option.innerText = label;
-        to.append(option);
-      }
-      langs.forEach(lang => addOption(lang[0], lang[0], selectLang));
-
-      function handleSelectLang(langGroup) {
-        const dialects = getDialectList(langs, langGroup);
-        while (selectDial.firstChild)
-          selectDial.removeChild(selectDial.firstChild);
-        dialects.forEach(lang => addOption(`${lang[1] ?? langGroup}`, lang[0], selectDial));
-        handleSelectDial(dialects[0][0]);
-      }
-
-      selectLang.value = 'English';
-      handleSelectLang('English');
-      function handleSelectDial(dialect) {
-        selectedDial = dialect;
-      }
-
-      function send(obj) {
-        (ws.OPEN === ws.readyState) && ws.send(JSON.stringify(obj));
-      }
-
-      // throttle interim
-      let w = false;
-      function sendInterimThrottle(message) {
-        if (w) return;
-        send(message);
-        w = true;
-        setTimeout(() => (w = false), 400);
-      }
-    
-
-      async function spawnInstance() {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        let SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-        sttInstance = new SpeechRecognition();
-        sttInstance.continuous = true;
-        sttInstance.interimResults = true;
-        sttInstance.lang = selectDial.value;
-        sttInstance.start();
-        sttInstance.onstart = () => {
-          buttonStart.textContent = "Listening..."
+      // Populate languages
+      if (typeof langs !== 'undefined') {
+        for (let i = 0; i < langs.length; i++) {
+          selectLang.options[i] = new Option(langs[i][0], i);
         }
-        isStarted = true;
+        selectLang.selectedIndex = 10; // Default to English
+        updateCountry();
+        selectDial.selectedIndex = 0; // Default to US
 
-        sttInstance.onend = () => sttInstance && sttInstance.start();
-
-        sttInstance.onresult = (event) => {
-          try {
-            let interim_transcript = '';
-            let final_transcript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              if (event.results[i].isFinal) {
-                final_transcript += event.results[i][0].transcript;
-                send({topic: "text.stt",data: {type: 0, value: final_transcript}});
-                addRowNode(final_transcript, 'stt.final');
-              }
-              else {
-                interim_transcript += event.results[i][0].transcript;
-                sendInterimThrottle({topic: "text.stt",data: {type: 1, value: interim_transcript}})
-              }
-            }
-          } catch (error) { }
-        }
-        sttInstance.onerror = (e) => console.log(e);
-
-        window.onbeforeunload = () => {
-          sttInstance && sttInstance.stop();
-        }
+        selectLang.onchange = updateCountry;
+        selectDial.onchange = () => {
+          if (recognition && isStreaming) {
+            recognition.stop(); // Will restart with new lang
+          }
+        };
       }
 
-      function startSTT() {
-        if (!isStarted)
-          spawnInstance();
-        else if (sttInstance) {
-          isStarted = false;
-          buttonStart.textContent = "Start"
-          sttInstance.onend = null;
-          sttInstance.stop();
-          sttInstance = undefined;
+      function updateCountry() {
+        for (let i = selectDial.options.length - 1; i >= 0; i--) {
+          selectDial.remove(i);
         }
+        let list = langs[selectLang.selectedIndex];
+        for (let i = 1; i < list.length; i++) {
+          selectDial.options.add(new Option(list[i][1], list[i][0]));
+        }
+        selectDial.style.visibility = list[1].length == 1 ? 'hidden' : 'visible';
       }
+
     })();
 
   </script>

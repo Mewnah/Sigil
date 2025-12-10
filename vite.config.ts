@@ -2,13 +2,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import * as path from "path";
 import { VitePWA } from "vite-plugin-pwa";
+import { visualizer } from "rollup-plugin-visualizer";
 export default defineConfig({
   plugins: [
-    // visualizer({
-    //   gzipSize: true,
-    //   template: 'treemap',
-    //   filename: 'stats/rollup-stats.html',
-    // }),
+    visualizer({
+      gzipSize: true,
+      template: 'treemap',
+      filename: 'stats/rollup-stats.html',
+    }) as any,
     react({
       // jsxImportSource: '@welldone-software/why-did-you-render'
     }),

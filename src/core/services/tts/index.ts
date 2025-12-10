@@ -1,0 +1,130 @@
+import { IServiceInterface, ServiceNetworkState, TextEventType } from "@/types";
+import { WordReplacementsCache, buildWordReplacementsCache, serviceSubscibeToInput, serviceSubscibeToSource } from "@/utils";
+import { toast } from "react-toastify";
+import { proxy } from "valtio";
+import { subscribeKey } from "valtio/utils";
+import { TTS_Backends } from "./schema";
+import { TTS_AzureService } from "./services/azure";
+import { TTS_NativeService } from "./services/native";
+import { TTS_TikTokService } from "./services/tiktok";
+import { TTS_WindowsService } from "./services/windows";
+import { TTS_UberduckService } from "./services/uberduck";
+import {
+  ITTSReceiver,
+  ITTSService,
+  ITTSServiceConstructor
+} from "./types";
+
+const backends: {
+  [k in TTS_Backends]: ITTSServiceConstructor;
+} = {
+  [TTS_Backends.native]: TTS_NativeService,
+  [TTS_Backends.windows]: TTS_WindowsService,
+  [TTS_Backends.azure]: TTS_AzureService,
+  [TTS_Backends.tiktok]: TTS_TikTokService,
+  [TTS_Backends.uberduck]: TTS_UberduckService,
+};
+
+class Service_TTS implements IServiceInterface, ITTSReceiver {
+  #serviceInstance?: ITTSService;
+
+  serviceState = proxy({
+    status: ServiceNetworkState.disconnected,
+    error: ""
+  });
+
+  private eventDisposers: (() => void)[] = [];
+
+  #_wordReplacementsCache!: WordReplacementsCache;
+
+  get data() {
+    return window.ApiServer.state.services.tts.data;
+  }
+
+  updateReplacementsCache() {
+    this.#_wordReplacementsCache = buildWordReplacementsCache(this.data.replaceWords, this.data.replaceWordsIgnoreCase);
+  }
+
+  runReplacements(value: string) {
+    if (this.#_wordReplacementsCache.isEmpty)
+      return value;
+    return value.replace(this.#_wordReplacementsCache.regexp, v => {
+      const _v = this.data.replaceWordsIgnoreCase ? v.toLowerCase() : v;
+      return this.#_wordReplacementsCache.map[_v];
+    }).replace(/[<>]/gi, ""); // clear ssml tags
+  }
+
+  async init() {
+    this.updateReplacementsCache();
+    this.eventDisposers.push(subscribeKey(this.data, "replaceWords", () => this.updateReplacementsCache()));
+    this.eventDisposers.push(subscribeKey(this.data, "replaceWordsIgnoreCase", () => this.updateReplacementsCache()));
+    this.eventDisposers.push(serviceSubscibeToSource(this.data, "source", data => {
+      if (data?.type === TextEventType.final)
+        this.play(data.value);
+    }));
+
+    this.eventDisposers.push(serviceSubscibeToInput(this.data, "inputField", data => {
+      if (data?.type === TextEventType.final)
+        this.play(data.value);
+    }));
+
+    if (this.data.autoStart)
+      this.start();
+    const unsubStream = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
+      if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected) {
+        this.stop();
+      }
+    });
+    this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(unsubStream));
+  }
+
+  stop(): void {
+    this.#serviceInstance?.stop();
+    this.#serviceInstance = undefined;
+  }
+
+  #setStatus(value: ServiceNetworkState) {
+    this.serviceState.status = value;
+  }
+
+  onStart(): void {
+    this.#setStatus(ServiceNetworkState.connected);
+  }
+  onStop(error?: string | undefined): void {
+    if (error) {
+      toast(error, { type: "error", autoClose: false });
+      this.serviceState.error = error;
+    }
+    this.#serviceInstance = undefined;
+    this.#setStatus(ServiceNetworkState.disconnected);
+  }
+  onFilePlayRequest(data: ArrayBuffer, options?: Record<string, any> | undefined): void {
+  }
+
+  play(value: string) {
+    const patchedValue = this.runReplacements(value);
+    if (!patchedValue)
+      return;
+    this.#serviceInstance?.play(patchedValue);
+  }
+
+  start() {
+    this.stop();
+    this.serviceState.error = "";
+
+    let backend = this.data.backend;
+    if (!(backend in backends)) {
+      return;
+    }
+    this.#serviceInstance = new backends[backend](this);
+    this.#setStatus(ServiceNetworkState.connecting);
+    this.#serviceInstance.start(this.data);
+  }
+  dispose() {
+    this.stop();
+    this.eventDisposers.forEach(d => d());
+    this.eventDisposers = [];
+  }
+}
+
+export default Service_TTS;

@@ -55,9 +55,9 @@ fn main() {
     let args = InitArguments::parse();
 
     // crash if port is not available
-    let port_availability = std::net::TcpListener::bind(format!("0.0.0.0:{}", args.port));
+    let port_availability = std::net::TcpListener::bind(format!("127.0.0.1:{}", args.port));
     match port_availability {
-        Ok(l) => l.set_nonblocking(true).unwrap(),
+        Ok(l) => l.set_nonblocking(true).expect("Failed to set nonblocking"),
         Err(_err) => {
             unsafe {
                 MessageBoxA(
@@ -73,7 +73,7 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let window = app.get_window("main").unwrap();
+            let window = app.get_window("main").expect("Failed to get main window");
             set_shadow(&window, true).expect("Unsupported platform!");
             Ok(())
         })

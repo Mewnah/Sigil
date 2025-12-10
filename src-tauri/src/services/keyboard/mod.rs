@@ -86,7 +86,9 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
         if m.is_some() {
             #[allow(static_mut_refs)]
             if let Some(cb) = &mut GLOBAL_CALLBACK {
-                cb(m.unwrap());
+                if let Some(cmd) = m {
+                    cb(cmd);
+                }
             }
             // block on command
             return LRESULT(1);
@@ -99,7 +101,10 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
 #[command]
 fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
     {
-        let current_hook_id = state.listen_hook_id.read().unwrap();
+        let current_hook_id = state
+            .listen_hook_id
+            .read()
+            .map_err(|_| "Failed to read lock")?;
         if current_hook_id.is_some() {
             return Err("Already active".into());
         }
@@ -114,13 +119,16 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
                 KeyCommand::Delete | KeyCommand::BackSpace => "cmd:delete".to_string(),
                 KeyCommand::Key(key) => format!("key:{}", key),
             };
-            tx.send(rpc).unwrap();
+            tx.send(rpc).ok();
         }));
     }
     let Ok(hook) = (unsafe { SetWindowsHookExA(WH_KEYBOARD_LL, Some(raw_callback), None, 0) }) else {
         return Err("Could not start listener".into());
     };
-    let mut wr = state.listen_hook_id.write().unwrap();
+    let mut wr = state
+        .listen_hook_id
+        .write()
+        .map_err(|_| "Failed to write lock")?;
     *wr = Some(hook);
     Ok(())
 }
@@ -128,13 +136,14 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
 #[allow(dead_code)]
 #[command]
 fn stop_tracking(state: State<BgInput>) {
-    let mut wr = state.listen_hook_id.write().unwrap();
-    if let Some(hook) = *wr {
-        unsafe {
-            UnhookWindowsHookEx(hook);
-        }
-    };
-    *wr = None;
+    if let Ok(mut wr) = state.listen_hook_id.write() {
+        if let Some(hook) = *wr {
+            unsafe {
+                UnhookWindowsHookEx(hook);
+            }
+        };
+        *wr = None;
+    }
 }
 
 #[allow(dead_code)]
@@ -157,7 +166,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Some(output) = pubsub_output_rx.recv().await {
-                        handle.emit_all("keyboard", output).unwrap();
+                        handle.emit_all("keyboard", output).ok();
                     }
                 }
             });
