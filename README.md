@@ -1,33 +1,12 @@
-<p align="center">
-<img height="60" src="https://user-images.githubusercontent.com/3977499/218317016-0ebd9936-4065-4b6b-a0a0-1199d43c0024.svg" alt="Curses Logo">
-</p>
-<p align="center">
-  <a href="https://GitHub.com/mmpneo/curses/releases/"><img src="https://img.shields.io/github/release/mmpneo/curses.svg?color=FC6471&label" alt="Latest Release"></a>
-</p>
-<p align="center">Curses+ - Speech to Text Captions for OBS, VRChat, Twitch stream and Discord</p>
-
 # About Curses+
 
-This is a modified version of the original Curses application, maintained by **Mewnah**.
+This is a modified version of the original Curses application by **mmpneo**. Maintained by **Mewnah**.
+
 **Curses+ (v0.2.0)** includes:
 
-- **Enhanced Branding**: New logo with prominent "+" symbol.
-- **Improved Language Support**: Better default language handling (English default) and corrected localization keys.
-- **UI/UX Refinements**: Pinned "Settings" button, reorganized Sidebar, and cleaner interface elements.
+- **UI/UX Refinements**: Reorganized Sidebar and cleaner interface elements.
 - **Bug Fixes**: Addressed various styling and functional issues from the original codebase.
-
-<p align="center"><b>Socials</b></p>
-<p align="center">
-  <a href="https://www.twitch.tv/mmpcode"><img alt="Twitch Status" src="https://img.shields.io/twitch/status/mmpcode?label=Dev Streams&logo=twitch&logoColor=white"></a>
-  <a href="https://discord.gg/Sw6pw8fGYS"><img src="https://img.shields.io/discord/856500849815060500?label=Join Discord&color=blue&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://twitter.com/mmpneo"><img src="https://img.shields.io/badge/Receive Updates-%231DA1F2.svg?label=Follow&logo=twitter&logoColor=white" alt="Twitter Follow"></a>
-</p>
-
-<p align="center">
-<span class="badge-patreon">
-  <a href="https://patreon.com/mmpcode"><img src="https://img.shields.io/badge/patreon-Donate-yellow.svg?label=&logo=patreon&logoColor=white" alt="Patreon donate button" /></a>
-</span>
-</p>
+- **Improved Language Support**: Better default language handling (English default) and corrected localization keys.
 
 <p align="center">
 <!-- static -->
@@ -35,24 +14,16 @@ This is a modified version of the original Curses application, maintained by **M
   <img width="600" src="https://user-images.githubusercontent.com/3977499/218335391-a53dab5b-1e22-47b8-89c5-e1124798fbdc.gif" alt="Curses Demo GIF">
 </p>
 
-<p align="center"><b>Repo Stats</b></p>
-<p align="center">
-  <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/mmpneo/curses?color=2EB87D"/>
-  <img alt="GitHub language count" src="https://img.shields.io/github/languages/count/mmpneo/curses?color=2EB87D"/>
-  <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/mmpneo/curses?color=2EB87D"/>
-  <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/mmpneo/curses?color=2EB87D"/>
-</p>
-
 # Features
 
-- **OBS Captions customization**: Colors, fonts, shadows, background textures, text typing animation, sound effects, particle effects and CSS
 - **Native OBS stream captions**
-- **AI Transform**: Rewrite your voice in real-time using OpenAI, OpenRouter, or Local LLMs (Ollama)
+- **OBS Captions customization**: Colors, fonts, shadows, background textures, text typing animation, sound effects, particle effects and CSS
+- **AI Transform**: Rewrite your voice in real-time using OpenAI, OpenRouter, or Local LLMs
 - **Synchronized Subtitles**: Display original text alongside AI-transformed text with perfect timing
-- **Canvas Editor**: Drag & Drop interface with Snap-to-Grid (2px) and smart element alignment
-- **Speech to Text**: [Microsoft Azure](https://azure.microsoft.com/en-au/products/cognitive-services/speech-to-text/), [Deepgram](https://deepgram.com/), WebSpeechApi (Chrome/Edge), Local Whisper (beta)
-- **Text to Speech**: [Microsoft Azure](https://azure.microsoft.com/en-us/products/cognitive-services/text-to-speech/), [Uberduck](https://uberduck.ai/), TikTok, Windows Api (SAPI), WebSpeechApi
-- **VRChat**: [KillFrenzy Avatar text](https://github.com/killfrenzy96/KillFrenzyAvatarText), vrchat's chatbox
+- **Canvas Editor**: Drag & Drop interface with Snap-to-Grid and smart element alignment
+- **Speech to Text**: [Microsoft Azure](https://azure.microsoft.com/en-au/products/cognitive-services/speech-to-text/), [Deepgram](https://deepgram.com/), WebSpeechApi (Chrome/Edge), Local OpenAI Whisper (beta)
+- **Text to Speech**: [Microsoft Azure](https://azure.microsoft.com/en-us/products/cognitive-services/text-to-speech/), [Uberduck](https://uberduck.ai/), TikTok, Windows API (SAPI), WebSpeechAPI
+- **VRChat**: [KillFrenzy Avatar text](https://github.com/killfrenzy96/KillFrenzyAvatarText), VRChat's chatbox
 - **Twitch**:
   - Use 7TV/FFZ/BTTV emotes in OBS captions
   - Post your STT to chat
@@ -63,25 +34,15 @@ This is a modified version of the original Curses application, maintained by **M
   - Save multiple designs and freely switch between them
   - Automatically switch design when OBS changes scene
 
-# Community
-
-For help, feature requests, bug reports, release notifications, design templates [Join Discord](https://discord.gg/Sw6pw8fGYS)
-
-<a href="https://discord.gg/Sw6pw8fGYS"><img src="https://discordapp.com/api/guilds/856500849815060500/widget.png?style=banner2" alt="Discord Banner" /></a>
-
 # Getting Started with OBS
 
-### 1. Get the App
-
-Get the latest [release here](https://github.com/mmpneo/curses/releases/latest). You can also [Join Discord](https://discord.gg/Sw6pw8fGYS) to get release notifications and download the new version from there as soon as it is published
-
-### 2. Open app and copy link for OBS
+### 1. Open app and copy link for OBS
 
 Or click "Set Up OBS" to have everything set up automatically with **obs-websocket** plugin
 
 <img width="600" src="https://user-images.githubusercontent.com/3977499/218330675-472e02a9-1e18-4d60-8662-c4ca33325c24.gif" alt="Obs Setup GIF">
 
-### 3. Create browser source in OBS
+### 2. Create Browser Source in OBS
 
 Paste the link and change window size to match app's canvas size (default is 500x300)
 
@@ -92,3 +53,9 @@ Paste the link and change window size to match app's canvas size (default is 500
 - [ ] **Whisper Refactor**: Rewrite backend to use FFI for stable local inference
 - [ ] **STT**: Vosk Integration
 - [ ] **TTS**: VoiceVox Integration
+
+
+
+**Special thanks and all credits go to mmpneo and everyone who has contributed to and supported the original Curses application.**
+
+**Without them, none of this would be possible.**
