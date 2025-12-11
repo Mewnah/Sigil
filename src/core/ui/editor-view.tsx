@@ -1,5 +1,6 @@
 import NiceModal from "@ebay/nice-modal-react";
-import { FC, FormEvent, memo, useEffect, useRef, useState } from "react";
+import { FC, FormEvent, memo, useEffect, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
+import { useDebounce } from "react-use";
 import { ToastContainer } from "react-toastify";
 import 'react-toastify/dist/ReactToastify.min.css';
 import { TextEventSource, TextEventType } from "@/types";
@@ -8,9 +9,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useSnapshot } from "valtio";
 import ActionBar from "./actionbar";
 import "./file-modal";
+import "./stt-replacements-modal";
 import OverlayInput from "./overlay-input";
 import { ElementEditorTransform } from "./element-transform";
-import { useGetState } from "@/client";
+import { useGetState, useUpdateState } from "@/client";
 import classNames from "classnames";
 import { RiCheckFill } from "react-icons/ri";
 import BackgroundInput from "./background-input";
@@ -77,14 +79,86 @@ const ShortcutRecorder: FC = () => {
 const Canvas: FC = memo(() => {
   const canvas = useGetState(state => state.canvas);
   const ids = useGetState(state => state.elementsIds);
+  const update = useUpdateState();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isCanvasSelected, setIsCanvasSelected] = useState(false);
+
+  const [localDim, setLocalDim] = useState({ w: canvas?.w || 500, h: canvas?.h || 400 });
+  const [resizing, setResizing] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (canvas) setLocalDim({ w: canvas.w, h: canvas.h });
+  }, [canvas?.w, canvas?.h]);
+
+  useDebounce(() => {
+    if (canvas && (canvas.w !== localDim.w || canvas.h !== localDim.h)) {
+      update(s => { s.canvas.w = localDim.w; s.canvas.h = localDim.h });
+    }
+  }, 100, [localDim]);
+
+  const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+  useEffect(() => {
+    if (tab?.value) {
+      setSelectedId(tab.value);
+    }
+    if (tab?.tab && tab.tab !== 'scenes') {
+      setIsCanvasSelected(false);
+    } else if (tab?.tab === 'scenes') {
+      setIsCanvasSelected(true);
+    }
+  }, [tab?.value, tab?.tab]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const handleMove = (e: MouseEvent) => {
+      setLocalDim(prev => {
+        const next = { ...prev };
+        if (resizing.includes('e')) next.w += e.movementX;
+        if (resizing.includes('s')) next.h += e.movementY;
+        return next;
+      })
+    }
+    const handleUp = () => setResizing(null);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp); }
+  }, [resizing]);
+
+  const handleDragStart = (dir: string) => (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    setResizing(dir);
+  }
+
   return <>
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      onMouseDown={() => { setSelectedId(null); setIsCanvasSelected(false); }}
+      onDoubleClick={() => { setIsCanvasSelected(true); window.ApiServer.changeTab({ tab: "scenes" }); }}
       transition={{ ease: "anticipate", duration: 0.3 }}
-      style={{ width: canvas?.w, height: canvas?.h }} className="relative rounded-lg border border-dashed border-primary/50">
-      {ids?.map((elementId) => <ElementEditorTransform id={elementId} key={elementId} />)}
+      style={{ width: localDim.w, height: localDim.h }} className={classNames("relative rounded-lg border border-dashed border-primary/50 group", {
+        "border-primary": isCanvasSelected
+      })}>
+
+      {/* Canvas Resize Handles */}
+      <div onMouseDown={handleDragStart("e")} className={classNames("absolute -right-2 top-0 bottom-0 w-4 cursor-e-resize flex items-center justify-center transition-opacity",
+        isCanvasSelected ? "opacity-100" : "opacity-0 pointer-events-none")}>
+        <div className="w-1 h-8 bg-base-content/20 rounded-full"></div>
+      </div>
+      <div onMouseDown={handleDragStart("s")} className={classNames("absolute -bottom-2 left-0 right-0 h-4 cursor-s-resize flex items-center justify-center transition-opacity",
+        isCanvasSelected ? "opacity-100" : "opacity-0 pointer-events-none")}>
+        <div className="h-1 w-8 bg-base-content/20 rounded-full"></div>
+      </div>
+      <div onMouseDown={handleDragStart("se")} className={classNames("absolute -bottom-2 -right-2 w-4 h-4 cursor-se-resize bg-primary rounded-full transition-opacity",
+        isCanvasSelected ? "opacity-100" : "opacity-0 pointer-events-none")}></div>
+
+      {ids?.map((elementId) => <ElementEditorTransform
+        id={elementId}
+        key={elementId}
+        canvasSelected={selectedId === elementId}
+        onSelect={() => setSelectedId(elementId)}
+      />)}
     </motion.div>
   </>
 })
@@ -116,7 +190,7 @@ const LogsView = () => {
 
 export const EditorViewport: FC = () => {
   const { showLogs } = useSnapshot(window.ApiServer.state);
-  return <div className="w-full relative bg-base-300 rounded-tl-box flex flex-grow items-center justify-center overflow-hidden">
+  return <div className="w-full relative bg-base-300 flex flex-grow items-center justify-center overflow-hidden">
     <AnimatePresence>
       {showLogs ? <LogsView /> : <Canvas />}
     </AnimatePresence>
@@ -147,7 +221,7 @@ const STTInput: FC = () => {
     animate={{ opacity: 1, width: showLogs ? '100%' : '400px', y: 0 }}
     transition={{ ease: "anticipate", duration: 0.5 }}
     className="flex items-center space-x-2 w-96">
-    {/* <button className="btn btn-circle btn-ghost"><RiChatDeleteFill/></button> */}
+
     <form onSubmit={submit} className="w-full">
       <input type="text" autoComplete="off" name="sttinput" placeholder={t('main.keyboard_input')} className="w-full input text-sm" value={inputValue} onChange={e => handleChange(e.target.value)} />
     </form>

@@ -1,5 +1,6 @@
 {
-  "name": "curses",
+  "name": "curses-plus",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -73,7 +74,6 @@
     "@types/react-dom": "^18.2.13",
     "@vitejs/plugin-react": "^3.1.0",
     "@vitejs/plugin-react-swc": "^3.4.0",
-    "@welldone-software/why-did-you-render": "^7.0.1",
     "prettier": "^2.8.8",
     "rollup-plugin-visualizer": "^5.9.2",
     "typescript": "^5.2.2",

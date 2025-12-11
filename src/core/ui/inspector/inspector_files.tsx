@@ -59,6 +59,7 @@ const Inspector_Files: FC = memo(() => {
       </div>
     </Inspector.Header>
     <Inspector.Content>
+      <Inspector.SubHeader>Library</Inspector.SubHeader>
       <div className="flex flex-col space-y-2">
         {fonts.map(font => <FontGroup key={font.name} data={font}></FontGroup>)}
         {data.map(file => <FileElement key={file.id} data={file} actions={fileActions.current} />)}

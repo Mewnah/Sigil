@@ -14,9 +14,12 @@ const Inspector_Discord: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><SiDiscord /> {t('discord.title')}</Inspector.Header>
     <Inspector.Content>
+      <Inspector.SubHeader>Discord Integration</Inspector.SubHeader>
       <Inspector.Description>{t('discord.desc')}</Inspector.Description>
-      <InputCheckbox label="common.field_enable" value={pr.postEnable} onChange={e => up("postEnable", e)} />
-      <InputCheckbox label="discord.field_post_only_when_streaming" value={pr.postWithTwitchLive} onChange={e => up("postWithTwitchLive", e)} />
+      <div className="contents">
+        <InputCheckbox label="common.field_enable" value={pr.postEnable} onChange={e => up("postEnable", e)} />
+        <InputCheckbox label="discord.field_post_only_when_streaming" value={pr.postWithTwitchLive} onChange={e => up("postWithTwitchLive", e)} />
+      </div>
       <InputText type="password" label="discord.field_channel_hook" value={pr.channelHook} onChange={e => up("channelHook", e.target.value)} />
       <InputText label="discord.field_bot_name" placeholder="Curses" value={pr.channelBotName} onChange={e => up("channelBotName", e.target.value)} />
       <InputText label="discord.field_bot_avatar" placeholder="Image url" value={pr.channelAvatarUrl} onChange={e => up("channelAvatarUrl", e.target.value)} />

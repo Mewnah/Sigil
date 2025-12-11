@@ -1,7 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures::StreamExt;
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::sync::mpsc::{channel, Sender};
@@ -18,6 +19,10 @@ use zip::ZipArchive;
 const WHISPER_VERSION: &str = "v1.5.4";
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
 const CHUNK_DURATION_SECS: u64 = 5;
+
+// Trusted SHA256 hashes (Trust On First Use verified)
+const WHISPER_ZIP_HASH: &str = "9cb13bbe167e0947afedd7ff9766575c4324b3cd01b4267be2ba9648dc7e8cc9";
+const MODEL_HASH: &str = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
 
 #[derive(Clone, Debug)]
 struct VadConfig {
@@ -78,6 +83,28 @@ fn calculate_rms_db(samples: &[f32]) -> f32 {
     }
 }
 
+fn verify_file(path: &std::path::Path, expected_hash: &str) -> Result<(), String> {
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file for verification: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 4096];
+
+    loop {
+        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+
+    let result = hasher.finalize();
+    let hash_hex = hex::encode(result);
+
+    if hash_hex.to_lowercase() != expected_hash.to_lowercase() {
+        return Err(format!("Hash mismatch! Expected {}, got {}", expected_hash, hash_hex));
+    }
+    Ok(())
+}
+
 #[command]
 async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let app_data_dir = app
@@ -89,12 +116,10 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>) -> Result<(), String
     let whisper_exe = whisper_dir.join("main.exe");
     let model_path = whisper_dir.join("ggml-base.en.bin");
 
-    if whisper_exe.exists() && model_path.exists() {
-        eprintln!("Whisper dependencies already exist");
-        return Ok(());
+    // Create dir if missing
+    if !whisper_dir.exists() {
+        fs::create_dir_all(&whisper_dir).map_err(|e| e.to_string())?;
     }
-
-    fs::create_dir_all(&whisper_dir).map_err(|e| e.to_string())?;
 
     if !whisper_exe.exists() {
         eprintln!("Downloading whisper.cpp...");
@@ -116,12 +141,18 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>) -> Result<(), String
         let mut file = File::create(&zip_path).map_err(|e| e.to_string())?;
         file.write_all(&bytes).map_err(|e| e.to_string())?;
 
+        // VERIFY ZIP HASH
+        if let Err(e) = verify_file(&zip_path, WHISPER_ZIP_HASH) {
+            fs::remove_file(&zip_path).ok();
+            return Err(format!("Security check failed for Whisper binary: {}", e));
+        }
+
         let file = File::open(&zip_path).map_err(|e| e.to_string())?;
         let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
         archive.extract(&whisper_dir).map_err(|e| e.to_string())?;
 
         fs::remove_file(&zip_path).ok();
-        eprintln!("Whisper.cpp extracted successfully");
+        eprintln!("Whisper.cpp extracted and verified successfully");
     }
 
     if !model_path.exists() {
@@ -152,6 +183,12 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>) -> Result<(), String
                 )
                 .ok();
             }
+        }
+
+        // VERIFY MODEL HASH
+        if let Err(e) = verify_file(&model_path, MODEL_HASH) {
+            fs::remove_file(&model_path).ok();
+            return Err(format!("Security check failed for Whisper model: {}", e));
         }
 
         eprintln!("Model downloaded successfully");

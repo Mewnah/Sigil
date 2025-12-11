@@ -6,11 +6,11 @@ import { useSnapshot } from "valtio";
 import Dropdown from "../dropdown/Dropdown";
 import Tooltip from "../dropdown/Tooltip";
 import Inspector from "./components";
-import { InputBaseText, InputDoubleCountainer } from "./components/input";
+import { InputBaseText, InputDoubleCountainer, InputCheckbox } from "./components/input";
 import { useTranslation } from "react-i18next";
 
 const SceneMenu: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   return (
     <ul className="dropdown p-2">
       <li className="menu-title"><span>{t('scenes.scene_menu_title')}</span></li>
@@ -21,22 +21,30 @@ const SceneMenu: FC<{ id: string }> = ({ id }) => {
 };
 
 const Scene: FC<{ data: SceneState }> = ({ data }) => {
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const update = useUpdateState();
 
   return <div className="flex items-center space-x-2">
     <Tooltip className="flex items-center" placement="top" content={`Activate`}>
-      <input type="radio" name="font" value={data.id} checked={data.id === activeScene} onChange={e => window.ApiClient.scenes.setActive(e.target.value)} className="radio radio-sm radio-primary" />
+      <input
+        type="radio"
+        name="font"
+        value={data.id}
+        checked={data.id === activeScene}
+        onChange={e => window.ApiClient.scenes.setActive(e.target.value)}
+        className="radio radio-sm radio-primary"
+        aria-label="Activate scene"
+      />
     </Tooltip>
     <InputBaseText disabled={data.id === 'main'} fieldWidth={false} className="w-full" value={data.name} onChange={e => update(state => { state.scenes[data.id].name = e.target.value })} />
     <Dropdown placement="right" content={<SceneMenu id={data.id} />}>
-      <button className="btn btn-sm btn-ghost btn-circle flex-nowrap whitespace-nowrap gap-1"><RiMore2Fill/></button>
+      <button className="btn btn-sm btn-ghost btn-circle flex-nowrap whitespace-nowrap gap-1" aria-label="Scene options"><RiMore2Fill /></button>
     </Dropdown>
   </div>
 }
 
 const Inspector_Scenes: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const scenes = useGetState(state => state.scenes);
   const canvas = useGetState(state => state.canvas);
 
@@ -48,9 +56,10 @@ const Inspector_Scenes: FC = () => {
     <Inspector.Content>
       <Inspector.SubHeader>{t('scenes.section_canvas')}</Inspector.SubHeader>
       <InputDoubleCountainer label="scenes.field_canvas_size">
-        <InputBaseText value={canvas?.w} onChange={e => updateState(state => { state.canvas.w = parseFloat(e.target.value) })} type="number"/>
-        <InputBaseText value={canvas?.h} onChange={e => updateState(state => { state.canvas.h = parseFloat(e.target.value) })} type="number"/>
+        <InputBaseText value={canvas?.w} onChange={e => updateState(state => { state.canvas.w = parseFloat(e.target.value) })} type="number" />
+        <InputBaseText value={canvas?.h} onChange={e => updateState(state => { state.canvas.h = parseFloat(e.target.value) })} type="number" />
       </InputDoubleCountainer>
+      <InputCheckbox label="Snap to Grid" value={useGetState(state => state.snapToGrid)} onChange={v => updateState(state => { state.snapToGrid = v })} />
 
       <Inspector.SubHeader>{t('scenes.section_scenes')}</Inspector.SubHeader>
       {scenes && Object.keys(scenes).map((sceneId) => <Scene key={sceneId} data={scenes[sceneId]} />)}

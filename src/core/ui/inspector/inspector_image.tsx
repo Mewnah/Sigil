@@ -1,16 +1,28 @@
 import { useGetState, useUpdateState } from "@/client";
 import { Element_ImageState } from "@/client/elements/image/schema";
+import { ElementSceneState } from "@/client/elements/schema";
 import { useInspectorTabs } from "@/core/ui/inspector/components/tabs";
 import { FC, useMemo } from "react";
-import { RiImageFill, RiImageLine } from "react-icons/ri";
+import { RiDragMove2Fill, RiImageFill, RiImageLine } from "react-icons/ri";
 import { SiCsswizardry } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import Inspector from "./components";
-import { InputCode, InputEvent, InputFile, InputText } from "./components/input";
+import { InputCheckbox, InputCode, InputEvent, InputFile, InputText } from "./components/input";
 import NameInput from "./components/name-input";
 import TransformInput from "./components/transform-input";
 import { useUpdateElement } from "@/utils";
 import { useTranslation } from "react-i18next";
+
+const GeneralInspector: FC<{ id: string }> = ({ id }) => {
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
+  const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_ImageState>>);
+  const up = useUpdateElement<Element_ImageState>(id);
+
+  return <>
+    <Inspector.SubHeader>Element Settings</Inspector.SubHeader>
+    <TransformInput id={id} />
+  </>
+}
 
 const BaseInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
@@ -57,14 +69,15 @@ const Inspector_ElementImage: FC<{ id: string }> = ({ id }) => {
   return <Inspector.Body>
     <Inspector.Header><RiImageFill /> <NameInput id={id} /></Inspector.Header>
     {isInScene && <Inspector.Content>
-      <TransformInput id={id} />
       <Inspector.Tabs>
-        <Inspector.Tab tooltip={t('avatar.section_base_style')} onClick={() => handleTab(0)} active={tab === 0}><RiImageLine /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('avatar.section_css')} onClick={() => handleTab(1)} active={tab === 1}><SiCsswizardry /></Inspector.Tab>
+        <Inspector.Tab tooltip="Element Settings" onClick={() => handleTab(0)} active={tab === 0}><RiDragMove2Fill /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('avatar.section_base_style')} onClick={() => handleTab(1)} active={tab === 1}><RiImageLine /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('avatar.section_css')} onClick={() => handleTab(2)} active={tab === 2}><SiCsswizardry /></Inspector.Tab>
       </Inspector.Tabs>
       <Inspector.TabsContent direction={direction} tabKey={tab}>
-        {tab === 0 && <BaseInspector id={id} />}
-        {tab === 1 && <CssInspector id={id} />}
+        {tab === 0 && <GeneralInspector id={id} />}
+        {tab === 1 && <BaseInspector id={id} />}
+        {tab === 2 && <CssInspector id={id} />}
       </Inspector.TabsContent>
     </Inspector.Content>}
     {!isInScene && <Inspector.Content>

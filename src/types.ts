@@ -44,6 +44,7 @@ export enum TextEventSource {
   stt = "text.stt",
   translation = "text.translation",
   transform = "text.transform",
+  transform_source = "text.transform_source",
 }
 
 // todo rename

@@ -48,13 +48,13 @@ class Service_Document implements IServiceInterface {
       r: 0
     });
   }
-  
+
   // i hate this
   #patchField<Key extends keyof DocumentState>(og: DocumentState, patch: DocumentState, key: Key) {
     og[key] = patch[key];
   }
 
-  patchState(immerState: DocumentState, newState: DocumentState){
+  patchState(immerState: DocumentState, newState: DocumentState) {
     // trigger immer-yjs generator
     let k: keyof DocumentState;
     for (k in newState)
@@ -69,7 +69,7 @@ class Service_Document implements IServiceInterface {
   async init() {
     this.#file.getArray<Uint8Array>("files");
     this.fileBinder = bind<DocumentState>(this.#file.getMap("template"));
-    
+
     if (window.Config.isClient()) {
       // wait for initial push from server
       await new Promise((res, rej) => {
@@ -150,9 +150,9 @@ class Service_Document implements IServiceInterface {
       ],
     });
     if (path) try {
-      await writeBinaryFile(path, tempEncodedUpdate, {append: false});
+      await writeBinaryFile(path, tempEncodedUpdate, { append: false });
       // write author to original doc on success
-      this.fileBinder.update(a => {a.author = authorName});
+      this.fileBinder.update(a => { a.author = authorName });
     } catch (error) {
 
     }
@@ -181,7 +181,7 @@ class Service_Document implements IServiceInterface {
     if (!bExists)
       await createDir("user", { dir: BaseDirectory.AppData, recursive: true });
     const data = Y.encodeStateAsUpdate(doc);
-    await writeBinaryFile("user/template", data, {append: false, dir: BaseDirectory.AppData});
+    await writeBinaryFile("user/template", data, { append: false, dir: BaseDirectory.AppData });
   }
 
   saveDocument = debounce(() => {
@@ -196,4 +196,5 @@ class Service_Document implements IServiceInterface {
     });
   }
 }
+
 export default Service_Document;

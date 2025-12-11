@@ -59,7 +59,7 @@ const options = [
 const UI_SCALE_MIN = 0.8;
 const UI_SCALE_MAX = 1.5;
 
-const languageOptions = i18nLanguages.map(({code, name}) => ({label: name, value: code}));
+const languageOptions = i18nLanguages.map(({ code, name }) => ({ label: name, value: code }));
 
 const AddrInput = () => {
   const [v, setV] = useState(window.ApiServer.state.linkAddress);
@@ -80,7 +80,7 @@ const ExportMenu: FC = () => {
 }
 
 const Inspector_Settings: FC = memo(() => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const { clientTheme, uiScale, uiLanguage, backgroundInputTimer } = useSnapshot(window.ApiServer.state);
   const { state: linkStatus } = useSnapshot(window.ApiShared.pubsub.serviceState);
   const author = useGetState(state => state.author);
@@ -102,19 +102,19 @@ const Inspector_Settings: FC = memo(() => {
     <Inspector.Header><RiSettings2Fill /> {t('settings.title')}</Inspector.Header>
     <Inspector.Content>
       <div className="flex flex-col items-center space-y-1">
-        <span className="text-4xl leading-none font-header font-black"><Logo/></span>
+        <span className="text-4xl leading-none font-header font-black"><Logo /></span>
         <div className="flex space-x-1 self-center">
-          <Tooltip content="/mmpcode" body={<span>I stream app development, vrc udon <br/> stuff and games sometimes</span>}>
-            <a target="_blank" href="https://www.twitch.tv/mmpcode" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitch /></a>
+          <Tooltip content="/mmpcode" body={<span>I stream app development, vrc udon <br /> stuff and games sometimes</span>}>
+            <a target="_blank" rel="noopener noreferrer" href="https://www.twitch.tv/mmpcode" aria-label="Twitch" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitch /></a>
           </Tooltip>
           <Tooltip content="@mmpneo" body="I tweet once a year, LUL">
-            <a target="_blank" href="https://twitter.com/mmpneo" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitter /></a>
+            <a target="_blank" rel="noopener noreferrer" href="https://twitter.com/mmpneo" aria-label="Twitter" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitter /></a>
           </Tooltip>
           <Tooltip content="Code and Curses" body={<span>App updates and help</span>}>
-            <a target="_blank" href="https://discord.gg/Sw6pw8fGYS" className="btn text-primary btn-ghost btn-circle text-2xl"><SiDiscord /></a>
+            <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/Sw6pw8fGYS" aria-label="Discord" className="btn text-primary btn-ghost btn-circle text-2xl"><SiDiscord /></a>
           </Tooltip>
-          <Tooltip content="Patreon" body={<span>Subscribe to get a Supporter role in discord <br/> (completely useless, just different color) <img className="h-8" src="/peepoSmile.webp"/></span>}>
-            <a target="_blank" href="https://www.patreon.com/mmpcode" className="btn text-primary btn-ghost btn-circle text-2xl"><SiPatreon /></a>
+          <Tooltip content="Patreon" body={<span>Subscribe to get a Supporter role in discord <br /> (completely useless, just different color) <img className="h-8" alt="peepoSmile" src="/peepoSmile.webp" /></span>}>
+            <a target="_blank" rel="noopener noreferrer" href="https://www.patreon.com/mmpcode" aria-label="Patreon" className="btn text-primary btn-ghost btn-circle text-2xl"><SiPatreon /></a>
           </Tooltip>
         </div>
         <div className="self-center text-sm opacity-50">{t('settings.desc_1')}</div>
@@ -122,7 +122,7 @@ const Inspector_Settings: FC = memo(() => {
         <div className="self-center text-sm opacity-50">v.{version}</div>
       </div>
       <div className="divider"></div>
-
+      <Inspector.SubHeader>Application Settings</Inspector.SubHeader>
       <InputSelect label="settings.field_app_theme" options={options} value={clientTheme} onValueChange={handleChangeTheme} />
       <InputChips label="settings.field_ui_scale" value={uiScale} onChange={e => handleChangeScale(e)} options={[
         { label: "S", value: .8 },
@@ -146,7 +146,7 @@ const Inspector_Settings: FC = memo(() => {
       {window.Config.features.background_input && <>
         <Inspector.SubHeader>Background Input</Inspector.SubHeader>
         <InputShortcut label="Shortcut" shortcut="bgInput" />
-        <InputText label="Timer" value={backgroundInputTimer} onChange={e => window.ApiServer.state.backgroundInputTimer = e.target.value} type="number"/>
+        <InputText label="Timer" value={backgroundInputTimer} onChange={e => window.ApiServer.state.backgroundInputTimer = e.target.value} type="number" />
         <div className="text-xs opacity-70">
           Use <kbd className="kbd kbd-sm font-semibold text-primary">Esc</kbd> to cancel input, <kbd className="kbd kbd-sm font-semibold text-primary">Enter</kbd> to submit and <kbd className="kbd kbd-sm font-semibold text-primary">Backspace</kbd> to delete
         </div>

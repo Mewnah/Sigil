@@ -91,9 +91,9 @@ const ElementMenu: FC<{ id: string, title: string }> = ({ id, title }) => {
   );
 };
 
-const SIdebarDivider: FC<PropsWithChildren<{ expand: boolean, icon: ReactNode }>> = ({ children, expand, icon }) => {
-  return <div className="flex flex-nowrap items-center text-xs font-semibold opacity-50 w-auto">
-    <div className="flex flex-none w-10 h-6 items-center justify-center text-xl">{icon}</div>
+const SIdebarDivider: FC<PropsWithChildren<{ expand: boolean }>> = ({ children, expand }) => {
+  if (!expand) return <Divider />;
+  return <div className="flex flex-nowrap items-center text-xs font-bold text-base-content/40 uppercase tracking-widest ml-3 mt-4 mb-2 truncate">
     <span className={classNames("transition-opacity", expand ? "opacity-100" : "opacity-0")}>{children}</span>
   </div>
 }
@@ -137,36 +137,44 @@ const Sidebar: FC = memo(() => {
   const transformState = useSnapshot(window.ApiServer.transform.serviceState);
 
   return <div className="flex h-full z-20">
-    <div className="bg-base-200 flex-none overflow-y-scroll overflow-x-hidden scrollbar-hide">
-      <motion.div transition={{ ease: "anticipate", duration: 0.2 }} initial={{ width: "3.5rem" }} animate={{ width: expand ? "13rem" : "3.5rem" }} className="flex flex-col space-y-1 py-2 px-2">
-        <button className="w-full btn btn-ghost border-none justify-start min-h-fit h-auto flex-nowrap whitespace-nowrap px-0 gap-1 overflow-hidden" onClick={switchExpand}>
-          <span className={classNames("flex-none w-10 h-8 items-center justify-center text-lg text-base-content/50 swap swap-flip", { "swap-active": expand })}>
-            <TbArrowBarToLeft className="swap-on" />
-            <TbArrowBarToRight className="swap-off" />
-          </span>
-          <div className="font-medium text-xs text-base-content/50 leading-none">{t('main.btn_collapse_menu')}</div>
-        </button>
-        <SideBarButton status={sttState.status} tab={{ tab: Services.stt }} tooltip={t("stt.title")}><RiUserVoiceFill /></SideBarButton>
-        <SideBarButton status={transformState.status} tab={{ tab: Services.transform }} tooltip="AI Transform"><RiSparklingFill /></SideBarButton>
-        <SideBarButton status={ttsState.status} tab={{ tab: Services.tts }} tooltip={t("tts.title")}><RiChatVoiceFill /></SideBarButton>
-        <SideBarButton tab={{ tab: "settings" }} tooltip={t("settings.title")}><RiSettings2Fill /></SideBarButton>
-        <SIdebarDivider expand={expand} icon={<MdExtension className="flex-none" size={14} />}>{t('main.section_integrations')}</SIdebarDivider>
-        <div className={classNames("flex flex-col transition-spacing space-y-1", expand ? "pl-2" : "pl-0")}>
-          <SideBarButton tab={{ tab: "obs" }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
-          <SideBarButton tab={{ tab: Services.twitch }} tooltip={t("twitch.title")}><SiTwitch /></SideBarButton>
-          <SideBarButton tab={{ tab: Services.discord }} tooltip={t("discord.title")}><SiDiscord /></SideBarButton>
-          <SideBarButton tab={{ tab: Services.vrc }} tooltip={t("vrc.title")}><RiMessage2Fill /></SideBarButton>
+    <div className="bg-base-200 flex-none overflow-x-hidden">
+      <motion.div transition={{ ease: "anticipate", duration: 0.2 }} initial={{ width: "3.5rem" }} animate={{ width: expand ? "13rem" : "3.5rem" }} className="flex flex-col h-full py-2 px-2">
+        <div className="flex-1 flex flex-col space-y-1 overflow-y-auto scrollbar-hide min-h-0">
+          <button className="w-full btn btn-ghost border-none justify-start min-h-fit h-auto flex-nowrap whitespace-nowrap px-0 gap-1 overflow-hidden" onClick={switchExpand}>
+            <span className={classNames("flex-none w-10 h-8 items-center justify-center text-lg text-base-content/50 swap swap-flip", { "swap-active": expand })}>
+              <TbArrowBarToLeft className="swap-on" />
+              <TbArrowBarToRight className="swap-off" />
+            </span>
+            <div className="font-medium text-xs text-base-content/50 leading-none">{t('main.btn_collapse_menu')}</div>
+          </button>
+          <SIdebarDivider expand={expand}>{t('main.section_services', "Services")}</SIdebarDivider>
+          <SideBarButton status={sttState.status} tab={{ tab: Services.stt }} tooltip={t("stt.title")}><RiUserVoiceFill /></SideBarButton>
+          <SideBarButton status={transformState.status} tab={{ tab: Services.transform }} tooltip="AI Transform"><RiSparklingFill /></SideBarButton>
+          <SideBarButton status={ttsState.status} tab={{ tab: Services.tts }} tooltip={t("tts.title")}><RiChatVoiceFill /></SideBarButton>
+          <SideBarButton status={translationState.status} tab={{ tab: Services.translation }} tooltip={t("transl.title")}><RiTranslate2 /></SideBarButton>
+
+          <SIdebarDivider expand={expand}>{t('main.section_integrations')}</SIdebarDivider>
+          <div className="flex flex-col transition-spacing space-y-1">
+            <SideBarButton tab={{ tab: "obs" }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.twitch }} tooltip={t("twitch.title")}><SiTwitch /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.discord }} tooltip={t("discord.title")}><SiDiscord /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.vrc }} tooltip={t("vrc.title")}><RiMessage2Fill /></SideBarButton>
+          </div>
+          <SIdebarDivider expand={expand}>{t('main.section_elements')}</SIdebarDivider>
+          <div className="flex flex-col space-y-1 transition-spacing">
+            <SideBarButton tab={{ tab: "scenes" }} tooltip={t("scenes.title")}><RiStackFill /></SideBarButton>
+            <ElementList />
+          </div>
+          <Dropdown placement="right" content={<AddElementsMenu />}>
+            <SideBarButtonBase tooltip={t("main.btn_add_element")}><RiAddFill /></SideBarButtonBase>
+          </Dropdown>
+
+
         </div>
-        <SIdebarDivider expand={expand} icon={<RiBrushFill className="flex-none" size={14} />}>{t('main.section_elements')}</SIdebarDivider>
-        <div className={classNames("flex flex-col space-y-1 transition-spacing", expand ? "pl-2" : "pl-0")}>
-          <SideBarButton tab={{ tab: "scenes" }} tooltip={t("scenes.title")}><RiStackFill /></SideBarButton>
-          <ElementList />
+        <div className="flex-none pt-2 mt-auto">
+          <SideBarButton tab={{ tab: "files" }} tooltip={t("files.title")}><RiFolderMusicFill /></SideBarButton>
+          <SideBarButton tab={{ tab: "settings" }} tooltip={t("settings.title")}><RiSettings2Fill /></SideBarButton>
         </div>
-        <Dropdown placement="right" content={<AddElementsMenu />}>
-          <SideBarButtonBase tooltip={t("main.btn_add_element")}><RiAddFill /></SideBarButtonBase>
-        </Dropdown>
-        <Divider />
-        <SideBarButton tab={{ tab: "files" }} tooltip={t("files.title")}><RiFolderMusicFill /></SideBarButton>
       </motion.div>
     </div>
     <AnimatePresence initial={false}>
@@ -195,7 +203,7 @@ const Sidebar: FC = memo(() => {
 export default Sidebar;
 
 const inspectorOpacityVariants = {
-  visible: { opacity: 1, marginRight: "-1rem", transition: { ease: "easeInOut", duration: .3 } },
+  visible: { opacity: 1, marginRight: "0", transition: { ease: "easeInOut", duration: .3 } },
   hidden: { opacity: 0, marginRight: "0", transition: { ease: "easeInOut", duration: .2 } },
 }
 const inspectorSizeVariants = {

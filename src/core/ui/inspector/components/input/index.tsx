@@ -9,11 +9,7 @@ import FileElement from "../../../file-element";
 import { FileState, FileType } from "@/client/services/files/schema";
 import Dropdown from "../../../dropdown/Dropdown";
 
-// import "ace-builds/src-noconflict/mod";
-// import AceEditor from "react-ace";
-// import "ace-builds/src-noconflict/ext-language_tools";
-// import "ace-builds/src-noconflict/mode-css";
-// import "ace-builds/src-noconflict/theme-twilight";
+
 import { MappedGroupDictionary, ServiceNetworkState, TextEventSource } from "@/types";
 
 import { useSnapshot } from "valtio";
@@ -30,10 +26,10 @@ interface InputBaseProps {
     labelOptions?: any
 }
 
-export const InputContainer: FC<PropsWithChildren<{ id?: string, vertical?: boolean, label: string }>> = memo(({ id, vertical, label, children }) => {
+export const InputContainer: FC<PropsWithChildren<{ id?: string, vertical?: boolean, label: string, className?: string }>> = memo(({ id, vertical, label, children, className }) => {
     const { t } = useTranslation();
     const layout = vertical ? "flex-col space-y-2" : "justify-between items-center"
-    return <div className={cx("flex min-h-8", layout)}>
+    return <div className={cx("flex min-h-8", layout, className)}>
         <label className="flex-grow font-medium text-base-content/80 text-xs cursor-pointer" htmlFor={id}>{t(label)}</label>
         {children}
     </div>
@@ -107,14 +103,15 @@ interface InputColorProps extends InputBaseProps {
     value: string
 }
 export const InputColor: FC<InputColorProps> = memo(({ label, ...rest }) => {
+    const id = useId();
     return <Dropdown targetOffset={24} placement="right" content={<ColorSelectDropdown {...rest} />}>
-        <InputContainer label={label} id={label}>
+        <InputContainer label={label} id={id}>
             <div className="field-width grid grid-cols-2 gap-2">
                 <div></div>
                 {(() => {
                     const style = { backgroundColor: rest.value as string };
                     // eslint-disable-next-line
-                    return <div className="cursor-pointer hover:bg-base-300 input input-bordered input-sm" style={style}></div>
+                    return <div id={id} className="cursor-pointer hover:bg-base-300 input input-bordered input-sm" style={style}></div>
                 })()}
             </div>
         </InputContainer>
@@ -141,8 +138,7 @@ interface ChipsProps extends InputBaseProps {
     value?: string | number
 }
 export const InputChips: FC<ChipsProps> = memo(({ label, value, options, onChange }) => {
-    const id = useId();
-    return <InputContainer label={label} id={id}>
+    return <InputContainer label={label}>
         <div className="flex field-width btn-group">
             {options.map((option, i) => <button className={cx("btn btn-sm flex-grow", { "btn-active": option.value === value })} key={i} onClick={() => onChange(option.value)}>{option.label}</button>)}
         </div>
@@ -173,7 +169,7 @@ export const InputSelect: FC<NewNewSelectProps> = ({ options, ...props }) => {
     return (
         <InputContainer label={props.label} id={id}>
             <RadixSelect.Root key={props.value} {...props}>
-                <RadixSelect.Trigger className="input relative input-sm pr-4 truncate input-bordered field-width font-semibold text-start">
+                <RadixSelect.Trigger id={id} className="input relative input-sm pr-4 truncate input-bordered field-width font-semibold text-start">
                     <RadixSelect.Value placeholder="Select" />
                     <RadixSelect.Icon className="text-primary absolute right-1 self-center top-2">
                         <HiChevronDown />
@@ -228,7 +224,7 @@ export const InputDoubleCountainer: FC<PropsWithChildren<{ label: string }>> = (
 export const InputCheckbox: FC<CheckboxTextProps> = memo(({ label, value, onChange }) => {
     const id = useId();
     return (
-        <InputContainer label={label} id={id}>
+        <InputContainer className="input-checkbox" label={label} id={id}>
             <input className="toggle toggle-neutral" id={id} type="checkbox" onChange={e => onChange?.(e.target.checked)} checked={value} />
         </InputContainer>
     )
@@ -563,7 +559,7 @@ interface MappedGroupSelectProps extends Omit<InputBaseProps, "label"> {
 }
 export const InputMappedGroupSelect: FC<MappedGroupSelectProps> = memo(({ labelGroup, labelOption, value, onChange, library }) => {
     const { t } = useTranslation();
-    const groupOptions = Object.keys(library).map(k => ({ label: t(`languages.${k}`), value: k }));
+    const groupOptions = Object.keys(library).map(k => ({ label: k, value: k }));
     const [group, setGroup] = useState(value?.group || groupOptions[0].value);
 
     useEffect(() => {

@@ -72,6 +72,7 @@ const Inspector_Twitch: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><SiTwitch /> {t('twitch.title')}</Inspector.Header>
     <Inspector.Content>
+      <Inspector.SubHeader>Twitch Integration</Inspector.SubHeader>
       {user && <div className="flex items-center space-x-4">
         <img className="rounded-full aspect-square w-10 ring-2 ring-success ring-offset-base-100 ring-offset-2" src={user.profilePictureUrl} alt={user.name} />
         <div className="flex flex-col">
@@ -100,8 +101,10 @@ const Inspector_Twitch: FC = () => {
         <span>
           <span className="link link-accent link-hover font-semibold text-xs" onClick={handleShowEmotes}>{t('twitch.btn_show_emotes')}</span> | <span className="link link-accent link-hover font-semibold text-xs" onClick={handleShowEmotesMapper}>{t('twitch.btn_remap_emotes')}</span>
         </span>
-        <InputCheckbox label="twitch.field_enable_captions_emotes" value={pr.emotesEnableReplacements} onChange={e => up("emotesEnableReplacements", e)} />
-        <InputCheckbox label="twitch.field_case_sensitive" value={pr.emotesCaseSensitive} onChange={e => up("emotesCaseSensitive", e)} />
+        <div className="contents">
+          <InputCheckbox label="twitch.field_enable_captions_emotes" value={pr.emotesEnableReplacements} onChange={e => up("emotesEnableReplacements", e)} />
+          <InputCheckbox label="twitch.field_case_sensitive" value={pr.emotesCaseSensitive} onChange={e => up("emotesCaseSensitive", e)} />
+        </div>
       </Inspector.Switchable>
     </Inspector.Content>
   </Inspector.Body>

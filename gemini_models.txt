@@ -1,0 +1,7 @@
+Searching for Gemini Free models...
+FOUND: ID='google/gemma-3n-e2b-it:free' | Name='Google: Gemma 3n 2B (free)'
+FOUND: ID='google/gemma-3n-e4b-it:free' | Name='Google: Gemma 3n 4B (free)'
+FOUND: ID='google/gemma-3-4b-it:free' | Name='Google: Gemma 3 4B (free)'
+FOUND: ID='google/gemma-3-12b-it:free' | Name='Google: Gemma 3 12B (free)'
+FOUND: ID='google/gemma-3-27b-it:free' | Name='Google: Gemma 3 27B (free)'
+FOUND: ID='google/gemini-2.0-flash-exp:free' | Name='Google: Gemini 2.0 Flash Experimental (free)'

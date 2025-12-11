@@ -9,9 +9,8 @@ import { useSnapshot } from "valtio";
 import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/stt_data";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputCheckbox, InputMapObject, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
+import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
-import Modal from "../Modal";
 import { useTranslation } from 'react-i18next';
 
 const Native: FC = () => {
@@ -29,11 +28,6 @@ const Native: FC = () => {
       value={{ option: pr.language, group: pr.language_group }}
       onChange={updateLanguage}
       library={nativeLangs} />
-    {/* <div className="p-2 border-2 border-error rounded-lg text-xs space-y-2 flex flex-col">
-      <span className="font-bold text-error">Experimental. Might be unstable on some PCs.</span>
-      <span className="font-bold text-error">Auto start is disabled.</span>
-      <span className="font-bold">How to test</span>
-      Just keep it on in the background for 10-15 minutes and say something every minute or two.</div> */}
   </>
 }
 
@@ -208,7 +202,7 @@ const Whisper: FC = () => {
       </div>
     )}
 
-    <div className="divider"></div>
+
     <Inspector.SubHeader>Voice Activity Detection</Inspector.SubHeader>
     <InputCheckbox
       label="Enable VAD (Auto-transcribe on silence)"
@@ -256,27 +250,7 @@ const Whisper: FC = () => {
   </>
 }
 
-const WordsReplacementModal: FC = () => {
-  const { t } = useTranslation();
-  const data = useSnapshot(window.ApiServer.state.services.stt);
 
-  const up = <K extends keyof STT_State>(key: K, v: STT_State[K]) => window.ApiServer.patchService("stt", s => s.data[key] = v);
-
-  return <Modal.Body width={420}>
-    <Modal.Header>{t('word_replacements.title')}</Modal.Header>
-    <Modal.Content>
-      <div className="p-4 flex flex-col space-y-2">
-        <InputCheckbox label="word_replacements.field_ignore_case" value={data.data.replaceWordsIgnoreCase} onChange={v => up("replaceWordsIgnoreCase", v)} />
-        {data.data.replaceWordsIgnoreCase && <>
-          <InputCheckbox label="word_replacements.field_preserve_capitalization" value={data.data.replaceWordsPreserveCase} onChange={v => up("replaceWordsPreserveCase", v)} />
-          <Inspector.Description>{t('word_replacements.field_preserve_capitalization_desc')}</Inspector.Description>
-        </>}
-        <InputMapObject keyPlaceholder={t('word_replacements.label_dictionary_key')} valuePlaceholder={t('word_replacements.label_dictionary_value')} addLabel={t('common.btn_add')} value={{ ...data.data.replaceWords }} onChange={e => up("replaceWords", e)} label="" />
-      </div>
-    </Modal.Content>
-  </Modal.Body>
-}
-NiceModal.register('stt-replacements', (props) => <Modal.Base {...props}><WordsReplacementModal /></Modal.Base>);
 
 const Inspector_STT: FC = () => {
   const { t } = useTranslation();
@@ -293,20 +267,24 @@ const Inspector_STT: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><RiUserVoiceFill /> {t('stt.title')}</Inspector.Header>
     <Inspector.Content>
-      <InputCheckbox label="common.field_action_bar" onChange={handleStart} value={data.showActionButton} />
-      <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
-      <InputCheckbox label="stt.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
-      <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm" onClick={handleShowReplacements}><RiCharacterRecognitionFill />{t('common.btn_edit_replacements')}</span>
+      <Inspector.SubHeader>Speech Provider</Inspector.SubHeader>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
-          { label: "Whisper (Local)", value: STT_Backends.whisper },
+          { label: "Whisper", value: STT_Backends.whisper },
           { label: "Chrome (Browser)", value: STT_Backends.chrome },
           { label: "Edge (Browser)", value: STT_Backends.edge },
           { label: "Azure", value: STT_Backends.azure },
           { label: "Deepgram", value: STT_Backends.deepgram },
           { label: "Speechly", value: STT_Backends.speechly }
         ]} label="common.field_service" value={data.data.backend} onValueChange={e => up("backend", e as STT_Backends)} />
+
+        {data.data.backend !== STT_Backends.chrome && data.data.backend !== STT_Backends.edge && (
+          <div className="mt-2 mb-4">
+            <InputCheckbox label='stt.field_uwu_filter' onChange={e => up("uwu", e)} value={data.data.uwu} />
+            <Inspector.Description>{t('stt.field_uwu_filter_desc')}</Inspector.Description>
+          </div>
+        )}
 
         {data.data.backend === STT_Backends.chrome && <Chrome />}
         {data.data.backend === STT_Backends.edge && <Edge />}
@@ -317,11 +295,28 @@ const Inspector_STT: FC = () => {
         {data.data.backend === STT_Backends.native && <Native />}
       </Inspector.Deactivatable>
 
-      {data.data.backend !== STT_Backends.chrome && data.data.backend !== STT_Backends.edge && <ServiceButton status={state.status} onStart={() => window.ApiServer.stt.start()} onStop={() => window.ApiServer.stt.stop()} />}
-      <div className="pt-8">
-        <InputCheckbox label='stt.field_uwu_filter' onChange={e => up("uwu", e)} value={data.data.uwu} />
-        <Inspector.Description>{t('stt.field_uwu_filter_desc')}</Inspector.Description>
+      {data.data.backend !== STT_Backends.chrome && data.data.backend !== STT_Backends.edge && (
+        <>
+          <div className="pt-4 flex flex-col">
+            <ServiceButton status={state.status} onStart={() => window.ApiServer.stt.start()} onStop={() => window.ApiServer.stt.stop()} />
+          </div>
+
+
+        </>
+      )}
+
+
+
+
+      <div className="contents">
+        <div className="h-2" />
+        <InputCheckbox label="common.field_action_bar" onChange={handleStart} value={data.showActionButton} />
+        <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
+        <InputCheckbox label="stt.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
+        <div className="h-2" />
+        <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm justify-end" onClick={handleShowReplacements}><RiCharacterRecognitionFill />{t('common.btn_edit_replacements')}</span>
       </div>
+
     </Inspector.Content>
   </Inspector.Body>
 }

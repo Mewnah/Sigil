@@ -76,7 +76,7 @@ const Inspector_OBS: FC = () => {
 
       <Inspector.SubHeader>{t('obs.section_websocket')}</Inspector.SubHeader>
       <Inspector.Description>{t('obs.websocket_desc')}</Inspector.Description>
-      <InputCheckbox label="obs.field_auto_connect" value={data.wsAutoStart} onChange={e => up("wsAutoStart", e)} />
+
       <InputNetworkStatus label="common.field_connection_status" value={wsState.status} />
       <InputText label="common.field_connection_port" type="number" value={data.wsPort} onChange={e => up("wsPort", e.target.value)} />
       <InputText label="common.field_password" type="password" value={data.wsPassword} onChange={e => up("wsPassword", e.target.value)} />
@@ -90,6 +90,10 @@ const Inspector_OBS: FC = () => {
         onStart={handleStartWs}
         onPending={handleCancelWs}
         onStop={handleStopWs} />
+      <div className="contents">
+
+        <InputCheckbox label="obs.field_auto_connect" value={data.wsAutoStart} onChange={e => up("wsAutoStart", e)} />
+      </div>
       <Inspector.SubHeader>{t('obs.section_native_captions')}</Inspector.SubHeader>
       {/* <InputCheckbox value={data.enable} onChange={e => up("enable", e)} label="Enable captions" /> */}
       <InputCheckbox value={data.captionsEnable} onChange={e => up("captionsEnable", e)} label="common.field_enable" />

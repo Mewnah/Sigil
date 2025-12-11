@@ -47,11 +47,24 @@ export class Transform_LLMService implements ITransformService {
             apiKey = "dummy";
         }
 
+        console.log(`[LLM] STARTING. Key Present: ${apiKey !== "dummy"} (${apiKey.substring(0, 8)}...)`);
+
+        const defaultHeaders: Record<string, string> = {
+            "Authorization": `Bearer ${apiKey}`, // Ensure Auth header is explicit
+        };
+
+        if (data.provider === "openrouter") {
+            defaultHeaders["HTTP-Referer"] = "https://github.com/mmpneo/curses"; // Using repo URL as referer
+            defaultHeaders["X-Title"] = "Curses+";
+        }
+
         try {
             this.openai = new OpenAI({
                 apiKey: apiKey,
                 baseURL: baseURL || undefined,
-                dangerouslyAllowBrowser: true
+                dangerouslyAllowBrowser: true,
+                defaultHeaders: defaultHeaders,
+                maxRetries: 0 // Disable auto-retry to handle rate limits manually
             });
             this.systemPrompt = data.systemPrompt;
             this.model = model;
@@ -80,12 +93,25 @@ export class Transform_LLMService implements ITransformService {
                 max_tokens: 100,
             });
 
-            const result = response.choices[0]?.message?.content?.trim();
+            if (!response || !response.choices || response.choices.length === 0) {
+                throw new Error(`Invalid response from ${this.model}: No choices returned.`);
+            }
+
+            let result = response.choices[0]?.message?.content?.trim();
             if (result) {
+                // Clean common raw tokens that might leak
+                result = result.replace(/^<s>/, "").replace(/<\/s>$/, "").trim();
                 this.receiver.onTransform(id, e, result);
             }
         } catch (error: any) {
-            console.error("LLM Transform Error:", error);
+            const message = error?.message || String(error);
+            const status = error?.status || "Unknown";
+
+            console.error(`[LLM] Transform Error (${status}): ${message}`);
+
+            if (error?.status === 429) {
+                this.receiver.onTransform(id, e, "[AI Rate Limited]");
+            }
         }
     }
 }

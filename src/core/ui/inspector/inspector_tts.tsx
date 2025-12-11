@@ -332,10 +332,7 @@ const Inspector_TTS: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><RiChatVoiceFill /> {t('tts.title')}</Inspector.Header>
     <Inspector.Content>
-      <InputCheckbox label="common.field_action_bar" value={data.showActionButton} onChange={handleStart} />
-      <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
-      <InputCheckbox label="tts.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
-      <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm" onClick={handleShowReplacements}><RiCharacterRecognitionFill /> {t('common.btn_edit_replacements')}</span>
+      <Inspector.SubHeader>Voice Provider</Inspector.SubHeader>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputTextSource label="common.field_text_source" value={data.data.source} onChange={e => up("source", e)} />
         <InputCheckbox label="common.field_use_keyboard_input" value={data.data.inputField} onChange={e => up("inputField", e)} />
@@ -354,7 +351,20 @@ const Inspector_TTS: FC = () => {
       {data.data.backend === TTS_Backends.tiktok && <TikTok />}
       {data.data.backend === TTS_Backends.uberduck && <UberDuck />}
       {/* {data.data.backend === TTS_Backends.voicevox && <VoiceVox />} */}
+
       <ServiceButton status={state.status} onStart={() => window.ApiServer.tts.start()} onStop={() => window.ApiServer.tts.stop()} />
+
+
+
+      <div className="contents">
+        <div className="h-2" />
+        <InputCheckbox label="common.field_action_bar" value={data.showActionButton} onChange={handleStart} />
+        <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
+        <InputCheckbox label="tts.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
+        <div className="h-2" />
+        <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm justify-end" onClick={handleShowReplacements}><RiCharacterRecognitionFill /> {t('common.btn_edit_replacements')}</span>
+      </div>
+
     </Inspector.Content>
   </Inspector.Body>
 }

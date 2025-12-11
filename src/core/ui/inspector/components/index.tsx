@@ -27,7 +27,7 @@ export const Body: FC<PropsWithChildren<{ scrollable?: boolean }>> = ({ scrollab
   </TabAnimation>
 }
 export const Header: FC<PropsWithChildren> = memo(({ children }) => {
-  return <div className="flex font-header items-center gap-2 px-4 pt-4 text-xl font-extrabold">{children}</div>
+  return <div className="flex font-header items-center gap-2 px-4 py-4 text-xl font-extrabold border-b border-base-content/10">{children}</div>
 })
 export const SubHeader: FC<PropsWithChildren> = ({ children }) => {
   return <span className="first:pt-0 pt-4">
@@ -41,7 +41,9 @@ export const Description: FC<PropsWithChildren> = ({ children }) => {
   </span>
 }
 export const Content: FC<PropsWithChildren> = ({ children }) => {
-  return <div className="w-[22rem] flex flex-col p-4 space-y-2">{children}</div>
+  return <div className="w-[22rem] flex flex-col p-4 space-y-2 [&>.input-checkbox+.input-checkbox]:!mt-0">
+    {children}
+  </div>
 }
 export const Switchable: FC<PropsWithChildren<{ visible: boolean }>> = ({ visible, children }) => {
   return <AnimatePresence initial={false}>

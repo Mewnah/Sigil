@@ -9,6 +9,7 @@ export enum Transform_Backends {
 export const Service_Transform_Schema = z.object({
     backend: zSafe(z.nativeEnum(Transform_Backends), Transform_Backends.dummy),
     autoStart: zSafe(z.boolean(), true),
+    stopWithStream: zSafe(z.boolean(), false),
 
     // AI Provider Selection
     provider: zSafe(z.enum(["openai", "openrouter", "custom"]), "openai"),
@@ -21,7 +22,7 @@ export const Service_Transform_Schema = z.object({
     // OpenRouter Config
     openRouterKey: zSafe(z.string(), ""),
     openRouterUrl: zSafe(z.string(), "https://openrouter.ai/api/v1"),
-    openRouterModel: zSafe(z.string(), "mistralai/mistral-7b-instruct:free"),
+    openRouterModel: zSafe(z.string(), "google/gemini-flash-1.5"),
 
     // Custom Config
     customKey: zSafe(z.string(), ""),

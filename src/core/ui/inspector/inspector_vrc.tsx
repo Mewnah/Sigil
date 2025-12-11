@@ -12,7 +12,7 @@ const targetOptions = [
 ]
 
 const TextboxInspector: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const state = useSnapshot(window.ApiServer.state.services.vrc.data.textbox);
   const up = <K extends keyof VRC_State["textbox"]>(key: K, v: VRC_State["textbox"][K]) => window.ApiServer.patchService("vrc", s => s.data.textbox[key] = v);
   return <>
@@ -23,34 +23,35 @@ const TextboxInspector: FC = () => {
 }
 
 const KillFrenzyInspector: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const state = useSnapshot(window.ApiServer.state.services.vrc.data.killfrenzy);
   const up = <K extends keyof VRC_State["killfrenzy"]>(key: K, v: VRC_State["killfrenzy"][K]) => window.ApiServer.patchService("vrc", s => s.data.killfrenzy[key] = v);
   return <>
     <Inspector.SubHeader>{t('vrc.kfi_title')}</Inspector.SubHeader>
     {/* <InputCheckbox label="Show indicator" value={state.indicator} onChange={e => up("indicator", e)} /> */}
     <InputCheckbox label="vrc.kfi_split_large" value={state.splitSentences} onChange={e => up("splitSentences", e)} />
-    <InputText type="number" label="vrc.kfi_hide_after" min={0} max={4} value={state.visibleTimer} onChange={e => up("visibleTimer", e.target.value)}/>
-    <InputText type="number" label="vrc.kfi_sync_points" min={0} max={4} value={state.syncPoints} onChange={e => up("syncPoints", e.target.value)}/>
-    <InputText type="number" label="vrc.kfi_sync_delay" min={0} max={1000} value={state.syncDelay} onChange={e => up("syncDelay", e.target.value)}/>
+    <InputText type="number" label="vrc.kfi_hide_after" min={0} max={4} value={state.visibleTimer} onChange={e => up("visibleTimer", e.target.value)} />
+    <InputText type="number" label="vrc.kfi_sync_points" min={0} max={4} value={state.syncPoints} onChange={e => up("syncPoints", e.target.value)} />
+    <InputText type="number" label="vrc.kfi_sync_delay" min={0} max={1000} value={state.syncDelay} onChange={e => up("syncDelay", e.target.value)} />
 
     <Inspector.SubHeader>OSC Keys</Inspector.SubHeader>
-    <InputText label="vrc.kfi_visibility_key" value={state.KAT_Visible} onChange={e => up("KAT_Visible", e.target.value)}/>
-    <InputText label="vrc.kfi_pointer_key" value={state.KAT_Pointer} onChange={e => up("KAT_Pointer", e.target.value)}/>
-    <InputText label="vrc.kfi_chat_sync_key" value={state.KAT_CharSync} onChange={e => up("KAT_CharSync", e.target.value)}/>
+    <InputText label="vrc.kfi_visibility_key" value={state.KAT_Visible} onChange={e => up("KAT_Visible", e.target.value)} />
+    <InputText label="vrc.kfi_pointer_key" value={state.KAT_Pointer} onChange={e => up("KAT_Pointer", e.target.value)} />
+    <InputText label="vrc.kfi_chat_sync_key" value={state.KAT_CharSync} onChange={e => up("KAT_CharSync", e.target.value)} />
   </>
 }
 
 const Inspector_VRC: FC = () => {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const state: VRC_State = useSnapshot(window.ApiServer.state.services.vrc.data);
   const up = <K extends keyof VRC_State>(key: K, v: VRC_State[K]) => window.ApiServer.patchService("vrc", s => s.data[key] = v);
 
   return <Inspector.Body>
     <Inspector.Header><RiMessage2Fill /> {t('vrc.title')}</Inspector.Header>
     <Inspector.Content>
+      <Inspector.SubHeader>VRChat Integration</Inspector.SubHeader>
       <div className="p-2 border-2 border-primary rounded-lg text-xs flex space-x-2 items-center text-primary">
-        <RiAlertFill className="text-primary" size={24}/>
+        <RiAlertFill className="text-primary" size={24} />
         <div className="flex flex-col">
           <span className="font-bold">{t('vrc.notice_title')}</span>
           <span className="font-medium">{t('vrc.notice_desc')}</span>

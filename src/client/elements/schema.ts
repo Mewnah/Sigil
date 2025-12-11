@@ -4,7 +4,7 @@ import { Element_ImageStateSchemaN } from "./image/schema";
 import { Element_TextStateSchemaN } from "./text/schema";
 
 export enum ElementType {
-  text  = "text",
+  text = "text",
   image = "image",
 }
 const ElementTypeSchema = z.nativeEnum(ElementType);
@@ -31,7 +31,7 @@ export type ElementSceneState<T = any> = {
 
 export const ElementSceneStateFactory = (type: ElementType) => z.object({
   active: zSafe(z.boolean(), true),
-  rect: zSafe(TransformRectSchema, {x: 0,y: 0,w: 100,h: 100,r: 0}),
+  rect: zSafe(TransformRectSchema, { x: 0, y: 0, w: 100, h: 100, r: 0 }),
   data: ElementSchemaMap[type]
 }).default({});
 
@@ -43,9 +43,10 @@ export const UnionElementStateSchema = z.discriminatedUnion("type", [
 export type ElementState = z.infer<typeof UnionElementStateSchema>;
 
 export function ElementStateFactory(type: ElementType, elementDataSchema: z.ZodDefault<z.AnyZodObject>) {
+  const defaultName = type.charAt(0).toUpperCase() + type.slice(1);
   return z.object({
     id: zSafe(z.string(), ""),
-    name: zSafe(z.string(), "Unnamed element"),
+    name: zSafe(z.string(), defaultName),
     type: z.literal(type),
     scenes: zSafe(z.record(z.string(), ElementSceneStateFactory(type)), {})
   });

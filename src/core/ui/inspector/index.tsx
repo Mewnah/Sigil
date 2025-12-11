@@ -25,43 +25,45 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
     navigator.clipboard.writeText(err);
     toast.success("Copied!");
   }
-  return <div className="w-[22rem] relative h-full flex-none bg-base-100 rounded-t-box flex flex-col overflow-hidden">
-    <ErrorBoundary fallbackRender={({ error, resetErrorBoundary }) => (
-      <div className="w-full h-full flex flex-col items-center justify-center p-4 space-y-2">
-        <div className="flex flex-col items-center">
-          <img className="w-16 grayscale" src="/images/ui-noo.gif" alt="Crash Indicator" />
-          <div className="text-primary font-semibold font-header inline-block">Inspector crashed!</div>
-          <pre className="text-xs text-base-content/50 whitespace-pre-wrap text-center">
-            Try to close and open it again.
-            If this doesn't work, you can ask for help in the <a className="link text-secondary ink-primary link-hover" href="discord://-/channels/856500849815060500/1058343274991058945">Discord #help</a>
-          </pre>
+  return <div className="w-[22rem] h-full flex-none bg-base-100 rounded-t-box flex flex-col overflow-hidden">
+    <div className="flex-grow relative overflow-hidden">
+      <ErrorBoundary fallbackRender={({ error, resetErrorBoundary }) => (
+        <div className="w-full h-full flex flex-col items-center justify-center p-4 space-y-2">
+          <div className="flex flex-col items-center">
+            <img className="w-16 grayscale" src="/images/ui-noo.gif" alt="Crash Indicator" />
+            <div className="text-primary font-semibold font-header inline-block">Inspector crashed!</div>
+            <pre className="text-xs text-base-content/50 whitespace-pre-wrap text-center">
+              Try to close and open it again.
+              If this doesn't work, you can ask for help in the <a className="link text-secondary ink-primary link-hover" href="discord://-/channels/856500849815060500/1058343274991058945">Discord #help</a>
+            </pre>
+          </div>
+          {error.stack && <pre className="text-[9px] relative w-full text-xs rounded-box bg-base-200 h-24">
+            <SimpleBar className="w-full h-full">
+              <pre className="px-2 truncate break-words whitespace-pre-wrap">{error.stack}</pre>
+            </SimpleBar>
+            <button className="absolute right-2 top-0 btn btn-link btn-xs self-start" onClick={() => error.stack && handleCopyError(error.stack)}>
+              Copy
+            </button>
+          </pre>}
         </div>
-        {error.stack && <pre className="text-[9px] relative w-full text-xs rounded-box bg-base-200 h-24">
-          <SimpleBar className="w-full h-full">
-            <pre className="px-2 truncate break-words whitespace-pre-wrap">{error.stack}</pre>
-          </SimpleBar>
-          <button className="absolute right-2 top-0 btn btn-link btn-xs self-start" onClick={() => error.stack && handleCopyError(error.stack)}>
-            Copy
-          </button>
-        </pre>}
-      </div>
-    )}>
-      <AnimatePresence initial={false}>
-        {path?.tab === Services.stt && <Inspector_STT key="stt" />}
-        {path?.tab === Services.tts && <Inspector_TTS key="tts" />}
-        {path?.tab === Services.translation && <Inspector_Translation key="translation" />}
-        {path?.tab === "obs" && <Inspector_OBS key="obs" />}
-        {path?.tab === Services.vrc && <Inspector_VRC key="vrc" />}
-        {path?.tab === Services.transform && <Inspector_Transform key="transform" />}
-        {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
-        {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
-        {path?.tab === "settings" && <Inspector_Settings key="settings" />}
-        {path?.tab === "scenes" && <Inspector_Scenes key="scenes" />}
-        {path?.tab === "files" && <Inspector_Files key="files" />}
-        {path?.tab === ElementType.text && path?.value && <Inspector_ElementText id={path.value} key={`${path.tab}-${path.value}`} />}
-        {path?.tab === ElementType.image && path?.value && <Inspector_ElementImage id={path.value} key={`${path.tab}-${path.value}`} />}
-      </AnimatePresence>
-    </ErrorBoundary>
+      )}>
+        <AnimatePresence initial={false}>
+          {path?.tab === Services.stt && <Inspector_STT key="stt" />}
+          {path?.tab === Services.tts && <Inspector_TTS key="tts" />}
+          {path?.tab === Services.translation && <Inspector_Translation key="translation" />}
+          {path?.tab === "obs" && <Inspector_OBS key="obs" />}
+          {path?.tab === Services.vrc && <Inspector_VRC key="vrc" />}
+          {path?.tab === Services.transform && <Inspector_Transform key="transform" />}
+          {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
+          {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
+          {path?.tab === "settings" && <Inspector_Settings key="settings" />}
+          {path?.tab === "scenes" && <Inspector_Scenes key="scenes" />}
+          {path?.tab === "files" && <Inspector_Files key="files" />}
+          {path?.tab === ElementType.text && path?.value && <Inspector_ElementText id={path.value} key={`${path.tab}-${path.value}`} />}
+          {path?.tab === ElementType.image && path?.value && <Inspector_ElementImage id={path.value} key={`${path.tab}-${path.value}`} />}
+        </AnimatePresence>
+      </ErrorBoundary>
+    </div>
   </div>
 }
 

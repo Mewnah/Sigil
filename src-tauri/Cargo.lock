@@ -806,12 +806,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "curses"
-version = "0.0.19"
+name = "curses_plus"
+version = "0.2.0"
 dependencies = [
  "clap 4.5.53",
  "cpal",
  "futures",
+ "hex",
  "hound",
  "itertools 0.10.5",
  "local-ip-address",
@@ -820,6 +821,7 @@ dependencies = [
  "rosc",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-window-state",

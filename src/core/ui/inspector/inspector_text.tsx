@@ -5,7 +5,7 @@ import { FC, memo, useMemo, useState } from "react";
 import { BsStars, BsTextareaResize } from "react-icons/bs";
 import { GrTextAlignCenter, GrTextAlignLeft, GrTextAlignRight } from "react-icons/gr";
 import { IoIosRadio } from "react-icons/io";
-import { RiAlignBottom, RiAlignTop, RiAlignVertically, RiFileCopyLine, RiFontSize } from "react-icons/ri";
+import { RiAlignBottom, RiAlignTop, RiAlignVertically, RiDragMove2Fill, RiFileCopyLine, RiFontSize } from "react-icons/ri";
 import { SiCsswizardry } from "react-icons/si";
 import { TbTextResize } from "react-icons/tb";
 import { VscSettings } from "react-icons/vsc";
@@ -18,24 +18,60 @@ import TransformInput from "./components/transform-input";
 import { ElementSceneState } from "@/client/elements/schema";
 import { useTranslation } from "react-i18next";
 
-const SourceInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+import { TextEventSource } from "@/types";
+
+const GeneralInspector: FC<{ id: string }> = ({ id }) => {
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
+  const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_TextState>>);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
+    <Inspector.SubHeader>Element Settings</Inspector.SubHeader>
+    <TransformInput id={id} />
+    <InputCheckbox label="text.field_preview" value={data[activeScene]?.data?.previewMode} onChange={e => up("previewMode", e)} />
+  </>
+}
+
+const SourceInspector: FC<{ id: string }> = ({ id }) => {
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
+  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const up = useUpdateElement<Element_TextState>(id);
+
+  const isSynced = data.sourceMain === TextEventSource.transform_source;
+  const showSyncOption = data.sourceMain === TextEventSource.stt || isSynced;
+
+  return <>
     <Inspector.SubHeader>{t('text.section_text_source')}</Inspector.SubHeader>
-    <InputTextSource label="common.field_text_source" value={data.sourceMain} onChange={e => up("sourceMain", e)} />
-    <InputCheckbox label="common.field_interim_results" value={data.sourceInterim} onChange={e => up("sourceInterim", e)} />
-    <InputCheckbox label="common.field_use_keyboard_input" value={data.sourceInputField} onChange={e => up("sourceInputField", e)} />
+    <InputTextSource
+      label="common.field_text_source"
+      value={isSynced ? TextEventSource.stt : data.sourceMain}
+      onChange={e => up("sourceMain", e)}
+    />
+
+    <div className="contents">
+      {showSyncOption && (
+        <InputCheckbox
+          label="stt.field_sync_timing"
+          value={isSynced}
+          onChange={(v) => {
+            if (v) up("sourceMain", TextEventSource.transform_source);
+            else up("sourceMain", TextEventSource.stt);
+          }}
+        />
+      )}
+
+      <InputCheckbox label="common.field_interim_results" value={data.sourceInterim} onChange={e => up("sourceInterim", e)} />
+      <InputCheckbox label="common.field_use_keyboard_input" value={data.sourceInputField} onChange={e => up("sourceInputField", e)} />
+    </div>
     <InputText label="text.field_text_profanity_mask" value={data.textProfanityMask} onChange={e => up("textProfanityMask", e.target.value)} />
   </>
 }
 
 const TextInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
@@ -83,15 +119,17 @@ const TextInspector: FC<{ id: string }> = ({ id }) => {
 }
 
 const BoxInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
     <Inspector.SubHeader>{t('text.section_box')}</Inspector.SubHeader>
-    <InputCheckbox label="text.box_auto_width" value={data.boxAutoWidth} onChange={e => up("boxAutoWidth", e)} />
-    <InputCheckbox label="text.box_auto_height" value={data.boxAutoHeight} onChange={e => up("boxAutoHeight", e)} />
+    <div className="contents">
+      <InputCheckbox label="text.box_auto_width" value={data.boxAutoWidth} onChange={e => up("boxAutoWidth", e)} />
+      <InputCheckbox label="text.box_auto_height" value={data.boxAutoHeight} onChange={e => up("boxAutoHeight", e)} />
+    </div>
 
     {/* <Inspector.SubHeader>Align</Inspector.SubHeader> */}
     <InputChips options={[
@@ -145,7 +183,7 @@ const BoxInspector: FC<{ id: string }> = ({ id }) => {
       <Inspector.SubHeader>{t('text.section_box_bg_slice')}</Inspector.SubHeader>
       <Inspector.Description>
         <span>
-          You can learn about 9-slice <a target="_blank" className="link link-primary link-hover" href="https://en.wikipedia.org/wiki/9-slice_scaling">here</a> and <a target="_blank" className="link link-primary link-hover" href="https://developer.mozilla.org/en-US/docs/Web/CSS/border-image-slice">here</a>
+          You can learn about 9-slice <a target="_blank" rel="noopener noreferrer" className="link link-primary link-hover" href="https://en.wikipedia.org/wiki/9-slice_scaling">here</a> and <a target="_blank" rel="noopener noreferrer" className="link link-primary link-hover" href="https://developer.mozilla.org/en-US/docs/Web/CSS/border-image-slice">here</a>
         </span>
       </Inspector.Description>
       <InputText label="text.box_bg_slice_tile" min="0" step="1" type="number" value={data.boxSliceTileSize} onChange={e => up("boxSliceTileSize", e.target.value)} />
@@ -158,8 +196,8 @@ const BoxInspector: FC<{ id: string }> = ({ id }) => {
 }
 
 const BehaviourInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
@@ -193,8 +231,8 @@ const BehaviourInspector: FC<{ id: string }> = ({ id }) => {
 }
 
 const EffectsInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
@@ -261,8 +299,8 @@ const EffectsInspector: FC<{ id: string }> = ({ id }) => {
 }
 
 const CssInspector: FC<{ id: string }> = ({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
   return <>
@@ -271,43 +309,46 @@ const CssInspector: FC<{ id: string }> = ({ id }) => {
   </>
 }
 
+const tabMemory: Record<string, number> = {};
+
 const Inspector_ElementText: FC<{ id: string }> = memo(({ id }) => {
-  const {t} = useTranslation();
-  const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
+  const { t } = useTranslation();
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_TextState>>);
   const up = useUpdateElement<Element_TextState>(id);
 
-  const [[tab, direction], setTab] = useState<[number, number]>([1, 0]);
+  const [[tab, direction], setTab] = useState<[number, number]>([tabMemory[id] || 0, 0]);
 
   const isInScene = useMemo(() => data && activeScene in data, [activeScene, data]);
 
   const handleTab = (v: number) => {
+    tabMemory[id] = v;
     setTab([v, Math.sign(v - tab)]);
   }
 
   if (!data)
-    return <Inspector.Deleted/>
+    return <Inspector.Deleted />
 
   return <Inspector.Body>
     <Inspector.Header><TbTextResize /> <NameInput id={id} /></Inspector.Header>
     {isInScene && <Inspector.Content>
-      <TransformInput id={id} />
-      <InputCheckbox label="text.field_preview" value={data[activeScene]?.data?.previewMode} onChange={e => up("previewMode", e)} />
       <Inspector.Tabs>
-        <Inspector.Tab tooltip={t('text.section_text_source')} tooltipBody={t('text.section_text_source_desc')} onClick={() => handleTab(0)} active={tab === 0}><IoIosRadio /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_font')} tooltipBody={t('text.section_font_desc')} onClick={() => handleTab(1)} active={tab === 1}><RiFontSize /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_box')} tooltipBody={t('text.section_box_desc')} onClick={() => handleTab(2)} active={tab === 2}><BsTextareaResize /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_behaviour')} tooltipBody={t('text.section_behaviour_desc')} onClick={() => handleTab(3)} active={tab === 3}><VscSettings /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_effects')} tooltipBody={t('text.section_effects_desc')} onClick={() => handleTab(4)} active={tab === 4}><BsStars /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_css')} onClick={() => handleTab(5)} active={tab === 5}><SiCsswizardry /></Inspector.Tab>
+        <Inspector.Tab tooltip="Element Settings" onClick={() => handleTab(0)} active={tab === 0}><RiDragMove2Fill /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_text_source')} tooltipBody={t('text.section_text_source_desc')} onClick={() => handleTab(1)} active={tab === 1}><IoIosRadio /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_font')} tooltipBody={t('text.section_font_desc')} onClick={() => handleTab(2)} active={tab === 2}><RiFontSize /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_box')} tooltipBody={t('text.section_box_desc')} onClick={() => handleTab(3)} active={tab === 3}><BsTextareaResize /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_behaviour')} tooltipBody={t('text.section_behaviour_desc')} onClick={() => handleTab(4)} active={tab === 4}><VscSettings /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_effects')} tooltipBody={t('text.section_effects_desc')} onClick={() => handleTab(5)} active={tab === 5}><BsStars /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_css')} onClick={() => handleTab(6)} active={tab === 6}><SiCsswizardry /></Inspector.Tab>
       </Inspector.Tabs>
       <Inspector.TabsContent direction={direction} tabKey={tab}>
-        {tab === 0 && <SourceInspector id={id} />}
-        {tab === 1 && <TextInspector id={id} />}
-        {tab === 2 && <BoxInspector id={id} />}
-        {tab === 3 && <BehaviourInspector id={id} />}
-        {tab === 4 && <EffectsInspector id={id} />}
-        {tab === 5 && <CssInspector id={id} />}
+        {tab === 0 && <GeneralInspector id={id} />}
+        {tab === 1 && <SourceInspector id={id} />}
+        {tab === 2 && <TextInspector id={id} />}
+        {tab === 3 && <BoxInspector id={id} />}
+        {tab === 4 && <BehaviourInspector id={id} />}
+        {tab === 5 && <EffectsInspector id={id} />}
+        {tab === 6 && <CssInspector id={id} />}
       </Inspector.TabsContent>
     </Inspector.Content>}
     {!isInScene && <Inspector.Content>

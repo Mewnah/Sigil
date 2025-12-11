@@ -6,10 +6,11 @@ import { SceneStateSchema } from "../services/scenes/schema";
 
 export const DocumentSchema = z.object({
   author: zSafe(z.string(), ""),
-  canvas: zSafe(TransformRectSchema, {x: 0, y: 0, w: 500,h: 400, r: 0}),
+  canvas: zSafe(TransformRectSchema, { x: 0, y: 0, w: 500, h: 400, r: 0 }),
+  snapToGrid: zSafe(z.boolean(), false),
   activeScene: zSafe(z.string(), "main"),
   scenes: zSafe(z.record(z.string(), SceneStateSchema), {
-    main: {id: "main", name: "Default scene"}
+    main: { id: "main", name: "Default scene" }
   }),
   filesMeta: zSafe(FileStateSchema.array(), []),
   elementsIds: zSafe(z.string().array(), []),

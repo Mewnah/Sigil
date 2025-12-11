@@ -1,8 +1,8 @@
 [package]
-name = "curses"
-version = "0.0.19"
+name = "curses_plus"
+version = "0.2.0"
 description = "A very cool app"
-authors = ["Curses"]
+authors = ["Curses", "Mewnah"]
 license = ""
 repository = ""
 edition = "2021"
@@ -45,6 +45,8 @@ reqwest = {version = "0.11.15", features = ["json", "stream", "blocking"] }
 cpal = "0.15.2"
 hound = "3.5.0"
 zip = "0.6.6"
+sha2 = "0.10"
+hex = "0.4"
 
 [profile.release]
 lto = true

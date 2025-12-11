@@ -2,6 +2,7 @@ import {
     IServiceInterface,
     ServiceNetworkState,
     TextEvent,
+    TextEventType,
     TextEventSource,
 } from "@/types";
 import { serviceSubscibeToInput } from "@/utils";
@@ -42,7 +43,11 @@ class Service_Transform implements IServiceInterface, ITransformReceiver {
 
         const subId = window.ApiShared.pubsub.subscribeText(
             TextEventSource.stt,
-            (e) => e && this.transform(e)
+            (e) => {
+                if (e && e.type === TextEventType.final) {
+                    this.transform(e);
+                }
+            }
         );
         this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(subId));
 
@@ -65,12 +70,16 @@ class Service_Transform implements IServiceInterface, ITransformReceiver {
         this.#setStatus(ServiceNetworkState.disconnected);
     }
     onTransform(id: number, e: TextEvent, value: string): void {
-        // ignore late results if applicable
-        if (this.#id - 1 !== id) return;
+        // Legacy: We used to discard interim results here. 
+        // Now that we key off "Final", we accept all out-of-order returns.
+        // if (this.#id - 1 !== id) return; <-- REMOVED
+
         window.ApiShared.pubsub.publishText(TextEventSource.transform, {
             value,
             type: e.type,
         });
+        // Publish the original source text at the exact same time
+        window.ApiShared.pubsub.publishText(TextEventSource.transform_source, e);
     }
     // #endregion
 

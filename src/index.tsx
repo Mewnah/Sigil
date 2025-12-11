@@ -1,4 +1,4 @@
-// import "./wdyr"
+
 import ReactDOM from "react-dom/client";
 import "./style.css";
 import ApiServer from "./core";
@@ -15,15 +15,10 @@ declare global {
     ApiShared: ApiShared;
     ApiServer: ApiServer;
     ApiClient: ApiClient;
+    reactRoot: ReactDOM.Root;
   }
 }
 window.global ||= window;
-
-declare module 'react' {
-  interface CSSProperties {
-    '--uiscale'?: string
-  }
-}
 
 // prevent rightclicks
 window.addEventListener('contextmenu', e => {
@@ -38,10 +33,13 @@ let root_ele = document.getElementById("root");
 if (!root_ele)
   throw Error("Root not found");
 
-const root = ReactDOM.createRoot(root_ele);
+// Singleton root pattern for HMR
+if (!window.reactRoot) {
+  window.reactRoot = ReactDOM.createRoot(root_ele);
+}
 
 function renderView(view: ReactNode) {
-  root && root.render(view);
+  window.reactRoot && window.reactRoot.render(view);
 }
 
 const LazyServerView = React.lazy(() => import("./core/ui/editor-view"));

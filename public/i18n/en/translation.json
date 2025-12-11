@@ -57,26 +57,24 @@
     "btn_add_text": "Add text",
     "btn_add_image": "Add image",
     "section_elements": "Elements",
-    "section_integrations": "Integrations"
+    "section_integrations": "Integrations",
+    "section_services": "Services"
   },
   "stt": {
-    "title": "Speech to text",
+    "title": "Speech-to-Text",
     "field_enable_interim_results": "Enable interim results",
     "field_uwu_filter": "UwU filter",
     "field_uwu_filter_desc": "Only works with English (* ^ ω ^)!!1",
-    "field_stop_with_stream": "Stop with twitch stream",
+    "field_stop_with_stream": "Stop with Twitch stream",
     "state_muted": "Muted",
     "state_": "Muted",
-
     "native_title": "Native",
-
     "browser_title": "Browser",
     "browser_open_edge": "Open Edge",
     "browser_open_chrome": "Open Chrome",
-
+    "field_sync_timing": "Sync timing with AI Transform",
     "speechly_title": "Speechly",
     "speechly_appid": "App ID",
-
     "deepgram_title": "Deepgram",
     "deepgram_key": "Key",
     "deepgram_quality": "Quality",
@@ -84,7 +82,6 @@
     "deepgram_punctuate": "Punctuate",
     "deepgram_quality_notice": "Some languages cannot be used with \"enhanced\" quality option",
     "deepgram_quality_notice_link": "See language table",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "Location",
@@ -97,10 +94,9 @@
     "azure_silence_timeout": "Silence timeout"
   },
   "tts": {
-    "title": "Text to speech",
+    "title": "Text-to-Speech",
     "field_voice": "Voice",
-    "field_stop_with_stream": "Stop with twitch stream",
-
+    "field_stop_with_stream": "Stop with Twitch stream",
     "uberduck_title": "Uberduck",
     "uberduck_api_key": "Api key",
     "uberduck_secret": "Secret",
@@ -109,7 +105,6 @@
     "uberduck_voice_desc_link": "Preview available voices",
     "uberduck_voice_status_reload": "Load voices",
     "uberduck_voice_status_updating": "Loading voices..",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "Location",
@@ -119,9 +114,7 @@
     "azure_voice_rate": "Voice rate",
     "azure_voice_pitch": "Voice pitch",
     "azure_voice_range": "Voice range",
-
     "native_title": "Native",
-
     "tiktok_title": "TikTok",
     "windows_title": "Windows"
   },
@@ -137,10 +130,12 @@
     "azure_profanity_removed": "Removed",
     "azure_profanity_raw": "Raw"
   },
-
+  "transform": {
+    "title": "AI Transform"
+  },
   "settings": {
     "title": "Settings",
-    "desc_1": "Made with 💖 by Mmp",
+    "desc_1": "Made with 💖 by Mmp (Modified by Mewnah)",
     "desc_2": "Join discord for updates and help!",
     "section_template": "Template",
     "section_link_apps": "Link apps",
@@ -154,7 +149,6 @@
     "field_language": "Language",
     "field_ip_address": "IP address"
   },
-
   "word_replacements": {
     "title": "Word replacements",
     "field_ignore_case": "Ignore letter case",
@@ -168,11 +162,9 @@
     "section_browser_source": "Browser source captions",
     "browser_source_desc": "Create new browser source, paste the link and set window size to {{width}}x{{height}} pixels",
     "btn_copy_browser_source_link": "Copy browser source url",
-
     "section_websocket": "Websocket connection",
     "websocket_desc": "obs-websocket plugin required.",
     "field_auto_connect": "Auto connect",
-
     "section_native_captions": "Native stream captions",
     "section_scenes": "Scenes",
     "section_scenes_desc": "Automatically change curses scene to match active obs scene",
@@ -187,12 +179,11 @@
     "status_chat": "Chat connection",
     "field_enable_chat": "Enable chat",
     "field_post_in_chat": "Post in chat",
-    "field_post_in_chat_desc": "Post speech to text or translation results in chat",
+    "field_post_in_chat_desc": "Post Speech-to-Text or translation results in chat",
     "field_post_in_chat_live": "Post only when live streaming",
     "field_post_in_chat_delay": "Send delay(ms)",
     "field_chat_text": "Use chat messages",
-    "field_chat_text_desc": "Use your twitch chat messages as source for speech to text",
-
+    "field_chat_text_desc": "Use your Twitch chat messages as source for Speech-to-Text",
     "section_emotes": "Emotes",
     "btn_show_emotes": "Show emotes",
     "btn_remap_emotes": "Remap emotes",
@@ -218,10 +209,8 @@
     "notice_desc": "Radial Menu » Options » OSC » Enable",
     "field_target": "Target",
     "btn_send_test": "Send test",
-
     "textbox_title": "VRC Textbox options",
     "textbox_show_indicator": "Show indicator",
-
     "kfi_title": "KillFrenzy options",
     "kfi_split_large": "Split large messages",
     "kfi_hide_after": "Hide after",
@@ -236,17 +225,16 @@
     "section_canvas": "Canvas",
     "section_scenes": "Scenes",
     "field_canvas_size": "Canvas size",
-    "scene_menu_title": "Scene", 
+    "scene_menu_title": "Scene",
     "btn_add_scene": "Add scene",
     "btn_duplicate_scene": "Duplicate scene",
     "btn_remove_scene": "Remove scene"
   },
   "text": {
-    "field_preview": "Preview_design",
+    "field_preview": "Preview Design",
     "section_text_source": "Text source",
     "section_text_source_desc": "Where should we get the text from",
     "field_text_profanity_mask": "Profanity mask",
-    
     "section_font": "Font",
     "section_font_desc": "Colors, size, shadow, outline",
     "font_color": "Color",
@@ -260,16 +248,13 @@
     "font_horizontal_align": "Horizontal align",
     "font_vertical_align": "Vertical align",
     "font_line_height": "Line height",
-
     "section_text_shadow": "Text shadow",
     "text_shadow_position": "Position",
     "text_shadow_blur": "Blur",
     "text_shadow_color": "Color",
-
     "section_text_outline": "Outline",
     "text_outline_size": "Size",
     "text_outline_color": "Color",
-
     "section_box": "Box",
     "section_box_desc": "Background, border, size",
     "box_auto_width": "Auto width",
@@ -279,13 +264,11 @@
     "box_text_padding": "Text padding",
     "box_horizontal_offset": "Horizontal offset",
     "box_vertical_offset": "Vertical offset",
-
     "section_box_shadow": "Text shadow",
     "box_shadow_position": "Position",
     "box_shadow_blur": "Blur",
     "box_shadow_spread": "Blur",
     "box_shadow_color": "Color",
-
     "section_box_background": "background",
     "box_bg_type": "Type",
     "box_bg_type_solid": "Solid",
@@ -302,7 +285,6 @@
     "box_bg_slice_right": "Right",
     "box_bg_slice_bottom": "Bottom",
     "box_bg_slice_left": "Left",
-
     "section_behaviour": "Behaviour",
     "section_behaviour_desc": "Automatic cleanup and animation",
     "section_animation": "Animation",
@@ -312,12 +294,10 @@
     "animation_interval_sentences": "Sentences",
     "animation_emit_event": "Emit event",
     "btn_copy_event_css": "Copy event css",
-
     "section_cleanup": "Cleanup",
     "cleanup_clear_after": "Clear text after",
     "cleanup_clear_animation_delay": "Clear animation delay",
     "cleanup_replace_previous_sentence": "Replace previous sentence",
-
     "section_effects": "Effects",
     "section_effects_desc": "Sound and particles",
     "section_audio": "Audio",
@@ -328,7 +308,6 @@
     "audio_params": "Params",
     "audio_detune": "Detune",
     "audio_playback": "Playback",
-
     "section_particles": "Particles",
     "particles_first": "Particle 1",
     "particles_second": "Particle 2",
@@ -340,7 +319,6 @@
     "particles_direction_y": "Direction Y",
     "particles_scale": "Scale",
     "particles_rotation": "Rotation",
-
     "section_css": "CSS style"
   },
   "avatar": {
@@ -372,5 +350,15 @@
     "install_google": "Install from google fonts",
     "install_google_desc": "Find font at Google Fonts and copypaste it's name here.",
     "btn_install": "Install from file system"
-  }
+  },
+  "Engine": "Engine",
+  "AI Provider": "AI Provider",
+  "API Key": "API Key",
+  "API URL": "API URL",
+  "Model Name": "Model Name",
+  "System Prompt": "System Prompt",
+  "Enable VAD (Auto-transcribe on silence)": "Enable VAD (Auto-transcribe on silence)",
+  "Silence Threshold (dB)": "Silence Threshold (dB)",
+  "Silence Duration (ms)": "Silence Duration (ms)",
+  "Minimum Chunk Duration (ms)": "Minimum Chunk Duration (ms)"
 }

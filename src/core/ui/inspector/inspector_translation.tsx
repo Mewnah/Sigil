@@ -55,8 +55,7 @@ const Inspector_Translation: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><RiTranslate2 /> {t('transl.title')}</Inspector.Header>
     <Inspector.Content>
-      <InputCheckbox label="common.field_action_bar" onChange={handleStart} value={data.showActionButton} />
-      <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
+      <Inspector.SubHeader>Translation Provider</Inspector.SubHeader>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Azure", value: Translation_Backends.azure },
@@ -66,6 +65,12 @@ const Inspector_Translation: FC = () => {
       </Inspector.Deactivatable>
 
       <ServiceButton status={state.status} onStart={() => window.ApiServer.translation.start()} onStop={() => window.ApiServer.translation.stop()} />
+
+      <div className="contents">
+        <div className="h-2" />
+        <InputCheckbox label="common.field_action_bar" onChange={handleStart} value={data.showActionButton} />
+        <InputCheckbox label="common.field_auto_start" value={data.data.autoStart} onChange={e => up("autoStart", e)} />
+      </div>
     </Inspector.Content>
   </Inspector.Body>
 };
