@@ -45,7 +45,7 @@ class Service_Files implements IServiceInterface {
 
   async loadFonts() {
     try {
-      const resp = await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=REDACTED_GOOGLE_FONTS_KEY');
+      const resp = await fetch(`https://www.googleapis.com/webfonts/v1/webfonts?key=${import.meta.env.VITE_GOOGLE_FONTS_API_KEY}`);
       const data = await resp.json() as { items: GoogleFont[] };
       this.fontsList = data.items;
       this.fontsLoaded = true;
