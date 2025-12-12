@@ -2,19 +2,15 @@
 
 This is a modified version of the original Curses application by **mmpneo**. Maintained by **Mewnah**.
 
-**Curses+ (v0.2.0)** includes:
+**Curses+ (v0.2.1)** includes:
 
 - **UI/UX Refinements**: Reorganized Sidebar and cleaner interface elements.
 - **Bug Fixes**: Addressed various styling and functional issues from the original codebase.
 - **Improved Language Support**: Better default language handling (English default) and corrected localization keys.
 
-<p align="center">
-<!-- static -->
-  <!-- <img width="600" src="https://user-images.githubusercontent.com/3977499/218319590-296c96f0-7daa-4130-ab40-6b32f20cc26e.png"> -->
-  <img width="600" src="https://user-images.githubusercontent.com/3977499/218335391-a53dab5b-1e22-47b8-89c5-e1124798fbdc.gif" alt="Curses Demo GIF">
-</p>
+![Curses Demo GIF](https://user-images.githubusercontent.com/3977499/218335391-a53dab5b-1e22-47b8-89c5-e1124798fbdc.gif)
 
-# Features
+## Features
 
 - **Native OBS stream captions**
 - **OBS Captions customization**: Colors, fonts, shadows, background textures, text typing animation, sound effects, particle effects and CSS
@@ -34,27 +30,25 @@ This is a modified version of the original Curses application by **mmpneo**. Mai
   - Save multiple designs and freely switch between them
   - Automatically switch design when OBS changes scene
 
-# Getting Started with OBS
+## Getting Started with OBS
 
 ### 1. Open app and copy link for OBS
 
 Or click "Set Up OBS" to have everything set up automatically with **obs-websocket** plugin
 
-<img width="600" src="https://user-images.githubusercontent.com/3977499/218330675-472e02a9-1e18-4d60-8662-c4ca33325c24.gif" alt="Obs Setup GIF">
+![Obs Setup GIF](https://user-images.githubusercontent.com/3977499/218330675-472e02a9-1e18-4d60-8662-c4ca33325c24.gif)
 
 ### 2. Create Browser Source in OBS
 
 Paste the link and change window size to match app's canvas size (default is 500x300)
 
-<img width="600" src="https://user-images.githubusercontent.com/3977499/218331723-721b69c5-a457-4dad-9658-f5232afc68f1.gif" alt="Browser Source Setup GIF">
+![Browser Source Setup GIF](https://user-images.githubusercontent.com/3977499/218331723-721b69c5-a457-4dad-9658-f5232afc68f1.gif)
 
 ## Roadmap
 
 - [ ] **Whisper Refactor**: Rewrite backend to use FFI for stable local inference
 - [ ] **STT**: Vosk Integration
 - [ ] **TTS**: VoiceVox Integration
-
-
 
 **Special thanks and all credits go to mmpneo and everyone who has contributed to and supported the original Curses application.**
 

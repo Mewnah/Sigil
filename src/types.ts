@@ -33,7 +33,8 @@ export const TextEventSchema = z.object({
   type: TextEventTypeSchema,
   value: z.string().default(""),
   emotes: z.record(z.number().or(z.string()), z.string()).default({}),
-  textFieldType: z.enum(["textField", "twitchChat"]).nullish()
+  textFieldType: z.enum(["textField", "twitchChat"]).nullish(),
+  id: z.number().optional()
 });
 
 export type TextEvent = z.infer<typeof TextEventSchema>;
@@ -45,6 +46,7 @@ export enum TextEventSource {
   translation = "text.translation",
   transform = "text.transform",
   transform_source = "text.transform_source",
+  transform_raw = "text.transform_raw",
 }
 
 // todo rename

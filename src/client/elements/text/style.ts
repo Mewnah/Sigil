@@ -25,6 +25,8 @@ export const elementStyle = `
           box-sizing: border-box;
           width: 100%;
           position: relative;
+          user-select: text;
+          pointer-events: all;
         }
         
         .char.animate {

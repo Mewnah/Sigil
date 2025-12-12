@@ -20,7 +20,7 @@ const Inspector_Transform = () => {
             state.data[key] = value;
         });
         // Restart service if critical config changes AND it is currently running
-        if (status === ServiceNetworkState.connected && ["backend", "provider", "model", "customModel", "openaiModel", "openRouterModel"].includes(key)) {
+        if (status === ServiceNetworkState.connected && ["backend", "provider"].includes(key)) {
             service.start();
         }
     };
@@ -51,8 +51,8 @@ const Inspector_Transform = () => {
                                 label="AI Provider"
                                 value={data.provider}
                                 options={[
-                                    { label: "OpenAI (Cloud)", value: "openai" },
                                     { label: "OpenRouter", value: "openrouter" },
+                                    { label: "OpenAI (Cloud)", value: "openai" },
                                     { label: "Custom", value: "custom" },
                                 ]}
                                 onValueChange={(v) => handleUpdate("provider", v as any)}
@@ -155,10 +155,18 @@ const Inspector_Transform = () => {
 
                     <ServiceButton
                         status={status}
-                        onStart={() => service.start()}
+                        onStart={() => {
+                            console.error("[Inspector] Manual Start Clicked");
+                            service.start();
+                        }}
                         onStop={() => service.stop()}
                     />
                     <div className="h-2" />
+                    <InputCheckbox
+                        label="Enable Context History ✱"
+                        value={data.contextHistory}
+                        onChange={(v) => handleUpdate("contextHistory", v)}
+                    />
                     <InputCheckbox
                         label="common.field_action_bar"
                         value={transformState.showActionButton}
@@ -176,6 +184,9 @@ const Inspector_Transform = () => {
                         value={data.stopWithStream}
                         onChange={(v) => handleUpdate("stopWithStream", v)}
                     />
+                    <div className="text-xs font-medium text-base-content/80 mt-2 px-1">
+                        ✱ Sends previous sentences to AI for better context. Increases token usage slightly.
+                    </div>
                 </form>
             </Inspector.Content>
         </Inspector.Body>

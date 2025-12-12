@@ -26,10 +26,10 @@ interface InputBaseProps {
     labelOptions?: any
 }
 
-export const InputContainer: FC<PropsWithChildren<{ id?: string, vertical?: boolean, label: string, className?: string }>> = memo(({ id, vertical, label, children, className }) => {
+export const InputContainer: FC<PropsWithChildren<{ id?: string, vertical?: boolean, label: string, className?: string, [key: string]: any }>> = memo(({ id, vertical, label, children, className, ...rest }) => {
     const { t } = useTranslation();
     const layout = vertical ? "flex-col space-y-2" : "justify-between items-center"
-    return <div className={cx("flex min-h-8", layout, className)}>
+    return <div className={cx("flex min-h-8", layout, className)} {...rest}>
         <label className="flex-grow font-medium text-base-content/80 text-xs cursor-pointer" htmlFor={id}>{t(label)}</label>
         {children}
     </div>
@@ -209,7 +209,9 @@ export const InputSelect: FC<NewNewSelectProps> = ({ options, ...props }) => {
 
 interface CheckboxTextProps extends InputBaseProps {
     onChange?: (value: boolean) => void,
-    value?: boolean
+    value?: boolean,
+    className?: string,
+    [key: string]: any // Allow data attributes
 }
 
 export const InputDoubleCountainer: FC<PropsWithChildren<{ label: string }>> = ({ label, children }) => {
@@ -221,10 +223,10 @@ export const InputDoubleCountainer: FC<PropsWithChildren<{ label: string }>> = (
 }
 
 
-export const InputCheckbox: FC<CheckboxTextProps> = memo(({ label, value, onChange }) => {
+export const InputCheckbox: FC<CheckboxTextProps> = memo(({ label, value, onChange, className, ...rest }) => {
     const id = useId();
     return (
-        <InputContainer className="input-checkbox" label={label} id={id}>
+        <InputContainer className={cx("input-checkbox", className)} label={label} id={id} {...rest}>
             <input className="toggle toggle-neutral" id={id} type="checkbox" onChange={e => onChange?.(e.target.checked)} checked={value} />
         </InputContainer>
     )

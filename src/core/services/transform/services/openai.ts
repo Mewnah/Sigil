@@ -62,7 +62,7 @@ export class Transform_OpenAIService implements ITransformService {
         this.receiver.onStop();
     }
 
-    async transform(id: number, e: TextEvent): Promise<void> {
+    async transform(id: number, e: TextEvent, history: any[]): Promise<void> {
         if (!this.openai || !e.value.trim()) return;
 
         try {
@@ -70,9 +70,10 @@ export class Transform_OpenAIService implements ITransformService {
                 model: this.model || "gpt-3.5-turbo",
                 messages: [
                     { role: "system", content: this.systemPrompt },
+                    ...history,
                     { role: "user", content: e.value },
                 ],
-                max_tokens: 100, // Keep it short for captions
+                max_tokens: 100,
             });
 
             const result = response.choices[0]?.message?.content?.trim();
@@ -81,8 +82,6 @@ export class Transform_OpenAIService implements ITransformService {
             }
         } catch (error: any) {
             console.error("OpenAI Transform Error:", error);
-            // Optionally notify error via toast or console, but don't stop the service
-            // this.receiver.onStop(`API Error: ${error.message}`);
         }
     }
 }

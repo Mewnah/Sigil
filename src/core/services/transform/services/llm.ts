@@ -50,7 +50,7 @@ export class Transform_LLMService implements ITransformService {
         console.log(`[LLM] STARTING. Key Present: ${apiKey !== "dummy"} (${apiKey.substring(0, 8)}...)`);
 
         const defaultHeaders: Record<string, string> = {
-            "Authorization": `Bearer ${apiKey}`, // Ensure Auth header is explicit
+            // "Authorization": `Bearer ${apiKey}`, // SDK handles this
         };
 
         if (data.provider === "openrouter") {
@@ -80,18 +80,26 @@ export class Transform_LLMService implements ITransformService {
         this.receiver.onStop();
     }
 
-    async transform(id: number, e: TextEvent): Promise<void> {
+    async transform(id: number, e: TextEvent, history: any[] = []): Promise<void> {
         if (!this.openai || !e.value.trim()) return;
 
         try {
-            const response = await this.openai.chat.completions.create({
+            const completionPromise = this.openai.chat.completions.create({
                 model: this.model,
                 messages: [
                     { role: "system", content: this.systemPrompt },
+                    ...history, // Inject Context History
                     { role: "user", content: e.value },
                 ],
                 max_tokens: 100,
             });
+
+            // Timeout after 15 seconds to ensure responsiveness
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("AI Request Timeout")), 15000)
+            );
+
+            const response = await Promise.race([completionPromise, timeoutPromise]) as any;
 
             if (!response || !response.choices || response.choices.length === 0) {
                 throw new Error(`Invalid response from ${this.model}: No choices returned.`);
@@ -111,6 +119,9 @@ export class Transform_LLMService implements ITransformService {
 
             if (error?.status === 429) {
                 this.receiver.onTransform(id, e, "[AI Rate Limited]");
+            } else {
+                // Fallback to original text on error to ensure sync timing doesn't hang
+                this.receiver.onTransform(id, e, e.value);
             }
         }
     }

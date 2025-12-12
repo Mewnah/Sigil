@@ -16,6 +16,7 @@ type SentenceState = {
   profanityCursorList: Record<number, any>
   isAnimated: boolean,
   emotes: Record<number, string>
+  id?: number
 }
 
 class TextController {
@@ -226,18 +227,29 @@ class TextController {
   }
 
   enqueueSentence(event: TextEvent) {
+    if (this.currentState.sourceMain === TextEventSource.transform_source) {
+      // console.log("[TextController] Received event for Sync Timing", event);
+    }
+
     if (!this.currentState.sourceInterim && event?.type === TextEventType.interim) {
       return;
+    }
+
+    // Try to find target sentence by ID first (Robust), then by Interim status (Legacy)
+    let targetIndex = -1;
+    if (event.id !== undefined) {
+      targetIndex = this.sentenceQueue.findIndex(s => s.id === event.id);
+    } else if (event.type === TextEventType.interim || event.type === TextEventType.final) {
+      // Fallback: assume the first interim sentence is the target for update
+      targetIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim);
     }
 
     // insert animated text (ONLY for final events)
     if (this.currentState.animateEnable) {
 
-      const interimIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim);
-
-      if (interimIndex !== -1) {
-        // Update existing interim sentence
-        const sentence = this.sentenceQueue[interimIndex];
+      if (targetIndex !== -1) {
+        // Update existing sentence
+        const sentence = this.sentenceQueue[targetIndex];
         const oldText = sentence.text;
         const newText = event.value;
 
@@ -261,6 +273,7 @@ class TextController {
           sentence.profanityCursorList[v.index as number] = true;
         }
 
+        // If transitioning to final, remove interim class
         if (event.type === TextEventType.final) {
           sentence.element.classList.remove("interim");
         }
@@ -274,6 +287,7 @@ class TextController {
       } else {
         // Create new sentence
         const sentenceState: SentenceState = {
+          id: event.id,
           type: event.type,
           element: document.createElement("span"),
           text: event.value,
@@ -301,8 +315,6 @@ class TextController {
     }
     // insert static text (OR interim text for animation mode)
     else {
-      const interimIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim); // todo cache index
-
       let filteredText = escapeHTML(event.value).replaceAll(/[^\s\.,?!]*\*+[^\s\.,?!]*/gi, `<span class="${event.type === TextEventType.interim ? 'interim' : ''} profanity">${this.currentState.textProfanityMask}</span>`);
       for (let emoteKey in event.emotes) {
         // ignore cursors
@@ -314,13 +326,13 @@ class TextController {
       // add space
       filteredText += " ";
 
-      // update interim
-      if (interimIndex !== -1) {
+      // update existing
+      if (targetIndex !== -1) {
 
-        // remove interim / drop active state
+        // remove sentence / drop active state
         if (event.value === "") {
-          this.sentenceQueue[interimIndex].element?.remove?.();
-          this.sentenceQueue.splice(interimIndex, 1);
+          this.sentenceQueue[targetIndex].element?.remove?.();
+          this.sentenceQueue.splice(targetIndex, 1);
 
           if (!this.sentenceQueue.length) {
             this.boxElement.classList.remove("active");
@@ -328,8 +340,8 @@ class TextController {
           return;
         }
 
-        const sentenceElement = this.sentenceQueue[interimIndex].element;
-        this.sentenceQueue[interimIndex].type = event.type;
+        const sentenceElement = this.sentenceQueue[targetIndex].element;
+        this.sentenceQueue[targetIndex].type = event.type;
         if (sentenceElement) {
           sentenceElement.innerHTML = filteredText;
           // final
@@ -341,6 +353,7 @@ class TextController {
       else {
         // create new sentence
         const sentenceState: SentenceState = {
+          id: event.id,
           type: event.type,
           element: document.createElement("span"),
           text: event.value,

@@ -1,7 +1,7 @@
 {
   "package": {
-    "productName": "curses+",
-    "version": "0.2.0"
+    "productName": "Curses+",
+    "version": "0.2.1"
   },
   "build": {
     "beforeDevCommand": "pnpm dev --host",

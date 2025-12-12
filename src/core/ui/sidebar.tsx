@@ -18,7 +18,7 @@ import {
 import { MdExtension } from "react-icons/md";
 import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
 import { TbArrowBarToLeft, TbArrowBarToRight, TbTextResize } from "react-icons/tb";
-import { useSnapshot } from "valtio";
+import { useSnapshot, proxy } from "valtio";
 import { Services } from "../index";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
@@ -120,7 +120,7 @@ const ElementList: FC = memo(() => {
 const Sidebar: FC = memo(() => {
   const { t } = useTranslation();
   const { sidebarState: { tab, show, expand } } = useSnapshot(window.ApiServer.ui);
-  const { showOverlay } = useSnapshot(window.ApiServer.state);
+  const { showOverlay } = useSnapshot(window.ApiServer.state || proxy({}));
 
   useEffect(() => {
     if (showOverlay && show)

@@ -29,7 +29,7 @@ const GeneralInspector: FC<{ id: string }> = ({ id }) => {
   return <>
     <Inspector.SubHeader>Element Settings</Inspector.SubHeader>
     <TransformInput id={id} />
-    <InputCheckbox label="text.field_preview" value={data[activeScene]?.data?.previewMode} onChange={e => up("previewMode", e)} />
+
   </>
 }
 
@@ -39,7 +39,8 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
   const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
-  const isSynced = data.sourceMain === TextEventSource.transform_source;
+  const isSynced = data.sourceMain === TextEventSource.transform_raw;
+  // Show option if we are on Raw STT or already on Synced Raw
   const showSyncOption = data.sourceMain === TextEventSource.stt || isSynced;
 
   return <>
@@ -56,7 +57,8 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
           label="stt.field_sync_timing"
           value={isSynced}
           onChange={(v) => {
-            if (v) up("sourceMain", TextEventSource.transform_source);
+            // User requested Sync Timing to switch to Synced Raw
+            if (v) up("sourceMain", TextEventSource.transform_raw);
             else up("sourceMain", TextEventSource.stt);
           }}
         />
@@ -64,6 +66,7 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
 
       <InputCheckbox label="common.field_interim_results" value={data.sourceInterim} onChange={e => up("sourceInterim", e)} />
       <InputCheckbox label="common.field_use_keyboard_input" value={data.sourceInputField} onChange={e => up("sourceInputField", e)} />
+      <InputCheckbox label="text.field_preview" value={data.previewMode} onChange={e => up("previewMode", e)} />
     </div>
     <InputText label="text.field_text_profanity_mask" value={data.textProfanityMask} onChange={e => up("textProfanityMask", e.target.value)} />
   </>
@@ -333,8 +336,8 @@ const Inspector_ElementText: FC<{ id: string }> = memo(({ id }) => {
     <Inspector.Header><TbTextResize /> <NameInput id={id} /></Inspector.Header>
     {isInScene && <Inspector.Content>
       <Inspector.Tabs>
-        <Inspector.Tab tooltip="Element Settings" onClick={() => handleTab(0)} active={tab === 0}><RiDragMove2Fill /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_text_source')} tooltipBody={t('text.section_text_source_desc')} onClick={() => handleTab(1)} active={tab === 1}><IoIosRadio /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_text_source')} tooltipBody={t('text.section_text_source_desc')} onClick={() => handleTab(0)} active={tab === 0}><IoIosRadio /></Inspector.Tab>
+        <Inspector.Tab tooltip="Element Settings" onClick={() => handleTab(1)} active={tab === 1}><RiDragMove2Fill /></Inspector.Tab>
         <Inspector.Tab tooltip={t('text.section_font')} tooltipBody={t('text.section_font_desc')} onClick={() => handleTab(2)} active={tab === 2}><RiFontSize /></Inspector.Tab>
         <Inspector.Tab tooltip={t('text.section_box')} tooltipBody={t('text.section_box_desc')} onClick={() => handleTab(3)} active={tab === 3}><BsTextareaResize /></Inspector.Tab>
         <Inspector.Tab tooltip={t('text.section_behaviour')} tooltipBody={t('text.section_behaviour_desc')} onClick={() => handleTab(4)} active={tab === 4}><VscSettings /></Inspector.Tab>
@@ -342,8 +345,8 @@ const Inspector_ElementText: FC<{ id: string }> = memo(({ id }) => {
         <Inspector.Tab tooltip={t('text.section_css')} onClick={() => handleTab(6)} active={tab === 6}><SiCsswizardry /></Inspector.Tab>
       </Inspector.Tabs>
       <Inspector.TabsContent direction={direction} tabKey={tab}>
-        {tab === 0 && <GeneralInspector id={id} />}
-        {tab === 1 && <SourceInspector id={id} />}
+        {tab === 0 && <SourceInspector id={id} />}
+        {tab === 1 && <GeneralInspector id={id} />}
         {tab === 2 && <TextInspector id={id} />}
         {tab === 3 && <BoxInspector id={id} />}
         {tab === 4 && <BehaviourInspector id={id} />}

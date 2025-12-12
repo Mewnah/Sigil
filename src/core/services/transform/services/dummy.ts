@@ -12,7 +12,7 @@ export class Transform_DummyService implements ITransformService {
         this.receiver.onStop();
     }
 
-    transform(id: number, e: TextEvent): void {
+    transform(id: number, e: TextEvent, history: any[]): void {
         const transformed = e.value.toUpperCase() + " (AI)";
         this.receiver.onTransform(id, e, transformed);
     }
