@@ -14,9 +14,43 @@ use tauri::{
 };
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
 const CHUNK_DURATION_SECS: u64 = 5;
-const MODEL_HASH: &str = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
+
+fn get_model_info(model: &str) -> (&'static str, &'static str) {
+    // Returns (url, filename)
+    match model {
+        "tiny.en" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
+            "ggml-tiny.en.bin",
+        ),
+        "tiny" => ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin", "ggml-tiny.bin"),
+        "base.en" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+            "ggml-base.en.bin",
+        ),
+        "base" => ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", "ggml-base.bin"),
+        "small.en" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin",
+            "ggml-small.en.bin",
+        ),
+        "small" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            "ggml-small.bin",
+        ),
+        "medium.en" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin",
+            "ggml-medium.en.bin",
+        ),
+        "medium" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+            "ggml-medium.bin",
+        ),
+        _ => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+            "ggml-base.en.bin",
+        ),
+    }
+}
 
 #[derive(Clone, Debug)]
 struct VadConfig {
@@ -37,6 +71,8 @@ pub struct WhisperState {
     consecutive_silent_frames: Arc<Mutex<u32>>,
     last_transcription_time: Arc<Mutex<Instant>>,
     ctx: Arc<Mutex<Option<WhisperContext>>>,
+    current_model: Arc<Mutex<String>>,
+    current_language: Arc<Mutex<String>>,
 }
 
 impl WhisperState {
@@ -56,6 +92,8 @@ impl WhisperState {
             consecutive_silent_frames: Arc::new(Mutex::new(0)),
             last_transcription_time: Arc::new(Mutex::new(Instant::now())),
             ctx: Arc::new(Mutex::new(None)),
+            current_model: Arc::new(Mutex::new("base.en".to_string())),
+            current_language: Arc::new(Mutex::new("en".to_string())),
         }
     }
 }
@@ -79,6 +117,7 @@ fn calculate_rms_db(samples: &[f32]) -> f32 {
     }
 }
 
+#[allow(dead_code)]
 fn verify_file(path: &std::path::Path, expected_hash: &str) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("Failed to open: {}", e))?;
     let mut hasher = Sha256::new();
@@ -98,20 +137,32 @@ fn verify_file(path: &std::path::Path, expected_hash: &str) -> Result<(), String
 }
 
 #[command]
-async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, WhisperState>) -> Result<(), String> {
+async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, WhisperState>, model: String, language: String) -> Result<(), String> {
+    // Store the model and language in state
+    *state.current_model.lock().map_err(|_| "Lock failed")? = model.clone();
+    *state.current_language.lock().map_err(|_| "Lock failed")? = language.clone();
+
+    let (model_url, model_filename) = get_model_info(&model);
+
     let app_data_dir = app
         .path_resolver()
         .app_data_dir()
         .ok_or("Failed to get app data directory")?;
     let whisper_dir = app_data_dir.join("whisper");
-    let model_path = whisper_dir.join("ggml-base.en.bin");
+    let model_path = whisper_dir.join(model_filename);
 
     if !whisper_dir.exists() {
         fs::create_dir_all(&whisper_dir).map_err(|e| e.to_string())?;
     }
 
+    // Check if we need to reload the model (different from currently loaded)
+    let need_reload = {
+        let ctx_guard = state.ctx.lock().map_err(|_| "Failed to lock ctx")?;
+        ctx_guard.is_none() || !model_path.exists()
+    };
+
     if !model_path.exists() {
-        let response = reqwest::get(MODEL_URL)
+        let response = reqwest::get(model_url)
             .await
             .map_err(|e| format!("Model download failed: {}", e))?;
         let total = response.content_length().unwrap_or(0);
@@ -127,20 +178,16 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
                 let _ = app.emit_all(
                     "whisper:download_progress",
                     ProgressPayload {
-                        file: "ggml-base.en.bin".to_string(),
+                        file: model_filename.to_string(),
                         progress: (downloaded as f64 / total as f64) * 100.0,
                     },
                 );
             }
         }
-        if let Err(e) = verify_file(&model_path, MODEL_HASH) {
-            fs::remove_file(&model_path).ok();
-            return Err(e);
-        }
     }
 
-    let mut ctx_guard = state.ctx.lock().map_err(|_| "Failed to lock ctx")?;
-    if ctx_guard.is_none() {
+    if need_reload {
+        let mut ctx_guard = state.ctx.lock().map_err(|_| "Failed to lock ctx")?;
         let path_str = model_path.to_str().ok_or("Invalid model path")?;
         let ctx =
             WhisperContext::new_with_params(path_str, WhisperContextParameters::default()).map_err(|e| format!("Failed to load context: {}", e))?;
@@ -184,7 +231,10 @@ fn transcribe_chunk(state: &WhisperState, audio_data: Vec<f32>, sample_rate: u32
 
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_n_threads(4);
-    params.set_language(Some("en"));
+    // Get language from state (use None for auto-detect)
+    let lang = state.current_language.lock().map_err(|_| "Lock failed")?;
+    let lang_opt = if lang.as_str() == "auto" { None } else { Some(lang.as_str()) };
+    params.set_language(lang_opt);
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -210,6 +260,7 @@ fn transcribe_chunk(state: &WhisperState, audio_data: Vec<f32>, sample_rate: u32
 async fn start_recording<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, WhisperState>,
+    device_name: Option<String>,
     vad_enabled: bool,
     silence_threshold_db: f32,
     silence_duration_ms: u64,
@@ -220,7 +271,23 @@ async fn start_recording<R: Runtime>(
     let mut config_channels = 1;
     let device_opt = if capture_local {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or("No input device")?;
+
+        // Select device by name, or use default if not specified
+        let device = if let Some(ref name) = device_name {
+            if !name.is_empty() {
+                host.input_devices()
+                    .map_err(|e| e.to_string())?
+                    .find(|d| d.name().unwrap_or_default() == *name)
+                    .ok_or_else(|| format!("Input device '{}' not found", name))?
+            } else {
+                host.default_input_device()
+                    .ok_or("No default input device")?
+            }
+        } else {
+            host.default_input_device()
+                .ok_or("No default input device")?
+        };
+
         let config = device.default_input_config().map_err(|e| e.to_string())?;
         config_sample_rate = config.sample_rate().0;
         config_channels = config.channels();

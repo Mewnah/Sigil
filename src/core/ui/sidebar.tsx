@@ -23,6 +23,13 @@ import { Services } from "../index";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { InspectorTabPath, ServiceNetworkState } from "@/types";
+
+// Kick logo as inline SVG component
+const KickIcon: FC<{ size?: number }> = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor">
+    <path d="M115.2 0h76.8v204.8L345.6 0H448L268.8 230.4 460.8 512H345.6L192 281.6V512h-76.8V0z" />
+  </svg>
+);
 import Dropdown from "./dropdown/Dropdown";
 import Tooltip from "./dropdown/Tooltip";
 import Inspector from "./inspector";
@@ -157,6 +164,7 @@ const Sidebar: FC = memo(() => {
           <div className="flex flex-col transition-spacing space-y-1">
             <SideBarButton tab={{ tab: "obs" }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
             <SideBarButton tab={{ tab: Services.twitch }} tooltip={t("twitch.title")}><SiTwitch /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.kick }} tooltip="Kick"><KickIcon /></SideBarButton>
             <SideBarButton tab={{ tab: Services.discord }} tooltip={t("discord.title")}><SiDiscord /></SideBarButton>
             <SideBarButton tab={{ tab: Services.vrc }} tooltip={t("vrc.title")}><RiMessage2Fill /></SideBarButton>
           </div>

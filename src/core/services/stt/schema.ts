@@ -8,8 +8,8 @@ export enum STT_Backends {
   browser = "browser",
   azure = "azure",
   deepgram = "deepgram",
-  speechly = "speechly",
   whisper = "whisper",
+  vosk = "vosk",
 }
 
 export const zodSTT_Backends = z.nativeEnum(STT_Backends);
@@ -23,13 +23,13 @@ export const Service_STT_Schema = z.object({
   replaceWordsIgnoreCase: zSafe(z.coerce.boolean(), false),
   replaceWordsPreserveCase: zSafe(z.coerce.boolean(), false),
   native: z.object({
-    language_group: zSafe(z.coerce.string(), ""),
-    language: zSafe(z.coerce.string(), ""),
+    language_group: zSafe(z.coerce.string(), "English"),
+    language: zSafe(z.coerce.string(), "en-US"),
   }).default({}),
   azure: z.object({
     device: zSafe(z.coerce.string(), "default"),
-    language_group: zSafe(z.coerce.string(), ""),
-    language: zSafe(z.coerce.string(), ""),
+    language_group: zSafe(z.coerce.string(), "English"),
+    language: zSafe(z.coerce.string(), "en-US"),
     secondary_language_group: zSafe(z.coerce.string(), ""),
     secondary_language: zSafe(z.coerce.string(), ""),
     use_secondary_language: zSafe(z.coerce.boolean(), true),
@@ -39,12 +39,10 @@ export const Service_STT_Schema = z.object({
     silenceTimeout: zSafe(zStringNumber(), "20"),
     interim: zSafe(z.coerce.boolean(), true),
   }).default({}),
-  speechly: z.object({
-    device: zSafe(z.coerce.string(), ""),
-    key: zSafe(z.coerce.string(), ""),
-  }).default({}),
   whisper: z.object({
+    device: zSafe(z.coerce.string(), ""),
     model: zSafe(z.coerce.string(), "base.en"),
+    language: zSafe(z.coerce.string(), "en"),
     vadEnabled: zSafe(z.coerce.boolean(), true),
     silenceThresholdDb: zSafe(zStringNumber(), "-40"),
     silenceDurationMs: zSafe(zStringNumber(), "1500"),
@@ -52,13 +50,18 @@ export const Service_STT_Schema = z.object({
   }).default({}),
   deepgram: z.object({
     device: zSafe(z.coerce.string(), "default"),
-    language_group: zSafe(z.coerce.string(), ""),
-    language: zSafe(z.coerce.string(), ""),
+    language_group: zSafe(z.coerce.string(), "English"),
+    language: zSafe(z.coerce.string(), "en-US"),
     tier: zSafe(z.coerce.string(), ""),
     key: zSafe(z.coerce.string(), ""),
     punctuate: zSafe(z.coerce.boolean(), true),
     profanity: zSafe(z.coerce.boolean(), true),
     interim: zSafe(z.coerce.boolean(), true),
+  }).default({}),
+  vosk: z.object({
+    device: zSafe(z.coerce.string(), ""),
+    model: zSafe(z.coerce.string(), "vosk-model-small-en-us-0.15"),
+    modelUrl: zSafe(z.coerce.string(), ""),
   }).default({})
 }).default({});
 

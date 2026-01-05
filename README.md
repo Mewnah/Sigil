@@ -1,55 +1,118 @@
-# About Curses+
+# Sigil
 
-This is a modified version of the original Curses application by **mmpneo**. Maintained by **Mewnah**.
+**A comprehensive voice communication suite for VRChat and streaming.**
 
-**Curses+ (v0.2.1)** includes:
+Sigil is a powerful, open-source application for real-time speech-to-text, text-to-speech, translation, and stream captioning. Built for the VRChat community and streamers who need accessible, customizable voice tools.
 
-- **UI/UX Refinements**: Reorganized Sidebar and cleaner interface elements.
-- **Bug Fixes**: Addressed various styling and functional issues from the original codebase.
-- **Improved Language Support**: Better default language handling (English default) and corrected localization keys.
+![Demo](https://user-images.githubusercontent.com/3977499/218335391-a53dab5b-1e22-47b8-89c5-e1124798fbdc.gif)
 
-![Curses Demo GIF](https://user-images.githubusercontent.com/3977499/218335391-a53dab5b-1e22-47b8-89c5-e1124798fbdc.gif)
+## ✨ Features
 
-## Features
+### Speech Recognition (STT)
 
-- **Native OBS stream captions**
-- **OBS Captions customization**: Colors, fonts, shadows, background textures, text typing animation, sound effects, particle effects and CSS
-- **AI Transform**: Rewrite your voice in real-time using OpenAI, OpenRouter, or Local LLMs
-- **Synchronized Subtitles**: Display original text alongside AI-transformed text with perfect timing
-- **Canvas Editor**: Drag & Drop interface with Snap-to-Grid and smart element alignment
-- **Speech to Text**: [Microsoft Azure](https://azure.microsoft.com/en-au/products/cognitive-services/speech-to-text/), [Deepgram](https://deepgram.com/), WebSpeechApi (Chrome/Edge), Local OpenAI Whisper (beta)
-- **Text to Speech**: [Microsoft Azure](https://azure.microsoft.com/en-us/products/cognitive-services/text-to-speech/), [Uberduck](https://uberduck.ai/), TikTok, Windows API (SAPI), WebSpeechAPI
-- **VRChat**: [KillFrenzy Avatar text](https://github.com/killfrenzy96/KillFrenzyAvatarText), VRChat's chatbox
-- **Twitch**:
-  - Use 7TV/FFZ/BTTV emotes in OBS captions
-  - Post your STT to chat
-  - Use your chat messages as a source for captions and TTS
-  - native captions
-- **Discord**: Send your STT to specified channel
-- **Scenes**:
-  - Save multiple designs and freely switch between them
-  - Automatically switch design when OBS changes scene
+- **Local Whisper** - Privacy-focused, runs entirely on your machine
+- **Microsoft Azure** - Cloud-based with high accuracy
+- **Deepgram** - Real-time streaming transcription
+- **WebSpeech API** - Browser-based (Chrome/Edge)
+- *Coming Soon: Vosk integration*
 
-## Getting Started with OBS
+### Text-to-Speech (TTS)
 
-### 1. Open app and copy link for OBS
+- **Microsoft Azure** - Natural-sounding voices
+- **Windows SAPI** - Built-in system voices
+- **TikTok Voices** - Trending voice styles
+- **WebSpeech API** - Browser-based synthesis
+- *Coming Soon: VoiceVox integration*
 
-Or click "Set Up OBS" to have everything set up automatically with **obs-websocket** plugin
+### AI Transform
 
-![Obs Setup GIF](https://user-images.githubusercontent.com/3977499/218330675-472e02a9-1e18-4d60-8662-c4ca33325c24.gif)
+- Rewrite your speech in real-time using AI
+- Support for **OpenAI**, **OpenRouter**, and **Local LLMs**
+- Display original and transformed text side-by-side
 
-### 2. Create Browser Source in OBS
+### Streaming Integration
 
-Paste the link and change window size to match app's canvas size (default is 500x300)
+- **OBS Studio** - Native browser source captions
+- **Twitch** - Post to chat, use 7TV/FFZ/BTTV emotes
+- **Kick** - Full OAuth integration with chat support
+- **Discord** - Send transcriptions to channels
 
-![Browser Source Setup GIF](https://user-images.githubusercontent.com/3977499/218331723-721b69c5-a457-4dad-9658-f5232afc68f1.gif)
+### VRChat
 
-## Roadmap
+- **KillFrenzy Avatar Text** support
+- Native VRChat chatbox integration
+- Real-time subtitle display
 
-- [ ] **Whisper Refactor**: Rewrite backend to use FFI for stable local inference
-- [ ] **STT**: Vosk Integration
-- [ ] **TTS**: VoiceVox Integration
+### Customization
 
-**Special thanks and all credits go to mmpneo and everyone who has contributed to and supported the original Curses application.**
+- Canvas editor with drag & drop
+- Custom fonts, colors, shadows, backgrounds
+- Text animations and particle effects
+- Multiple scenes with auto-switching
 
-**Without them, none of this would be possible.**
+## 🚀 Getting Started
+
+### Quick Setup with OBS
+
+1. **Open Sigil** and copy the browser source link
+2. **Create a Browser Source** in OBS
+3. Paste the link and set dimensions to match canvas (default: 500x300)
+
+*Or click "Set Up OBS" for automatic configuration via obs-websocket.*
+
+![OBS Setup](https://user-images.githubusercontent.com/3977499/218330675-472e02a9-1e18-4d60-8662-c4ca33325c24.gif)
+
+## 🗺️ Roadmap
+
+- [ ] Whisper FFI backend for stable local inference
+- [ ] Vosk STT integration
+- [ ] VoiceVox TTS integration
+- [ ] Lightweight voice changer
+- [ ] ASL-to-text (experimental)
+
+## 🛠️ Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Run in development mode
+pnpm tauri dev
+
+# Build for production
+pnpm tauri build
+```
+
+### Environment Variables
+
+Create a `.env` file with your OAuth credentials:
+
+```env
+# Twitch (https://dev.twitch.tv/console/apps)
+SIGIL_TWITCH_CLIENT_ID=your_client_id
+
+# Kick (https://kick.com/settings/developer)
+SIGIL_KICK_CLIENT_ID=your_client_id
+SIGIL_KICK_CLIENT_SECRET=your_client_secret
+```
+
+---
+
+## 🙏 Credits & Acknowledgments
+
+**Sigil is built upon the foundation of [Curses](https://github.com/mmpneo/curses) by mmpneo.**
+
+This project would not exist without the incredible work of **mmpneo** and everyone who contributed to and supported the original Curses application. Sigil continues their vision of making communication accessible to everyone.
+
+### Special Thanks
+
+- **mmpneo** - Original creator of Curses
+- **The Curses community** - For feedback, bug reports, and support
+- **VRChat community** - For inspiring accessible communication tools
+- All open-source contributors who made this possible
+
+**If you enjoy Sigil, please consider starring the original [Curses repository](https://github.com/mmpneo/curses) to show your appreciation.**
+
+---
+
+Made with 💜 for the VRChat community

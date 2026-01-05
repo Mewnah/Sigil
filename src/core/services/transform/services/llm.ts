@@ -41,7 +41,8 @@ export class Transform_LLMService implements ITransformService {
         if (!apiKey) {
             // Allow dummy key if custom (local LLM might not need it, but SDK requires string)
             if (data.provider !== "custom") {
-                this.receiver.onStop(`API Key missing for ${data.provider}`);
+                // Silently stop - don't show error on app startup if no key configured yet
+                this.receiver.onStop();
                 return;
             }
             apiKey = "dummy";
@@ -55,7 +56,7 @@ export class Transform_LLMService implements ITransformService {
 
         if (data.provider === "openrouter") {
             defaultHeaders["HTTP-Referer"] = "https://github.com/mmpneo/curses"; // Using repo URL as referer
-            defaultHeaders["X-Title"] = "Curses+";
+            defaultHeaders["X-Title"] = "Sigil";
         }
 
         try {

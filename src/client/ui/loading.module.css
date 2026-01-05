@@ -1,3 +1,5 @@
+@reference "tailwindcss";
+
 .screen {
   font-family: Outfit;
   display: flex;

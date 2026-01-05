@@ -169,9 +169,9 @@ export const InputSelect: FC<NewNewSelectProps> = ({ options, ...props }) => {
     return (
         <InputContainer label={props.label} id={id}>
             <RadixSelect.Root key={props.value} {...props}>
-                <RadixSelect.Trigger id={id} className="input relative input-sm pr-4 truncate input-bordered field-width font-semibold text-start">
-                    <RadixSelect.Value placeholder="Select" />
-                    <RadixSelect.Icon className="text-primary absolute right-1 self-center top-2">
+                <RadixSelect.Trigger id={id} className="input relative input-sm input-bordered field-width font-semibold text-start flex items-center justify-between gap-1">
+                    <span className="truncate flex-1 min-w-0"><RadixSelect.Value placeholder="Select" /></span>
+                    <RadixSelect.Icon className="text-primary flex-shrink-0">
                         <HiChevronDown />
                     </RadixSelect.Icon>
                 </RadixSelect.Trigger>
@@ -227,7 +227,7 @@ export const InputCheckbox: FC<CheckboxTextProps> = memo(({ label, value, onChan
     const id = useId();
     return (
         <InputContainer className={cx("input-checkbox", className)} label={label} id={id} {...rest}>
-            <input className="toggle toggle-neutral" id={id} type="checkbox" onChange={e => onChange?.(e.target.checked)} checked={value} />
+            <input className="toggle toggle-primary" id={id} type="checkbox" onChange={e => onChange?.(e.target.checked)} checked={value} />
         </InputContainer>
     )
 })

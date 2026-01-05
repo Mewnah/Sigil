@@ -43,7 +43,7 @@ class Service_Discord implements IServiceInterface {
         body: JSON.stringify({
           content: value,
           embeds: null,
-          username: this.#state.data.channelBotName || "Curses",
+          username: this.#state.data.channelBotName || "Sigil",
           avatar_url: this.#state.data.channelAvatarUrl || "",
           attachments: [],
         }),

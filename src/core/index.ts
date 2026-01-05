@@ -11,6 +11,7 @@ import Service_Translation from "./services/translation";
 import Service_Transform from "./services/transform";
 import Service_TTS from "./services/tts";
 import Service_Twitch from "./services/twitch";
+import Service_Kick from "./services/kick";
 import Service_VRC from "./services/vrc";
 import { changeLanguage, initI18n } from '@/i18n';
 
@@ -21,6 +22,7 @@ export enum Services {
   translation = "translation",
   transform = "transform",
   twitch = "twitch",
+  kick = "kick",
   discord = "discord",
 }
 
@@ -33,6 +35,7 @@ class ApiServer {
   public readonly translation = new Service_Translation();
   public readonly transform = new Service_Transform();
   public readonly twitch = new Service_Twitch();
+  public readonly kick = new Service_Kick();
   public readonly discord = new Service_Discord();
   public readonly vrc = new Service_VRC();
   public readonly obs = new Service_OBS();
@@ -103,6 +106,7 @@ class ApiServer {
     // Initialize services in parallel
     const results = await Promise.allSettled([
       this.twitch.init(),
+      this.kick.init(),
       this.discord.init(),
       this.stt.init(),
       this.tts.init(),

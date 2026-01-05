@@ -1,6 +1,7 @@
 import { customAlphabet, urlAlphabet } from "nanoid";
 import { Service_Discord_Schema } from "./services/discord/schema";
 import { Service_OBS_Schema } from "./services/obs/schema";
+import { Service_Kick_Schema } from "./services/kick/schema";
 import { Service_STT_Schema } from "./services/stt/schema";
 import { Service_Translation_Schema } from "./services/translation/schema";
 import { Service_Transform_Schema } from "./services/transform/schema";
@@ -21,12 +22,14 @@ const zodServiceSchemaFactory = <Data extends z.ZodDefault<z.AnyZodObject>>(sche
 export const BackendSchema = z.object({
   id: zSafe(z.string(), () => customAlphabet(urlAlphabet, 42)()),
   linkAddress: zSafe(z.string(), ""),
-  clientTheme: zSafe(z.string(), "curses"),
+  clientTheme: zSafe(z.string(), "sigil"),
   uiScale: zSafe(z.number(), 1),
   uiLanguage: zSafe(z.string(), "en"),
   showOverlay: zSafe(z.coerce.boolean(), false),
   showLogs: zSafe(z.coerce.boolean(), false),
   muteSoundEffects: zSafe(z.coerce.boolean(), false),
+  audioInputDevice: zSafe(z.string(), ""),
+  audioOutputDevice: zSafe(z.string(), ""),
   showOverlayLogs: zSafe(z.coerce.boolean(), false),
   backgroundInputTimer: zSafe(zStringNumber(), "5000"),
   shortcuts: z.object({
@@ -42,6 +45,7 @@ export const BackendSchema = z.object({
     translation: zodServiceSchemaFactory(Service_Translation_Schema).default({}),
     transform: zodServiceSchemaFactory(Service_Transform_Schema).default({}),
     twitch: zodServiceSchemaFactory(Service_Twitch_Schema).default({}),
+    kick: zodServiceSchemaFactory(Service_Kick_Schema).default({}),
     discord: zodServiceSchemaFactory(Service_Discord_Schema).default({}),
     obs: zodServiceSchemaFactory(Service_OBS_Schema).default({}),
   }).default({})

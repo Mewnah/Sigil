@@ -3,15 +3,68 @@ import { ServiceNetworkState } from "@/types";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { FC, useState, useEffect } from "react";
-import { RiCharacterRecognitionFill, RiUserVoiceFill, RiGlobalLine } from "react-icons/ri";
+import { RiCharacterRecognitionFill, RiUserVoiceFill, RiGlobalLine, RiRefreshLine } from "react-icons/ri";
 import { SiGooglechrome, SiMicrosoftedge } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/stt_data";
+import { VOSK_MODELS } from "../../services/stt/services/vosk";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
 import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
 import { useTranslation } from 'react-i18next';
+import classNames from "classnames";
+
+// Rust-based input device selector
+interface AudioDevice {
+  id: string;
+  name: string;
+}
+
+const RustInputDeviceSelect: FC<{ label: string; value: string; onChange: (value: string) => void }> = ({ label, value, onChange }) => {
+  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadDevices = async () => {
+    setLoading(true);
+    try {
+      const result = await invoke<AudioDevice[]>("plugin:audio|list_input_devices");
+      setDevices(result);
+    } catch (error) {
+      console.error("Failed to load input devices:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDevices();
+  }, []);
+
+  return (
+    <div className="grid grid-cols-2 items-center gap-2">
+      <div className="flex items-center gap-1">
+        <span className="text-sm font-semibold truncate">{label}</span>
+        <button
+          className={classNames("btn btn-xs btn-ghost btn-circle", { loading })}
+          onClick={loadDevices}
+          disabled={loading}
+          title="Refresh devices"
+        >
+          <RiRefreshLine />
+        </button>
+      </div>
+      <InputSelect
+        value={value}
+        onValueChange={onChange}
+        options={[
+          { label: "System Default", value: "" },
+          ...devices.map(d => ({ label: d.name, value: d.id }))
+        ]}
+      />
+    </div>
+  );
+};
 
 const Native: FC = () => {
   const { t } = useTranslation();
@@ -134,7 +187,7 @@ const Deepgram: FC = () => {
     <Inspector.SubHeader>{t('stt.deepgram_title')}</Inspector.SubHeader>
     <InputText label="stt.deepgram_key" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
 
-    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
+    <RustInputDeviceSelect value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
     <InputMappedGroupSelect
       labelGroup="common.field_language"
       labelOption="common.field_dialect"
@@ -159,18 +212,6 @@ const Deepgram: FC = () => {
   </>
 }
 
-const Speechly: FC = () => {
-  const { t } = useTranslation();
-  const pr = useSnapshot(window.ApiServer.state.services.stt.data.speechly);
-  const up = <K extends keyof STT_State["speechly"]>(key: K, v: STT_State["speechly"][K]) => window.ApiServer.state.services.stt.data.speechly[key] = v;
-
-  return <>
-    <Inspector.SubHeader>{t('stt.speechly_title')}</Inspector.SubHeader>
-    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
-    <InputText label="stt.speechly_appid" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
-  </>
-}
-
 const Whisper: FC = () => {
   const { t } = useTranslation();
   const [downloadProgress, setDownloadProgress] = useState<{ file: string, progress: number } | null>(null);
@@ -190,8 +231,56 @@ const Whisper: FC = () => {
   return <>
     <Inspector.SubHeader>OpenAI Whisper</Inspector.SubHeader>
     <div className="text-xs text-base-content/70 mb-2">
-      Runs locally using whisper.cpp. First run will download the model (~140MB).
+      Runs locally using whisper.cpp. First run will download the selected model.
     </div>
+
+    <RustInputDeviceSelect
+      label="Input Device"
+      value={pr.device}
+      onChange={e => up("device", e)}
+    />
+
+    <InputSelect
+      label="Model"
+      value={pr.model}
+      options={[
+        { value: "tiny.en", label: "Tiny (English) - 75MB, Fastest" },
+        { value: "tiny", label: "Tiny (Multilingual) - 75MB" },
+        { value: "base.en", label: "Base (English) - 142MB, Fast" },
+        { value: "base", label: "Base (Multilingual) - 142MB" },
+        { value: "small.en", label: "Small (English) - 466MB, Balanced" },
+        { value: "small", label: "Small (Multilingual) - 466MB" },
+        { value: "medium.en", label: "Medium (English) - 1.5GB, Accurate" },
+        { value: "medium", label: "Medium (Multilingual) - 1.5GB" },
+      ]}
+      onValueChange={e => up("model", e)}
+    />
+    <Inspector.Description>
+      Larger models are more accurate but slower. English-only models are faster for English speech.
+    </Inspector.Description>
+
+    <InputSelect
+      label="Language"
+      value={pr.language}
+      options={[
+        { value: "en", label: "English" },
+        { value: "auto", label: "Auto-detect" },
+        { value: "es", label: "Spanish" },
+        { value: "fr", label: "French" },
+        { value: "de", label: "German" },
+        { value: "it", label: "Italian" },
+        { value: "pt", label: "Portuguese" },
+        { value: "ru", label: "Russian" },
+        { value: "ja", label: "Japanese" },
+        { value: "ko", label: "Korean" },
+        { value: "zh", label: "Chinese" },
+      ]}
+      onValueChange={e => up("language", e)}
+    />
+    <Inspector.Description>
+      For ".en" models, language is always English. For multilingual models, you can select the language.
+    </Inspector.Description>
+
     {downloadProgress && (
       <div className="flex flex-col gap-1 mb-2">
         <div className="flex justify-between text-xs">
@@ -250,6 +339,50 @@ const Whisper: FC = () => {
   </>
 }
 
+const Vosk: FC = () => {
+  const { t } = useTranslation();
+  const pr = useSnapshot(window.ApiServer.state.services.stt.data.vosk);
+  const up = <K extends keyof STT_State["vosk"]>(key: K, v: STT_State["vosk"][K]) => window.ApiServer.state.services.stt.data.vosk[key] = v;
+
+  const modelOptions = VOSK_MODELS.map(m => ({
+    label: `${m.name} (${m.size})`,
+    value: m.id
+  }));
+
+  return <>
+    <Inspector.SubHeader>Vosk (Offline)</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">
+      Runs 100% offline using Rust audio capture. First run downloads the language model.
+    </div>
+
+    <RustInputDeviceSelect
+      label="Input Device"
+      value={pr.device}
+      onChange={e => up("device", e)}
+    />
+
+    <InputSelect
+      label="Language Model"
+      options={modelOptions}
+      value={pr.model}
+      onValueChange={e => up("model", e)}
+    />
+    <Inspector.Description>
+      Models are downloaded once and cached. Larger models = better accuracy but slower.
+    </Inspector.Description>
+
+    <InputText
+      label="Custom Model URL (optional)"
+      placeholder="https://example.com/model.zip"
+      value={pr.modelUrl}
+      onChange={e => up("modelUrl", e.target.value)}
+    />
+    <Inspector.Description>
+      Leave empty to use the default CDN. Use for custom or self-hosted models.
+    </Inspector.Description>
+  </>
+}
+
 
 
 const Inspector_STT: FC = () => {
@@ -271,12 +404,12 @@ const Inspector_STT: FC = () => {
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
-          { label: "Whisper", value: STT_Backends.whisper },
+          { label: "Whisper (Local AI)", value: STT_Backends.whisper },
+          { label: "Vosk (Offline)", value: STT_Backends.vosk },
           { label: "Chrome (Browser)", value: STT_Backends.chrome },
           { label: "Edge (Browser)", value: STT_Backends.edge },
           { label: "Azure", value: STT_Backends.azure },
-          { label: "Deepgram", value: STT_Backends.deepgram },
-          { label: "Speechly", value: STT_Backends.speechly }
+          { label: "Deepgram", value: STT_Backends.deepgram }
         ]} label="common.field_service" value={data.data.backend} onValueChange={e => up("backend", e as STT_Backends)} />
 
         {data.data.backend !== STT_Backends.chrome && data.data.backend !== STT_Backends.edge && (
@@ -290,8 +423,8 @@ const Inspector_STT: FC = () => {
         {data.data.backend === STT_Backends.edge && <Edge />}
         {data.data.backend === STT_Backends.azure && <Azure />}
         {data.data.backend === STT_Backends.deepgram && <Deepgram />}
-        {data.data.backend === STT_Backends.speechly && <Speechly />}
         {data.data.backend === STT_Backends.whisper && <Whisper />}
+        {data.data.backend === STT_Backends.vosk && <Vosk />}
         {data.data.backend === STT_Backends.native && <Native />}
       </Inspector.Deactivatable>
 

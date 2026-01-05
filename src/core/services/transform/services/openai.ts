@@ -39,8 +39,11 @@ export class Transform_OpenAIService implements ITransformService {
         }
 
         if (!apiKey) {
-            this.receiver.onStop(`API Key missing for ${data.provider}`);
-            return;
+            // Silently stop - don't show error on app startup if no key configured yet
+            if (data.provider !== "custom") {
+                this.receiver.onStop();
+                return;
+            }
         }
 
         try {

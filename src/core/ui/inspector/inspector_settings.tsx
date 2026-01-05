@@ -3,14 +3,14 @@ import { ServiceNetworkState } from "@/types";
 import { getVersion } from '@tauri-apps/api/app';
 import { FC, memo, useEffect, useState } from "react";
 import { RiFileCopyLine, RiSettings2Fill } from "react-icons/ri";
-import { SiDiscord, SiPatreon, SiTwitch, SiTwitter } from "react-icons/si";
+import { SiDiscord, SiGithub, SiPatreon, SiTwitch, SiTwitter } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import Dropdown from "../dropdown/Dropdown";
 import Tooltip from "../dropdown/Tooltip";
 import Logo from "../logo";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputChips, InputNetworkStatus, InputSelect, InputShortcut, InputText } from "./components/input";
+import { InputChips, InputNativeAudioOutput, InputNetworkStatus, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import { useTranslation } from "react-i18next";
 import { i18nLanguages, loadLanguageFile } from "@/i18n";
 const themesLight = [
@@ -36,7 +36,7 @@ const themesLight = [
 ]
 
 const themesDark = [
-  'curses',
+  'sigil',
   'matrix',
   'staffy',
   'dark',
@@ -81,7 +81,7 @@ const ExportMenu: FC = () => {
 
 const Inspector_Settings: FC = memo(() => {
   const { t } = useTranslation();
-  const { clientTheme, uiScale, uiLanguage, backgroundInputTimer } = useSnapshot(window.ApiServer.state);
+  const { clientTheme, uiScale, uiLanguage, backgroundInputTimer, audioInputDevice, audioOutputDevice } = useSnapshot(window.ApiServer.state);
   const { state: linkStatus } = useSnapshot(window.ApiShared.pubsub.serviceState);
   const author = useGetState(state => state.author);
 
@@ -103,23 +103,21 @@ const Inspector_Settings: FC = memo(() => {
     <Inspector.Content>
       <div className="flex flex-col items-center space-y-1">
         <span className="text-4xl leading-none font-header font-black"><Logo /></span>
-        <div className="flex space-x-1 self-center">
-          <Tooltip content="/mmpcode" body={<span>I stream app development, vrc udon <br /> stuff and games sometimes</span>}>
-            <a target="_blank" rel="noopener noreferrer" href="https://www.twitch.tv/mmpcode" aria-label="Twitch" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitch /></a>
+        <div className="self-center text-xs italic opacity-60 mt-1">Your voice, your way ✨</div>
+        <div className="self-center text-sm opacity-70 mt-2">
+          Crafted with 💜 by <span className="text-primary font-semibold">Mewnah</span>
+        </div>
+        <div className="self-center text-xs opacity-50">Built on the magic of Curses by mmpneo</div>
+        <div className="self-center text-xs opacity-40 mt-1">v.{version}</div>
+        <div className="flex space-x-1 self-center mt-3">
+          <Tooltip content="Join the Party!" body={<span>Discord community for updates,<br />help, and good vibes 🎉</span>}>
+            <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/Sw6pw8fGYS" aria-label="Discord" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiDiscord /></a>
           </Tooltip>
-          <Tooltip content="@mmpneo" body="I tweet once a year, LUL">
-            <a target="_blank" rel="noopener noreferrer" href="https://twitter.com/mmpneo" aria-label="Twitter" className="btn text-primary btn-ghost btn-circle text-2xl"><SiTwitter /></a>
-          </Tooltip>
-          <Tooltip content="Code and Curses" body={<span>App updates and help</span>}>
-            <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/Sw6pw8fGYS" aria-label="Discord" className="btn text-primary btn-ghost btn-circle text-2xl"><SiDiscord /></a>
-          </Tooltip>
-          <Tooltip content="Patreon" body={<span>Subscribe to get a Supporter role in discord <br /> (completely useless, just different color) <img className="h-8" alt="peepoSmile" src="/peepoSmile.webp" /></span>}>
-            <a target="_blank" rel="noopener noreferrer" href="https://www.patreon.com/mmpcode" aria-label="Patreon" className="btn text-primary btn-ghost btn-circle text-2xl"><SiPatreon /></a>
+          <Tooltip content="Where it all began" body={<span>The OG Curses project 🙏<br />Go give mmpneo some love!</span>}>
+            <a target="_blank" rel="noopener noreferrer" href="https://github.com/mmpneo/curses" aria-label="GitHub" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiGithub /></a>
           </Tooltip>
         </div>
-        <div className="self-center text-sm opacity-50">{t('settings.desc_1')}</div>
-        <div className="self-center text-sm opacity-50">{t('settings.desc_2')}</div>
-        <div className="self-center text-sm opacity-50">v.{version}</div>
+        <div className="self-center text-[10px] opacity-30 mt-2">Made for the VRChat community 🦊</div>
       </div>
       <div className="divider"></div>
       <Inspector.SubHeader>Application Settings</Inspector.SubHeader>
@@ -132,6 +130,23 @@ const Inspector_Settings: FC = memo(() => {
       ]} />
       <InputSelect label="settings.field_language" options={languageOptions} value={uiLanguage} onValueChange={handleChangeLanguage} />
       <Inspector.Description><span className="text-primary font-semibold mt-2" onClick={loadLanguageFile}>{t('settings.btn_import_translation')}</span></Inspector.Description>
+
+      <Inspector.SubHeader>Audio Settings</Inspector.SubHeader>
+      <InputWebAudioInput
+        label="Default Input Device"
+        value={audioInputDevice}
+        onChange={e => window.ApiServer.state.audioInputDevice = e}
+      />
+      <InputNativeAudioOutput
+        label="Default Output Device"
+        value={audioOutputDevice}
+        onChange={e => window.ApiServer.state.audioOutputDevice = e}
+      />
+      <Inspector.Description>
+        <span className="text-base-content/60 text-xs">
+          These are the default devices. Services may override with their own settings.
+        </span>
+      </Inspector.Description>
 
 
       <Inspector.SubHeader>{t('settings.section_template')}</Inspector.SubHeader>

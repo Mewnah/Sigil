@@ -1,6 +1,6 @@
-import {invoke}            from "@tauri-apps/api/tauri";
-import {proxy}             from "valtio";
-import {IServiceInterface} from "@/types";
+import { invoke } from "@tauri-apps/api/tauri";
+import { proxy } from "valtio";
+import { IServiceInterface } from "@/types";
 
 type SoundEffects = {
   volume?: number;
@@ -63,7 +63,12 @@ class Service_Sound implements IServiceInterface {
   enqueueVoiceClip(buffer: ArrayBuffer, options: VoiceClipOptions) {
     if (!buffer)
       return;
-    this.#voiceClipQueue.push({data: buffer, options});
+    // Use global output device as fallback if service doesn't specify one
+    const deviceName = options.device_name || window.ApiServer.state.audioOutputDevice || "";
+    this.#voiceClipQueue.push({
+      data: buffer,
+      options: { ...options, device_name: deviceName }
+    });
     this.#tryDequeueVoiceClip();
   }
 

@@ -7,9 +7,9 @@ import { isEmptyValue } from "../../../../utils";
 import { STT_State } from "../schema";
 
 export class STT_DeepgramService implements ISTTService {
-  constructor(private bindings: ISTTReceiver) {}
+  constructor(private bindings: ISTTReceiver) { }
 
-  dispose(): void {}
+  dispose(): void { }
 
   private socket?: WebSocket;
   private recorder?: MediaRecorder;
@@ -23,7 +23,13 @@ export class STT_DeepgramService implements ISTTService {
     if (Object.values(state.deepgram).some(isEmptyValue))
       return this.bindings.onStop("Options missing");
 
-    navigator.mediaDevices.getUserMedia({audio: {deviceId: {exact: this.state.device}}}).then((stream) => {
+    // Use service device setting or global fallback
+    const deviceId = this.state.device || window.ApiServer.state.audioInputDevice;
+    const audioConstraints = deviceId
+      ? { deviceId: { exact: deviceId } }
+      : true;
+
+    navigator.mediaDevices.getUserMedia({ audio: audioConstraints }).then((stream) => {
       this.recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       this.socket = new WebSocket(
         `wss://api.deepgram.com/v1/listen?punctuate=${!!state.deepgram.punctuate}&interim_results=${!!state.deepgram.interim}&language=${state.deepgram.language}&tier=${state.deepgram.tier}`,
@@ -47,14 +53,14 @@ export class STT_DeepgramService implements ISTTService {
         try {
           const rec = JSON.parse(e.data);
           const transcript = rec?.channel?.alternatives?.[0]?.transcript;
-          
+
           if (!transcript)
             return;
-            if(rec.speech_final || rec.is_final)
-              this.bindings.onFinal(transcript);
-            else
-              this.bindings.onInterim(transcript);
-        } catch (error) {}
+          if (rec.speech_final || rec.is_final)
+            this.bindings.onFinal(transcript);
+          else
+            this.bindings.onInterim(transcript);
+        } catch (error) { }
       };
       this.socket.onclose = (ev) => {
         this.stopRecorder();

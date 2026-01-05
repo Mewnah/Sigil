@@ -105,8 +105,8 @@ class Service_Document implements IServiceInterface {
     const path = await open({
       filters: [
         {
-          name: "Curses template",
-          extensions: ["cursestmp"],
+          name: "Sigil template",
+          extensions: ["sigiltmp"],
         },
       ],
     });
@@ -144,8 +144,8 @@ class Service_Document implements IServiceInterface {
     const path = await save({
       filters: [
         {
-          name: "Curses template",
-          extensions: ["cursestmp"],
+          name: "Sigil template",
+          extensions: ["sigiltmp"],
         },
       ],
     });

@@ -6,9 +6,9 @@ import { subscribeKey } from "valtio/utils";
 import { TTS_Backends } from "./schema";
 import { TTS_AzureService } from "./services/azure";
 import { TTS_NativeService } from "./services/native";
-import { TTS_TikTokService } from "./services/tiktok";
 import { TTS_WindowsService } from "./services/windows";
 import { TTS_UberduckService } from "./services/uberduck";
+import { TTS_VoicevoxService } from "./services/voicevox";
 import {
   ITTSReceiver,
   ITTSService,
@@ -21,8 +21,8 @@ const backends: {
   [TTS_Backends.native]: TTS_NativeService,
   [TTS_Backends.windows]: TTS_WindowsService,
   [TTS_Backends.azure]: TTS_AzureService,
-  [TTS_Backends.tiktok]: TTS_TikTokService,
   [TTS_Backends.uberduck]: TTS_UberduckService,
+  [TTS_Backends.voicevox]: TTS_VoicevoxService,
 };
 
 class Service_TTS implements IServiceInterface, ITTSReceiver {

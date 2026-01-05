@@ -6,9 +6,8 @@ export enum TTS_Backends {
   native = "native",
   windows = "windows",
   azure = "azure",
-  tiktok = "tiktok",
   uberduck = "uberduck",
-  // voicevox = "voicevox",
+  voicevox = "voicevox",
 }
 
 const zodTTS_Backends = z.nativeEnum(TTS_Backends);
@@ -27,12 +26,6 @@ export const Service_TTS_Schema = z.object({
     rate: zSafe(zStringNumber(), "1"),
     volume: zSafe(zStringNumber(), "1"),
   }).default({}),
-  tiktok: z.object({
-    device: zSafe(z.coerce.string(), ""),
-    voice: zSafe(z.coerce.string(), ""),
-    volume: zSafe(zStringNumber(), "1"),
-    rate: zSafe(zStringNumber(), "1"),
-  }).default({}),
   windows: z.object({
     device: zSafe(z.coerce.string(), ""),
     voice: zSafe(z.coerce.string(), ""),
@@ -49,7 +42,7 @@ export const Service_TTS_Schema = z.object({
   }).default({}),
   azure: z.object({
     device: zSafe(z.coerce.string(), ""),
-    language: zSafe(z.coerce.string(), ""),
+    language: zSafe(z.coerce.string(), "English (United States)"),
     voice: zSafe(z.coerce.string(), ""),
     voiceStyle: zSafe(z.coerce.string(), ""),
     voiceRole: zSafe(z.coerce.string(), ""),
@@ -61,6 +54,15 @@ export const Service_TTS_Schema = z.object({
     rate: zSafe(zStringNumber(), "1"),
     key: zSafe(z.coerce.string(), ""),
     location: zSafe(z.coerce.string(), ""),
+  }).default({}),
+  voicevox: z.object({
+    host: zSafe(z.coerce.string(), "http://localhost:50021"),
+    speaker: zSafe(z.coerce.string(), "0"),
+    speedScale: zSafe(zStringNumber(), "1.0"),
+    pitchScale: zSafe(zStringNumber(), "0.0"),
+    intonationScale: zSafe(zStringNumber(), "1.0"),
+    volumeScale: zSafe(zStringNumber(), "1.0"),
+    device: zSafe(z.coerce.string(), ""),
   }).default({})
 }).default({});
 

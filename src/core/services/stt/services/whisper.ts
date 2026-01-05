@@ -24,8 +24,11 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 this.receiver.onInterim(`Downloading ${payload.file}: ${payload.progress.toFixed(0)}%...`);
             });
 
-            console.log("[Whisper] Ensuring dependencies...");
-            await invoke("plugin:whisper|ensure_dependencies");
+            console.log("[Whisper] Ensuring dependencies...", { model: params.whisper.model, language: params.whisper.language });
+            await invoke("plugin:whisper|ensure_dependencies", {
+                model: params.whisper.model,
+                language: params.whisper.language,
+            });
 
             if (this.unlistenProgress) {
                 this.unlistenProgress();
@@ -52,7 +55,10 @@ export class STT_WhisperService implements ISpeechRecognitionService {
             });
 
             console.log("[Whisper] Starting recording...");
+            // Use service device setting or global fallback
+            const deviceName = params.whisper.device || window.ApiServer.state.audioInputDevice || "";
             await invoke("plugin:whisper|start_recording", {
+                deviceName: deviceName || null,
                 vadEnabled: params.whisper.vadEnabled,
                 silenceThresholdDb: parseFloat(params.whisper.silenceThresholdDb),
                 silenceDurationMs: parseInt(params.whisper.silenceDurationMs),

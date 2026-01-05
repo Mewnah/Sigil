@@ -18,6 +18,7 @@ import Inspector_Scenes from "./inspector_scenes";
 import Inspector_Settings from "./inspector_settings";
 import Inspector_Twitch from "./inspector_twitch";
 import Inspector_Discord from "./inspector_discord";
+import Inspector_Kick from "./inspector_kick";
 import Inspector_OBS from "./inspector_obs";
 
 const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
@@ -55,6 +56,7 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
           {path?.tab === Services.vrc && <Inspector_VRC key="vrc" />}
           {path?.tab === Services.transform && <Inspector_Transform key="transform" />}
           {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
+          {path?.tab === Services.kick && <Inspector_Kick key="kick" />}
           {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
           {path?.tab === "settings" && <Inspector_Settings key="settings" />}
           {path?.tab === "scenes" && <Inspector_Scenes key="scenes" />}

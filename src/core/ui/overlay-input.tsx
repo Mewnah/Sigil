@@ -4,9 +4,9 @@ import { nanoid } from "nanoid";
 import { FC, forwardRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { RiSendPlaneFill } from "react-icons/ri";
 import { TbArrowBarToLeft, TbArrowBarToRight } from "react-icons/tb";
-import { useSnapshot }                    from "valtio";
+import { useSnapshot } from "valtio";
 import { TextEventSource, TextEventType } from "../../types";
-import Tooltip                            from "./dropdown/Tooltip";
+import Tooltip from "./dropdown/Tooltip";
 import RecordingAlerts from "./recording-alerts";
 
 const overlayVariant = {
@@ -39,7 +39,7 @@ const Logs: FC<{ onFillRequest: (value: string) => void }> = ({ onFillRequest })
   const { lastId, list } = useSnapshot(window.ApiShared.pubsub.textHistory);
   const scrollContainer = useRef<HTMLDivElement>(null)
   useEffect(() => {
-      setTimeout(() => scrollContainer.current?.scrollTo({ top: scrollContainer.current.scrollHeight, behavior: "smooth" }));
+    setTimeout(() => scrollContainer.current?.scrollTo({ top: scrollContainer.current.scrollHeight, behavior: "smooth" }));
   }, [lastId]);
 
   return <div ref={scrollContainer} style={{ width: '15rem' }} className="h-full bg-neutral/30 flex overflow-y-scroll scrollbar-hide flex-col-reverse">
@@ -107,13 +107,13 @@ const OverlayInput: FC<{ onClose: () => void }> = forwardRef(({ onClose }, ref: 
           onChange={e => handleChange(e.target.value)}></textarea>
 
         <div className="flex absolute bottom-4 right-4 space-x-2 items-center">
-          <RecordingAlerts/>
+          <RecordingAlerts />
           <button className="hidden sm:flex btn btn-xl text-xl btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
           <button className="flex sm:hidden btn btn-sm btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
         </div>
 
         <Tooltip content={showOverlayLogs ? "Hide Logs" : "Show Logs"} className="absolute right-2 top-2">
-          <button className="btn btn-sm btn-ghost btn-square border-none" onClick={handleLogsSwitch}>
+          <button className="btn btn-sm btn-ghost btn-square border-none" onClick={handleLogsSwitch} aria-label={showOverlayLogs ? "Hide Logs" : "Show Logs"} title={showOverlayLogs ? "Hide Logs" : "Show Logs"}>
             <span className={classNames("flex-none w-10 h-8 items-center justify-center text-lg text-base-content/50 swap swap-flip", { "swap-active": showOverlayLogs })}>
               <TbArrowBarToRight className="swap-on" />
               <TbArrowBarToLeft className="swap-off" />

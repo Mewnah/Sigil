@@ -3,8 +3,11 @@ import react from "@vitejs/plugin-react-swc";
 import * as path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 import { visualizer } from "rollup-plugin-visualizer";
+import tailwindcss from "@tailwindcss/vite";
+
 export default defineConfig({
   plugins: [
+    tailwindcss(),
     visualizer({
       gzipSize: true,
       template: 'treemap',
@@ -29,13 +32,13 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
   },
-  envPrefix: ["VITE_", "TAURI_", "CURSES_"],
+  envPrefix: ["VITE_", "TAURI_", "SIGIL_", "CURSES_"],
   resolve: {
     alias: [{ find: "@", replacement: path.resolve(__dirname, "src") }],
   },
   build: {
-    // Tauri supports es2021
-    target: ["es2021", "chrome100", "safari13"],
+    // Tauri uses modern Chromium - chrome120+ supports OKLCH for DaisyUI v5
+    target: ["es2021", "chrome120", "safari15"],
     // don't minify for debug builds
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     // produce sourcemaps for debug builds

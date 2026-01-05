@@ -1,0 +1,13 @@
+
+> curses-plus@0.2.2 dev C:\Users\chris\Desktop\CursesAntigravity\curses_plus
+> vite "--host"
+
+[33mplugin 'vite-plugin-pwa:dev-sw' uses deprecated 'enforce' option. Use 'order' option instead.[39m
+[33mplugin 'vite-plugin-pwa:dev-sw' uses deprecated 'transform' option. Use 'handler' option instead.[39m
+[31merror when starting dev server:
+Error: Port 1420 is already in use
+    at Server.onError (file:///C:/Users/chris/Desktop/CursesAntigravity/curses_plus/node_modules/.pnpm/vite@5.3.1_@types+node@18.18.5_terser@5.31.1/node_modules/vite/dist/node/chunks/dep-BcXSligG.js:46079:18)
+    at Server.emit (node:events:508:28)
+    at emitErrorNT (node:net:1976:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)[39m
+ ELIFECYCLE  Command failed with exit code 1.

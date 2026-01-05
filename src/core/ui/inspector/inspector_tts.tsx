@@ -5,7 +5,8 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { FC, useEffect, useState } from "react";
 import { RiCharacterRecognitionFill, RiChatVoiceFill } from "react-icons/ri";
 import { proxy, useSnapshot } from "valtio";
-import { azureVoices, tiktokVoices } from "../../services/tts/tts_data";
+import { azureVoices } from "../../services/tts/tts_data";
+import { fetchVoicevoxSpeakers } from "../../services/tts/services/voicevox";
 import Modal from "../Modal";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
@@ -44,23 +45,6 @@ const Windows: FC = () => {
       label="tts.field_voice" />
     <InputRange value={data.volume} onChange={e => handleUpdate("volume", e.target.value)} label="common.field_volume" step="0.05" min="0" max="1" />
     <InputRange value={data.rate} onChange={e => handleUpdate("rate", e.target.value)} label="common.field_rate" step="0.05" min="0.1" max="5" />
-  </>
-}
-
-const TikTok: FC = () => {
-  const { t } = useTranslation();
-  const data = useSnapshot(window.ApiServer.state.services.tts.data.tiktok);
-  const handleUpdate = <K extends keyof TTS_State["tiktok"]>(key: K, v: TTS_State["tiktok"][K]) => window.ApiServer.patchService("tts", s => s.data.tiktok[key] = v);
-  return <>
-    <Inspector.SubHeader>{t("tts.tiktok_title")}</Inspector.SubHeader>
-    <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
-    <InputSelect
-      value={data.voice}
-      onValueChange={e => handleUpdate("voice", e)}
-      options={tiktokVoices}
-      label="tts.field_voice" />
-    <InputRange value={data.volume} onChange={e => handleUpdate("volume", e.target.value)} label="common.field_volume" step="0.05" min="0" max="1" />
-    {/* <InputRange value={data.rate} onChange={e => handleUpdate("rate", e.target.value)} label={`Rate (${data.rate})`} step="0.05" min="0.1" max="5" /> */}
   </>
 }
 
@@ -186,65 +170,130 @@ const Azure: FC = () => {
   </>
 }
 
+interface VoicevoxSpeakerOption {
+  label: string;
+  value: string;
+}
+
 const VoiceVox: FC = () => {
-  const handleQuery = async () => {
-    let resp = await fetch("http://127.0.0.1:50021/audio_query?text=text&speaker=1", {
-      method: "POST",
-      body: JSON.stringify({
-        query: {
-          text: "text",
-          speaker: 1,
-        }
-      })
-    });
-    const jsn = await resp.json();
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.voicevox);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  const handleUpdate = <K extends keyof TTS_State["voicevox"]>(key: K, v: TTS_State["voicevox"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.voicevox[key] = v);
+
+  const [speakers, setSpeakers] = useState<VoicevoxSpeakerOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadSpeakers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const speakerData = await fetchVoicevoxSpeakers(data.host);
+      const options: VoicevoxSpeakerOption[] = [];
+      speakerData.forEach(speaker => {
+        speaker.styles.forEach(style => {
+          options.push({
+            label: `${speaker.name} (${style.name})`,
+            value: style.id.toString(),
+          });
+        });
+      });
+      setSpeakers(options);
+      if (options.length === 0) {
+        setError("No speakers found. Is VoiceVox running?");
+      }
+    } catch (err: any) {
+      setError("Failed to connect to VoiceVox. Make sure the engine is running.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleQueryVoices = async () => {
-    let resp = await fetch("http://127.0.0.1:50021/speakers");
-    const jsn = await resp.json();
-  };
-
-  const handleSynth = async () => {
-    let resp = await fetch("http://127.0.0.1:50021/synthesis?speaker=0", {
-      headers: {
-        // 'Accept': 'audio/wav',
-        'Content-type': 'application/json'
-      },
-      method: "POST",
-      body: JSON.stringify({
-        accent_phrases: [
-          {
-            accent: 1,
-            is_interrogative: false,
-            moras: [{
-              consonant: "t",
-              consonant_length: 0.0727369412779808,
-              pitch: 5.911419868469238,
-              text: "テ",
-              vowel: "e",
-              vowel_length: 0.1318332552909851,
-            }],
-            pause_mora: null
-          }],
-        speedScale: 1,
-        pitchScale: 1,
-        intonationScale: 1,
-        volumeScale: 1,
-        prePhonemeLength: 1,
-        postPhonemeLength: 1,
-        outputSamplingRate: 1,
-        outputStereo: true,
-      })
-    });
-    const jsn = await resp.arrayBuffer();
-  };
+  useEffect(() => {
+    loadSpeakers();
+  }, [data.host]);
 
   return <>
-    voicevox
-    <button onClick={handleQuery}>Query</button>
-    <button onClick={handleSynth}>Synth</button>
-    <button onClick={handleQueryVoices}>Voices</button>
+    <Inspector.SubHeader>VoiceVox</Inspector.SubHeader>
+    <Inspector.Description>
+      <span className="text-base-content/60 text-xs">
+        VoiceVox is a free Japanese TTS engine. Download from{" "}
+        <a className="link link-primary link-hover" target="_blank" rel="noopener noreferrer" href="https://voicevox.hiroshiba.jp/">
+          voicevox.hiroshiba.jp
+        </a>
+      </span>
+    </Inspector.Description>
+
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText
+        label="Host URL"
+        value={data.host}
+        onChange={e => handleUpdate("host", e.target.value)}
+      />
+
+      {error && (
+        <div className="text-error text-xs py-1">{error}</div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <InputSelect
+            label="Speaker"
+            value={data.speaker}
+            onValueChange={e => handleUpdate("speaker", e)}
+            options={speakers}
+          />
+        </div>
+        <button
+          className={classNames("btn btn-sm btn-primary", { loading })}
+          onClick={loadSpeakers}
+          disabled={loading}
+        >
+          Refresh
+        </button>
+      </div>
+
+      <InputNativeAudioOutput
+        label="common.field_output_device"
+        value={data.device}
+        onChange={e => handleUpdate("device", e)}
+      />
+    </Inspector.Deactivatable>
+
+    <InputRange
+      value={data.speedScale}
+      onChange={e => handleUpdate("speedScale", e.target.value)}
+      label="Speed"
+      step="0.1"
+      min="0.5"
+      max="2.0"
+    />
+    <InputRange
+      value={data.pitchScale}
+      onChange={e => handleUpdate("pitchScale", e.target.value)}
+      label="Pitch"
+      step="0.1"
+      min="-0.15"
+      max="0.15"
+    />
+    <InputRange
+      value={data.intonationScale}
+      onChange={e => handleUpdate("intonationScale", e.target.value)}
+      label="Intonation"
+      step="0.1"
+      min="0"
+      max="2.0"
+    />
+    <InputRange
+      value={data.volumeScale}
+      onChange={e => handleUpdate("volumeScale", e.target.value)}
+      label="common.field_volume"
+      step="0.1"
+      min="0"
+      max="2.0"
+    />
   </>
 }
 
@@ -340,17 +389,15 @@ const Inspector_TTS: FC = () => {
           { label: "Native", value: TTS_Backends.native },
           { label: "Windows", value: TTS_Backends.windows },
           { label: "Azure", value: TTS_Backends.azure },
-          { label: "TikTok", value: TTS_Backends.tiktok },
           { label: "Uberduck", value: TTS_Backends.uberduck },
-          // { label: "VoiceVox", value: TTS_Backends.voicevox },
+          { label: "VoiceVox", value: TTS_Backends.voicevox },
         ]} onValueChange={e => up("backend", e as TTS_Backends)} />
       </Inspector.Deactivatable>
       {data.data.backend === TTS_Backends.windows && <Windows />}
       {data.data.backend === TTS_Backends.azure && <Azure />}
       {data.data.backend === TTS_Backends.native && <Native />}
-      {data.data.backend === TTS_Backends.tiktok && <TikTok />}
       {data.data.backend === TTS_Backends.uberduck && <UberDuck />}
-      {/* {data.data.backend === TTS_Backends.voicevox && <VoiceVox />} */}
+      {data.data.backend === TTS_Backends.voicevox && <VoiceVox />}
 
       <ServiceButton status={state.status} onStart={() => window.ApiServer.tts.start()} onStop={() => window.ApiServer.tts.stop()} />
 
