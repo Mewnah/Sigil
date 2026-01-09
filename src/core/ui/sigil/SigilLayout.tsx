@@ -116,6 +116,36 @@ export const SigilLayout: FC = memo(() => {
 
                 </div>
 
+                {/* 4. RIGHT PANEL (Logs OR Property Inspector) */}
+                {!toolbarState.presentationMode && (
+                    <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: "22rem" }}
+                        className="flex-none h-full z-40 relative shadow-lg border-l border-base-content/5 bg-base-100 hidden lg:block overflow-hidden"
+                    >
+                        <div className="w-[22rem] h-full flex flex-col">
+                            <ErrorBoundary FallbackComponent={PanelErrorFallback}>
+                                {activeSelectionId ? (
+                                    // A. Property Inspector (When Element Selected)
+                                    <PropertyInspector selectionId={activeSelectionId} />
+                                ) : (
+                                    // B. System Logs (Default)
+                                    <div className="flex flex-col h-full p-4 bg-base-100">
+                                        <div className="font-bold border-b border-base-content/10 pb-2 mb-2 flex justify-between items-center text-sm opacity-70">
+                                            <span>System Logs</span>
+                                        </div>
+                                        <div className="flex-1 overflow-auto text-xs font-mono opacity-50 space-y-1 select-text">
+                                            <div className="text-success">[System] Ready.</div>
+                                            <div>[Info] Layout initialized.</div>
+                                            <div className="text-base-content/30 italic">Select an element to view properties.</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </ErrorBoundary>
+                        </div>
+                    </motion.div>
+                )}
+
             </div>
 
         </div>
