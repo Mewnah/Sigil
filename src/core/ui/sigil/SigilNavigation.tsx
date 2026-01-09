@@ -12,7 +12,8 @@ import {
     RiTwitchFill,
     RiDiscordFill,
     RiGamepadFill,
-    RiRecordCircleFill
+    RiRecordCircleFill,
+    RiStackFill
 } from "react-icons/ri";
 import { KickIcon } from "../icons/KickIcon";
 import { Services } from "@/core";
@@ -100,6 +101,13 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     collapsed={collapsed}
                     shortcut="Ctrl+0"
                     onClick={() => navigate(undefined as any)}
+                />
+                <NavItem
+                    label="Project"
+                    icon={<RiStackFill />}
+                    active={tab?.tab === 'project' || tab?.tab === 'scenes' || tab?.tab === 'elements'}
+                    collapsed={collapsed}
+                    onClick={() => navigate('project')}
                 />
             </NavGroup>
 

@@ -5,11 +5,11 @@
   themes: all;
 }
 
-/* Custom theme: Sigil - Pastel purple with soft cyan contrast */
+/* Custom theme: Sigil Dark - Pastel purple with soft cyan contrast */
 @plugin "daisyui/theme" {
-  name: "sigil";
-  default: false;
-  prefersdark: false;
+  name: "sigil-dark";
+  default: true;
+  prefersdark: true;
   color-scheme: dark;
   --color-primary: #A78BFA;
   --color-secondary: #8B5CF6;
@@ -26,6 +26,52 @@
   --radius-box: 0.8rem;
   --radius-field: 0.5rem;
   --radius-selector: 0.25rem;
+}
+
+/* Custom theme: Sigil Light - Clean white/purple */
+@plugin "daisyui/theme" {
+  name: "sigil-light";
+  default: false;
+  prefersdark: false;
+  color-scheme: light;
+  --color-primary: #7C3AED;
+  --color-secondary: #8B5CF6;
+  --color-accent: #C084FC;
+  --color-base-100: #ffffff;
+  --color-base-200: #f3f4f6;
+  --color-base-300: #e5e7eb;
+  --color-base-content: #1f2937;
+  --color-neutral: #d1d5db;
+  --color-info: #0ea5e9;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --radius-box: 0.8rem;
+  --radius-field: 0.5rem;
+  --radius-selector: 0.25rem;
+}
+
+/* Custom theme: Streamer Mode - High Contrast / Green Screen safe? */
+@plugin "daisyui/theme" {
+  name: "streamer";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #d946ef;
+  --color-secondary: #a855f7;
+  --color-accent: #22d3ee;
+  --color-base-100: #000000;
+  --color-base-200: #111111;
+  --color-base-300: #222222;
+  --color-base-content: #ffffff;
+  --color-neutral: #333333;
+  --color-info: #3b82f6;
+  --color-success: #10b981;
+  --color-warning: #eab308;
+  --color-error: #ef4444;
+  --radius-box: 0rem;
+  --radius-field: 0rem;
+  --radius-selector: 0rem;
 }
 
 /* Custom theme: Staffy */

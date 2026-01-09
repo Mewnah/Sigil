@@ -1,0 +1,322 @@
+@import "simplebar-react/dist/simplebar.min.css";
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: all;
+}
+
+/* Custom theme: Sigil - Pastel purple with soft cyan contrast */
+@plugin "daisyui/theme" {
+  name: "sigil";
+  default: false;
+  prefersdark: false;
+  color-scheme: dark;
+  --color-primary: #A78BFA;
+  --color-secondary: #8B5CF6;
+  --color-accent: #F0ABFC;
+  --color-base-100: #1a1625;
+  --color-base-200: #140f1f;
+  --color-base-300: #0f0a18;
+  --color-base-content: #DDD6FE;
+  --color-neutral: #2a2438;
+  --color-info: #7DD3FC;
+  --color-success: #86EFAC;
+  --color-warning: #FDE68A;
+  --color-error: #FCA5A5;
+  --radius-box: 0.8rem;
+  --radius-field: 0.5rem;
+  --radius-selector: 0.25rem;
+}
+
+/* Custom theme: Staffy */
+@plugin "daisyui/theme" {
+  name: "staffy";
+  default: false;
+  prefersdark: false;
+  color-scheme: dark;
+  --color-primary: #8741d6;
+  --color-secondary: #8741d6;
+  --color-accent: #00eb5e;
+  --color-base-100: #333333;
+  --color-base-200: #232323;
+  --color-base-300: #212121;
+  --color-base-content: #f4e32a;
+  --color-neutral: #272626;
+  --color-info: #0000ff;
+  --color-success: #008000;
+  --color-warning: #ffff00;
+  --color-error: #ff0000;
+  --radius-box: 0.8rem;
+  --radius-field: 0.5rem;
+  --radius-selector: 0.5rem;
+}
+
+/* Custom theme: Matrix */
+@plugin "daisyui/theme" {
+  name: "matrix";
+  default: false;
+  prefersdark: false;
+  color-scheme: dark;
+  --color-primary: #80ce87;
+  --color-secondary: #204829;
+  --color-accent: #00eb5e;
+  --color-base-100: #090909;
+  --color-base-200: #070707;
+  --color-base-300: #020202;
+  --color-base-content: #22b455;
+  --color-neutral: #272626;
+  --color-info: #0000ff;
+  --color-success: #008000;
+  --color-warning: #ffff00;
+  --color-error: #ff0000;
+  --radius-box: 0;
+  --radius-field: 0;
+  --radius-selector: 0;
+}
+
+/* toasts */
+.toasts {
+  --toastify-color-light: #fff;
+  --toastify-color-dark: #121212;
+  --toastify-color-info: hsl(var(--in) / 1);
+  --toastify-color-success: hsl(var(--su) / 1);
+  --toastify-color-warning: hsl(var(--wa) / 1);
+  --toastify-color-error: hsl(var(--er) / 1);
+  --toastify-color-transparent: rgba(255, 255, 255, 0.7);
+
+  --toastify-icon-color-info: var(--toastify-color-info);
+  --toastify-icon-color-success: var(--toastify-color-success);
+  --toastify-icon-color-warning: var(--toastify-color-warning);
+  --toastify-icon-color-error: var(--toastify-color-error);
+
+  --toastify-toast-width: 320px;
+  --toastify-toast-background: #fff;
+  --toastify-toast-min-height: 2rem;
+  --toastify-toast-max-height: 800px;
+  --toastify-font-family: sans-serif;
+  --toastify-z-index: 9999;
+
+  --toastify-text-color-light: #757575;
+  --toastify-text-color-dark: #fff;
+
+  /* //Used only for colored theme */
+  --toastify-text-color-info: hsl(var(--inc, var(--nc))/1);
+  --toastify-text-color-success: hsl(var(--suc, var(--nc))/1);
+  --toastify-text-color-warning: hsl(var(--wac, var(--nc))/1);
+  --toastify-text-color-error: hsl(var(--erc, var(--nc))/1);
+
+  --toastify-spinner-color: #616161;
+  --toastify-spinner-color-empty-area: #e0e0e0;
+
+  /* // Used when no type is provided */
+  --toastify-color-progress-dark: #bb86fc;
+  --toastify-color-progress-info: var(--toastify-color-info);
+  --toastify-color-progress-success: var(--toastify-color-success);
+  --toastify-color-progress-warning: var(--toastify-color-warning);
+  --toastify-color-progress-error: var(--toastify-color-error);
+}
+
+
+
+html.host,
+html.host body,
+html.host #root {
+  /* color: #34f09f; */
+  @apply !bg-base-300;
+}
+
+.dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: block;
+  z-index: 1;
+  /* opacity: 0; */
+  /*background-color: tomato;*/
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+}
+
+:root,
+html,
+body,
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('assets/fonts/Outfit-Variable.ttf') format("truetype-variations");
+  font-weight: 1 999;
+}
+
+@font-face {
+  font-family: 'Mona Sans';
+  src:
+    url('assets/fonts/Mona-Sans.woff2') format('woff2 supports variations'),
+    url('assets/fonts/Mona-Sans.woff2') format('woff2-variations');
+  font-weight: 200 900;
+  font-stretch: 75% 125%;
+}
+
+.font-header {
+  font-family: "Outfit"
+}
+
+:root {
+  margin: 0;
+  /* font-size: 16px; */
+  font-family: "Mona Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: calc(16px * var(--uiscale));
+  transition: font-size .1s ease-in-out;
+}
+
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.btn {
+  /* font-weight: 600;
+  line-height: 1.2em; */
+  text-transform: none;
+}
+
+/*Input*/
+fieldset>input[type="color"] {
+  padding: 0;
+}
+
+fieldset>input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+fieldset>input[type="color"]::-webkit-color-swatch {
+  -webkit-appearance: none;
+  border: none;
+  margin: 0;
+  height: 100%;
+}
+
+.field-width {
+  @apply !w-36;
+}
+
+/*Tooltip*/
+.custom-tooltip {
+  @apply text-sm bg-neutral text-neutral-content p-2 rounded-md font-semibold;
+}
+
+.custom-tooltip-arrow {
+  @apply absolute bg-neutral;
+  width: 0.5rem;
+  height: 0.5rem;
+  transform: rotate(45deg);
+}
+
+.simplebar-hidden .simplebar-track {
+  display: none;
+}
+
+/* Dropdown */
+
+.dropdown {
+  min-width: 13rem;
+  z-index: 1000;
+  @apply menu bg-base-100 w-56 rounded-box font-semibold shadow-lg;
+}
+
+.dropdown li {
+  z-index: 1001;
+}
+
+.dropdown-arrow {
+  z-index: 1000;
+  @apply bg-base-100;
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  color: #4de699;
+  display: none;
+}
+
+/* For IE, Edge and Firefox */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
+}
+
+.simplebar-scrollbar::before {
+  @apply bg-primary;
+  color: rgb(255, 234, 234);
+}
+
+.colorPicker .react-colorful {
+  @apply w-full space-y-4;
+}
+
+.colorPicker .react-colorful__saturation {
+  @apply rounded-xl;
+}
+
+.colorPicker .react-colorful__pointer {
+  height: 10px;
+  width: 10px;
+}
+
+.colorPicker .react-colorful__pointer {
+  border: none;
+}
+
+.colorPicker .react-colorful__last-control {
+  border-radius: inherit;
+}
+
+.colorPicker .react-colorful__pointer-fill {
+  border: 2px solid white;
+}
+
+.colorPicker .react-colorful__alpha,
+.dropdown .react-colorful__hue {
+  border-radius: 1rem;
+  height: .5rem;
+}
+
+/*
+.react-colorful__saturation {
+  border-radius: 4px 4px 0 0;
+}
+.react-colorful__hue {
+  height: 40px;
+  border-radius: 0 0 4px 4px;
+}
+.react-colorful__hue-pointer {
+  width: 12px;
+  height: inherit;
+  border-radius: 0;
+} */
+.field-width .field-width {
+  width: auto !important;
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+}
+
+.field-width .field-width {
+  width: auto !important;
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+}

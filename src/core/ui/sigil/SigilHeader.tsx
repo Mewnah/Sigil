@@ -146,13 +146,17 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
                     </Tooltip>
 
                     {/* Theme Toggle */}
-                    <Tooltip content={isDarkTheme ? "Switch to light mode" : "Switch to dark mode"} placement="bottom">
+                    <Tooltip content={`Current: ${clientTheme === 'streamer' ? 'Streamer Mode' : clientTheme === 'sigil-light' ? 'Light Mode' : 'Dark Mode'}. Click to cycle.`} placement="bottom">
                         <button
-                            onClick={toggleTheme}
-                            title="Toggle theme"
+                            onClick={() => {
+                                if (clientTheme === 'sigil-dark') window.ApiServer.changeTheme('sigil-light');
+                                else if (clientTheme === 'sigil-light') window.ApiServer.changeTheme('streamer');
+                                else window.ApiServer.changeTheme('sigil-dark');
+                            }}
+                            title="Cycle Theme (Dark -> Light -> Streamer)"
                             className="h-8 w-8 flex items-center justify-center rounded hover:bg-base-content/5 transition-colors text-base-content/50 hover:text-base-content"
                         >
-                            {isDarkTheme ? <RiSunFill /> : <RiMoonFill />}
+                            {clientTheme === 'sigil-light' ? <RiSunFill /> : clientTheme === 'streamer' ? <RiSideBarLine className="rotate-90" /> : <RiMoonFill />}
                         </button>
                     </Tooltip>
                 </div>

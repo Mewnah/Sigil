@@ -25,7 +25,7 @@ export const TTSInputBar: FC = memo(() => {
     };
 
     return (
-        <div className="flex-shrink-0 bg-base-200 border-t border-base-content/5 px-4 py-3">
+        <div className="flex-shrink-0 bg-transparent px-2 py-2">
             <div className="flex items-center gap-2">
                 <input
                     type="text"

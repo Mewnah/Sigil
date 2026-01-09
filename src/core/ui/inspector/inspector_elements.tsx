@@ -98,14 +98,12 @@ const Inspector_Elements: FC = () => {
             }
 
             window.ApiServer.ui.sidebarState.selections = currentSelections;
-            // Also set as active tab for inspector properties
-            if (currentSelections.includes(id)) {
-                window.ApiServer.changeTab({ tab: type, value: id });
-            }
+            // Do NOT change tab, as this would replace the Project view.
+            // Selection now drives the Right Panel (PropertyInspector).
         } else {
             // Single selection
-            window.ApiServer.ui.sidebarState.selections = [];
-            window.ApiServer.changeTab({ tab: type, value: id });
+            window.ApiServer.ui.sidebarState.selections = [id];
+            // window.ApiServer.changeTab({ tab: type, value: id });
         }
     };
 

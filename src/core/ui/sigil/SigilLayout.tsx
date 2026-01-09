@@ -1,83 +1,122 @@
 import { FC, memo, useState } from "react";
 import { useSnapshot } from "valtio";
+import { ErrorBoundary } from "react-error-boundary";
 import { SigilHeader } from "./SigilHeader";
 import QuickActionDock from "../QuickActionDock";
 import StatsPanel from "../StatsPanel";
 import { TTSInputBar } from "./TTSInputBar";
 import { EditorViewport } from "../editor-view";
 import HistoryPanel from "../HistoryPanel";
-import { Services } from "@/core";
-import { canvasToolbarState } from "../CanvasToolbar";
+import CanvasToolbar, { canvasToolbarState } from "../CanvasToolbar";
+import { SigilNavigation } from "./SigilNavigation";
+import { SigilDashboard } from "./SigilDashboard";
+import Inspector, { PropertyInspector } from "../inspector";
+import { BottomPanel } from "../BottomPanel";
+import { AnimatePresence, motion } from "framer-motion";
+
+const PanelErrorFallback = ({ error }: { error: Error }) => (
+    <div className="p-4 bg-error/10 text-error border border-error rounded-lg h-full overflow-auto">
+        <h3 className="font-bold text-sm">Panel Error</h3>
+        <pre className="text-[10px] mt-2 font-mono whitespace-pre-wrap">{error.message}</pre>
+        <pre className="text-[10px] opacity-50">{error.stack}</pre>
+    </div>
+);
 
 export const SigilLayout: FC = memo(() => {
-    const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const { tab, selections } = useSnapshot(window.ApiServer.ui.sidebarState);
     const toolbarState = useSnapshot(canvasToolbarState);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-    // Modern "Floating" Layout
-    // 1. EditorViewport is the full-screen background (Z-0)
-    // 2. Header, Dock, Stats, and TTS are floating layers (Z-10+)
+    // Determines active element for right panel (single select for now)
+    const activeSelectionId = selections && selections.length > 0 ? selections[0] : null;
 
     return (
         <div className="flex flex-col h-screen w-screen bg-base-300 text-base-content overflow-hidden font-sans selection:bg-primary/30 relative">
 
-            {/* BACKGROUND LAYER: Canvas/Viewport */}
-            {/* Positions absolutely to fill screen below header area (roughly) or full screen if header is floating */}
-            {/* Let's keep Header static at top for stability, Canvas fills rest */}
-
+            {/* HEADER */}
             {!toolbarState.presentationMode && (
                 <div className="flex-none z-50 relative shadow-xl">
-                    <SigilHeader sidebarCollapsed={false} onToggleSidebar={() => { }} />
+                    <SigilHeader
+                        sidebarCollapsed={sidebarCollapsed}
+                        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+                    />
                 </div>
             )}
 
-            <div className="relative flex-1 overflow-hidden w-full h-full group/layout">
-                {/* CANVAS - Fills container */}
-                <div className="absolute inset-0 z-0">
-                    <EditorViewport />
-                    {/* History Panel is usually internal or floating. We place it here. */}
-                    {toolbarState.showHistory && !toolbarState.presentationMode && (
-                        <div className="absolute left-20 bottom-20 z-20">
-                            {/* Adjusted position to avoid Dock/TTS overlapping */}
-                            <HistoryPanel />
-                        </div>
-                    )}
-                </div>
+            {/* MAIN CONTENT ROW */}
+            <div className="flex flex-1 overflow-hidden relative">
 
-                {/* FLOATING UI LAYER */}
+                {/* 1. SIDEBAR NAVIGATION (Leftmost) */}
                 {!toolbarState.presentationMode && (
-                    <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-4">
-
-                        <div className="flex flex-1 min-h-0 relative">
-                            {/* LEFT: Quick Action Dock */}
-                            <div className="pointer-events-auto h-full flex flex-col justify-center mr-auto">
-                                <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/5 bg-base-100/60 backdrop-blur-md">
-                                    <QuickActionDock />
-                                </div>
-                            </div>
-
-                            {/* RIGHT: Stats Panel */}
-                            <div className="pointer-events-auto h-full flex flex-col justify-center ml-auto">
-                                {/* StatsPanel manages its own sizing/collapse */}
-                                <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/5 bg-base-100/60 backdrop-blur-md">
-                                    <StatsPanel />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* BOTTOM: TTS Input */}
-                        {/* Centered floating bar */}
-                        <div className="flex-none flex justify-center mt-4 pointer-events-auto">
-                            <div className="w-[600px] max-w-full bg-base-100/80 backdrop-blur-xl rounded-full shadow-2xl border border-white/10 p-1">
-                                <TTSInputBar />
-                            </div>
-                        </div>
-
+                    <div className="flex-none h-full z-50 relative shadow-lg">
+                        <SigilNavigation collapsed={sidebarCollapsed} />
                     </div>
                 )}
-            </div>
 
-            {/* Presentation Mode: Full Canvas (Header/Dock hidden above) */}
-            {/* Note: EditorViewport is already in z-0. If presentationMode is true, the overlays are hidden via conditionals above. */}
+                {/* 2. LEFT INSPECTOR PANEL (Navigation Driven) */}
+                <AnimatePresence>
+                    {tab?.tab && !toolbarState.presentationMode && (
+                        <motion.div
+                            initial={{ width: 0, opacity: 0 }}
+                            animate={{ width: "22rem", opacity: 1 }}
+                            exit={{ width: 0, opacity: 0 }}
+                            transition={{ duration: 0.2, ease: "easeInOut" }}
+                            className="flex-none h-full z-40 relative shadow-lg border-r border-base-content/5 bg-base-100 overflow-hidden"
+                        >
+                            <div className="w-[22rem] h-full">
+                                <ErrorBoundary FallbackComponent={PanelErrorFallback}>
+                                    <Inspector path={tab} />
+                                </ErrorBoundary>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                {/* 3. CANVAS AREA (Middle, flexible) */}
+                <div className="flex flex-col flex-1 relative min-w-0">
+
+                    {/* CANVAS TOOLBAR (Zoom, Grid, Align) */}
+                    {!toolbarState.presentationMode && (
+                        <div className="flex-none z-30 relative">
+                            <CanvasToolbar />
+                        </div>
+                    )}
+
+                    {/* VIEWPORT & FLOATING OVERLAYS */}
+                    <div className="relative flex-1 overflow-hidden w-full h-full group/layout">
+
+                        {/* 0. CANVAS (Background) */}
+                        <div className="absolute inset-0 z-0">
+                            <EditorViewport />
+                            {/* History Panel */}
+                            {toolbarState.showHistory && !toolbarState.presentationMode && (
+                                <div className="absolute left-4 bottom-4 z-20">
+                                    <HistoryPanel />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 1. FLOATING OVERLAYS (TTS) */}
+                        {!toolbarState.presentationMode && (
+                            <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-end p-4">
+                                {/* TTS Input (Bottom-Center - Floating above Bottom Panel) */}
+                                <div className="flex-none flex justify-center mt-4 pointer-events-auto mb-4">
+                                    <div className="w-[600px] max-w-full bg-base-100/80 backdrop-blur-xl rounded-full shadow-2xl border border-white/10 p-1">
+                                        <TTSInputBar />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* BOTTOM PANEL (Service Controls) */}
+                    {!toolbarState.presentationMode && (
+                        <BottomPanel />
+                    )}
+
+                </div>
+
+            </div>
 
         </div>
     );

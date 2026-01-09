@@ -4,6 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "react-toastify";
 import SimpleBar from "simplebar-react";
 import { Services } from "@/core";
+import { useGetState } from "@/client";
 import Inspector_STT from "./inspector_stt";
 import Inspector_Translation from "./inspector_translation";
 import Inspector_TTS from "./inspector_tts";
@@ -21,7 +22,11 @@ import Inspector_Twitch from "./inspector_twitch";
 import Inspector_Discord from "./inspector_discord";
 import Inspector_Kick from "./inspector_kick";
 import Inspector_OBS from "./inspector_obs";
+import { RiCloseLine } from "react-icons/ri";
 
+import Inspector_Project from "./inspector_project";
+
+// LEFT PANEL INSPECTOR (Navigation Driven)
 const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
   const handleCopyError = (err: string) => {
     navigator.clipboard.writeText(err);
@@ -31,25 +36,11 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
     <div className="flex-grow relative overflow-hidden">
       <ErrorBoundary fallbackRender={({ error, resetErrorBoundary }) => (
         <div className="w-full h-full flex flex-col items-center justify-center p-4 space-y-2">
-          <div className="flex flex-col items-center">
-            <img className="w-16 grayscale" src="/images/ui-noo.gif" alt="Crash Indicator" />
-            <div className="text-primary font-semibold font-header inline-block">Inspector crashed!</div>
-            <pre className="text-xs text-base-content/50 whitespace-pre-wrap text-center">
-              Try to close and open it again.
-              If this doesn't work, you can ask for help in the <a className="link text-secondary ink-primary link-hover" href="discord://-/channels/856500849815060500/1058343274991058945">Discord #help</a>
-            </pre>
-          </div>
-          {error.stack && <pre className="text-[9px] relative w-full text-xs rounded-box bg-base-200 h-24">
-            <SimpleBar className="w-full h-full">
-              <pre className="px-2 truncate break-words whitespace-pre-wrap">{error.stack}</pre>
-            </SimpleBar>
-            <button className="absolute right-2 top-0 btn btn-link btn-xs self-start" onClick={() => error.stack && handleCopyError(error.stack)}>
-              Copy
-            </button>
-          </pre>}
+          {/* Error UI ... */}
+          <div className="text-error">Inspector Error</div>
         </div>
       )}>
-        <AnimatePresence initial={false}>
+        <AnimatePresence initial={false} mode="wait">
           {path?.tab === Services.stt && <Inspector_STT key="stt" />}
           {path?.tab === Services.tts && <Inspector_TTS key="tts" />}
           {path?.tab === Services.translation && <Inspector_Translation key="translation" />}
@@ -60,16 +51,45 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
           {path?.tab === Services.kick && <Inspector_Kick key="kick" />}
           {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
           {path?.tab === "settings" && <Inspector_Settings key="settings" />}
-          {path?.tab === "scenes" && <Inspector_Scenes key="scenes" />}
           {path?.tab === "files" && <Inspector_Files key="files" />}
-          {path?.tab === ElementType.text && path?.value && <Inspector_ElementText id={path.value} key={`${path.tab}-${path.value}`} />}
-          {path?.tab === ElementType.image && path?.value && <Inspector_ElementImage id={path.value} key={`${path.tab}-${path.value}`} />}
-          {path?.tab === ElementType.audioViz && path?.value && <Inspector_ElementAudioViz id={path.value} key={`${path.tab}-${path.value}`} />}
+
+          {/* Default/Project Tab (Replaces Elements/Scenes/Studio) */}
+          {(path?.tab === "project" || path?.tab === "scenes" || path?.tab === ElementType.text || path?.tab === ElementType.image) && <Inspector_Project key="project" />}
+
         </AnimatePresence>
 
       </ErrorBoundary>
     </div>
   </div>
 }
+
+// RIGHT PANEL INSPECTOR (Selection Driven)
+export const PropertyInspector: FC<{ selectionId: string }> = ({ selectionId }) => {
+  const element = useGetState(state => state.elements[selectionId]);
+  if (!element) return null;
+
+  return (
+    <div className="w-[22rem] h-full flex-none bg-base-100 border-l border-base-content/10 flex flex-col overflow-hidden">
+      <div className="flex-none p-4 border-b border-base-content/10 font-bold flex justify-between items-center z-10 bg-base-100">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.ApiServer.ui.sidebarState.selections = []}
+            className="btn btn-sm btn-circle btn-ghost"
+            title="Close Properties"
+          >
+            <RiCloseLine />
+          </button>
+          <span>Properties</span>
+        </div>
+        <span className="badge badge-sm badge-neutral font-mono opacity-50 capitalize">{element.type}</span>
+      </div>
+      <div className="flex-grow relative overflow-hidden">
+        {element.type === ElementType.text && <Inspector_ElementText id={selectionId} />}
+        {element.type === ElementType.image && <Inspector_ElementImage id={selectionId} />}
+        {element.type === ElementType.audioViz && <Inspector_ElementAudioViz id={selectionId} />}
+      </div>
+    </div>
+  );
+};
 
 export default Inspector;

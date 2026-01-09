@@ -58,21 +58,15 @@ const Canvas: FC<{ activeScene: string, transition?: { type: string, duration: n
     }
   }, 100, [localDim]);
 
-  const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+  const { tab, selections } = useSnapshot(window.ApiServer.ui.sidebarState);
   useEffect(() => {
-    if (tab?.value) {
-      setSelectedId(tab.value);
+    if (selections && selections.length > 0) {
+      // Use the first selection as the primary one for handles
+      setSelectedId(selections[0]);
+    } else {
+      setSelectedId(null);
     }
-    // If we're on a service page (like STT, TTS) that is NOT a studio tab, we might want to hide the canvas or dim it
-    // But currently we always show it.
-    // If we wanted to hide it for performance or focus:
-    if (tab?.tab && tab.tab !== 'scenes' && tab.tab !== 'text' && tab.tab !== 'image') {
-      // checks against ElementType "text" and "image"
-      setIsCanvasSelected(false);
-    } else if (tab?.tab === 'scenes') {
-      setIsCanvasSelected(true);
-    }
-  }, [tab?.value, tab?.tab]);
+  }, [selections]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -105,9 +99,9 @@ const Canvas: FC<{ activeScene: string, transition?: { type: string, duration: n
       animate="animate"
       exit="exit"
       onMouseDown={() => { setSelectedId(null); setIsCanvasSelected(false); }}
-      onDoubleClick={() => { setIsCanvasSelected(true); window.ApiServer.changeTab({ tab: "scenes" }); }}
+      onDoubleClick={() => { setIsCanvasSelected(true); window.ApiServer.changeTab({ tab: "project" }); }}
       style={{ width: localDim.w, height: localDim.h }}
-      className={classNames("relative bg-black rounded-lg border border-dashed border-primary/50 group shadow-2xl", {
+      className={classNames("relative bg-base-100 rounded-lg border border-dashed border-primary/50 group shadow-2xl", {
         "border-primary": isCanvasSelected
       })}
     >
@@ -126,8 +120,24 @@ const Canvas: FC<{ activeScene: string, transition?: { type: string, duration: n
       {ids?.map((elementId) => <ElementEditorTransform
         id={elementId}
         key={elementId}
-        canvasSelected={selectedId === elementId}
-        onSelect={() => setSelectedId(elementId)}
+        canvasSelected={selectedId === elementId || window.ApiServer.ui.sidebarState.selections.includes(elementId)}
+        onSelect={(e) => {
+          if (e.shiftKey) {
+            const selections = window.ApiServer.ui.sidebarState.selections ? [...window.ApiServer.ui.sidebarState.selections] : [];
+            const idx = selections.indexOf(elementId);
+            if (idx === -1) selections.push(elementId);
+            else selections.splice(idx, 1);
+            window.ApiServer.ui.sidebarState.selections = selections;
+
+            // If selected, make it the active tab too? Maybe not, keep focus on last clicked or don't change tab.
+            if (selections.includes(elementId)) {
+              setSelectedId(elementId); // Update local state for handles
+            }
+          } else {
+            window.ApiServer.ui.sidebarState.selections = [elementId];
+            setSelectedId(elementId);
+          }
+        }}
       />)}
     </motion.div>
   );
