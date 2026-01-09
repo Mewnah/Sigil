@@ -30,8 +30,21 @@ export const BackendSchema = z.object({
   muteSoundEffects: zSafe(z.coerce.boolean(), false),
   audioInputDevice: zSafe(z.string(), ""),
   audioOutputDevice: zSafe(z.string(), ""),
+  onboardingComplete: zSafe(z.coerce.boolean(), false),
   showOverlayLogs: zSafe(z.coerce.boolean(), false),
   backgroundInputTimer: zSafe(zStringNumber(), "5000"),
+  recentSnapshots: zSafe(z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    path: z.string(),
+    date: z.string()
+  })), []),
+  elementTemplates: zSafe(z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    type: z.string(),
+    data: z.any()
+  })), []),
   shortcuts: z.object({
     bgInput: zSafe(z.string(), ""),
     start: zSafe(z.string(), ""),

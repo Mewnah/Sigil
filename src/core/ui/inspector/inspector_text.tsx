@@ -20,10 +20,12 @@ import { useTranslation } from "react-i18next";
 
 import { TextEventSource } from "@/types";
 
+import { DocumentState } from "@/client/schema";
+
 const GeneralInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_TextState>>);
+  const data = useGetState((state: DocumentState) => state.elements[id]?.scenes as unknown as Record<string, ElementSceneState<Element_TextState>>);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
@@ -36,7 +38,7 @@ const GeneralInspector: FC<{ id: string }> = ({ id }) => {
 const SourceInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const data: Element_TextState = useGetState((state: DocumentState) => state.elements[id]?.scenes[activeScene].data as unknown as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   const isSynced = data.sourceMain === TextEventSource.transform_raw;
@@ -75,7 +77,7 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
 const TextInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const data: Element_TextState = useGetState((state: DocumentState) => state.elements[id]?.scenes[activeScene].data as unknown as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
@@ -124,7 +126,7 @@ const TextInspector: FC<{ id: string }> = ({ id }) => {
 const BoxInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const data: Element_TextState = useGetState((state: DocumentState) => state.elements[id]?.scenes[activeScene].data as unknown as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
@@ -201,7 +203,7 @@ const BoxInspector: FC<{ id: string }> = ({ id }) => {
 const BehaviourInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const data: Element_TextState = useGetState((state: DocumentState) => state.elements[id]?.scenes[activeScene].data as unknown as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   const [, copyToClipboard] = useCopyToClipboard();
@@ -236,7 +238,7 @@ const BehaviourInspector: FC<{ id: string }> = ({ id }) => {
 const EffectsInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_TextState = useGetState(state => state.elements[id]?.scenes[activeScene].data as Element_TextState);
+  const data: Element_TextState = useGetState((state: DocumentState) => state.elements[id]?.scenes[activeScene].data as unknown as Element_TextState);
   const up = useUpdateElement<Element_TextState>(id);
 
   return <>
@@ -317,7 +319,7 @@ const tabMemory: Record<string, number> = {};
 const Inspector_ElementText: FC<{ id: string }> = memo(({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_TextState>>);
+  const data = useGetState((state: DocumentState) => state.elements[id]?.scenes as unknown as Record<string, ElementSceneState<Element_TextState>>);
   const up = useUpdateElement<Element_TextState>(id);
 
   const [[tab, direction], setTab] = useState<[number, number]>([tabMemory[id] || 0, 0]);

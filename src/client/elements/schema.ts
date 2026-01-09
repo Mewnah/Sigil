@@ -2,17 +2,36 @@ import { zSafe } from "@/utils";
 import z from "zod";
 import { Element_ImageStateSchemaN } from "./image/schema";
 import { Element_TextStateSchemaN } from "./text/schema";
+import { Element_AudioVizStateSchemaN } from "./audio-viz/schema";
 
 export enum ElementType {
   text = "text",
   image = "image",
+  audioViz = "audioViz",
 }
 const ElementTypeSchema = z.nativeEnum(ElementType);
 
-const ElementSchemaMap = {
+const ElementSchemaMap: Record<ElementType, z.ZodDefault<z.AnyZodObject>> = {
   [ElementType.image]: Element_ImageStateSchemaN,
   [ElementType.text]: Element_TextStateSchemaN,
+  [ElementType.audioViz]: Element_AudioVizStateSchemaN,
 }
+
+// Animation configuration for enter/exit animations
+export const AnimationConfigSchema = z.object({
+  type: zSafe(z.string(), "none"), // none, fade, slide-up, slide-down, slide-left, slide-right, scale
+  duration: zSafe(z.number(), 300),
+  delay: zSafe(z.number(), 0),
+  ease: zSafe(z.string(), "easeOut"),
+}).default({});
+
+export const AnimationStateSchema = z.object({
+  enter: AnimationConfigSchema,
+  exit: AnimationConfigSchema,
+}).default({});
+
+export type AnimationConfig = z.infer<typeof AnimationConfigSchema>;
+export type AnimationState = z.infer<typeof AnimationStateSchema>;
 
 export const TransformRectSchema = z.object({
   x: zSafe(z.number(), 0),
@@ -27,18 +46,21 @@ export type TransformRect = z.infer<typeof TransformRectSchema>;
 export type ElementSceneState<T = any> = {
   rect: TransformRect;
   data: T;
+  animation?: AnimationState;
 };
 
 export const ElementSceneStateFactory = (type: ElementType) => z.object({
   active: zSafe(z.boolean(), true),
   rect: zSafe(TransformRectSchema, { x: 0, y: 0, w: 100, h: 100, r: 0 }),
-  data: ElementSchemaMap[type]
+  data: ElementSchemaMap[type],
+  animation: AnimationStateSchema,
 }).default({});
 
 
 export const UnionElementStateSchema = z.discriminatedUnion("type", [
   ElementStateFactory(ElementType.image, Element_ImageStateSchemaN),
   ElementStateFactory(ElementType.text, Element_TextStateSchemaN),
+  ElementStateFactory(ElementType.audioViz, Element_AudioVizStateSchemaN),
 ]);
 export type ElementState = z.infer<typeof UnionElementStateSchema>;
 

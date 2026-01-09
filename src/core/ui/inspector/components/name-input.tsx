@@ -1,7 +1,7 @@
-import { FC }                          from "react";
+import { FC } from "react";
 import { useGetState, useUpdateState } from "@/client";
 
-const NameInput: FC<{id: string}> = ({id}) => {
+const NameInput: FC<{ id: string }> = ({ id }) => {
   const name = useGetState(state => state.elements[id].name);
   const update = useUpdateState();
 
@@ -10,7 +10,7 @@ const NameInput: FC<{id: string}> = ({id}) => {
   });
 
   return <>
-    <input value={name} onChange={e => handleUpdateName(e.target.value)} className="w-full appearance-none text-xl font-bold border-none !outline-none bg-transparent" />
+    <input aria-label="Element Name" placeholder="Element Name" value={name} onChange={e => handleUpdateName(e.target.value)} className="w-full appearance-none text-xl font-bold border-none !outline-none bg-transparent" />
   </>
 }
 

@@ -13,6 +13,7 @@ import Service_TTS from "./services/tts";
 import Service_Twitch from "./services/twitch";
 import Service_Kick from "./services/kick";
 import Service_VRC from "./services/vrc";
+import Service_History from "./services/history";
 import { changeLanguage, initI18n } from '@/i18n';
 
 export enum Services {
@@ -41,6 +42,7 @@ class ApiServer {
   public readonly obs = new Service_OBS();
   public readonly keyboard = new Service_Keyboard();
   public readonly sound = new Service_Sound();
+  public readonly history = new Service_History();
 
   get state() {
     return this._state.state;
@@ -51,12 +53,14 @@ class ApiServer {
       tab: InspectorTabPath | undefined;
       show: boolean;
       expand: boolean;
+      selections: string[];
     };
   }>({
     sidebarState: {
       tab: undefined,
       show: false,
-      expand: false
+      expand: false,
+      selections: []
     },
   });
   closeSidebar() {

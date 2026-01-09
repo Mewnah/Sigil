@@ -55,6 +55,7 @@ const RustInputDeviceSelect: FC<{ label: string; value: string; onChange: (value
         </button>
       </div>
       <InputSelect
+        label="Input Device"
         value={value}
         onValueChange={onChange}
         options={[

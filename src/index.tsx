@@ -38,11 +38,14 @@ if (!window.reactRoot) {
   window.reactRoot = ReactDOM.createRoot(root_ele);
 }
 
+// Set default theme
+document.documentElement.setAttribute("data-theme", "sigil");
+
 function renderView(view: ReactNode) {
   window.reactRoot && window.reactRoot.render(view);
 }
 
-const LazyServerView = React.lazy(() => import("./core/ui/editor-view"));
+import SigilRoot from "./core/ui/sigil/SigilRoot";
 
 (async function () {
   try {
@@ -51,6 +54,8 @@ const LazyServerView = React.lazy(() => import("./core/ui/editor-view"));
     window.ApiClient = new ApiClient();
 
     await window.Config.init();
+    await window.ApiShared.init();
+
     await window.ApiShared.init();
 
     if (window.Config.isClient()) {
@@ -65,29 +70,26 @@ const LazyServerView = React.lazy(() => import("./core/ui/editor-view"));
       }
     }
 
-    if (window.Config.isClient())
-      renderView(<ClientLoadingView />);
-    // else
-    //   renderView(<LazyServerView/>);
-
-    // always load client api
+    // Initialize ApiClient (always needed)
     await window.ApiClient.init();
 
-    // load server api only in app
-    if (window.Config.isServer()) {
-      const serverApi = await import("./core");
-      window.ApiServer = new serverApi.default();
-      await window.ApiServer.init();
-    }
-
-
-    if (window.Config.isServer())
-      document.documentElement.className = "host";
-
-    if (window.Config.isClient())
+    // Determine Mode & Initialize Server API if needed
+    if (window.Config.isClient()) {
       renderView(<ClientView />);
-    else
-      renderView(<LazyServerView />);
+    } else {
+      // Assume Server/App Mode if not explicitly Client
+      if (!window.ApiServer) {
+        const serverApi = await import("./core");
+        window.ApiServer = new serverApi.default();
+        await window.ApiServer.init();
+      }
+
+      if (window.Config.isServer()) {
+        document.documentElement.className = "host";
+      }
+
+      renderView(<SigilRoot />);
+    }
   } catch (error: any) {
     console.error("App initialization failed:", error);
     if (root_ele) {

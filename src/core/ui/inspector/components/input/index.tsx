@@ -45,7 +45,7 @@ export const InputBaseText: FC<InputHTMLAttributes<HTMLInputElement> & { fieldWi
         setInternalValue(val.target.value);
         onChange?.(val);
     };
-    return <input {...props} value={internalValue} onChange={updateVal} className={cx(styles.clearAppearance, props.className, { "field-width": fieldWidth }, "input input-bordered overflow-hidden input-sm font-semibold leading-none")} />;
+    return <input aria-label={props["aria-label"] || props.title || props.placeholder || "Input"} {...props} value={internalValue} onChange={updateVal} className={cx(styles.clearAppearance, props.className, { "field-width": fieldWidth }, "input input-bordered overflow-hidden input-sm font-semibold leading-none")} />;
 };
 
 interface InputTextProps extends InputBaseProps, InputHTMLAttributes<HTMLInputElement> { }

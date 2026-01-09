@@ -12,10 +12,11 @@ import NameInput from "./components/name-input";
 import TransformInput from "./components/transform-input";
 import { useUpdateElement } from "@/utils";
 import { useTranslation } from "react-i18next";
+import { DocumentState } from "@/client/schema";
 
 const GeneralInspector: FC<{ id: string }> = ({ id }) => {
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data = useGetState(state => state.elements[id]?.scenes as Record<string, ElementSceneState<Element_ImageState>>);
+  const data = useGetState((state: DocumentState) => state.elements[id]?.scenes as unknown as Record<string, ElementSceneState<Element_ImageState>>);
   const up = useUpdateElement<Element_ImageState>(id);
 
   return <>
@@ -27,7 +28,7 @@ const GeneralInspector: FC<{ id: string }> = ({ id }) => {
 const BaseInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_ImageState = useGetState(state => state.elements[id].scenes[activeScene].data as Element_ImageState);
+  const data: Element_ImageState = useGetState((state: DocumentState) => state.elements[id].scenes[activeScene].data as unknown as Element_ImageState);
   const up = useUpdateElement<Element_ImageState>(id);
 
   return <>
@@ -48,7 +49,7 @@ const BaseInspector: FC<{ id: string }> = ({ id }) => {
 const CssInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data: Element_ImageState = useGetState(state => state.elements[id].scenes[activeScene].data as Element_ImageState);
+  const data: Element_ImageState = useGetState((state: DocumentState) => state.elements[id].scenes[activeScene].data as unknown as Element_ImageState);
   const up = useUpdateElement<Element_ImageState>(id);
   return <>
     <Inspector.SubHeader>{t('avatar.section_css')}</Inspector.SubHeader>

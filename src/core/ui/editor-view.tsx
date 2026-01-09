@@ -1,82 +1,44 @@
-import NiceModal from "@ebay/nice-modal-react";
-import { FC, FormEvent, memo, useEffect, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
+import { FC, memo, useEffect, useState, MouseEvent as ReactMouseEvent } from "react";
 import { useDebounce } from "react-use";
-import { ToastContainer } from "react-toastify";
-import 'react-toastify/dist/ReactToastify.min.css';
-import { TextEventSource, TextEventType } from "@/types";
-import Sidebar from "./sidebar";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, Variants } from "framer-motion";
 import { useSnapshot } from "valtio";
-import ActionBar from "./actionbar";
-import "./file-modal";
-import "./stt-replacements-modal";
-import OverlayInput from "./overlay-input";
 import { ElementEditorTransform } from "./element-transform";
 import { useGetState, useUpdateState } from "@/client";
 import classNames from "classnames";
-import { RiCheckFill } from "react-icons/ri";
-import BackgroundInput from "./background-input";
-import RecordingAlerts from "./recording-alerts";
-import { useTranslation } from "react-i18next";
 
-const EditorView: FC = () => {
-  const { showOverlay } = useSnapshot(window.ApiServer.state);
-  return <AnimatePresence>
-    <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ ease: "anticipate", duration: .4 }}
-      className="relative bg-base-200 w-screen h-screen flex overflow-hidden">
-      <NiceModal.Provider>
-        <Sidebar />
-        <div className="relative flex flex-col overflow-hidden w-full h-full">
-          <ActionBar />
-          <EditorViewport />
-          <AnimatePresence initial={false}>
-            {!showOverlay && <div className="absolute flex justify-center self-center bottom-4 left-4 right-4"><STTInput /></div>}
-          </AnimatePresence>
-        </div>
-        <AnimatePresence>
-          {showOverlay && <OverlayInput onClose={() => window.ApiServer.state.showOverlay = false} />}
-        </AnimatePresence>
-        <ShortcutRecorder />
-        <BackgroundInput />
-        <AnimatePresence>
-          {!showOverlay && <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ ease: "anticipate", duration: 0.3 }}
-            className="absolute top-16 right-4">
-            <RecordingAlerts />
-          </motion.div>}
-        </AnimatePresence>
-        <ToastContainer className="toasts" draggable={false} closeOnClick limit={3} hideProgressBar theme="colored" />
-      </NiceModal.Provider>
-    </motion.div>
-  </AnimatePresence>
-}
+// Transition helper
+const getSceneVariants = (type: string = 'none', duration: number = 300): Variants => {
+  const transition = { duration: duration / 1000, ease: "easeInOut" };
 
-const ShortcutRecorder: FC = () => {
-  const { showRecorder, currentValue } = useSnapshot(window.ApiServer.keyboard.ui);
+  switch (type) {
+    case 'fade':
+      return {
+        initial: { opacity: 0 },
+        animate: { opacity: 1, transition },
+        exit: { opacity: 0, transition }
+      };
+    case 'blur':
+      return {
+        initial: { opacity: 0, filter: "blur(10px)" },
+        animate: { opacity: 1, filter: "blur(0px)", transition },
+        exit: { opacity: 0, filter: "blur(10px)", transition }
+      };
+    case 'slide':
+      return {
+        initial: { x: 20, opacity: 0 },
+        animate: { x: 0, opacity: 1, transition },
+        exit: { x: -20, opacity: 0, transition }
+      };
+    default:
+      return {
+        initial: { opacity: 1 },
+        animate: { opacity: 1 },
+        exit: { opacity: 1 }
+      };
+  }
+};
 
-  return <AnimatePresence>
-    {showRecorder && <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ ease: "anticipate", duration: 0.3 }}
-      className="fixed inset-0 z-50 bg-base-300/90 flex flex-col space-y-5 items-center justify-center">
-      <span className={classNames("font-bold text-5xl", { "opacity-50": !currentValue })}>{currentValue || "Listening for input.."}</span>
-      <div className="flex space-x-2">
-        <button className="btn btn-sm btn-ghost gap-2 leading-none items-center" onClick={() => window.ApiServer.keyboard.cancelComboRecord()}>Cancel</button>
-        <button className="btn btn-sm btn-primary gap-2 leading-none items-center" onClick={() => window.ApiServer.keyboard.confirmShortcutRecord()}><RiCheckFill className="text-xl" /> Update shortcut</button>
-      </div>
-    </motion.div>}
-  </AnimatePresence>
-}
-
-const Canvas: FC = memo(() => {
+const Canvas: FC<{ activeScene: string, transition?: { type: string, duration: number } }> = memo(({ activeScene, transition }) => {
   const canvas = useGetState(state => state.canvas);
   const ids = useGetState(state => state.elementsIds);
   const update = useUpdateState();
@@ -101,7 +63,11 @@ const Canvas: FC = memo(() => {
     if (tab?.value) {
       setSelectedId(tab.value);
     }
-    if (tab?.tab && tab.tab !== 'scenes') {
+    // If we're on a service page (like STT, TTS) that is NOT a studio tab, we might want to hide the canvas or dim it
+    // But currently we always show it.
+    // If we wanted to hide it for performance or focus:
+    if (tab?.tab && tab.tab !== 'scenes' && tab.tab !== 'text' && tab.tab !== 'image') {
+      // checks against ElementType "text" and "image"
       setIsCanvasSelected(false);
     } else if (tab?.tab === 'scenes') {
       setIsCanvasSelected(true);
@@ -129,18 +95,22 @@ const Canvas: FC = memo(() => {
     setResizing(dir);
   }
 
-  return <>
+  const variants = getSceneVariants(transition?.type, transition?.duration);
+
+  return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      key={activeScene}
+      variants={variants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       onMouseDown={() => { setSelectedId(null); setIsCanvasSelected(false); }}
       onDoubleClick={() => { setIsCanvasSelected(true); window.ApiServer.changeTab({ tab: "scenes" }); }}
-      transition={{ ease: "anticipate", duration: 0.3 }}
-      style={{ width: localDim.w, height: localDim.h }} className={classNames("relative rounded-lg border border-dashed border-primary/50 group", {
+      style={{ width: localDim.w, height: localDim.h }}
+      className={classNames("relative bg-black rounded-lg border border-dashed border-primary/50 group shadow-2xl", {
         "border-primary": isCanvasSelected
-      })}>
-
+      })}
+    >
       {/* Canvas Resize Handles */}
       <div onMouseDown={handleDragStart("e")} className={classNames("absolute -right-2 top-0 bottom-0 w-4 cursor-e-resize flex items-center justify-center transition-opacity",
         isCanvasSelected ? "opacity-100" : "opacity-0 pointer-events-none")}>
@@ -160,72 +130,20 @@ const Canvas: FC = memo(() => {
         onSelect={() => setSelectedId(elementId)}
       />)}
     </motion.div>
-  </>
-})
-
-const LogsView = () => {
-  const scrollContainer = useRef<HTMLDivElement>(null);
-  const { lastId, list } = useSnapshot(window.ApiShared.pubsub.textHistory);
-
-  useEffect(() => {
-    setTimeout(() => scrollContainer.current?.scrollTo({ top: scrollContainer.current.scrollHeight, behavior: "smooth" }));
-  }, [lastId]);
-
-  return <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    transition={{ ease: "anticipate", duration: 0.3 }}
-    className="relative w-full h-full flex flex-col">
-    <div ref={scrollContainer} className="flex flex-grow overflow-y-scroll scrollbar-hide flex-col-reverse mb-8">
-      <div className="w-full flex flex-col px-4 pt-6 pb-12 space-y-2">
-        {list.map(event => <div key={event.id} className="flex flex-col rounded-md bg-neutral/10 hover:bg-neutral/30 transition-colors px-4 py-2 cursor-pointer">
-          <div className="hidden sm:block text-xs opacity-50 font-semibold">from {event.event}</div>
-          <div className="text-sm sm:text-lg font-semibold !leading-none">{event.value}</div>
-        </div>)}
-      </div>
-    </div>
-  </motion.div>
-}
+  );
+});
 
 export const EditorViewport: FC = () => {
-  const { showLogs } = useSnapshot(window.ApiServer.state);
-  return <div className="w-full relative bg-base-300 flex flex-grow items-center justify-center overflow-hidden">
-    <AnimatePresence>
-      {showLogs ? <LogsView /> : <Canvas />}
-    </AnimatePresence>
-  </div>
-}
+  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
+  const transition = useGetState(state => state.canvas?.transition);
 
-const STTInput: FC = () => {
-  const { showLogs } = useSnapshot(window.ApiServer.state);
-  const { t } = useTranslation();
-  const [inputValue, setInputValue] = useState('');
-  const submit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!inputValue)
-      return;
-    setInputValue('');
-    window.ApiShared.pubsub.publishText(TextEventSource.textfield, { type: TextEventType.final, value: inputValue });
-  }
+  return (
+    <div className="w-full h-full relative flex items-center justify-center overflow-auto p-8">
+      <AnimatePresence mode="wait">
+        <Canvas activeScene={activeScene} transition={transition} />
+      </AnimatePresence>
+    </div>
+  );
+};
 
-  const handleChange = (value: string) => {
-    window.ApiShared.pubsub.publishText(TextEventSource.textfield, { type: TextEventType.interim, value });
-    setInputValue(value);
-  }
-
-  return <motion.div
-    key="overlay-input"
-    initial={{ opacity: 0, y: 10, width: showLogs ? '100%' : '400px' }}
-    exit={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, width: showLogs ? '100%' : '400px', y: 0 }}
-    transition={{ ease: "anticipate", duration: 0.5 }}
-    className="flex items-center space-x-2 w-96">
-
-    <form onSubmit={submit} className="w-full">
-      <input type="text" autoComplete="off" name="sttinput" placeholder={t('main.keyboard_input')} className="w-full input text-sm" value={inputValue} onChange={e => handleChange(e.target.value)} />
-    </form>
-  </motion.div>
-}
-
-export default EditorView;
+export default EditorViewport;

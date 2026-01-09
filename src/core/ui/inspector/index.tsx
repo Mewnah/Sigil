@@ -12,6 +12,7 @@ import Inspector_Transform from "./inspector_transform";
 import Inspector_ElementImage from "./inspector_image";
 import Inspector_ElementText from "./inspector_text";
 import Inspector_Files from "./inspector_files";
+import Inspector_ElementAudioViz from "./inspector_audioviz";
 import { ElementType } from "@/client/elements/schema";
 import { InspectorTabPath } from "@/types";
 import Inspector_Scenes from "./inspector_scenes";
@@ -63,7 +64,9 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
           {path?.tab === "files" && <Inspector_Files key="files" />}
           {path?.tab === ElementType.text && path?.value && <Inspector_ElementText id={path.value} key={`${path.tab}-${path.value}`} />}
           {path?.tab === ElementType.image && path?.value && <Inspector_ElementImage id={path.value} key={`${path.tab}-${path.value}`} />}
+          {path?.tab === ElementType.audioViz && path?.value && <Inspector_ElementAudioViz id={path.value} key={`${path.tab}-${path.value}`} />}
         </AnimatePresence>
+
       </ErrorBoundary>
     </div>
   </div>

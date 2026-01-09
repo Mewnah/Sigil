@@ -6,7 +6,7 @@ import { useSnapshot } from "valtio";
 import Dropdown from "../dropdown/Dropdown";
 import Tooltip from "../dropdown/Tooltip";
 import Inspector from "./components";
-import { InputBaseText, InputDoubleCountainer, InputCheckbox } from "./components/input";
+import { InputBaseText, InputDoubleCountainer, InputCheckbox, InputSelect } from "./components/input";
 import { useTranslation } from "react-i18next";
 
 const SceneMenu: FC<{ id: string }> = ({ id }) => {
@@ -60,6 +60,35 @@ const Inspector_Scenes: FC = () => {
         <InputBaseText value={canvas?.h} onChange={e => updateState(state => { state.canvas.h = parseFloat(e.target.value) })} type="number" />
       </InputDoubleCountainer>
       <InputCheckbox label="Snap to Grid" value={useGetState(state => state.snapToGrid)} onChange={v => updateState(state => { state.snapToGrid = v })} />
+
+      <Inspector.SubHeader>{t('scenes.section_transitions') || "Global Transitions"}</Inspector.SubHeader>
+      <InputSelect
+        label="Type"
+        options={[
+          { label: 'None', value: 'none' },
+          { label: 'Fade', value: 'fade' },
+          { label: 'Blur', value: 'blur' },
+          { label: 'Slide', value: 'slide' }
+        ]}
+        value={useGetState(state => state.transition?.type || 'none')}
+        onValueChange={v => updateState(state => {
+          if (!state.transition) state.transition = { type: 'none', duration: 300 };
+          state.transition.type = v;
+        })}
+      />
+      <InputDoubleCountainer label="Duration (ms)">
+        <InputBaseText
+          fieldWidth={false}
+          className="w-full"
+          value={useGetState(state => state.transition?.duration || 300)}
+          onChange={e => updateState(state => {
+            if (!state.transition) state.transition = { type: 'none', duration: 300 };
+            state.transition.duration = parseFloat(e.target.value);
+          })}
+          type="number"
+        />
+        <div></div>
+      </InputDoubleCountainer>
 
       <Inspector.SubHeader>{t('scenes.section_scenes')}</Inspector.SubHeader>
       {scenes && Object.keys(scenes).map((sceneId) => <Scene key={sceneId} data={scenes[sceneId]} />)}

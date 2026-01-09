@@ -21,6 +21,11 @@ class Service_Sound implements IServiceInterface {
   }
 
   private audioContext!: AudioContext;
+  private mediaStream: MediaStream | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+
+  // Public analyser for audio visualization
+  public analyser: AnalyserNode | null = null;
 
   async init() {
     this.audioContext = new AudioContext();
@@ -28,7 +33,56 @@ class Service_Sound implements IServiceInterface {
 
   public serviceState = proxy({
     muted: false,
+    inputActive: false,
   });
+
+  /**
+   * Start microphone input for audio visualization
+   */
+  async startInput(): Promise<void> {
+    if (this.mediaStream) return; // Already started
+
+    try {
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      if (!this.audioContext || this.audioContext.state === "closed") {
+        this.audioContext = new AudioContext();
+      }
+
+      if (this.audioContext.state === "suspended") {
+        await this.audioContext.resume();
+      }
+
+      this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0.8;
+
+      this.sourceNode.connect(this.analyser);
+      // Don't connect to destination - we don't want to hear ourselves
+
+      this.serviceState.inputActive = true;
+    } catch (error) {
+      console.error("Failed to start audio input:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Stop microphone input
+   */
+  stopInput(): void {
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
+    }
+    if (this.sourceNode) {
+      this.sourceNode.disconnect();
+      this.sourceNode = null;
+    }
+    this.analyser = null;
+    this.serviceState.inputActive = false;
+  }
 
 
   #voiceClipQueue: { data: ArrayBuffer; options: VoiceClipOptions }[] = [];
