@@ -18,7 +18,9 @@ const CHUNK_DURATION_SECS: u64 = 5;
 
 fn get_model_info(model: &str) -> (&'static str, &'static str) {
     // Returns (url, filename)
+    // Quantized models (Q5_1, Q8_0) provide ~2-3x speedup with minimal quality loss
     match model {
+        // Standard models
         "tiny.en" => (
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
             "ggml-tiny.en.bin",
@@ -44,6 +46,57 @@ fn get_model_info(model: &str) -> (&'static str, &'static str) {
         "medium" => (
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
             "ggml-medium.bin",
+        ),
+        // Quantized Q5_1 models (best balance of speed and quality)
+        "tiny.en-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin",
+            "ggml-tiny.en-q5_1.bin",
+        ),
+        "tiny-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin",
+            "ggml-tiny-q5_1.bin",
+        ),
+        "base.en-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin",
+            "ggml-base.en-q5_1.bin",
+        ),
+        "base-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
+            "ggml-base-q5_1.bin",
+        ),
+        "small.en-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin",
+            "ggml-small.en-q5_1.bin",
+        ),
+        "small-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+            "ggml-small-q5_1.bin",
+        ),
+        "medium.en-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_1.bin",
+            "ggml-medium.en-q5_1.bin",
+        ),
+        "medium-q5_1" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_1.bin",
+            "ggml-medium-q5_1.bin",
+        ),
+        // Quantized Q8_0 models (higher quality, slightly slower than Q5_1)
+        "small.en-q8_0" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q8_0.bin",
+            "ggml-small.en-q8_0.bin",
+        ),
+        "medium.en-q8_0" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q8_0.bin",
+            "ggml-medium.en-q8_0.bin",
+        ),
+        // Large V3 Turbo (optimized for speed)
+        "large-v3-turbo" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+            "ggml-large-v3-turbo.bin",
+        ),
+        "large-v3-turbo-q5_0" => (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
         ),
         _ => (
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",

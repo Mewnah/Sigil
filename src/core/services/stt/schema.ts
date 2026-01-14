@@ -10,6 +10,7 @@ export enum STT_Backends {
   deepgram = "deepgram",
   whisper = "whisper",
   vosk = "vosk",
+  moonshine = "moonshine",
 }
 
 export const zodSTT_Backends = z.nativeEnum(STT_Backends);
@@ -62,7 +63,13 @@ export const Service_STT_Schema = z.object({
     device: zSafe(z.coerce.string(), ""),
     model: zSafe(z.coerce.string(), "vosk-model-small-en-us-0.15"),
     modelUrl: zSafe(z.coerce.string(), ""),
+  }).default({}),
+  moonshine: z.object({
+    device: zSafe(z.coerce.string(), ""),
+    endpoint: zSafe(z.coerce.string(), "http://localhost:8090"),
+    language: zSafe(z.coerce.string(), "en"),
   }).default({})
 }).default({});
 
 export type STT_State = z.infer<typeof Service_STT_Schema>;
+

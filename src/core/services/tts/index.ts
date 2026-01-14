@@ -9,6 +9,7 @@ import { TTS_NativeService } from "./services/native";
 import { TTS_WindowsService } from "./services/windows";
 import { TTS_UberduckService } from "./services/uberduck";
 import { TTS_VoicevoxService } from "./services/voicevox";
+import { TTS_KokoroService } from "./services/kokoro";
 import {
   ITTSReceiver,
   ITTSService,
@@ -23,6 +24,7 @@ const backends: {
   [TTS_Backends.azure]: TTS_AzureService,
   [TTS_Backends.uberduck]: TTS_UberduckService,
   [TTS_Backends.voicevox]: TTS_VoicevoxService,
+  [TTS_Backends.kokoro]: TTS_KokoroService,
 };
 
 class Service_TTS implements IServiceInterface, ITTSReceiver {

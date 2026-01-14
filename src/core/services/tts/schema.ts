@@ -8,6 +8,7 @@ export enum TTS_Backends {
   azure = "azure",
   uberduck = "uberduck",
   voicevox = "voicevox",
+  kokoro = "kokoro",
 }
 
 const zodTTS_Backends = z.nativeEnum(TTS_Backends);
@@ -63,7 +64,14 @@ export const Service_TTS_Schema = z.object({
     intonationScale: zSafe(zStringNumber(), "1.0"),
     volumeScale: zSafe(zStringNumber(), "1.0"),
     device: zSafe(z.coerce.string(), ""),
+  }).default({}),
+  kokoro: z.object({
+    endpoint: zSafe(z.coerce.string(), "http://localhost:8880"),
+    voice: zSafe(z.coerce.string(), "af_bella"),
+    speed: zSafe(zStringNumber(), "1.0"),
+    device: zSafe(z.coerce.string(), ""),
   }).default({})
 }).default({});
 
 export type TTS_State = z.infer<typeof Service_TTS_Schema>
+

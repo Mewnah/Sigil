@@ -88,6 +88,9 @@ fn main() {
         .plugin(services::keyboard::init())
         .plugin(services::uwu::init())
         .plugin(services::whisper::init())
+        .plugin(services::translate::init())
+        .plugin(services::kokoro_tts::init())
+        .plugin(services::moonshine_stt::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -9,6 +9,7 @@ import { STT_DeepgramService } from "./services/deepgram";
 import { STT_NativeService } from "./services/native";
 import { STT_WhisperService } from "./services/whisper";
 import { STT_VoskService } from "./services/vosk";
+import { STT_MoonshineService } from "./services/moonshine";
 import { invoke } from "@tauri-apps/api/tauri";
 import {
   ISTTReceiver,
@@ -26,6 +27,7 @@ const backends: {
   [STT_Backends.deepgram]: STT_DeepgramService,
   [STT_Backends.whisper]: STT_WhisperService,
   [STT_Backends.vosk]: STT_VoskService,
+  [STT_Backends.moonshine]: STT_MoonshineService,
 };
 
 class Service_STT implements IServiceInterface, ISTTReceiver {
