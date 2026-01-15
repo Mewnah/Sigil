@@ -1,4 +1,6 @@
 pub mod audio;
+pub mod chatterbox_tts;
+pub mod fish_speech;
 pub mod keyboard;
 pub mod kokoro_tts;
 pub mod melo_tts;
