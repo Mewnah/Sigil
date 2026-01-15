@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod keyboard;
 pub mod kokoro_tts;
+pub mod melo_tts;
 pub mod moonshine_stt;
 pub mod osc;
 pub mod translate;
