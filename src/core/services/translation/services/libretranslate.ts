@@ -57,6 +57,10 @@ export class Translation_LibreTranslateService implements ITranslationService {
         this.#receiver.onStop("");
     }
 
+    dispose(): void {
+        this.stop();
+    }
+
     async translate(id: number, event: TextEvent): Promise<void> {
         if (!this.#isRunning || !event.value) return;
 

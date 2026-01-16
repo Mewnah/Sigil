@@ -13,47 +13,56 @@ import Inspector from "./components";
 import { InputChips, InputNativeAudioOutput, InputNetworkStatus, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import { useTranslation } from "react-i18next";
 import { i18nLanguages, loadLanguageFile } from "@/i18n";
-const themesLight = [
-  'light',
-  'lofi',
-  'cupcake',
-  'retro',
-  'valentine',
-  'garden',
-  'aqua',
-  'pastel',
-  'wireframe',
-  'winter',
-  'cyberpunk',
-  // 'corporate',
-  // 'bumblebee',
-  // 'emerald',
-  // 'fantasy',
-  // 'cmyk',
-  // 'autumn',
-  // 'acid',
-  // 'lemonade',
+// 1. Core & Tech
+const themesCore = [
+  'sigil-dark',
+  'sigil-light',
+  'neon-city',
+  'matrix',
+  'synthwave',
+  'terminal',
+  'steampunk',
 ]
 
-const themesDark = [
-  'sigil',
-  'matrix',
-  'staffy',
-  'dark',
-  'synthwave',
-  'halloween',
-  'forest',
-  'black',
+// 2. Nature & Elements
+const themesNature = [
+  'overgrowth',
+  'abyss',
+  'ember',
+  'zephyr',
+  'terracotta',
+]
+
+// 3. Aesthetic & Vibes
+const themesVibes = [
+  'vaporwave',
+  'lofi',
   'dracula',
-  'business',
-  'night',
+  'nord',
   'coffee',
-  // 'luxury',
+]
+
+// 4. Luxury & Precious
+const themesLuxury = [
+  'midas',
+  'rose-gold',
+  'royal',
+]
+
+// 5. Space & Sci-Fi
+const themesSpace = [
+  'starlight',
+  'mars',
+  'nebula',
+  'monochrome',
 ]
 
 const options = [
-  { label: 'Light themes', options: themesLight.map(theme => ({ value: theme, label: theme })) },
-  { label: 'Dark themes', options: themesDark.map(theme => ({ value: theme, label: theme })) }
+  { label: 'Core & Tech', options: themesCore.map(theme => ({ value: theme, label: theme })) },
+  { label: 'Nature & Elements', options: themesNature.map(theme => ({ value: theme, label: theme })) },
+  { label: 'Aesthetic & Vibes', options: themesVibes.map(theme => ({ value: theme, label: theme })) },
+  { label: 'Luxury & Precious', options: themesLuxury.map(theme => ({ value: theme, label: theme })) },
+  { label: 'Space & Sci-Fi', options: themesSpace.map(theme => ({ value: theme, label: theme })) },
 ]
 
 const UI_SCALE_MIN = 0.8;

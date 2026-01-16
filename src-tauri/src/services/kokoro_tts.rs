@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use tauri::{
     command,

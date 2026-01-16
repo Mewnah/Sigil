@@ -39,7 +39,7 @@ if (!window.reactRoot) {
 }
 
 // Set default theme
-document.documentElement.setAttribute("data-theme", "sigil");
+document.documentElement.setAttribute("data-theme", "sigil-dark");
 
 function renderView(view: ReactNode) {
   window.reactRoot && window.reactRoot.render(view);

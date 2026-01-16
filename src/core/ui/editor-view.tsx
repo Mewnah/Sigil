@@ -145,7 +145,7 @@ const Canvas: FC<{ activeScene: string, transition?: { type: string, duration: n
 
 export const EditorViewport: FC = () => {
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const transition = useGetState(state => state.canvas?.transition);
+  const transition = useGetState(state => state.transition);
 
   return (
     <div className="w-full h-full relative flex items-center justify-center overflow-auto p-8">

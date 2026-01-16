@@ -22,18 +22,7 @@ import { TextEventSource } from "@/types";
 
 import { DocumentState } from "@/client/schema";
 
-const GeneralInspector: FC<{ id: string }> = ({ id }) => {
-  const { t } = useTranslation();
-  const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const data = useGetState((state: DocumentState) => state.elements[id]?.scenes as unknown as Record<string, ElementSceneState<Element_TextState>>);
-  const up = useUpdateElement<Element_TextState>(id);
 
-  return <>
-    <Inspector.SubHeader>Element Settings</Inspector.SubHeader>
-    <TransformInput id={id} />
-
-  </>
-}
 
 const SourceInspector: FC<{ id: string }> = ({ id }) => {
   const { t } = useTranslation();
@@ -46,6 +35,9 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
   const showSyncOption = data.sourceMain === TextEventSource.stt || isSynced;
 
   return <>
+    <Inspector.SubHeader>Element Settings</Inspector.SubHeader>
+    <TransformInput id={id} />
+
     <Inspector.SubHeader>{t('text.section_text_source')}</Inspector.SubHeader>
     <InputTextSource
       label="common.field_text_source"
@@ -339,21 +331,19 @@ const Inspector_ElementText: FC<{ id: string }> = memo(({ id }) => {
     {isInScene && <Inspector.Content>
       <Inspector.Tabs>
         <Inspector.Tab tooltip={t('text.section_text_source')} tooltipBody={t('text.section_text_source_desc')} onClick={() => handleTab(0)} active={tab === 0}><IoIosRadio /></Inspector.Tab>
-        <Inspector.Tab tooltip="Element Settings" onClick={() => handleTab(1)} active={tab === 1}><RiDragMove2Fill /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_font')} tooltipBody={t('text.section_font_desc')} onClick={() => handleTab(2)} active={tab === 2}><RiFontSize /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_box')} tooltipBody={t('text.section_box_desc')} onClick={() => handleTab(3)} active={tab === 3}><BsTextareaResize /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_behaviour')} tooltipBody={t('text.section_behaviour_desc')} onClick={() => handleTab(4)} active={tab === 4}><VscSettings /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_effects')} tooltipBody={t('text.section_effects_desc')} onClick={() => handleTab(5)} active={tab === 5}><BsStars /></Inspector.Tab>
-        <Inspector.Tab tooltip={t('text.section_css')} onClick={() => handleTab(6)} active={tab === 6}><SiCsswizardry /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_font')} tooltipBody={t('text.section_font_desc')} onClick={() => handleTab(1)} active={tab === 1}><RiFontSize /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_box')} tooltipBody={t('text.section_box_desc')} onClick={() => handleTab(2)} active={tab === 2}><BsTextareaResize /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_behaviour')} tooltipBody={t('text.section_behaviour_desc')} onClick={() => handleTab(3)} active={tab === 3}><VscSettings /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_effects')} tooltipBody={t('text.section_effects_desc')} onClick={() => handleTab(4)} active={tab === 4}><BsStars /></Inspector.Tab>
+        <Inspector.Tab tooltip={t('text.section_css')} onClick={() => handleTab(5)} active={tab === 5}><SiCsswizardry /></Inspector.Tab>
       </Inspector.Tabs>
       <Inspector.TabsContent direction={direction} tabKey={tab}>
         {tab === 0 && <SourceInspector id={id} />}
-        {tab === 1 && <GeneralInspector id={id} />}
-        {tab === 2 && <TextInspector id={id} />}
-        {tab === 3 && <BoxInspector id={id} />}
-        {tab === 4 && <BehaviourInspector id={id} />}
-        {tab === 5 && <EffectsInspector id={id} />}
-        {tab === 6 && <CssInspector id={id} />}
+        {tab === 1 && <TextInspector id={id} />}
+        {tab === 2 && <BoxInspector id={id} />}
+        {tab === 3 && <BehaviourInspector id={id} />}
+        {tab === 4 && <EffectsInspector id={id} />}
+        {tab === 5 && <CssInspector id={id} />}
       </Inspector.TabsContent>
     </Inspector.Content>}
     {!isInScene && <Inspector.Content>

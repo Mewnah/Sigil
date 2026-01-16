@@ -5,7 +5,10 @@
   themes: all;
 }
 
-/* Custom theme: Sigil Dark - Pastel purple with soft cyan contrast */
+/* --- CORE & TECH --- */
+
+/* 1. Sigil Dark */
+/* 1. Sigil Dark */
 @plugin "daisyui/theme" {
   name: "sigil-dark";
   default: true;
@@ -28,96 +31,558 @@
   --radius-selector: 0.25rem;
 }
 
-/* Custom theme: Sigil Light - Clean white/purple */
+/* 2. Sigil Light (Daylight) */
 @plugin "daisyui/theme" {
   name: "sigil-light";
-  default: false;
   prefersdark: false;
   color-scheme: light;
-  --color-primary: #7C3AED;
-  --color-secondary: #8B5CF6;
-  --color-accent: #C084FC;
+  --color-primary: #6366f1;
+  /* Indigo 500 */
+  --color-secondary: #ec4899;
+  /* Pink 500 */
+  --color-accent: #8b5cf6;
+  /* Violet 500 */
   --color-base-100: #ffffff;
   --color-base-200: #f3f4f6;
+  /* Slate 100 */
   --color-base-300: #e5e7eb;
-  --color-base-content: #1f2937;
-  --color-neutral: #d1d5db;
+  /* Slate 200 */
+  --color-base-content: #111827;
+  /* Gray 900 */
+  --color-neutral: #cbd5e1;
+  /* Slate 300 */
   --color-info: #0ea5e9;
-  --color-success: #22c55e;
+  --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
-  --radius-box: 0.8rem;
-  --radius-field: 0.5rem;
-  --radius-selector: 0.25rem;
+  --radius-box: 0.5rem;
+  --radius-field: 0.3rem;
+  --radius-selector: 0.2rem;
 }
 
-/* Custom theme: Streamer Mode - High Contrast / Green Screen safe? */
+
+
+/* 4. Neon City (Cyberpunk) */
 @plugin "daisyui/theme" {
-  name: "streamer";
-  default: false;
+  name: "neon-city";
   prefersdark: true;
   color-scheme: dark;
-  --color-primary: #d946ef;
-  --color-secondary: #a855f7;
+  --color-primary: #f0abfc;
+  --color-primary-content: #000000;
+  /* Fuchsia 300 */
+  --color-secondary: #a78bfa;
+  /* Violet 400 */
   --color-accent: #22d3ee;
-  --color-base-100: #000000;
-  --color-base-200: #111111;
-  --color-base-300: #222222;
-  --color-base-content: #ffffff;
-  --color-neutral: #333333;
-  --color-info: #3b82f6;
-  --color-success: #10b981;
-  --color-warning: #eab308;
-  --color-error: #ef4444;
-  --radius-box: 0rem;
-  --radius-field: 0rem;
+  /* Cyan 400 */
+  --color-base-100: #2e1065;
+  /* Violet 950 */
+  --color-base-200: #1e1b4b;
+  /* Indigo 950 */
+  --color-base-300: #0f172a;
+  /* Slate 900 */
+  --color-base-content: #f5d0fe;
+  /* Fuchsia 100 */
+  --color-neutral: #4c1d95;
+  /* Violet 900 */
+  --color-info: #38bdf8;
+  --color-success: #34d399;
+  --color-warning: #facc15;
+  --color-error: #fb7185;
+  --radius-box: 0.2rem;
+  --radius-field: 0.2rem;
   --radius-selector: 0rem;
 }
 
-/* Custom theme: Staffy */
-@plugin "daisyui/theme" {
-  name: "staffy";
-  default: false;
-  prefersdark: false;
-  color-scheme: dark;
-  --color-primary: #8741d6;
-  --color-secondary: #8741d6;
-  --color-accent: #00eb5e;
-  --color-base-100: #333333;
-  --color-base-200: #232323;
-  --color-base-300: #212121;
-  --color-base-content: #f4e32a;
-  --color-neutral: #272626;
-  --color-info: #0000ff;
-  --color-success: #008000;
-  --color-warning: #ffff00;
-  --color-error: #ff0000;
-  --radius-box: 0.8rem;
-  --radius-field: 0.5rem;
-  --radius-selector: 0.5rem;
-}
-
-/* Custom theme: Matrix */
+/* 5. Matrix (Mainframe) */
 @plugin "daisyui/theme" {
   name: "matrix";
-  default: false;
-  prefersdark: false;
+  prefersdark: true;
   color-scheme: dark;
-  --color-primary: #80ce87;
-  --color-secondary: #204829;
-  --color-accent: #00eb5e;
-  --color-base-100: #090909;
-  --color-base-200: #070707;
-  --color-base-300: #020202;
-  --color-base-content: #22b455;
-  --color-neutral: #272626;
-  --color-info: #0000ff;
-  --color-success: #008000;
-  --color-warning: #ffff00;
-  --color-error: #ff0000;
+  --color-primary: #00ff41;
+  /* CRT Green */
+  --color-primary-content: #000000;
+  /* Text on primary */
+  --color-secondary: #008F11;
+  /* Dark Green */
+  --color-accent: #33ff00;
+  /* Bright Lime */
+  --color-base-100: #050505;
+  /* Black */
+  --color-base-200: #0a0a0a;
+  --color-base-300: #000000;
+  --color-base-content: #00ff41;
+  --color-neutral: #0d0d0d;
+  --color-info: #003b00;
+  --color-success: #00ff41;
+  --color-warning: #eaaa00;
+  /* Amber Warning */
+  --color-error: #ff003c;
+  /* Cyber Red */
   --radius-box: 0;
   --radius-field: 0;
   --radius-selector: 0;
+}
+
+/* 6. Synthwave (Outrun) */
+@plugin "daisyui/theme" {
+  name: "synthwave";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #ff007f;
+  /* Hot Pink */
+  --color-primary-content: #ffffff;
+  --color-secondary: #7b00ff;
+  /* Electric Violet */
+  --color-accent: #00f9ff;
+  /* Cyan */
+  --color-base-100: #241734;
+  /* Deep Purple */
+  --color-base-200: #1a0f26;
+  --color-base-300: #100918;
+  --color-base-content: #ffcc00;
+  /* Sun Yellow */
+  --color-neutral: #2d1b4e;
+  --color-info: #00f9ff;
+  --color-success: #05ffa1;
+  --color-warning: #ffcc00;
+  --color-error: #ff0055;
+  --radius-box: 1rem;
+}
+
+/* 7. Terminal (Amber) */
+@plugin "daisyui/theme" {
+  name: "terminal";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #fbbf24;
+  /* Amber 400 */
+  --color-primary-content: #000000;
+  --color-secondary: #f59e0b;
+  /* Amber 500 */
+  --color-accent: #d97706;
+  /* Amber 600 */
+  --color-base-100: #0c0a09;
+  /* Stone 950 (Off Black) */
+  --color-base-200: #1c1917;
+  /* Stone 900 */
+  --color-base-300: #292524;
+  /* Stone 800 */
+  --color-base-content: #fbbf24;
+  /* Amber Text */
+  --color-neutral: #44403c;
+  --color-info: #38bdf8;
+  --color-success: #10b981;
+  --color-warning: #fbbf24;
+  --color-error: #ef4444;
+  --radius-box: 0;
+  --radius-field: 0;
+  --radius-selector: 0;
+}
+
+/* 8. Steampunk (Retro-Future) */
+@plugin "daisyui/theme" {
+  name: "steampunk";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #d4a373;
+  /* Brass */
+  --color-primary-content: #120e0b;
+  /* Dark Brown Text */
+  --color-secondary: #a98467;
+  /* Leather */
+  --color-accent: #e9edc9;
+  /* Parchment */
+  --color-base-100: #231b16;
+  /* Oil Black */
+  --color-base-200: #1a1410;
+  --color-base-300: #120e0b;
+  --color-base-content: #e3d5ca;
+  /* Old Paper */
+  --color-neutral: #3e3630;
+  /* Rust */
+  --color-info: #7dd3fc;
+  --color-success: #86efac;
+  --color-warning: #fcd34d;
+  --color-error: #f87171;
+  --radius-box: 0.6rem;
+  --radius-field: 0.4rem;
+  --radius-selector: 0.2rem;
+}
+
+/* --- NATURE & ELEMENTS --- */
+
+/* 9. Overgrowth */
+@plugin "daisyui/theme" {
+  name: "overgrowth";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #86efac;
+  --color-primary-content: #000000;
+  --color-secondary: #4ade80;
+  --color-accent: #facc15;
+  --color-base-100: #0f2310;
+  --color-base-200: #081608;
+  --color-base-300: #040d04;
+  --color-base-content: #ecfdf5;
+  --color-neutral: #1a2e1b;
+  --color-info: #38bdf8;
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-error: #ef4444;
+  --radius-box: 1rem;
+}
+
+/* 10. Abyss */
+@plugin "daisyui/theme" {
+  name: "abyss";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #22d3ee;
+  --color-primary-content: #000000;
+  --color-secondary: #0ea5e9;
+  --color-accent: #67e8f9;
+  --color-base-100: #02101a;
+  --color-base-200: #010a12;
+  --color-base-300: #000508;
+  --color-base-content: #e0f2fe;
+  --color-neutral: #0a2133;
+  --color-info: #38bdf8;
+  --color-success: #2dd4bf;
+  --color-warning: #fde047;
+  --color-error: #f43f5e;
+  --radius-box: 0.8rem;
+}
+
+/* 11. Ember */
+@plugin "daisyui/theme" {
+  name: "ember";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #f87171;
+  --color-secondary: #ea580c;
+  --color-accent: #fbbf24;
+  --color-base-100: #1f120e;
+  --color-base-200: #140a08;
+  --color-base-300: #0a0504;
+  --color-base-content: #fef2f2;
+  --color-neutral: #381e18;
+  --color-info: #60a5fa;
+  --color-success: #34d399;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --radius-box: 0.6rem;
+}
+
+/* 12. Zephyr */
+@plugin "daisyui/theme" {
+  name: "zephyr";
+  prefersdark: false;
+  color-scheme: light;
+  --color-primary: #0ea5e9;
+  --color-secondary: #a8a29e;
+  --color-accent: #e0f2fe;
+  --color-base-100: #f0f9ff;
+  --color-base-200: #e0f2fe;
+  --color-base-300: #bae6fd;
+  --color-base-content: #0c4a6e;
+  --color-neutral: #bae6fd;
+  --color-info: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --radius-box: 1.2rem;
+}
+
+/* 13. Terracotta */
+@plugin "daisyui/theme" {
+  name: "terracotta";
+  prefersdark: true;
+  /* Actually a warm dark */
+  color-scheme: dark;
+  --color-primary: #d97706;
+  --color-secondary: #b45309;
+  --color-accent: #78350f;
+  --color-base-100: #291e14;
+  --color-base-200: #1f160e;
+  --color-base-300: #140d07;
+  --color-base-content: #fff7ed;
+  --color-neutral: #453222;
+  --color-info: #60a5fa;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --radius-box: 0.4rem;
+}
+
+/* --- AESTHETIC & VIBES --- */
+
+/* 14. Vaporwave */
+@plugin "daisyui/theme" {
+  name: "vaporwave";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #f472b6;
+  --color-secondary: #60a5fa;
+  --color-accent: #c084fc;
+  --color-base-100: #1e1b4b;
+  --color-base-200: #110e3d;
+  --color-base-300: #0a0826;
+  --color-base-content: #e0e7ff;
+  --color-neutral: #312e81;
+  --color-info: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-error: #f43f5e;
+  --radius-box: 0.5rem;
+}
+
+/* 15. Lofi (Study Beats) */
+@plugin "daisyui/theme" {
+  name: "lofi";
+  prefersdark: false;
+  color-scheme: light;
+  --color-primary: #9ca3af;
+  /* Sage Grey */
+  --color-secondary: #d6d3d1;
+  /* Stone */
+  --color-accent: #a8a29e;
+  /* Warm Grey */
+  --color-base-100: #fafaf9;
+  /* Warm Paper */
+  --color-base-200: #f5f5f4;
+  --color-base-300: #e7e5e4;
+  --color-base-content: #44403c;
+  /* Sepia Black */
+  --color-neutral: #d6d3d1;
+  --color-info: #7dd3fc;
+  --color-success: #86efac;
+  --color-warning: #fcd34d;
+  --color-error: #fca5a5;
+  --radius-box: 0.25rem;
+}
+
+/* 16. Dracula (Vampire) */
+@plugin "daisyui/theme" {
+  name: "dracula";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #ef4444;
+  /* Blood Red */
+  --color-secondary: #7f1d1d;
+  /* Dried Blood */
+  --color-accent: #a855f7;
+  /* Royal Purple */
+  --color-base-100: #18181b;
+  /* Zinc 950 */
+  --color-base-200: #09090b;
+  /* Zinc 950 dark */
+  --color-base-300: #000000;
+  --color-base-content: #e4e4e7;
+  /* Zinc 200 */
+  --color-neutral: #27272a;
+  --color-info: #60a5fa;
+  --color-success: #22c55e;
+  --color-warning: #facc15;
+  --color-error: #b91c1c;
+  --radius-box: 0.5rem;
+}
+
+/* 17. Nord (Glacier) */
+@plugin "daisyui/theme" {
+  name: "nord";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #5eead4;
+  /* Teal 300 */
+  --color-secondary: #2dd4bf;
+  /* Teal 400 */
+  --color-accent: #94a3b8;
+  /* Slate 400 */
+  --color-base-100: #0f172a;
+  /* Slate 900 */
+  --color-base-200: #020617;
+  /* Slate 950 */
+  --color-base-300: #000000;
+  --color-base-content: #f1f5f9;
+  /* Slate 100 */
+  --color-neutral: #1e293b;
+  --color-info: #38bdf8;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f43f5e;
+  --radius-box: 0.4rem;
+}
+
+/* 18. Coffee (Espresso) */
+@plugin "daisyui/theme" {
+  name: "coffee";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #d4a373;
+  /* Latte */
+  --color-secondary: #faedcd;
+  /* Cream */
+  --color-accent: #ccd5ae;
+  /* Matcha */
+  --color-base-100: #2f1b12;
+  /* Dark Roast */
+  --color-base-200: #23120b;
+  /* Espresso */
+  --color-base-300: #150905;
+  --color-base-content: #faedcd;
+  --color-neutral: #4a2c20;
+  --color-info: #67e8f9;
+  --color-success: #86efac;
+  --color-warning: #fde047;
+  --color-error: #fda4af;
+  --radius-box: 0.5rem;
+}
+
+/* --- LUXURY & PRECIOUS --- */
+
+/* 19. Midas */
+@plugin "daisyui/theme" {
+  name: "midas";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #fbbf24;
+  --color-primary-content: #000000;
+  --color-secondary: #facc15;
+  --color-accent: #f59e0b;
+  --color-base-100: #000000;
+  --color-base-200: #0f0f0f;
+  --color-base-300: #1a1a1a;
+  --color-base-content: #fbbf24;
+  --color-neutral: #333333;
+  --color-info: #60a5fa;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-error: #f43f5e;
+  --radius-box: 0;
+}
+
+/* 20. Rose Gold */
+@plugin "daisyui/theme" {
+  name: "rose-gold";
+  prefersdark: false;
+  color-scheme: light;
+  --color-primary: #fb7185;
+  --color-secondary: #e11d48;
+  --color-accent: #facc15;
+  --color-base-100: #fff1f2;
+  --color-base-200: #ffe4e6;
+  --color-base-300: #fecdd3;
+  --color-base-content: #881337;
+  --color-neutral: #fda4af;
+  --color-info: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-error: #f43f5e;
+  --radius-box: 1rem;
+}
+
+/* 21. Royal */
+@plugin "daisyui/theme" {
+  name: "royal";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #c084fc;
+  --color-secondary: #a855f7;
+  --color-accent: #fbbf24;
+  --color-base-100: #1e092b;
+  --color-base-200: #14061d;
+  --color-base-300: #0b0310;
+  --color-base-content: #f3e8ff;
+  --color-neutral: #3b0764;
+  --color-info: #60a5fa;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-error: #f43f5e;
+  --radius-box: 0.8rem;
+}
+
+/* --- SPACE & SCI-FI --- */
+
+/* 22. Starlight */
+@plugin "daisyui/theme" {
+  name: "starlight";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #e2e8f0;
+  --color-primary-content: #000000;
+  --color-secondary: #cbd5e1;
+  --color-accent: #f8fafc;
+  --color-base-100: #020617;
+  --color-base-200: #000000;
+  --color-base-300: #000000;
+  --color-base-content: #f8fafc;
+  --color-neutral: #1e293b;
+  --color-info: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-error: #f43f5e;
+  --radius-box: 0.5rem;
+}
+
+/* 23. Mars */
+@plugin "daisyui/theme" {
+  name: "mars";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #ef4444;
+  --color-secondary: #b91c1c;
+  --color-accent: #f97316;
+  --color-base-100: #450a0a;
+  --color-base-200: #360606;
+  --color-base-300: #260404;
+  --color-base-content: #fecaca;
+  --color-neutral: #7f1d1d;
+  --color-info: #60a5fa;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-error: #f43f5e;
+  --radius-box: 0.6rem;
+}
+
+/* 24. Nebula */
+@plugin "daisyui/theme" {
+  name: "nebula";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #818cf8;
+  --color-secondary: #c084fc;
+  --color-accent: #f472b6;
+  --color-base-100: #1e1b4b;
+  --color-base-200: #15123d;
+  --color-base-300: #0e0b30;
+  --color-base-content: #e0e7ff;
+  --color-neutral: #312e81;
+  --color-info: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-error: #f43f5e;
+  --radius-box: 1.5rem;
+}
+
+/* 25. Monochrome */
+@plugin "daisyui/theme" {
+  name: "monochrome";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-primary: #ffffff;
+  --color-primary-content: #000000;
+  --color-secondary: #d4d4d4;
+  --color-accent: #a3a3a3;
+  --color-base-100: #000000;
+  --color-base-200: #171717;
+  --color-base-300: #262626;
+  --color-base-content: #ffffff;
+  --color-neutral: #404040;
+  --color-info: #ffffff;
+  --color-success: #ffffff;
+  --color-warning: #ffffff;
+  --color-error: #ffffff;
+  --radius-box: 0;
 }
 
 /* toasts */

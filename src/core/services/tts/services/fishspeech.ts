@@ -71,7 +71,7 @@ export class TTS_FishSpeechService implements ITTSService {
         if (!this.#audioContext) this.#audioContext = new AudioContext();
 
         try {
-            const audioBuffer = await this.#audioContext.decodeAudioData(audioData.buffer.slice(0));
+            const audioBuffer = await this.#audioContext.decodeAudioData(audioData.buffer.slice(0) as ArrayBuffer);
             const source = this.#audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(this.#audioContext.destination);

@@ -32,6 +32,7 @@ struct TranscribeRequest {
 struct TranscribeResponse {
     text: String,
     #[serde(default)]
+    #[allow(dead_code)]
     language: Option<String>,
 }
 

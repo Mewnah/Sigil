@@ -45,7 +45,7 @@ export const InputBaseText: FC<InputHTMLAttributes<HTMLInputElement> & { fieldWi
         setInternalValue(val.target.value);
         onChange?.(val);
     };
-    return <input aria-label={props["aria-label"] || props.title || props.placeholder || "Input"} {...props} value={internalValue} onChange={updateVal} className={cx(styles.clearAppearance, props.className, { "field-width": fieldWidth }, "input input-bordered overflow-hidden input-sm font-semibold leading-none")} />;
+    return <input title={props.title || props.placeholder || "Text Input"} aria-label={props["aria-label"] || props.title || props.placeholder || "Input"} {...props} value={internalValue} onChange={updateVal} className={cx(styles.clearAppearance, props.className, { "field-width": fieldWidth }, "input input-bordered overflow-hidden input-sm font-semibold leading-none")} />;
 };
 
 interface InputTextProps extends InputBaseProps, InputHTMLAttributes<HTMLInputElement> { }
@@ -124,7 +124,7 @@ export const InputRange: FC<InputTextProps> = memo(({ label, ...rest }) => {
     return <InputContainer label={label} id={id}>
         <div className="flex space-x-2">
             <span>{rest.value}</span>
-            <input {...rest} id={id} type="range" className="field-width range range-sm range-primary" />
+            <input title={label} {...rest} id={id} type="range" className="field-width range range-sm range-primary" />
         </div>
     </InputContainer>
 });
