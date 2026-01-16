@@ -53,6 +53,6 @@ export enum TextEventSource {
 export const zodTextEventSource = z.nativeEnum(TextEventSource);
 
 export type InspectorTabPath = {
-  tab: Services | ElementType | "settings" | "integrations" | "scenes" | "files" | "fonts" | "obs" | "project" | "elements",
+  tab: Services | ElementType | "settings" | "integrations" | "scenes" | "files" | "fonts" | "obs" | "project" | "elements" | "voice_changer",
   value?: string
 }

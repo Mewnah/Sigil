@@ -14,6 +14,7 @@ import Service_Twitch from "./services/twitch";
 import Service_Kick from "./services/kick";
 import Service_VRC from "./services/vrc";
 import Service_History from "./services/history";
+import { VoiceChangerService } from "./services/voice_changer";
 import { changeLanguage, initI18n } from '@/i18n';
 
 export enum Services {
@@ -25,6 +26,7 @@ export enum Services {
   twitch = "twitch",
   kick = "kick",
   discord = "discord",
+  voice_changer = "voice_changer",
 }
 
 class ApiServer {
@@ -43,6 +45,7 @@ class ApiServer {
   public readonly keyboard = new Service_Keyboard();
   public readonly sound = new Service_Sound();
   public readonly history = new Service_History();
+  public readonly voiceChanger = new VoiceChangerService();
 
   get state() {
     return this._state.state;
@@ -119,6 +122,7 @@ class ApiServer {
       this.vrc.init(),
       this.obs.init(),
       this.keyboard.init(),
+      this.voiceChanger.init(),
     ]);
 
     // Log any failures

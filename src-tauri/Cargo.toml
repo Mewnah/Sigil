@@ -48,6 +48,7 @@ zip = "0.6.6"
 sha2 = "0.10"
 hex = "0.4"
 whisper-rs = "0.11.1"
+rubato = "0.14"
 
 [profile.release]
 lto = true

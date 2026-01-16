@@ -25,6 +25,7 @@ import Inspector_OBS from "./inspector_obs";
 import { RiCloseLine } from "react-icons/ri";
 
 import Inspector_Project from "./inspector_project";
+import { Inspector_VoiceChanger } from "./inspector_voice_changer";
 
 // LEFT PANEL INSPECTOR (Navigation Driven)
 const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
@@ -50,6 +51,7 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
           {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
           {path?.tab === Services.kick && <Inspector_Kick key="kick" />}
           {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
+          {path?.tab === Services.voice_changer && <Inspector_VoiceChanger key="voice_changer" />}
           {path?.tab === "settings" && <Inspector_Settings key="settings" />}
           {path?.tab === "files" && <Inspector_Files key="files" />}
 

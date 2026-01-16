@@ -13,7 +13,8 @@ import {
     RiDiscordFill,
     RiGamepadFill,
     RiRecordCircleFill,
-    RiStackFill
+    RiStackFill,
+    RiMagicFill
 } from "react-icons/ri";
 import { KickIcon } from "../icons/KickIcon";
 import { Services } from "@/core";
@@ -144,6 +145,13 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     collapsed={collapsed}
                     shortcut="Ctrl+4"
                     onClick={() => navigate(Services.transform)}
+                />
+                <NavItem
+                    label="Voice Changer"
+                    icon={<RiMagicFill />}
+                    active={isActive(Services.voice_changer)}
+                    collapsed={collapsed}
+                    onClick={() => navigate(Services.voice_changer)}
                 />
             </NavGroup>
 
