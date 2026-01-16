@@ -104,21 +104,10 @@ fn get_vosk_models() -> Vec<VoskModel> {
 /// Check if native Vosk is available (requires vosk library)
 #[command]
 fn check_vosk_native_availability(state: State<'_, VoskSttState>) -> bool {
-    // Try to check if vosk library is available
-    // This is a compile-time check essentially - if vosk crate linked, it's available
-    #[cfg(feature = "vosk-native")]
-    {
-        *state.is_available.lock().unwrap() = true;
-        return true;
-    }
-
-    #[cfg(not(feature = "vosk-native"))]
-    {
-        // For now, report as unavailable since we're using WASM fallback
-        // The frontend will continue using vosk-browser
-        *state.is_available.lock().unwrap() = false;
-        false
-    }
+    // Native Vosk requires pre-built libraries to be installed
+    // For now, report as unavailable - frontend will use vosk-browser WASM
+    *state.is_available.lock().unwrap() = false;
+    false
 }
 
 /// Set the path to a downloaded Vosk model

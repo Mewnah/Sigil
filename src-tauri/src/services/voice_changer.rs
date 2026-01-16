@@ -152,6 +152,7 @@ fn apply_voice_changer_preset(state: State<'_, VoiceChangerState>, preset_id: St
 }
 
 /// Calculate resample ratio from semitones
+#[allow(dead_code)]
 fn semitones_to_ratio(semitones: f32) -> f64 {
     2.0_f64.powf(semitones as f64 / 12.0)
 }
