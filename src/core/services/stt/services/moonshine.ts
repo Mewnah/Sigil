@@ -32,9 +32,17 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
             // Check availability
             const isAvailable = await invoke<boolean>("plugin:moonshine_stt|check_moonshine_availability");
             if (!isAvailable) {
-                this.receiver.onStop(
-                    `Moonshine not available at ${config.endpoint}. Start with: docker run -p 8090:8090 useful-sensors/moonshine-onnx-server`
-                );
+                const setupInstructions = [
+                    `Moonshine server not found at ${config.endpoint}`,
+                    "",
+                    "To start Moonshine, run:",
+                    "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server",
+                    "",
+                    "Or use the tiny model for faster startup:",
+                    "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server:tiny",
+                ].join("\n");
+
+                this.receiver.onStop(setupInstructions);
                 return;
             }
 
@@ -54,10 +62,10 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
                 sampleRate: 16000,
             });
 
-            // Process audio chunks periodically (every 2 seconds)
+            // Process audio chunks periodically (every 500ms for near-real-time)
             this.processingInterval = setInterval(async () => {
                 await this.processAudioBuffer(config.language);
-            }, 2000);
+            }, 500);
 
             this.isRunning = true;
             this.receiver.onStart();
@@ -74,7 +82,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
 
         // Combine all chunks
         const totalLength = this.audioBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-        if (totalLength < 1600) return; // At least 100ms at 16kHz
+        if (totalLength < 4000) return; // At least 250ms at 16kHz for better accuracy
 
         const combined = new Float32Array(totalLength);
         let offset = 0;
@@ -83,6 +91,9 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
             offset += chunk.length;
         }
         this.audioBuffer = [];
+
+        // Show interim status while processing
+        this.receiver.onInterim("...");
 
         // Convert to base64-encoded WAV for API
         const audioBase64 = this.floatToBase64Wav(combined, 16000);
@@ -99,6 +110,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
             }
         } catch (error) {
             console.error("[Moonshine] Transcription error:", error);
+            // Don't spam errors, just log
         }
     }
 

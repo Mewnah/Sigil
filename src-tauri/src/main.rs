@@ -95,6 +95,7 @@ fn main() {
         .plugin(services::chatterbox_tts::init())
         .plugin(services::fish_speech::init())
         .plugin(services::voice_changer::init())
+        .plugin(services::vosk_stt::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -3,7 +3,7 @@ import { STT_State } from "../schema";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
-// Available Vosk models (small models for browser use)
+// Available Vosk models - now fetched from Rust backend when available
 export const VOSK_MODELS = [
     { id: "vosk-model-small-en-us-0.15", name: "English (US)", size: "40 MB" },
     { id: "vosk-model-small-en-in-0.4", name: "English (India)", size: "36 MB" },
@@ -40,15 +40,25 @@ export class STT_VoskService implements ISpeechRecognitionService {
             console.log("[Vosk] Starting service...");
             this.receiver.onInterim("Loading Vosk...");
 
-            // Dynamically import vosk-browser (it's a heavy WASM module)
-            const { createModel, KaldiRecognizer } = await import("vosk-browser");
-
             // Determine model URL
             const modelId = params.vosk.model || "vosk-model-small-en-us-0.15";
-            const modelUrl = params.vosk.modelUrl || `${MODEL_CDN_BASE}/${modelId}.zip`;
+            let modelUrl = params.vosk.modelUrl || `${MODEL_CDN_BASE}/${modelId}.zip`;
+
+            // Try to check if model is already downloaded via Rust backend
+            try {
+                const downloadedModels = await invoke<string[]>("plugin:vosk_stt|list_downloaded_vosk_models");
+                if (downloadedModels.includes(modelId)) {
+                    console.log(`[Vosk] Model ${modelId} already downloaded via Rust backend`);
+                }
+            } catch {
+                // Rust backend not available, use CDN directly
+            }
 
             console.log(`[Vosk] Loading model: ${modelId}`);
             this.receiver.onInterim(`Downloading model: ${modelId}...`);
+
+            // Use vosk-browser WASM for transcription (most compatible)
+            const { createModel, KaldiRecognizer } = await import("vosk-browser");
 
             // Load the model (this may take a while on first load)
             this.model = await createModel(modelUrl);

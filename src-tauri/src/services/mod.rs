@@ -10,6 +10,7 @@ pub mod translate;
 pub mod uberduck_tts;
 pub mod uwu;
 pub mod voice_changer;
+pub mod vosk_stt;
 pub mod web;
 pub mod whisper;
 pub mod windows_tts;
