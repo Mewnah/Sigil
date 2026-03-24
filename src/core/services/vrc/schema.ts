@@ -1,4 +1,4 @@
-import { TextEventSource, zodTextEventSource } from "@/types";
+import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
@@ -10,7 +10,7 @@ const zodVRC_Backends = z.nativeEnum(VRC_Backends);
 
 export const Service_VRC_Schema = z.object({
   enable: zSafe(z.coerce.boolean(), false),
-  source: zSafe(zodTextEventSource, TextEventSource.stt),
+  source: zSafe(TextEventSourceSchema, TextEventSource.stt),
   target: zSafe(zodVRC_Backends, VRC_Backends.textbox),
   inputField: zSafe(z.coerce.boolean(), true),
   textbox: z.object({

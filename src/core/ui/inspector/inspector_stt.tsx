@@ -3,7 +3,7 @@ import { ServiceNetworkState } from "@/types";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { FC, useState, useEffect } from "react";
-import { RiCharacterRecognitionFill, RiUserVoiceFill, RiGlobalLine, RiRefreshLine } from "react-icons/ri";
+import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";
 import { SiGooglechrome, SiMicrosoftedge } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/stt_data";
@@ -13,7 +13,6 @@ import Inspector from "./components";
 import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
 import { useTranslation } from 'react-i18next';
-import classNames from "classnames";
 
 // Rust-based input device selector
 interface AudioDevice {
@@ -23,47 +22,23 @@ interface AudioDevice {
 
 const RustInputDeviceSelect: FC<{ label: string; value: string; onChange: (value: string) => void }> = ({ label, value, onChange }) => {
   const [devices, setDevices] = useState<AudioDevice[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const loadDevices = async () => {
-    setLoading(true);
-    try {
-      const result = await invoke<AudioDevice[]>("plugin:audio|list_input_devices");
-      setDevices(result);
-    } catch (error) {
-      console.error("Failed to load input devices:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    loadDevices();
+    invoke<AudioDevice[]>("plugin:audio|list_input_devices")
+      .then(setDevices)
+      .catch(e => console.error("Failed to load input devices:", e));
   }, []);
 
   return (
-    <div className="grid grid-cols-2 items-center gap-2">
-      <div className="flex items-center gap-1">
-        <span className="text-sm font-semibold truncate">{label}</span>
-        <button
-          className={classNames("btn btn-xs btn-ghost btn-circle", { loading })}
-          onClick={loadDevices}
-          disabled={loading}
-          title="Refresh devices"
-        >
-          <RiRefreshLine />
-        </button>
-      </div>
-      <InputSelect
-        label="Input Device"
-        value={value}
-        onValueChange={onChange}
-        options={[
-          { label: "System Default", value: "" },
-          ...devices.map(d => ({ label: d.name, value: d.id }))
-        ]}
-      />
-    </div>
+    <InputSelect
+      label={label}
+      value={value}
+      onValueChange={onChange}
+      options={[
+        { label: "System Default", value: "" },
+        ...devices.map(d => ({ label: d.name, value: d.id }))
+      ]}
+    />
   );
 };
 

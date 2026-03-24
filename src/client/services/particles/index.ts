@@ -22,9 +22,8 @@ class Service_Particles implements IServiceInterface {
   init(): void {}
 
   emit(rect: DOMRect, params: ParticlesEmitParams) {
-    //todo skip particles in fullscreen mode
-    // if (window.Config.isServer())
-    //   return;
+    // Skip particles in fullscreen mode to avoid visual clutter
+    if (document.fullscreenElement) return;
 
     if (document.visibilityState === "hidden")
       return

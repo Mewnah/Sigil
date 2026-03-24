@@ -19,6 +19,8 @@ import { MdExtension } from "react-icons/md";
 import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
 import { TbArrowBarToLeft, TbArrowBarToRight, TbTextResize } from "react-icons/tb";
 import { useSnapshot, proxy } from "valtio";
+import { useShallow } from "zustand/react/shallow";
+import { useAppUIStore } from "./store";
 import { Services } from "../index";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
@@ -43,7 +45,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const SideBarButtonBase: FC<PropsWithChildren<Omit<ButtonProps, "tab"> & { active?: boolean }>> = memo(({ status, active, tooltip, children, ...props }) => {
   const { t } = useTranslation();
-  const { expand } = useSnapshot(window.ApiServer.ui.sidebarState);
+  const expand = useAppUIStore((s) => s.sidebar.expand);
   const activeStyles = active ? "btn-secondary" : "btn-ghost";
   return <Tooltip body={status === ServiceNetworkState.connected ? t('common.status_connected') : ""} enable={!expand} placement="right" className="relative" content={tooltip}>
     <button {...props} className={classNames("w-full btn border-none justify-start min-h-fit h-auto flex-nowrap whitespace-nowrap px-0 gap-1", activeStyles)}>
@@ -56,8 +58,14 @@ const SideBarButtonBase: FC<PropsWithChildren<Omit<ButtonProps, "tab"> & { activ
 });
 
 const SideBarButton: FC<PropsWithChildren<ButtonProps>> = memo(({ tab, ...props }) => {
-  const { show, expand, ...ctx } = useSnapshot(window.ApiServer.ui.sidebarState);
-  const active = show && ctx.tab?.tab === tab.tab && ctx.tab?.value === tab.value;
+  const { show, expand, activeTab } = useAppUIStore(
+    useShallow((s) => ({
+      show: s.sidebar.show,
+      expand: s.sidebar.expand,
+      activeTab: s.sidebar.tab,
+    }))
+  );
+  const active = show && activeTab?.tab === tab.tab && activeTab?.value === tab.value;
 
   return <SideBarButtonBase {...props} active={active} onClick={() => window.ApiServer.changeTab(tab)} />
 });
@@ -126,17 +134,22 @@ const ElementList: FC = memo(() => {
 
 const Sidebar: FC = memo(() => {
   const { t } = useTranslation();
-  const { sidebarState: { tab, show, expand } } = useSnapshot(window.ApiServer.ui);
+  const { tab, show, expand } = useAppUIStore(
+    useShallow((s) => ({
+      tab: s.sidebar.tab,
+      show: s.sidebar.show,
+      expand: s.sidebar.expand,
+    }))
+  );
   const { showOverlay } = useSnapshot(window.ApiServer.state || proxy({}));
 
   useEffect(() => {
-    if (showOverlay && show)
-      window.ApiServer.ui.sidebarState.show = false;
-  }, [showOverlay]);
+    if (showOverlay && show) useAppUIStore.getState().setSidebarShow(false);
+  }, [showOverlay, show]);
 
   const switchExpand = () => {
-    window.ApiServer.ui.sidebarState.expand = !window.ApiServer.ui.sidebarState.expand;
-  }
+    useAppUIStore.getState().toggleSidebarExpand();
+  };
 
   const sttState = useSnapshot(window.ApiServer.stt.serviceState);
   const ttsState = useSnapshot(window.ApiServer.tts.serviceState);

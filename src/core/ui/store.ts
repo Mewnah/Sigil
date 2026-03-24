@@ -1,34 +1,80 @@
-import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { InspectorTabPath } from "@/types";
+import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 
-/**
- * UI State Store - Zustand
- * Replaces Valtio for better performance with React 18
- */
+export type SidebarSlice = {
+  tab: InspectorTabPath | undefined;
+  show: boolean;
+  expand: boolean;
+  selections: string[];
+};
 
-interface UIState {
-    // Stats Panel
-    statsPanelCollapsed: boolean;
-    toggleStatsPanel: () => void;
-    setStatsPanelCollapsed: (collapsed: boolean) => void;
+interface AppUIState {
+  statsPanelCollapsed: boolean;
+  toggleStatsPanel: () => void;
+  setStatsPanelCollapsed: (collapsed: boolean) => void;
+
+  sidebar: SidebarSlice;
+  changeTab: (v?: InspectorTabPath) => void;
+  closeSidebar: () => void;
+  toggleSidebarExpand: () => void;
+  setSidebarShow: (show: boolean) => void;
+  setSidebarSelections: (selections: string[]) => void;
 }
 
-export const useUIStore = create<UIState>()(
-    devtools(
-        (set) => ({
-            // Stats Panel State
-            statsPanelCollapsed: false,
+const initialSidebar: SidebarSlice = {
+  tab: undefined,
+  show: false,
+  expand: false,
+  selections: [],
+};
 
-            toggleStatsPanel: () =>
-                set((state: UIState) => ({ statsPanelCollapsed: !state.statsPanelCollapsed })),
+export const useAppUIStore = create<AppUIState>()(
+  devtools(
+    (set) => ({
+      statsPanelCollapsed: false,
+      toggleStatsPanel: () =>
+        set((s) => ({ statsPanelCollapsed: !s.statsPanelCollapsed })),
+      setStatsPanelCollapsed: (collapsed: boolean) =>
+        set({ statsPanelCollapsed: collapsed }),
 
-            setStatsPanelCollapsed: (collapsed: boolean) =>
-                set({ statsPanelCollapsed: collapsed }),
+      sidebar: { ...initialSidebar },
+
+      changeTab: (v?: InspectorTabPath) =>
+        set((s) => {
+          const { tab, show } = s.sidebar;
+          if (tab?.tab === v?.tab && tab?.value === v?.value && show) {
+            return {
+              sidebar: { ...s.sidebar, show: false, tab: undefined },
+            };
+          }
+          return { sidebar: { ...s.sidebar, tab: v, show: true } };
         }),
-        { name: 'SigilUIStore' }
-    )
+
+      closeSidebar: () =>
+        set((s) => ({
+          sidebar: { ...s.sidebar, tab: undefined, show: false },
+        })),
+
+      toggleSidebarExpand: () =>
+        set((s) => ({
+          sidebar: { ...s.sidebar, expand: !s.sidebar.expand },
+        })),
+
+      setSidebarShow: (show: boolean) =>
+        set((s) => ({ sidebar: { ...s.sidebar, show } })),
+
+      setSidebarSelections: (selections: string[]) =>
+        set((s) => ({ sidebar: { ...s.sidebar, selections } })),
+    }),
+    { name: "SigilAppUI" }
+  )
 );
 
-// Selector hooks for optimal performance
-export const useStatsPanelCollapsed = () => useUIStore((state: UIState) => state.statsPanelCollapsed);
-export const useToggleStatsPanel = () => useUIStore((state: UIState) => state.toggleStatsPanel);
+/** @deprecated Prefer useAppUIStore */
+export const useUIStore = useAppUIStore;
+
+export const useStatsPanelCollapsed = () =>
+  useAppUIStore((s) => s.statsPanelCollapsed);
+export const useToggleStatsPanel = () =>
+  useAppUIStore((s) => s.toggleStatsPanel);

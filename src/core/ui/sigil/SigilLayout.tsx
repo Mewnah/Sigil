@@ -1,6 +1,8 @@
 import { FC, memo, useState } from "react";
 import { useSnapshot } from "valtio";
-import { ErrorBoundary } from "react-error-boundary";
+import { useShallow } from "zustand/react/shallow";
+import { useAppUIStore } from "../store";
+import { ErrorBoundary, FallbackProps } from "react-error-boundary";
 import { SigilHeader } from "./SigilHeader";
 import QuickActionDock from "../QuickActionDock";
 import StatsPanel from "../StatsPanel";
@@ -14,18 +16,58 @@ import Inspector, { PropertyInspector } from "../inspector";
 import { BottomPanel } from "../BottomPanel";
 import { AnimatePresence, motion } from "framer-motion";
 
-const PanelErrorFallback = ({ error }: { error: Error }) => (
-    <div className="p-4 bg-error/10 text-error border border-error rounded-lg h-full overflow-auto">
-        <h3 className="font-bold text-sm">Panel Error</h3>
-        <pre className="text-[10px] mt-2 font-mono whitespace-pre-wrap">{error.message}</pre>
-        <pre className="text-[10px] opacity-50">{error.stack}</pre>
+const PanelErrorFallback = ({ error, resetErrorBoundary }: FallbackProps) => (
+    <div className="p-4 bg-error/10 text-error border border-error rounded-lg h-full overflow-auto flex flex-col gap-3">
+        <h3 className="font-bold text-sm">Panel error</h3>
+        <pre className="text-[10px] font-mono whitespace-pre-wrap opacity-90 flex-1 min-h-0">{error.message}</pre>
+        <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn btn-sm btn-primary" onClick={resetErrorBoundary}>
+                Try again
+            </button>
+            <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => {
+                    useAppUIStore.getState().setSidebarSelections([]);
+                    window.ApiServer.closeSidebar();
+                    resetErrorBoundary();
+                }}
+            >
+                Dismiss
+            </button>
+        </div>
     </div>
 );
 
 export const SigilLayout: FC = memo(() => {
-    const { tab, selections } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const { tab, selections } = useAppUIStore(
+        useShallow((s) => ({ tab: s.sidebar.tab, selections: s.sidebar.selections }))
+    );
     const toolbarState = useSnapshot(canvasToolbarState);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+    const handleAlignElements = (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+        if (!selections || selections.length === 0) return;
+        const canvas = window.ApiClient.document.fileBinder.get().canvas;
+        const activeScene = window.ApiClient.scenes.state.activeScene;
+
+        window.ApiClient.document.patch(state => {
+            selections.forEach(id => {
+                const el = state.elements[id];
+                if (!el || !el.scenes[activeScene] || !el.scenes[activeScene].rect) return;
+                const rect = el.scenes[activeScene].rect;
+
+                switch (alignment) {
+                    case 'left': rect.x = 0; break;
+                    case 'center': rect.x = Math.round(canvas.w / 2 - rect.w / 2); break;
+                    case 'right': rect.x = Math.round(canvas.w - rect.w); break;
+                    case 'top': rect.y = 0; break;
+                    case 'middle': rect.y = Math.round(canvas.h / 2 - rect.h / 2); break;
+                    case 'bottom': rect.y = Math.round(canvas.h - rect.h); break;
+                }
+            });
+        });
+    };
 
     // Determines active element for right panel (single select for now)
     const activeSelectionId = selections && selections.length > 0 ? selections[0] : null;
@@ -63,7 +105,7 @@ export const SigilLayout: FC = memo(() => {
                             transition={{ duration: 0.2, ease: "easeInOut" }}
                             className="flex-none h-full z-40 relative shadow-lg border-r border-base-content/5 bg-base-100 overflow-hidden"
                         >
-                            <div className="w-[22rem] h-full">
+                            <div className="w-88 h-full">
                                 <ErrorBoundary FallbackComponent={PanelErrorFallback}>
                                     <Inspector path={tab} />
                                 </ErrorBoundary>
@@ -78,7 +120,7 @@ export const SigilLayout: FC = memo(() => {
                     {/* CANVAS TOOLBAR (Zoom, Grid, Align) */}
                     {!toolbarState.presentationMode && (
                         <div className="flex-none z-30 relative">
-                            <CanvasToolbar />
+                            <CanvasToolbar onAlignElements={handleAlignElements} />
                         </div>
                     )}
 
@@ -123,8 +165,11 @@ export const SigilLayout: FC = memo(() => {
                         animate={{ width: "22rem" }}
                         className="flex-none h-full z-40 relative shadow-lg border-l border-base-content/5 bg-base-100 hidden lg:block overflow-hidden"
                     >
-                        <div className="w-[22rem] h-full flex flex-col">
-                            <ErrorBoundary FallbackComponent={PanelErrorFallback}>
+                        <div className="w-88 h-full flex flex-col">
+                            <ErrorBoundary
+                                FallbackComponent={PanelErrorFallback}
+                                resetKeys={[activeSelectionId ?? ""]}
+                            >
                                 {activeSelectionId ? (
                                     // A. Property Inspector (When Element Selected)
                                     <PropertyInspector selectionId={activeSelectionId} />

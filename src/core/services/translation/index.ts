@@ -20,7 +20,7 @@ import {
 // track events with ++
 // skip late resps
 
-// todo constructor
+// Translation backend registry — maps backend enum to service constructors
 const backends: {
   [k in Translation_Backends]: ITranslationServiceConstructor;
 } = {

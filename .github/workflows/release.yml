@@ -46,5 +46,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            src-tauri/target/release/curses.exe
-            src-tauri/target/release/bundle/msi/curses_${{steps.version.outputs.value}}_x64_en-US.msi
+            src-tauri/target/release/sigil.exe
+            src-tauri/target/release/bundle/msi/Sigil_${{steps.version.outputs.value}}_x64_en-US.msi

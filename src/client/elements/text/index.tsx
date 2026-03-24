@@ -42,6 +42,7 @@ class TextController {
   private sentenceQueue: SentenceState[] = [];
 
   private isPlayingAnimation = false;
+  private nextAnimationIndex = 0;
 
   private activityTimerHandle: number = -1;
   private activityTimerDelayClearHandle: number = -1;
@@ -134,6 +135,7 @@ class TextController {
     }
     // this.textElement.replaceChildren();
     this.sentenceQueue.length = 0;
+    this.nextAnimationIndex = 0;
   }
 
   moveCursorToSpaceOrEnd(sentence: SentenceState) {
@@ -219,10 +221,12 @@ class TextController {
       return;
     }
 
-    const interimIndex = this.sentenceQueue.findIndex(s => !s.isAnimated); // todo cache index
-    if (interimIndex !== -1) {
-      // run animation
-      this.stepSentenceAnimation(this.sentenceQueue[interimIndex]);
+    // Use cached index for O(1) lookup instead of scanning
+    while (this.nextAnimationIndex < this.sentenceQueue.length && this.sentenceQueue[this.nextAnimationIndex].isAnimated) {
+      this.nextAnimationIndex++;
+    }
+    if (this.nextAnimationIndex < this.sentenceQueue.length) {
+      this.stepSentenceAnimation(this.sentenceQueue[this.nextAnimationIndex]);
     }
   }
 

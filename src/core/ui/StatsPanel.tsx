@@ -4,7 +4,7 @@ import { useSnapshot } from "valtio";
 import classNames from "classnames";
 import { RiArrowRightSLine, RiArrowLeftSLine } from "react-icons/ri";
 import { ServiceNetworkState } from "@/types";
-import { useStatsPanelCollapsed, useToggleStatsPanel } from "./store";
+import { useAppUIStore, useStatsPanelCollapsed, useToggleStatsPanel } from "./store";
 import Inspector from "./inspector";
 
 interface StatCardProps {
@@ -36,7 +36,7 @@ const StatsPanel: FC = memo(() => {
     const transformState = useSnapshot(window.ApiServer.transform.serviceState);
 
     // Get active tab/inspector path
-    const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const tab = useAppUIStore((s) => s.sidebar.tab);
 
     // Listen for keyboard shortcut (Ctrl+I)
     useEffect(() => {

@@ -2,6 +2,7 @@ import { FC, memo, Suspense, lazy, useState, useEffect, useMemo } from "react";
 import { useGetState, useUpdateState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { useSnapshot } from "valtio";
+import { useAppUIStore } from "../store";
 import { createPortal } from "react-dom";
 import { RiAddCircleFill, RiImageFill, RiTextWrap, RiDeleteBin5Fill, RiCloseLine, RiLayoutMasonryFill, RiSearchLine, RiDragMoveFill, RiFileCopyLine, RiLockLine, RiLockUnlockLine } from "react-icons/ri";
 import Tooltip from "../dropdown/Tooltip";
@@ -80,7 +81,7 @@ interface SigilStudioProps {
 const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
     const elementsIds = useGetState(state => state.elementsIds);
     const elements = useGetState(state => state.elements);
-    const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const tab = useAppUIStore((s) => s.sidebar.tab);
 
     // Determine if an element is selected
     const selectedElementId = tab?.value;

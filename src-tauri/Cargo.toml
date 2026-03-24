@@ -1,7 +1,7 @@
 [package]
-name = "curses_plus"
+name = "sigil"
 version = "0.2.0"
-description = "A very cool app"
+description = "Sigil desktop application"
 authors = ["Curses", "Mewnah"]
 license = ""
 repository = ""
@@ -47,7 +47,7 @@ hound = "3.5.0"
 zip = "0.6.6"
 sha2 = "0.10"
 hex = "0.4"
-whisper-rs = "0.11.1"
+whisper-rs = "0.16"
 rubato = "0.14"
 vosk = "0.2"
 

@@ -1,4 +1,4 @@
-import { TextEventSource, zodTextEventSource } from "@/types";
+import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
@@ -17,7 +17,7 @@ export enum TTS_Backends {
 const zodTTS_Backends = z.nativeEnum(TTS_Backends);
 
 export const Service_TTS_Schema = z.object({
-  source: zSafe(zodTextEventSource, TextEventSource.stt),
+  source: zSafe(TextEventSourceSchema, TextEventSource.stt),
   inputField: zSafe(z.coerce.boolean(), true),
   backend: zSafe(zodTTS_Backends, TTS_Backends.native),
   autoStart: zSafe(z.coerce.boolean(), false),

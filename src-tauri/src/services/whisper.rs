@@ -297,13 +297,14 @@ fn transcribe_chunk(state: &WhisperState, audio_data: Vec<f32>, sample_rate: u32
         .full(params, &resampled)
         .map_err(|e| format!("Inference failed: {}", e))?;
 
-    let num_segments = w_state.full_n_segments().map_err(|e| e.to_string())?;
+    let num_segments = w_state.full_n_segments();
     let mut text = String::new();
     for i in 0..num_segments {
         let segment = w_state
-            .full_get_segment_text(i)
-            .map_err(|e| e.to_string())?;
-        text.push_str(&segment);
+            .get_segment(i)
+            .ok_or_else(|| format!("Missing segment {}", i))?;
+        let segment_text = segment.to_str().map_err(|e| e.to_string())?;
+        text.push_str(segment_text);
         text.push(' ');
     }
     Ok(text.trim().to_string())

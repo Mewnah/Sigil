@@ -1,11 +1,11 @@
-import { TextEventSource, zodTextEventSource } from "@/types";
+import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
 export const Service_Kick_Schema = z.object({
     token: zSafe(z.coerce.string(), ""),
     refreshToken: zSafe(z.coerce.string(), ""),
-    chatPostSource: zSafe(zodTextEventSource, TextEventSource.stt),
+    chatPostSource: zSafe(TextEventSourceSchema, TextEventSource.stt),
     chatEnable: zSafe(z.coerce.boolean(), false),
     chatPostEnable: zSafe(z.coerce.boolean(), false),
     chatPostLive: zSafe(z.coerce.boolean(), false),

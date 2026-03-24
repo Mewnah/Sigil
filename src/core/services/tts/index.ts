@@ -100,7 +100,15 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
   }
   onStop(error?: string | undefined): void {
     if (error) {
-      toast(error, { type: "error", autoClose: false });
+      const missingOpts =
+        error === "Options missing" || error.includes("Options missing");
+      const message = missingOpts
+        ? "Text-to-Speech needs setup: open Text to Speech settings and choose a voice (or fill API/device fields for your backend)."
+        : error;
+      toast(message, {
+        type: missingOpts ? "warning" : "error",
+        autoClose: missingOpts ? 12_000 : 10_000,
+      });
       this.serviceState.error = error;
     }
     this.#serviceInstance = undefined;

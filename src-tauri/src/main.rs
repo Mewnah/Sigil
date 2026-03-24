@@ -63,7 +63,7 @@ fn main() {
                 MessageBoxA(
                     None,
                     PCSTR(format!("Port {} is not available!", args.port).as_ptr()),
-                    s!("Curses error"),
+                    s!("Sigil"),
                     MB_OK | MB_ICONWARNING,
                 );
             }

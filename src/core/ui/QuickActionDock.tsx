@@ -11,6 +11,7 @@ import {
     RiSettings3Fill,
 } from "react-icons/ri";
 import { SiObsstudio } from "react-icons/si";
+import { Services } from "@/core";
 import { ServiceNetworkState } from "@/types";
 import Tooltip from "./dropdown/Tooltip";
 
@@ -131,21 +132,21 @@ const QuickActionDock: FC = memo(() => {
 
             <DockDivider />
 
-            {/* Integrations (placeholder - can expand later) */}
+            {/* Integrations */}
             <DockIcon
                 icon={<RiTwitchFill />}
-                label="Twitch (Coming Soon)"
-                onClick={() => { }}
+                label="Twitch"
+                onClick={() => window.ApiServer.changeTab({ tab: Services.twitch })}
             />
             <DockIcon
                 icon={<RiDiscordFill />}
-                label="Discord (Coming Soon)"
-                onClick={() => { }}
+                label="Discord"
+                onClick={() => window.ApiServer.changeTab({ tab: Services.discord })}
             />
             <DockIcon
                 icon={<SiObsstudio />}
-                label="OBS (Coming Soon)"
-                onClick={() => { }}
+                label="OBS Studio"
+                onClick={() => window.ApiServer.changeTab({ tab: "obs" })}
             />
 
             {/* Spacer */}

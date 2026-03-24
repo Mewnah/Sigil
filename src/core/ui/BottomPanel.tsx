@@ -11,6 +11,8 @@ import {
 } from "react-icons/ri";
 import { ServiceNetworkState } from "@/types";
 import { Services } from "@/core";
+import { TTS_Backends } from "@/core/services/tts/schema";
+import { toast } from "react-toastify";
 
 const ServiceCard: FC<{
     label: string;
@@ -70,7 +72,24 @@ export const BottomPanel: FC = memo(() => {
     const transformState = useSnapshot(window.ApiServer.transform.serviceState);
 
     const toggleSTT = () => sttState.status === ServiceNetworkState.connected ? window.ApiServer.stt.stop() : window.ApiServer.stt.start();
-    const toggleTTS = () => ttsState.status === ServiceNetworkState.connected ? window.ApiServer.tts.stop() : window.ApiServer.tts.start();
+    const toggleTTS = () => {
+        if (ttsState.status === ServiceNetworkState.connected) {
+            window.ApiServer.tts.stop();
+            return;
+        }
+        const tts = window.ApiServer.state.services.tts.data;
+        if (tts.backend === TTS_Backends.native && !tts.native.voice?.trim()) {
+            toast.info("Choose a voice in Text to Speech settings, then start again.", { autoClose: 6000 });
+            window.ApiServer.changeTab({ tab: Services.tts });
+            return;
+        }
+        if (tts.backend === TTS_Backends.windows && (!tts.windows.voice?.trim() || !tts.windows.device?.trim())) {
+            toast.info("Choose output device and voice in Text to Speech settings, then start again.", { autoClose: 6000 });
+            window.ApiServer.changeTab({ tab: Services.tts });
+            return;
+        }
+        window.ApiServer.tts.start();
+    };
     const toggleTransform = () => transformState.status === ServiceNetworkState.connected ? window.ApiServer.transform.stop() : window.ApiServer.transform.start();
 
     const openSettings = (tab: any) => window.ApiServer.changeTab({ tab });

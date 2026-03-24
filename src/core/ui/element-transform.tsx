@@ -5,6 +5,8 @@ import classNames from "classnames";
 import { FC, memo, useEffect, useState, MouseEvent as ReactMouseEvent } from "react";
 import { useDebounce } from "react-use";
 import { useSnapshot } from "valtio";
+import { useShallow } from "zustand/react/shallow";
+import { useAppUIStore } from "./store";
 
 type TransformDirection = 'n' | 'e' | 's' | 'w' | 'nw' | 'ne' | 'se' | 'sw' | 'm';
 
@@ -35,7 +37,7 @@ export const ElementEditorTransform: FC<{ id: string, canvasSelected?: boolean, 
         state.elements[id].scenes[activeScene].rect = rect;
 
         // Apply to other selected elements
-        const selections = window.ApiServer.ui.sidebarState.selections;
+        const selections = useAppUIStore.getState().sidebar.selections;
         if (selections && selections.length > 1 && selections.includes(id)) {
           selections.forEach(otherId => {
             if (otherId === id) return;
@@ -50,7 +52,9 @@ export const ElementEditorTransform: FC<{ id: string, canvasSelected?: boolean, 
     });
   }, 10, [rect]);
 
-  const { tab, show } = useSnapshot(window.ApiServer.ui.sidebarState);
+  const { tab, show } = useAppUIStore(
+    useShallow((s) => ({ tab: s.sidebar.tab, show: s.sidebar.show }))
+  );
 
   const selected = (show && tab?.value === id) || canvasSelected;
 

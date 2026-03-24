@@ -1,7 +1,9 @@
 import Service_Sound from "@/core/services/sound";
+import { Services } from "@/services-registry";
 import { InspectorTabPath } from "@/types";
-import { proxy } from "valtio";
+import { toast } from "react-toastify";
 import { BackendState } from "./schema";
+import { useAppUIStore } from "./ui/store";
 import Service_Discord from "./services/discord";
 import Service_Keyboard from "./services/keyboard";
 import Service_OBS from "./services/obs";
@@ -17,17 +19,7 @@ import Service_History from "./services/history";
 import { VoiceChangerService } from "./services/voice_changer";
 import { changeLanguage, initI18n } from '@/i18n';
 
-export enum Services {
-  vrc = "vrc",
-  stt = "stt",
-  tts = "tts",
-  translation = "translation",
-  transform = "transform",
-  twitch = "twitch",
-  kick = "kick",
-  discord = "discord",
-  voice_changer = "voice_changer",
-}
+export { Services };
 
 class ApiServer {
   constructor() { }
@@ -51,35 +43,11 @@ class ApiServer {
     return this._state.state;
   }
 
-  ui = proxy<{
-    sidebarState: {
-      tab: InspectorTabPath | undefined;
-      show: boolean;
-      expand: boolean;
-      selections: string[];
-    };
-  }>({
-    sidebarState: {
-      tab: undefined,
-      show: false,
-      expand: false,
-      selections: []
-    },
-  });
   closeSidebar() {
-    const sidebar = window.ApiServer.ui.sidebarState;
-    sidebar.tab = undefined;
-    sidebar.show = false;
+    useAppUIStore.getState().closeSidebar();
   }
   changeTab(v?: InspectorTabPath) {
-    const sidebar = window.ApiServer.ui.sidebarState;
-    if (sidebar.tab?.tab === v?.tab && sidebar.tab?.value === v?.value && sidebar.show) {
-      sidebar.show = false; // close tab
-      sidebar.tab = undefined;
-      return;
-    }
-    sidebar.tab = v; // close tab
-    sidebar.show = true; // close tab
+    useAppUIStore.getState().changeTab(v);
   }
 
   patchService<Key extends keyof BackendState["services"]>(
@@ -125,16 +93,43 @@ class ApiServer {
       this.voiceChanger.init(),
     ]);
 
-    // Log any failures
+    const serviceInitLabels = [
+      "Twitch",
+      "Kick",
+      "Discord",
+      "Speech-to-Text",
+      "Text-to-Speech",
+      "Translation",
+      "AI Transform",
+      "VRChat",
+      "OBS",
+      "Keyboard",
+      "Voice changer",
+    ] as const;
+    const failedLabels: string[] = [];
     results.forEach((result, index) => {
       if (result.status === "rejected") {
         console.error(`[ApiServer] Service initialization failed (index ${index}):`, result.reason);
+        failedLabels.push(serviceInitLabels[index] ?? `Service ${index}`);
       }
     });
+    if (failedLabels.length > 0) {
+      toast.warning(
+        `Some features failed to start: ${failedLabels.join(", ")}. Check the console for details.`,
+        { autoClose: 10_000 }
+      );
+    }
 
     await initI18n(this.state.uiLanguage);
     this.changeTheme(this.state.clientTheme);
     this.changeScale(this.state.uiScale);
+
+    window.ApiShared.pubsub.setTextEmoteEnricher((data) => {
+      if (!data.emotes) {
+        return { ...data, emotes: window.ApiServer.twitch.emotes.scanForEmotes(data.value) };
+      }
+      return data;
+    });
   }
 }
 

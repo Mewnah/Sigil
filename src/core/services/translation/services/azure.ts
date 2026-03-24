@@ -47,9 +47,12 @@ export class Translation_AzureService implements ITranslationService {
       },
     });
 
-    // ignore invalid
-    // todo notify
-    if (!resp.ok) return;
+    // Notify user of Azure translation errors
+    if (!resp.ok) {
+      const { toast } = await import("react-toastify");
+      toast(`[Azure Translate] Error ${resp.status}: ${resp.statusText}`, { type: "error", autoClose: 5000 });
+      return;
+    }
     try {
       const data: [
         {

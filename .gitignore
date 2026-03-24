@@ -28,3 +28,12 @@ dist-ssr
 /playwright-report/
 /playwright/.cache/
 .env
+
+# Local audit / scratch output (keep repo clean for release)
+audit_tsc.txt
+tsc_*.txt
+src-tauri/audit_*.txt
+src-tauri/cargo_*.txt
+
+# Vite rollup visualizer (regenerated locally)
+stats/

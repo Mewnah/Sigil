@@ -18,7 +18,7 @@ import {
 } from "react-icons/ri";
 import { KickIcon } from "../icons/KickIcon";
 import { Services } from "@/core";
-import { useSnapshot } from "valtio";
+import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
 
 interface NavItemProps {
@@ -83,7 +83,7 @@ interface SigilNavigationProps {
 }
 
 export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = false }) => {
-    const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const tab = useAppUIStore((s) => s.sidebar.tab);
 
     const navigate = (t: string) => window.ApiServer.changeTab({ tab: t as any });
     const isActive = (t: string) => tab?.tab === t;

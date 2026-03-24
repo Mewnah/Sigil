@@ -56,8 +56,6 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
     await window.Config.init();
     await window.ApiShared.init();
 
-    await window.ApiShared.init();
-
     if (window.Config.isClient()) {
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'classic' }).then((sw) => {

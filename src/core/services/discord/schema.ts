@@ -1,4 +1,4 @@
-import { TextEventSource, zodTextEventSource } from "@/types";
+import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe } from "@/utils";
 import { z } from "zod";
 
@@ -8,7 +8,7 @@ export const Service_Discord_Schema = z.object({
   channelAvatarUrl: zSafe(z.coerce.string(), ""),
   postEnable: zSafe(z.coerce.boolean(), false),
   postWithTwitchLive: zSafe(z.coerce.boolean(), false),
-  postSource: zSafe(zodTextEventSource, TextEventSource.stt),
+  postSource: zSafe(TextEventSourceSchema, TextEventSource.stt),
   postInput: zSafe(z.coerce.boolean(), false),
 }).default({});
 

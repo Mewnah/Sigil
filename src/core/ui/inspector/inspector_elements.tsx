@@ -3,6 +3,8 @@ import { ElementType } from "@/client/elements/schema";
 import { FC, memo, useState, MouseEvent } from "react";
 import { RiAddCircleFill, RiImageFill, RiTextWrap, RiDeleteBin5Fill, RiEdit2Fill, RiStackFill, RiLayoutMasonryFill, RiSave3Fill } from "react-icons/ri";
 import { useSnapshot } from "valtio";
+import { useShallow } from "zustand/react/shallow";
+import { useAppUIStore } from "../store";
 import Inspector from "./components";
 import Tooltip from "../dropdown/Tooltip";
 import { useTranslation } from "react-i18next";
@@ -74,7 +76,9 @@ const Inspector_Elements: FC = () => {
     const elementsIds = useGetState(state => state.elementsIds);
     const elements = useGetState(state => state.elements);
     const { elementTemplates } = useSnapshot(window.ApiServer.state);
-    const { tab, selections } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const { tab, selections } = useAppUIStore(
+        useShallow((s) => ({ tab: s.sidebar.tab, selections: s.sidebar.selections }))
+    );
     const [view, setView] = useState<'active' | 'templates'>('active');
 
     const handleAddText = () => {
@@ -88,7 +92,7 @@ const Inspector_Elements: FC = () => {
     const handleSelectElement = (id: string, type: ElementType, e: MouseEvent) => {
         if (e.shiftKey) {
             // Multi-selection logic
-            const currentSelections = window.ApiServer.ui.sidebarState.selections ? [...window.ApiServer.ui.sidebarState.selections] : [];
+            const currentSelections = [...(useAppUIStore.getState().sidebar.selections ?? [])];
             const idx = currentSelections.indexOf(id);
 
             if (idx === -1) {
@@ -97,12 +101,12 @@ const Inspector_Elements: FC = () => {
                 currentSelections.splice(idx, 1);
             }
 
-            window.ApiServer.ui.sidebarState.selections = currentSelections;
+            useAppUIStore.getState().setSidebarSelections(currentSelections);
             // Do NOT change tab, as this would replace the Project view.
             // Selection now drives the Right Panel (PropertyInspector).
         } else {
             // Single selection
-            window.ApiServer.ui.sidebarState.selections = [id];
+            useAppUIStore.getState().setSidebarSelections([id]);
             // window.ApiServer.changeTab({ tab: type, value: id });
         }
     };
@@ -111,9 +115,9 @@ const Inspector_Elements: FC = () => {
         if (confirm("Are you sure you want to delete this element?")) {
             window.ApiClient.elements.removeElement(id);
             // Cleanup selections
-            const currentSelections = window.ApiServer.ui.sidebarState.selections;
+            const currentSelections = useAppUIStore.getState().sidebar.selections;
             if (currentSelections.includes(id)) {
-                window.ApiServer.ui.sidebarState.selections = currentSelections.filter(pid => pid !== id);
+                useAppUIStore.getState().setSidebarSelections(currentSelections.filter((pid) => pid !== id));
             }
         }
     };
@@ -122,7 +126,7 @@ const Inspector_Elements: FC = () => {
         if (!selections || selections.length === 0) return;
         if (confirm(`Delete ${selections.length} selected elements?`)) {
             selections.forEach(id => window.ApiClient.elements.removeElement(id));
-            window.ApiServer.ui.sidebarState.selections = [];
+            useAppUIStore.getState().setSidebarSelections([]);
             window.ApiServer.changeTab({ tab: undefined as any });
             toast.success("Deleted selected elements");
         }

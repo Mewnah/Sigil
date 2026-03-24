@@ -1,6 +1,6 @@
 import { zSafe, zStringNumber } from "@/utils";
 import z from "zod";
-import { TextEventSource, zodTextEventSource } from "../../../types";
+import { TextEventSource, TextEventSourceSchema } from "../../../types";
 
 export enum FontCase {
   lowercase = "lowercase",
@@ -82,7 +82,7 @@ export const Element_TextStateSchemaN = z.object({
   animateEvent: zSafe(z.boolean(), false),
 
   //sources
-  sourceMain: zSafe(zodTextEventSource, TextEventSource.stt),
+  sourceMain: zSafe(TextEventSourceSchema, TextEventSource.stt),
   sourceInterim: zSafe(z.boolean(), true),
   sourceInputField: zSafe(z.boolean(), true),
 

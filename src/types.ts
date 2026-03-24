@@ -1,6 +1,6 @@
 import z from "zod";
 import { ElementType } from "./client/elements/schema";
-import { Services } from "./core";
+import { Services } from "./services-registry";
 
 export type MappedGroupDictionary<Options = any> = Record<string, ([string] | [string, string] | [string, string, Options])[]>
 
@@ -49,8 +49,7 @@ export enum TextEventSource {
   transform_raw = "text.transform_raw",
 }
 
-// todo rename
-export const zodTextEventSource = z.nativeEnum(TextEventSource);
+export const TextEventSourceSchema = z.nativeEnum(TextEventSource);
 
 export type InspectorTabPath = {
   tab: Services | ElementType | "settings" | "integrations" | "scenes" | "files" | "fonts" | "obs" | "project" | "elements" | "voice_changer",

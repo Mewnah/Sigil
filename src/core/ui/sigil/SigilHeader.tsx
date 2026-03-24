@@ -5,6 +5,7 @@ import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icon
 import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine } from "react-icons/ri";
 import { useSnapshot } from "valtio";
 import { Services } from "@/core";
+import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
 
 // Map tab IDs to human-readable names
@@ -92,7 +93,7 @@ interface SigilHeaderProps {
 }
 
 export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sidebarCollapsed }) => {
-    const { tab } = useSnapshot(window.ApiServer.ui.sidebarState);
+    const tab = useAppUIStore((s) => s.sidebar.tab);
     const { clientTheme } = useSnapshot(window.ApiServer.state);
     const [showShortcuts, setShowShortcuts] = useState(false);
 

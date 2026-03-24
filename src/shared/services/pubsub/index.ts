@@ -7,17 +7,24 @@ import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { proxyMap } from "valtio/utils";
 
-// todo move event to zod
+import { z } from "zod";
 
-type RegisteredEvent = {
-  label: string;
-  description?: string;
-  value: string;
-};
+const RegisteredEventSchema = z.object({
+  label: z.string(),
+  description: z.string().optional(),
+  value: z.string(),
+});
+
+type RegisteredEvent = z.infer<typeof RegisteredEventSchema>;
+
+export type TextEmoteEnricher = (
+  data: PartialWithRequired<TextEvent, "type" | "value">
+) => PartialWithRequired<TextEvent, "type" | "value">;
 
 class Service_PubSub implements IServiceInterface {
   constructor() { }
   #socket?: WebSocket;
+  #textEmoteEnricher?: TextEmoteEnricher;
   serviceState = proxy({
     state: ServiceNetworkState.disconnected,
   });
@@ -64,6 +71,11 @@ class Service_PubSub implements IServiceInterface {
   registerEvent = (event: RegisteredEvent) => this.registeredEvents.set(event.value, event);
   unregisterEvent = (eventValue: string) => this.registeredEvents.delete(eventValue);
 
+  /** Host registers Twitch (or other) emote scanning; shared layer stays free of ApiServer. */
+  setTextEmoteEnricher(fn: TextEmoteEnricher | undefined) {
+    this.#textEmoteEnricher = fn;
+  }
+
   async init() {
     window.Config.isServer() && listen('pubsub', (event) => {
       this.consumePubSubMessage(event.payload as string);
@@ -91,12 +103,11 @@ class Service_PubSub implements IServiceInterface {
   }
 
   private applyEmotes(data: PartialWithRequired<TextEvent, "type" | "value">) {
-    if (!data.emotes) {
-      let emotes = window.ApiServer.twitch.emotes.scanForEmotes(data.value);
-      return { ...data, emotes };
-    }
-    else
-      return data;
+    if (this.#textEmoteEnricher)
+      return this.#textEmoteEnricher(data);
+    if (!data.emotes)
+      return { ...data, emotes: {} };
+    return data;
   }
 
   publishLocally({ topic, data }: BaseEvent) {

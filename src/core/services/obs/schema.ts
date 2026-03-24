@@ -1,4 +1,4 @@
-import { TextEventSource, zodTextEventSource } from "@/types";
+import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe } from "@/utils";
 import { z } from "zod";
 
@@ -10,7 +10,7 @@ export const Service_OBS_Schema = z.object({
   wsPassword: zSafe(z.coerce.string(), ""),
 
   captionsEnable: zSafe(z.coerce.boolean(), false),
-  source: zSafe(zodTextEventSource, TextEventSource.stt),
+  source: zSafe(TextEventSourceSchema, TextEventSource.stt),
   inputField: zSafe(z.coerce.boolean(), false),
   interim: zSafe(z.coerce.boolean(), false),
 
