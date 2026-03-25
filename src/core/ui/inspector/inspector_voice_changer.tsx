@@ -1,6 +1,6 @@
 import { FC, useEffect, useState } from "react";
 import { useSnapshot } from "valtio";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { InputSelect, InputCheckbox, InputContainer } from "./components/input";
 import { RiMagicFill, RiPlayFill, RiStopFill } from "react-icons/ri";
 import Tooltip from "../dropdown/Tooltip";

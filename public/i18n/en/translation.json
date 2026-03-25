@@ -167,7 +167,7 @@
     "field_auto_connect": "Auto connect",
     "section_native_captions": "Native stream captions",
     "section_scenes": "Scenes",
-    "section_scenes_desc": "Automatically change curses scene to match active obs scene",
+    "section_scenes_desc": "Automatically change Sigil scene to match active OBS scene",
     "field_fallback_scene": "Fallback_scene",
     "field_map_scenes": "Map scenes"
   },

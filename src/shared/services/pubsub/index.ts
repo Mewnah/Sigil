@@ -1,6 +1,6 @@
 import { BaseEvent, IServiceInterface, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSchema, TextEventSource, TextEventType } from "@/types";
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
 import PubSub from "pubsub-js";
 import { toast } from "react-toastify";
@@ -21,10 +21,14 @@ export type TextEmoteEnricher = (
   data: PartialWithRequired<TextEvent, "type" | "value">
 ) => PartialWithRequired<TextEvent, "type" | "value">;
 
+/** Host registers STT forwarding for external `text.stt` pubsub (keeps shared free of ApiServer). */
+export type ExternalSttHandler = (event: TextEvent) => void;
+
 class Service_PubSub implements IServiceInterface {
   constructor() { }
   #socket?: WebSocket;
   #textEmoteEnricher?: TextEmoteEnricher;
+  #externalSttHandler?: ExternalSttHandler;
   serviceState = proxy({
     state: ServiceNetworkState.disconnected,
   });
@@ -52,9 +56,11 @@ class Service_PubSub implements IServiceInterface {
         return;
 
       const textEvent = this.applyEmotes(validated.data);
-      // redirect stt
       if (topic === "text.stt") {
-        window.ApiServer.stt.processExternalMessage(textEvent);
+        this.#externalSttHandler?.({
+          ...textEvent,
+          emotes: textEvent.emotes ?? {},
+        });
         return;
       }
 
@@ -74,6 +80,10 @@ class Service_PubSub implements IServiceInterface {
   /** Host registers Twitch (or other) emote scanning; shared layer stays free of ApiServer. */
   setTextEmoteEnricher(fn: TextEmoteEnricher | undefined) {
     this.#textEmoteEnricher = fn;
+  }
+
+  setExternalSttHandler(fn: ExternalSttHandler | undefined) {
+    this.#externalSttHandler = fn;
   }
 
   async init() {

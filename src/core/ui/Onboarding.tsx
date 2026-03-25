@@ -1,6 +1,6 @@
 import { FC, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { useSnapshot } from "valtio";
 import {
     RiUserVoiceFill,

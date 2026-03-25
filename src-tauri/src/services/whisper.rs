@@ -10,7 +10,7 @@ use std::time::Instant;
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
@@ -198,9 +198,9 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
     let (model_url, model_filename) = get_model_info(&model);
 
     let app_data_dir = app
-        .path_resolver()
+        .path()
         .app_data_dir()
-        .ok_or("Failed to get app data directory")?;
+        .map_err(|e| e.to_string())?;
     let whisper_dir = app_data_dir.join("whisper");
     let model_path = whisper_dir.join(model_filename);
 
@@ -228,7 +228,7 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
             file.write_all(&chunk).map_err(|e| e.to_string())?;
             downloaded += chunk.len() as u64;
             if total > 0 {
-                let _ = app.emit_all(
+                let _ = app.emit(
                     "whisper:download_progress",
                     ProgressPayload {
                         file: model_filename.to_string(),
@@ -457,7 +457,7 @@ pub fn process_audio_chunk<R: Runtime>(state: &WhisperState, app: &AppHandle<R>,
         thread::spawn(move || {
             if let Ok(text) = transcribe_chunk(&state_clone, chunk, sample_rate, channels) {
                 if !text.trim().is_empty() {
-                    let _ = app.emit_all("whisper:partial_result", text);
+                    let _ = app.emit("whisper:partial_result", text);
                 }
             }
         });
@@ -485,7 +485,7 @@ async fn stop_recording<R: Runtime>(_app: AppHandle<R>, state: State<'_, Whisper
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("whisper")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(WhisperState::new());
             Ok(())
         })

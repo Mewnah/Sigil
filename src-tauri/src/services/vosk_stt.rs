@@ -143,9 +143,9 @@ async fn download_vosk_model<R: Runtime>(app: AppHandle<R>, model_id: String) ->
 
     // Get app data directory
     let app_dir = app
-        .path_resolver()
+        .path()
         .app_data_dir()
-        .ok_or("Failed to get app data directory")?;
+        .map_err(|e| e.to_string())?;
 
     let models_dir = app_dir.join("vosk-models");
     std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
@@ -206,9 +206,9 @@ async fn download_vosk_model<R: Runtime>(app: AppHandle<R>, model_id: String) ->
 #[command]
 async fn list_downloaded_vosk_models<R: Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
     let app_dir = app
-        .path_resolver()
+        .path()
         .app_data_dir()
-        .ok_or("Failed to get app data directory")?;
+        .map_err(|e| e.to_string())?;
 
     let models_dir = app_dir.join("vosk-models");
     if !models_dir.exists() {
@@ -232,7 +232,7 @@ async fn list_downloaded_vosk_models<R: Runtime>(app: AppHandle<R>) -> Result<Ve
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("vosk_stt")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(VoskSttState::new());
             Ok(())
         })

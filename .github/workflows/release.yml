@@ -16,7 +16,7 @@ jobs:
       - name: setup node
         uses: actions/setup-node@v3
         with:
-          node-version: 16
+          node-version: 20
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
@@ -45,6 +45,8 @@ jobs:
           draft: true
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # After upgrading Tauri or the bundler, run `pnpm tauri build` locally and confirm paths under
+          # src-tauri/target/release/ and bundle/msi/ (WiX may vary MSI filename slightly).
           files: |
             src-tauri/target/release/sigil.exe
             src-tauri/target/release/bundle/msi/Sigil_${{steps.version.outputs.value}}_x64_en-US.msi

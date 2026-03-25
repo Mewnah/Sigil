@@ -130,6 +130,10 @@ class ApiServer {
       }
       return data;
     });
+
+    window.ApiShared.pubsub.setExternalSttHandler((event) => {
+      window.ApiServer.stt.processExternalMessage(event);
+    });
   }
 }
 

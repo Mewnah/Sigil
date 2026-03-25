@@ -1,6 +1,6 @@
 import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 // Available Vosk models - now fetched from Rust backend when available

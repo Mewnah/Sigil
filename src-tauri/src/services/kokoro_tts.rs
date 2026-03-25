@@ -128,7 +128,7 @@ async fn check_kokoro_availability<R: Runtime>(_app: AppHandle<R>, state: State<
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("kokoro_tts")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(KokoroTTSState::new());
             Ok(())
         })

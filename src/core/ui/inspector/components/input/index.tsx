@@ -17,7 +17,7 @@ import styles from "./style.module.css";
 import produce from "immer";
 import { BackendState } from "../../../../schema";
 import Tooltip from "../../../dropdown/Tooltip";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 const cx = classNames.bind(styles);
 import { useTranslation } from 'react-i18next';
 

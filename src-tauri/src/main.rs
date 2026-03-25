@@ -4,7 +4,6 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tauri::{command, Manager, State};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-use window_shadows::set_shadow;
 
 use windows::{
     core::PCSTR,
@@ -41,7 +40,7 @@ fn get_port(state: State<'_, InitArguments>) -> u16 {
 
 #[command]
 fn app_close(app_handle: tauri::AppHandle) {
-    let Some(window) = app_handle.get_window("main") else {
+    let Some(window) = app_handle.get_webview_window("main") else {
         return app_handle.exit(0);
     };
     app_handle.save_window_state(StateFlags::all()).ok(); // don't really care if it saves it
@@ -72,9 +71,14 @@ fn main() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let window = app.get_window("main").expect("Failed to get main window");
-            set_shadow(&window, true).expect("Unsupported platform!");
+            let window = app.get_webview_window("main").expect("Failed to get main window");
+            window.set_shadow(true).expect("Unsupported platform!");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_port, get_native_features, app_close])

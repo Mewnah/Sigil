@@ -91,10 +91,17 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
   } catch (error: any) {
     console.error("App initialization failed:", error);
     if (root_ele) {
+      const isClient = window.Config?.isClient?.() === true;
+      const cn = window.Config?.clientNetwork;
+      const clientHint = isClient && cn
+        ? `<p style="color:#ccc;margin:12px 0;">Remote client could not connect to the Sigil host. Check that the desktop app is running on this machine or your LAN, then open the client link from the host again (includes <code>host</code>, <code>port</code>, and <code>id</code> in the URL).</p>
+           <p style="color:#888;font-size:13px;">Trying: <code>${cn.host}:${cn.port}</code></p>`
+        : "";
       root_ele.innerHTML = `
-        <div style="padding: 20px; color: red; background: #333; height: 100vh;">
-          <h1>Application Failed to Start</h1>
-          <pre>${error?.message || String(error)}\n${error?.stack || ''}</pre>
+        <div style="padding: 24px; color: #f87171; background: #1a1a1a; height: 100vh; font-family: system-ui, sans-serif;">
+          <h1 style="color:#fff;margin-top:0;">Application failed to start</h1>
+          ${clientHint}
+          <pre style="color:#fca5a5;white-space:pre-wrap;font-size:12px;">${String(error?.message || error)}\n${String(error?.stack || "")}</pre>
         </div>
       `;
     }

@@ -7,7 +7,7 @@ use std::thread;
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 
 const DEFAULT_PITCH_SEMITONES: f32 = 0.0;
@@ -196,10 +196,10 @@ async fn start_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, Voi
         }
 
         *is_running.lock().unwrap() = false;
-        let _ = app_clone.emit_all("voice_changer:stopped", ());
+        let _ = app_clone.emit("voice_changer:stopped", ());
     });
 
-    let _ = app.emit_all("voice_changer:started", ());
+    let _ = app.emit("voice_changer:started", ());
     Ok(())
 }
 
@@ -401,7 +401,7 @@ fn stop_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, VoiceChang
     if let Some(sender) = state.stop_sender.lock().unwrap().take() {
         let _ = sender.send(());
     }
-    let _ = app.emit_all("voice_changer:stopped", ());
+    let _ = app.emit("voice_changer:stopped", ());
     Ok(())
 }
 
@@ -413,7 +413,7 @@ fn is_voice_changer_running(state: State<'_, VoiceChangerState>) -> bool {
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("voice_changer")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(VoiceChangerState::new());
             Ok(())
         })

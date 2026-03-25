@@ -5,7 +5,7 @@ use tauri::{
     async_runtime::Mutex,
     command,
     plugin::{Builder, TauriPlugin},
-    Manager, Runtime, State,
+    Emitter, Manager, Runtime, State,
 };
 use tokio::sync::mpsc;
 use warp::Filter;
@@ -77,14 +77,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let (pubsub_output_tx, mut pubsub_output_rx) = mpsc::channel::<String>(1); // to js
     Builder::new("web")
         .invoke_handler(tauri::generate_handler![open_browser, pubsub_broadcast, config])
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(PubSubInput {
                 tx: Mutex::new(pubsub_input_tx),
             });
 
             let app_port = app.state::<AppConfiguration>().port;
 
-            let app_handle = app.app_handle();
+            let app_handle = app.clone();
             let a = Arc::new(app.asset_resolver());
             tauri::async_runtime::spawn(async move {
                 let routes = warp::path!("ping")
@@ -99,11 +99,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                         .await
                 }
             });
-            let handle = app.app_handle();
+            let handle = app.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Some(output) = pubsub_output_rx.recv().await {
-                        handle.emit_all("pubsub", output).ok();
+                        let _ = handle.emit("pubsub", output);
                     }
                 }
             });

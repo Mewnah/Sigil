@@ -131,7 +131,7 @@ async fn check_fish_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("fish_speech")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(FishSpeechState::new());
             Ok(())
         })

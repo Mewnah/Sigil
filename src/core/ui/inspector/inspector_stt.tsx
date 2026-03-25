@@ -1,6 +1,6 @@
 import { STT_Backends, STT_State } from "@/core/services/stt/schema";
 import { ServiceNetworkState } from "@/types";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FC, useState, useEffect } from "react";
 import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";

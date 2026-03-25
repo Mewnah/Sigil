@@ -125,7 +125,7 @@ async fn check_melo_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("melo_tts")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(MeloTTSState::new());
             Ok(())
         })

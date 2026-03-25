@@ -163,7 +163,7 @@ async fn check_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_, Tra
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("translate")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(TranslateState::new());
             Ok(())
         })

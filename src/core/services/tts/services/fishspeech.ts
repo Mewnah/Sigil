@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver, ITTSService } from "../types";
 import { TTS_State } from "../schema";
 

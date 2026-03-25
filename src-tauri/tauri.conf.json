@@ -1,72 +1,44 @@
 {
-  "package": {
-    "productName": "Sigil",
-    "version": "0.2.2"
+  "bundle": {
+    "active": true,
+    "category": "Entertainment",
+    "copyright": "",
+    "targets": "all",
+    "externalBin": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "longDescription": "",
+    "resources": [],
+    "shortDescription": "",
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
   },
   "build": {
     "beforeDevCommand": "pnpm dev --host",
     "beforeBuildCommand": "pnpm build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist",
-    "withGlobalTauri": true
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
-  "tauri": {
-    "allowlist": {
-      "shell": {
-        "all": false,
-        "execute": false,
-        "open": true,
-        "scope": [],
-        "sidecar": false
-      },
-      "dialog": {
-        "all": true
-      },
-      "window": {
-        "all": true
-      },
-      "globalShortcut": {
-        "all": true
-      },
-      "fs": {
-        "all": true,
-        "scope": [
-          "$APPDATA/**"
-        ]
-      }
-    },
-    "bundle": {
-      "active": true,
-      "category": "Entertainment",
-      "copyright": "",
-      "deb": {
-        "depends": []
-      },
-      "externalBin": [],
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "identifier": "com.sigil.app",
-      "longDescription": "",
-      "resources": [],
-      "shortDescription": "",
-      "targets": "all",
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": ""
-      }
-    },
-    "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: https: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https: http://localhost:*;"
-    },
-    "updater": {
-      "active": false
-    },
+  "productName": "Sigil",
+  "mainBinaryName": "Sigil",
+  "version": "0.2.2",
+  "identifier": "com.sigil.app",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "fullscreen": false,
@@ -74,8 +46,12 @@
         "resizable": true,
         "decorations": false,
         "title": "Sigil",
-        "width": 800
+        "width": 800,
+        "useHttpsScheme": true
       }
-    ]
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost 'self' ws: wss: https: http://localhost:*;"
+    }
   }
 }

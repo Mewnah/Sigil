@@ -171,7 +171,7 @@
 
     "section_native_captions": "原生字幕流",
     "section_scenes": "场景",
-    "section_scenes_desc": "自动更改 curses 的场景以匹配 obs 的场景",
+    "section_scenes_desc": "自动更改 Sigil 的场景以匹配 OBS 的场景",
     "field_fallback_scene": "默认场景",
     "field_map_scenes": "场景地图"
   },

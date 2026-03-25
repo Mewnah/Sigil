@@ -1,5 +1,5 @@
-import { appWindow } from "@tauri-apps/api/window";
-import { exit } from '@tauri-apps/api/process';
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { exit } from '@tauri-apps/plugin-process';
 import classNames from "classnames";
 import { toast } from "react-toastify";
 import { FC, HtmlHTMLAttributes, PropsWithChildren, ReactNode, useState } from "react";
@@ -11,9 +11,10 @@ import { useSnapshot } from "valtio";
 import { ServiceNetworkState } from "../../types";
 import Tooltip from "./dropdown/Tooltip";
 import Logo from "./logo";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { SttMuteState } from "../services/stt/types";
 import { useTranslation } from "react-i18next";
+const appWindow = getCurrentWebviewWindow()
 
 const Divider: FC = () => {
   return <div className="flex-none h-4 w-1 bg-neutral rounded-full"></div>

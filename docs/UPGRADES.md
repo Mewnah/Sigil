@@ -2,6 +2,10 @@
 
 Use this list to plan larger follow-on work after the current release push. Order is suggested priority, not fixed.
 
+## Execution order (integration branch)
+
+Work proceeds on branch `integration/major-upgrades` in phases: **0 baseline → 1 hygiene → 2 architecture (TS) → 3 client → 4 Tauri v2 → 5 security/docs → merge to `master`. Each phase should leave the app buildable. See the Cursor plan “Integration branch major upgrades” for full detail.
+
 ## Platform and build
 
 - **Tauri v2** — Migrate app shell, IPC, and plugins when dependencies are ready; re-validate all `invoke` paths and bundling.

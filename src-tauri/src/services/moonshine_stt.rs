@@ -98,7 +98,7 @@ async fn check_moonshine_availability<R: Runtime>(_app: AppHandle<R>, state: Sta
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("moonshine_stt")
-        .setup(|app| {
+        .setup(|app, _api| {
             app.manage(MoonshineSttState::new());
             Ok(())
         })

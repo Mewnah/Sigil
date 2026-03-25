@@ -2,6 +2,7 @@ import { BaseEvent, IServiceInterface } from "@/types";
 import { toast } from "react-toastify";
 import { PeerjsProvider as PeerProvider } from "./provider";
 import AppConfiguration from "@/config";
+import { getApiClient, getApiShared, getConfig } from "@/runtime/host";
 
 class Service_Peer implements IServiceInterface {
   #provider?: PeerProvider;
@@ -11,12 +12,12 @@ class Service_Peer implements IServiceInterface {
   }
 
   getClientLink(): string {
-    const n = window.Config.serverNetwork;
+    const n = getConfig().serverNetwork;
     return `http://${n.host}:${n.port}/client`;
   }
 
   copyClientLink() {
-    navigator.clipboard.writeText(window.ApiShared.peer.getClientLink());
+    navigator.clipboard.writeText(getApiShared().peer.getClientLink());
     toast.success("Copied!");
   }
 
@@ -24,14 +25,14 @@ class Service_Peer implements IServiceInterface {
     this.#initializePeer();
     this.#provider?.addEventListener("on_client_connected", e => {
       if (e instanceof CustomEvent) {
-        this.#provider?.broadcastPubSubSingle(e.detail, { topic: "peers:init_data", data: window.ApiClient.getInitialConfig() });
+        this.#provider?.broadcastPubSubSingle(e.detail, { topic: "peers:init_data", data: getApiClient().getInitialConfig() });
       }
     });
 
     this.#provider?.connectServer({
       id: "server",
-      host: window.Config.serverNetwork.host,
-      port: window.Config.serverNetwork.port,
+      host: getConfig().serverNetwork.host,
+      port: getConfig().serverNetwork.port,
     });
   }
   private onConfigReceived?: (data: any) => any;
@@ -43,15 +44,15 @@ class Service_Peer implements IServiceInterface {
         if (e.detail.topic === "peers:init_data")
           this.onConfigReceived?.(e.detail.data);
         else
-          window.ApiShared.pubsub.publishLocally(e.detail);
+          getApiShared().pubsub.publishLocally(e.detail);
       } catch (error) {
         console.error(error)
       }
     });
     await this.#provider?.connectClient({
       id: "server",
-      host: window.Config.clientNetwork.host,
-      port: window.Config.clientNetwork.port,
+      host: getConfig().clientNetwork.host,
+      port: getConfig().clientNetwork.port,
     });
     // wait for runtime config
     return new Promise<AppConfiguration["clientInitialState"]>((res) => this.onConfigReceived = res);
@@ -62,7 +63,7 @@ class Service_Peer implements IServiceInterface {
 
   #initializePeer() {
     this.#provider?.dispose();
-    this.#provider = new PeerProvider(window.ApiClient.document.file);
+    this.#provider = new PeerProvider(getApiClient().document.file);
   }
 }
 

@@ -1,12 +1,13 @@
 import { FC, memo, useState } from "react";
-import { appWindow } from "@tauri-apps/api/window";
-import { exit } from "@tauri-apps/api/process";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { exit } from "@tauri-apps/plugin-process";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
 import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine } from "react-icons/ri";
 import { useSnapshot } from "valtio";
 import { Services } from "@/core";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
+const appWindow = getCurrentWebviewWindow()
 
 // Map tab IDs to human-readable names
 const TAB_NAMES: Record<string, string> = {

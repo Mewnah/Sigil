@@ -1,12 +1,7 @@
 import { IServiceInterface } from "@/types";
-import { open, save } from "@tauri-apps/api/dialog";
-import {
-  BaseDirectory,
-  createDir,
-  exists,
-  readBinaryFile,
-  writeBinaryFile,
-} from "@tauri-apps/api/fs";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { BaseDirectory } from "@tauri-apps/api/path";
+import { exists, mkdir, readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { Binder, bind } from "immer-yjs";
 import debounce from "lodash/debounce";
 import { toast } from "react-toastify";
@@ -111,7 +106,7 @@ class Service_Document implements IServiceInterface {
       ],
     });
     if (!path || Array.isArray(path)) return;
-    const data = await readBinaryFile(path);
+    const data = await readFile(path);
     const tempDoc = new Y.Doc();
     let binder: Binder<DocumentState> = bind<DocumentState>(tempDoc.getMap("template"));
     try {
@@ -150,7 +145,7 @@ class Service_Document implements IServiceInterface {
       ],
     });
     if (path) try {
-      await writeBinaryFile(path, tempEncodedUpdate, { append: false });
+      await writeFile(path, tempEncodedUpdate);
       // write author to original doc on success
       this.fileBinder.update(a => { a.author = authorName });
     } catch (error) {
@@ -164,11 +159,11 @@ class Service_Document implements IServiceInterface {
     }
 
     const bExists = await exists("user/template", {
-      dir: BaseDirectory.AppData,
+      baseDir: BaseDirectory.AppData,
     });
     if (bExists) try {
-      const data = await readBinaryFile("user/template", {
-        dir: BaseDirectory.AppData,
+      const data = await readFile("user/template", {
+        baseDir: BaseDirectory.AppData,
       });
       return data;
     } catch (error) {
@@ -177,11 +172,11 @@ class Service_Document implements IServiceInterface {
   }
 
   async #saveDocumentNative(doc: Y.Doc) {
-    const bExists = await exists("user", { dir: BaseDirectory.AppData });
+    const bExists = await exists("user", { baseDir: BaseDirectory.AppData });
     if (!bExists)
-      await createDir("user", { dir: BaseDirectory.AppData, recursive: true });
+      await mkdir("user", { baseDir: BaseDirectory.AppData, recursive: true });
     const data = Y.encodeStateAsUpdate(doc);
-    await writeBinaryFile("user/template", data, { append: false, dir: BaseDirectory.AppData });
+    await writeFile("user/template", data, { baseDir: BaseDirectory.AppData });
   }
 
   saveDocument = debounce(() => {

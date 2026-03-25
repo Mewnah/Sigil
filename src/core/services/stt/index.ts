@@ -10,7 +10,7 @@ import { STT_NativeService } from "./services/native";
 import { STT_WhisperService } from "./services/whisper";
 import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import {
   ISTTReceiver,
   ISTTServiceConstructor,

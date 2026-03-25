@@ -1,8 +1,8 @@
 import { FC, memo } from "react";
 import { useSnapshot } from "valtio";
 import { RiFileAddLine, RiFolderOpenLine, RiTimeLine } from "react-icons/ri";
-import { open } from "@tauri-apps/api/dialog";
-import { readTextFile } from "@tauri-apps/api/fs";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 
 const DashboardCard: FC<{
   title: string;

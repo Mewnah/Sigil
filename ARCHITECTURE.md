@@ -2,7 +2,7 @@
 
 ## Stack
 
-- **Shell:** Tauri 1 (Rust) — native plugins (audio, STT/TTS, OSC, local HTTP server).
+- **Shell:** Tauri 2 (Rust) — native plugins (audio, STT/TTS, OSC, local HTTP server); capabilities in `src-tauri/capabilities/` replace the v1 allowlist.
 - **UI:** Vite, React 18, TypeScript.
 - **State:** Valtio for backend/service and document sync; Zustand (`src/core/ui/store.ts`) for shell UI (sidebar, stats panel); Yjs + PeerJS for collaborative document sync.
 
@@ -24,7 +24,7 @@
 
 ## Data flow (host)
 
-1. **Text/events:** `Service_PubSub.publish` → local PubSub-JS topics → `invoke("plugin:web|pubsub_broadcast")` → Rust → `emit_all("pubsub")` → JS listener; plus PeerJS broadcast to clients; optional outbound WS when “linked.”
+1. **Text/events:** `Service_PubSub.publish` → local PubSub-JS topics → `invoke("plugin:web|pubsub_broadcast")` → Rust → `emit("pubsub", …)` → JS listener; plus PeerJS broadcast to clients; optional outbound WS when “linked.”
 2. **Document:** Yjs doc in `ApiClient.document`; `Service_Peer` syncs over PeerJS (see `src/shared/services/peer/`).
 3. **Local server:** Rust `web` plugin serves `127.0.0.1:<port>` — `ping`, PeerJS path, pubsub WebSocket, static assets (`src-tauri/src/services/web/`).
 
@@ -43,3 +43,8 @@ Sidebar tab visibility, expand/collapse, and multi-selection live in **Zustand**
 - `npm run test:e2e` — Playwright smoke (build + preview; checks `#root` is present)
 
 For deeper diagrams, see the internal architecture audit / roadmap in your planning docs.
+
+## Security notes (Tauri 2)
+
+- **Capabilities:** IPC and filesystem access are gated by capability JSON (`migrated`, `desktop-capability`). Prefer tightening `fs:scope` and plugin permissions over broad `*:default` when adding features.
+- **Threat model (short):** The Rust `web` plugin binds an HTTP/WebSocket stack to **localhost** only (`127.0.0.1`) for PeerJS signaling, pubsub relay, and static assets. Remote clients use the **PeerJS** path over the LAN; they do not execute Tauri commands. Treat any future exposure of that server beyond localhost as a high-risk change requiring authentication and TLS review.

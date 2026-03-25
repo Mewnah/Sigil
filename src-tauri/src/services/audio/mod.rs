@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 
 #[derive(Serialize, Debug)]
@@ -122,7 +122,7 @@ pub async fn start_audio_capture<R: Runtime>(
                         sample_rate: config_sample_rate,
                         channels: config_channels,
                     };
-                    let _ = app_clone.emit_all("audio:chunk", payload);
+                    let _ = app_clone.emit("audio:chunk", payload);
                 },
                 |e| eprintln!("[AudioCapture] Stream error: {}", e),
                 None,
@@ -140,7 +140,7 @@ pub async fn start_audio_capture<R: Runtime>(
                         sample_rate: config_sample_rate,
                         channels: config_channels,
                     };
-                    let _ = app_clone.emit_all("audio:chunk", payload);
+                    let _ = app_clone.emit("audio:chunk", payload);
                 },
                 |e| eprintln!("[AudioCapture] Stream error: {}", e),
                 None,
@@ -204,8 +204,8 @@ pub async fn play_async(data: RpcAudioPlayAsync) -> Result<(), String> {
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("audio")
-        .setup(|app_handle| {
-            app_handle.manage(AudioCaptureState::new());
+        .setup(|app, _api| {
+            app.manage(AudioCaptureState::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
