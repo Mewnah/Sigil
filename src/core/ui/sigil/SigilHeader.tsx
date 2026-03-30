@@ -131,7 +131,7 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
 
                 {/* Draggable Area */}
                 <div data-tauri-drag-region className="flex-1 flex items-center px-4 gap-3">
-                    <div className="font-bold text-sm tracking-wider text-primary">SIGIL <span className="text-base-content/30 font-normal">STUDIO</span></div>
+                    <div className="font-header font-black text-sm tracking-wider text-primary">SIGIL <span className="text-base-content/30 font-normal">STUDIO</span></div>
                     <div className="h-4 w-px bg-base-content/10"></div>
                     <div className="text-sm text-base-content/70 font-medium">{currentPage}</div>
                 </div>

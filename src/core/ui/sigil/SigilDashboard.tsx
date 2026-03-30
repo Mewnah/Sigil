@@ -22,7 +22,7 @@ export const SigilDashboard: FC<any> = memo(() => {
     <div className="flex flex-col h-full bg-base-300 p-8 overflow-y-auto">
       <div className="max-w-6xl mx-auto w-full flex flex-col gap-12 mt-12">
         <div className="text-center space-y-2">
-          <h1 className="text-5xl font-black tracking-tight text-white">
+          <h1 className="font-header text-5xl font-black tracking-tight text-white">
             Sigil<span className="text-primary">Studio</span>
           </h1>
           <p className="text-xl text-base-content/50 font-medium">
