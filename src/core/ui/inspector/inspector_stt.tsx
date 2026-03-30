@@ -7,7 +7,7 @@ import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";
 import { SiGooglechrome, SiMicrosoftedge } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/stt_data";
-import { VOSK_MODELS } from "../../services/stt/services/vosk";
+import { VOSK_MODELS_FALLBACK, type VoskCatalogModel } from "../../services/stt/services/vosk";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
 import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
@@ -315,12 +315,92 @@ const Whisper: FC = () => {
   </>
 }
 
-const Vosk: FC = () => {
+const Moonshine: FC = () => {
   const { t } = useTranslation();
+  const pr = useSnapshot(window.ApiServer.state.services.stt.data.moonshine);
+  const up = <K extends keyof STT_State["moonshine"]>(key: K, v: STT_State["moonshine"][K]) =>
+    window.ApiServer.state.services.stt.data.moonshine[key] = v;
+
+  return <>
+    <Inspector.SubHeader>{t("stt.moonshine_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">
+      {t("stt.moonshine_desc")}
+    </div>
+    <InputText
+      label="stt.moonshine_endpoint"
+      value={pr.endpoint}
+      onChange={e => up("endpoint", e.target.value)}
+    />
+    <RustInputDeviceSelect
+      label="common.field_input_device"
+      value={pr.device}
+      onChange={e => up("device", e)}
+    />
+    <InputText
+      label="stt.moonshine_language"
+      value={pr.language}
+      onChange={e => up("language", e.target.value)}
+    />
+    <Inspector.Description>{t("stt.moonshine_language_desc")}</Inspector.Description>
+  </>;
+};
+
+const OpenAIAudio: FC = () => {
+  const { t } = useTranslation();
+  const pr = useSnapshot(window.ApiServer.state.services.stt.data.openai_audio);
+  const up = <K extends keyof STT_State["openai_audio"]>(key: K, v: STT_State["openai_audio"][K]) =>
+    window.ApiServer.state.services.stt.data.openai_audio[key] = v;
+
+  return <>
+    <Inspector.SubHeader>{t("stt.openai_audio_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">
+      {t("stt.openai_audio_desc")}
+    </div>
+    <InputText
+      label="stt.openai_audio_base_url"
+      value={pr.baseUrl}
+      onChange={e => up("baseUrl", e.target.value)}
+      placeholder="http://127.0.0.1:8000/v1"
+    />
+    <InputText
+      label="stt.openai_audio_model"
+      value={pr.model}
+      onChange={e => up("model", e.target.value)}
+      placeholder={t("stt.openai_audio_model_placeholder")}
+    />
+    <InputText
+      label="stt.openai_audio_api_key"
+      type="password"
+      value={pr.apiKey}
+      onChange={e => up("apiKey", e.target.value)}
+    />
+    <RustInputDeviceSelect
+      label="common.field_input_device"
+      value={pr.device}
+      onChange={e => up("device", e)}
+    />
+    <InputText
+      label="stt.openai_audio_language"
+      value={pr.language}
+      onChange={e => up("language", e.target.value)}
+    />
+    <Inspector.Description>{t("stt.openai_audio_language_desc")}</Inspector.Description>
+  </>;
+};
+
+const Vosk: FC = () => {
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.vosk);
   const up = <K extends keyof STT_State["vosk"]>(key: K, v: STT_State["vosk"][K]) => window.ApiServer.state.services.stt.data.vosk[key] = v;
 
-  const modelOptions = VOSK_MODELS.map(m => ({
+  const [voskCatalog, setVoskCatalog] = useState<VoskCatalogModel[]>(VOSK_MODELS_FALLBACK);
+
+  useEffect(() => {
+    invoke<VoskCatalogModel[]>("plugin:vosk-stt|get_vosk_models")
+      .then(setVoskCatalog)
+      .catch(() => { /* keep fallback */ });
+  }, []);
+
+  const modelOptions = voskCatalog.map(m => ({
     label: `${m.name} (${m.size})`,
     value: m.id
   }));
@@ -328,7 +408,7 @@ const Vosk: FC = () => {
   return <>
     <Inspector.SubHeader>Vosk (Offline)</Inspector.SubHeader>
     <div className="text-xs text-base-content/70 mb-2">
-      Runs 100% offline using Rust audio capture. First run downloads the language model.
+      Models download once into app data as a zip, then load locally (WASM). Rust captures audio; no repeat CDN fetch for the same model.
     </div>
 
     <RustInputDeviceSelect
@@ -354,7 +434,7 @@ const Vosk: FC = () => {
       onChange={e => up("modelUrl", e.target.value)}
     />
     <Inspector.Description>
-      Leave empty to use the default CDN. Use for custom or self-hosted models.
+      Full URL to a .zip Vosk model. When set, it overrides the catalog URL for download; the file is still saved under app data as the selected model id.
     </Inspector.Description>
   </>
 }
@@ -380,12 +460,14 @@ const Inspector_STT: FC = () => {
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
-          { label: "Whisper (Local AI)", value: STT_Backends.whisper },
-          { label: "Vosk (Offline)", value: STT_Backends.vosk },
           { label: "Chrome (Browser)", value: STT_Backends.chrome },
           { label: "Edge (Browser)", value: STT_Backends.edge },
           { label: "Azure", value: STT_Backends.azure },
-          { label: "Deepgram", value: STT_Backends.deepgram }
+          { label: "Deepgram", value: STT_Backends.deepgram },
+          { label: "Whisper (Local AI)", value: STT_Backends.whisper },
+          { label: "Vosk (Offline)", value: STT_Backends.vosk },
+          { label: t("stt.provider_moonshine"), value: STT_Backends.moonshine },
+          { label: t("stt.provider_openai_audio"), value: STT_Backends.openai_audio },
         ]} label="common.field_service" value={data.data.backend} onValueChange={e => up("backend", e as STT_Backends)} />
 
         {data.data.backend !== STT_Backends.chrome && data.data.backend !== STT_Backends.edge && (
@@ -401,6 +483,8 @@ const Inspector_STT: FC = () => {
         {data.data.backend === STT_Backends.deepgram && <Deepgram />}
         {data.data.backend === STT_Backends.whisper && <Whisper />}
         {data.data.backend === STT_Backends.vosk && <Vosk />}
+        {data.data.backend === STT_Backends.moonshine && <Moonshine />}
+        {data.data.backend === STT_Backends.openai_audio && <OpenAIAudio />}
         {data.data.backend === STT_Backends.native && <Native />}
       </Inspector.Deactivatable>
 

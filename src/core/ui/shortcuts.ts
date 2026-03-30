@@ -1,5 +1,14 @@
 import hotkeys from "hotkeys-js";
 import { ServiceNetworkState } from "@/types";
+import { canvasToolbarState } from "./CanvasToolbar";
+
+function isEditableEventTarget(e: KeyboardEvent): boolean {
+    const t = e.target as HTMLElement | null;
+    if (!t) return false;
+    if (t.isContentEditable) return true;
+    const tag = t.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
 
 /**
  * Global keyboard shortcuts for Sigil UI
@@ -49,6 +58,37 @@ export const initializeUIShortcuts = () => {
             tts.start();
         }
     });
+
+    hotkeys("ctrl+shift+z,cmd+shift+z", (e) => {
+        if (isEditableEventTarget(e)) return;
+        e.preventDefault();
+        window.ApiClient.document.redo();
+    });
+
+    hotkeys("ctrl+y,cmd+y", (e) => {
+        if (isEditableEventTarget(e)) return;
+        e.preventDefault();
+        window.ApiClient.document.redo();
+    });
+
+    hotkeys("ctrl+z,cmd+z", (e) => {
+        if (e.shiftKey || isEditableEventTarget(e)) return;
+        e.preventDefault();
+        window.ApiClient.document.undo();
+    });
+
+    hotkeys("f11", (e) => {
+        if (isEditableEventTarget(e)) return;
+        e.preventDefault();
+        canvasToolbarState.presentationMode = !canvasToolbarState.presentationMode;
+    });
+
+    hotkeys("escape", (e) => {
+        if (!canvasToolbarState.presentationMode) return;
+        if (isEditableEventTarget(e)) return;
+        e.preventDefault();
+        canvasToolbarState.presentationMode = false;
+    });
 };
 
 export const cleanupUIShortcuts = () => {
@@ -57,4 +97,9 @@ export const cleanupUIShortcuts = () => {
     hotkeys.unbind("ctrl+1,cmd+1");
     hotkeys.unbind("ctrl+2,cmd+2");
     hotkeys.unbind("ctrl+3,cmd+3");
+    hotkeys.unbind("ctrl+shift+z,cmd+shift+z");
+    hotkeys.unbind("ctrl+y,cmd+y");
+    hotkeys.unbind("ctrl+z,cmd+z");
+    hotkeys.unbind("f11");
+    hotkeys.unbind("escape");
 };

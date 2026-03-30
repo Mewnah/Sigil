@@ -1,3 +1,4 @@
+import { pushSystemLog } from "@/core/services/systemLog";
 import { ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
 import { AuthProvider } from "@twurple/auth";
 import { ChatClient } from "@twurple/chat";
@@ -16,8 +17,12 @@ class TwitchChatApi {
   });
 
   async connect(username: string, authProvider: AuthProvider) {
-    if (this.state.connection !== ServiceNetworkState.disconnected)
+    const canStart =
+      this.state.connection === ServiceNetworkState.disconnected ||
+      this.state.connection === ServiceNetworkState.error;
+    if (!canStart)
       return;
+    this.state.connection = ServiceNetworkState.connecting;
     this.chatClient = new ChatClient({ authProvider, channels: [username] });
     this.chatClient.irc.onConnect(() => {
       this.state.username = username;
@@ -29,8 +34,14 @@ class TwitchChatApi {
       this.state.connection = ServiceNetworkState.disconnected;
     });
 
-    this.chatClient.onMessage((channel, user, message, msg) => {
-      if (msg.userInfo.userName !== this.state.username) return;
+    this.chatClient.onMessage((_channel, _user, _message, msg) => {
+      const selfLogin = window.ApiServer.twitch.state.user?.name;
+      if (
+        selfLogin &&
+        msg.userInfo.userName.toLowerCase() === selfLogin.toLowerCase()
+      ) {
+        return;
+      }
 
       if (this.#state.data.chatReceiveEnable) {
         window.ApiShared.pubsub.publishText(TextEventSource.textfield, {
@@ -41,10 +52,24 @@ class TwitchChatApi {
       }
     });
 
-    await this.chatClient.connect();
+    try {
+      await this.chatClient.connect();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.state.username = "";
+      this.state.connection = ServiceNetworkState.error;
+      pushSystemLog("Twitch", `Chat failed to connect: ${message}`, "error");
+      try {
+        this.chatClient.quit();
+      } catch {
+        /* ignore */
+      }
+      this.chatClient = undefined;
+    }
   }
 
   disconnect() {
+    this.state.connection = ServiceNetworkState.disconnected;
     this.chatClient?.quit();
   }
 

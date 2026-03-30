@@ -1,17 +1,27 @@
 import { IServiceInterface } from "@/types";
+import i18n from "i18next";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { BaseDirectory } from "@tauri-apps/api/path";
 import { exists, mkdir, readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { Binder, bind } from "immer-yjs";
 import debounce from "lodash/debounce";
 import { toast } from "react-toastify";
+import { proxy } from "valtio";
 import * as Y from "yjs";
 import { ElementType } from "../../elements/schema";
+import { migrateLegacyJsonDocument } from "@/client/migrate/legacyDocument";
 import { DocumentSchema, DocumentState } from "../../schema";
+
+/** Reactive undo/redo availability for the template document (Yjs UndoManager). */
+export const documentUndoState = proxy({
+  canUndo: false,
+  canRedo: false,
+});
 
 class Service_Document implements IServiceInterface {
   #file: Y.Doc = new Y.Doc();
   fileBinder!: Binder<DocumentState>;
+  #undoManager!: Y.UndoManager;
 
   get template() {
     return this.#file?.getMap("template");
@@ -61,15 +71,43 @@ class Service_Document implements IServiceInterface {
     }
   }
 
+  #syncDocumentUndoState = () => {
+    documentUndoState.canUndo = this.#undoManager.canUndo();
+    documentUndoState.canRedo = this.#undoManager.canRedo();
+  };
+
+  #initUndoManager() {
+    const templateMap = this.#file.getMap("template");
+    this.#undoManager = new Y.UndoManager(templateMap);
+    const sync = () => this.#syncDocumentUndoState();
+    this.#undoManager.on("stack-item-added", sync);
+    this.#undoManager.on("stack-item-popped", sync);
+    this.#undoManager.on("stack-cleared", sync);
+    sync();
+  }
+
+  undo() {
+    this.#undoManager.undo();
+    this.#syncDocumentUndoState();
+  }
+
+  redo() {
+    this.#undoManager.redo();
+    this.#syncDocumentUndoState();
+  }
+
   async init() {
     this.#file.getArray<Uint8Array>("files");
     this.fileBinder = bind<DocumentState>(this.#file.getMap("template"));
+    this.#initUndoManager();
 
     if (window.Config.isClient()) {
       // wait for initial push from server
       await new Promise((res, rej) => {
         this.#file.once("update", res);
       });
+      this.#undoManager.clear(true, true);
+      this.#syncDocumentUndoState();
       return;
     }
 
@@ -90,6 +128,8 @@ class Service_Document implements IServiceInterface {
     else {
       this.createNewState();
     }
+    this.#undoManager.clear(true, true);
+    this.#syncDocumentUndoState();
     this.saveDocument();
     this.#file.on("afterTransaction", (e) => {
       this.saveDocument();
@@ -97,35 +137,87 @@ class Service_Document implements IServiceInterface {
   }
 
   async importDocument() {
+    if (window.Config.isClient()) {
+      toast.error("Import template is only available on the host app.");
+      return;
+    }
     const path = await open({
       filters: [
         {
-          name: "Sigil template",
-          extensions: ["sigiltmp"],
+          name: "Sigil template (.sigiltmp, JSON)",
+          extensions: ["sigiltmp", "json", "sigil"],
         },
       ],
     });
     if (!path || Array.isArray(path)) return;
+
     const data = await readFile(path);
-    const tempDoc = new Y.Doc();
-    let binder: Binder<DocumentState> = bind<DocumentState>(tempDoc.getMap("template"));
-    try {
-      // try import and patch state
-      Y.applyUpdate(tempDoc, data);
-      tempDoc.transact(() => {
-        binder.update(state => {
-          const patchState = DocumentSchema.safeParse(state);
-          if (patchState.success) {
-            this.patchState(state, patchState.data);
-            this.#saveDocumentNative(tempDoc).then(() => window.location.reload())
-          }
-          else
-            toast.error("Invalid template");
-        })
+
+    const tryParseJson = (): unknown | null => {
+      let i = 0;
+      if (data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf) i = 3;
+      if (i >= data.length || data[i] !== 0x7b /* { */) return null;
+      try {
+        const text = new TextDecoder("utf-8").decode(data.subarray(i));
+        return JSON.parse(text) as unknown;
+      } catch {
+        return null;
+      }
+    };
+
+    const json = tryParseJson();
+    if (json !== null && typeof json === "object") {
+      const migrated = migrateLegacyJsonDocument(json);
+      if (!migrated.ok) {
+        toast.error(migrated.error);
+        return;
+      }
+      this.patch((state) => {
+        Object.assign(state, migrated.doc);
       });
-    } catch (error) {
-      toast.error("Invalid template");
+      this.#undoManager.clear(true, true);
+      this.#syncDocumentUndoState();
+      await this.#saveDocumentNative(this.#file);
+      if (migrated.notes.length > 0) {
+        toast.info(i18n.t("project.migrate_toast", { details: migrated.notes.join(" ") }));
+      } else {
+        toast.success(i18n.t("project.toast_imported"));
+      }
+      return;
     }
+
+    const tempDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(tempDoc, data);
+    } catch {
+      toast.error("Invalid template file.");
+      return;
+    }
+    const tempBinder = bind<DocumentState>(tempDoc.getMap("template"));
+    const parsed = DocumentSchema.safeParse(tempBinder.get());
+    if (!parsed.success) {
+      toast.error("Invalid template file.");
+      return;
+    }
+    this.patch((state) => {
+      this.patchState(state, parsed.data);
+    });
+    this.#undoManager.clear(true, true);
+    this.#syncDocumentUndoState();
+    await this.#saveDocumentNative(this.#file);
+    toast.success(i18n.t("project.toast_imported"));
+  }
+
+  /** Replace the working template with defaults (new canvas + one text element). Saves immediately. */
+  async resetTemplate(): Promise<void> {
+    if (window.Config.isClient()) {
+      toast.error("Reset template is only available on the host app.");
+      return;
+    }
+    this.createNewState();
+    this.#undoManager.clear(true, true);
+    this.#syncDocumentUndoState();
+    await this.#saveDocumentNative(this.#file);
   }
   async exportDocument(authorName: string) {
     // clone doc

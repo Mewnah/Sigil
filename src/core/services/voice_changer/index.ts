@@ -31,7 +31,7 @@ export class VoiceChangerService {
 
         // Fetch presets from backend
         try {
-            const presets = await invoke<VoiceChangerPreset[]>("plugin:voice_changer|get_voice_changer_presets");
+            const presets = await invoke<VoiceChangerPreset[]>("plugin:voice-changer|get_voice_changer_presets");
             this.state.presets = presets;
         } catch (error) {
             console.error("[VoiceChanger] Failed to load presets:", error);
@@ -48,7 +48,7 @@ export class VoiceChangerService {
 
         // Check if already running
         try {
-            this.state.isRunning = await invoke<boolean>("plugin:voice_changer|is_voice_changer_running");
+            this.state.isRunning = await invoke<boolean>("plugin:voice-changer|is_voice_changer_running");
         } catch {
             this.state.isRunning = false;
         }
@@ -61,7 +61,7 @@ export class VoiceChangerService {
             // Update backend params before starting
             await this.syncParams();
 
-            await invoke("plugin:voice_changer|start_voice_changer", {
+            await invoke("plugin:voice-changer|start_voice_changer", {
                 inputDevice: this.state.voiceChanger.inputDevice || null,
             });
             console.log("[VoiceChanger] Started");
@@ -75,7 +75,7 @@ export class VoiceChangerService {
         if (!this.state.isRunning) return;
 
         try {
-            await invoke("plugin:voice_changer|stop_voice_changer");
+            await invoke("plugin:voice-changer|stop_voice_changer");
             console.log("[VoiceChanger] Stopped");
         } catch (error) {
             console.error("[VoiceChanger] Failed to stop:", error);
@@ -92,7 +92,7 @@ export class VoiceChangerService {
 
     async syncParams() {
         try {
-            await invoke("plugin:voice_changer|set_voice_changer_params", {
+            await invoke("plugin:voice-changer|set_voice_changer_params", {
                 params: {
                     enabled: this.state.voiceChanger.enabled,
                     pitch_semitones: this.state.voiceChanger.pitch,
@@ -114,7 +114,7 @@ export class VoiceChangerService {
         this.state.voiceChanger.preset = presetId;
 
         try {
-            await invoke("plugin:voice_changer|apply_voice_changer_preset", {
+            await invoke("plugin:voice-changer|apply_voice_changer_preset", {
                 presetId,
             });
         } catch (error) {
@@ -134,7 +134,7 @@ export class VoiceChangerService {
 
     async setEnabled(enabled: boolean) {
         this.state.voiceChanger.enabled = enabled;
-        await invoke("plugin:voice_changer|set_voice_changer_enabled", { enabled });
+        await invoke("plugin:voice-changer|set_voice_changer_enabled", { enabled });
     }
 
     dispose() {

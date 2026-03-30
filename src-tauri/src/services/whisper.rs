@@ -1,3 +1,4 @@
+use crate::services::http_client::http_client;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
@@ -6,7 +7,7 @@ use std::io::{Read, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
@@ -215,28 +216,76 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
     };
 
     if !model_path.exists() {
-        let response = reqwest::get(model_url)
+        let partial_path = whisper_dir.join(format!("{}.partial", model_filename));
+        let _ = fs::remove_file(&partial_path);
+
+        let response = http_client()
+            .get(model_url)
+            .timeout(Duration::from_secs(7200))
+            .send()
             .await
             .map_err(|e| format!("Model download failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "Model download failed: HTTP {}",
+                response.status()
+            ));
+        }
+
         let total = response.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
         let mut stream = response.bytes_stream();
-        let mut file = File::create(&model_path).map_err(|e| e.to_string())?;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| e.to_string())?;
-            file.write_all(&chunk).map_err(|e| e.to_string())?;
-            downloaded += chunk.len() as u64;
-            if total > 0 {
-                let _ = app.emit(
-                    "whisper:download_progress",
-                    ProgressPayload {
-                        file: model_filename.to_string(),
-                        progress: (downloaded as f64 / total as f64) * 100.0,
-                    },
-                );
+        {
+            let mut file = File::create(&partial_path).map_err(|e| e.to_string())?;
+            while let Some(chunk) = stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = fs::remove_file(&partial_path);
+                        return Err(e.to_string());
+                    }
+                };
+                if let Err(e) = file.write_all(&chunk) {
+                    let _ = fs::remove_file(&partial_path);
+                    return Err(e.to_string());
+                }
+                downloaded += chunk.len() as u64;
+                if total > 0 {
+                    let _ = app.emit(
+                        "whisper:download_progress",
+                        ProgressPayload {
+                            file: model_filename.to_string(),
+                            progress: (downloaded as f64 / total as f64) * 100.0,
+                        },
+                    );
+                }
             }
         }
+
+        let meta = fs::metadata(&partial_path).map_err(|e| e.to_string())?;
+        const MIN_WHISPER_BIN_BYTES: u64 = 100 * 1024;
+        if meta.len() < MIN_WHISPER_BIN_BYTES {
+            let _ = fs::remove_file(&partial_path);
+            return Err(
+                "Downloaded file is too small to be a valid Whisper model (got an error page?)"
+                    .to_string(),
+            );
+        }
+
+        let mut sniff = [0u8; 8];
+        let mut sniff_file = File::open(&partial_path).map_err(|e| e.to_string())?;
+        let n = sniff_file.read(&mut sniff).map_err(|e| e.to_string())?;
+        if n > 0 && sniff[0] == b'<' {
+            let _ = fs::remove_file(&partial_path);
+            return Err("Download returned HTML instead of a model file.".to_string());
+        }
+
+        fs::rename(&partial_path, &model_path).map_err(|e| {
+            let _ = fs::remove_file(&partial_path);
+            e.to_string()
+        })?;
     }
 
     if need_reload {

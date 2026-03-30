@@ -1,7 +1,8 @@
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { FC, memo, useState, MouseEvent } from "react";
-import { RiAddCircleFill, RiImageFill, RiTextWrap, RiDeleteBin5Fill, RiEdit2Fill, RiStackFill, RiLayoutMasonryFill, RiSave3Fill } from "react-icons/ri";
+import { RiAddCircleFill, RiDeleteBin5Fill, RiFileCopyLine, RiLayoutMasonryFill, RiSave3Fill, RiTextWrap, RiImageFill } from "react-icons/ri";
+import { ElementTypeIcon } from "../ElementTypeIcon";
 import { useSnapshot } from "valtio";
 import { useShallow } from "zustand/react/shallow";
 import { useAppUIStore } from "../store";
@@ -17,12 +18,12 @@ interface ElementRowProps {
     type: ElementType;
     isActive: boolean;
     onSelect: (e: MouseEvent) => void;
+    onDuplicate: () => void;
     onDelete: () => void;
 }
 
-const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, onSelect, onDelete }) => {
-    const Icon = type === ElementType.text ? RiTextWrap : RiImageFill;
-
+const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, onSelect, onDuplicate, onDelete }) => {
+    const { t } = useTranslation();
     return (
         <div
             className={classNames(
@@ -31,18 +32,33 @@ const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, onSele
             )}
             onClick={onSelect}
         >
-            <Icon className="text-lg flex-shrink-0" />
+            <ElementTypeIcon type={type} className="text-lg flex-shrink-0" />
             <span className="flex-1 truncate font-medium text-sm">{name}</span>
             <span className="text-xs text-base-content/30 uppercase">{type}</span>
-            <Tooltip content="Delete" placement="top">
-                <button
-                    onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                    title="Delete element"
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-error/20 hover:text-error transition-all"
-                >
-                    <RiDeleteBin5Fill />
-                </button>
-            </Tooltip>
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Tooltip content={t("elements.duplicate_tooltip")} placement="top">
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+                        title={t("elements.duplicate_tooltip")}
+                        className="p-1 rounded hover:bg-primary/15 hover:text-primary transition-all"
+                        aria-label={t("elements.duplicate_tooltip")}
+                    >
+                        <RiFileCopyLine />
+                    </button>
+                </Tooltip>
+                <Tooltip content="Delete" placement="top">
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                        title="Delete element"
+                        className="p-1 rounded hover:bg-error/20 hover:text-error transition-all"
+                        aria-label="Delete element"
+                    >
+                        <RiDeleteBin5Fill />
+                    </button>
+                </Tooltip>
+            </div>
         </div>
     );
 });
@@ -102,7 +118,7 @@ const Inspector_Elements: FC = () => {
             }
 
             useAppUIStore.getState().setSidebarSelections(currentSelections);
-            // Do NOT change tab, as this would replace the Project view.
+            // Do NOT change tab, as this would replace the canvas inspector.
             // Selection now drives the Right Panel (PropertyInspector).
         } else {
             // Single selection
@@ -120,6 +136,25 @@ const Inspector_Elements: FC = () => {
                 useAppUIStore.getState().setSidebarSelections(currentSelections.filter((pid) => pid !== id));
             }
         }
+    };
+
+    const handleDuplicateElement = (id: string) => {
+        const newId = window.ApiClient.elements.duplicateElement(id);
+        if (!newId) return;
+        useAppUIStore.getState().setSidebarSelections([newId]);
+        toast.success(t("elements.toast_duplicated_one"));
+    };
+
+    const handleDuplicateSelected = () => {
+        if (!selections || selections.length === 0) return;
+        const created = window.ApiClient.elements.duplicateElements(selections);
+        if (created.length === 0) return;
+        useAppUIStore.getState().setSidebarSelections(created);
+        toast.success(
+            created.length === 1
+                ? t("elements.toast_duplicated_one")
+                : t("elements.toast_duplicated_n", { count: created.length })
+        );
     };
 
     const handleDeleteSelected = () => {
@@ -194,16 +229,16 @@ const Inspector_Elements: FC = () => {
                     <>
                         {/* Add Buttons */}
                         <Inspector.SubHeader>Add New Element</Inspector.SubHeader>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                             <button
                                 onClick={handleAddText}
-                                className="flex-1 flex items-center justify-center gap-2 h-10 bg-white/5 hover:bg-white/10 rounded text-sm font-medium transition-colors"
+                                className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-10 bg-white/5 hover:bg-white/10 rounded text-sm font-medium transition-colors"
                             >
                                 <RiTextWrap /> Text
                             </button>
                             <button
                                 onClick={handleAddImage}
-                                className="flex-1 flex items-center justify-center gap-2 h-10 bg-white/5 hover:bg-white/10 rounded text-sm font-medium transition-colors"
+                                className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-10 bg-white/5 hover:bg-white/10 rounded text-sm font-medium transition-colors"
                             >
                                 <RiImageFill /> Image
                             </button>
@@ -214,12 +249,22 @@ const Inspector_Elements: FC = () => {
                             <div className="flex justify-between items-center w-full">
                                 <span>Active Elements ({elementsIds?.length || 0})</span>
                                 {(selections && selections.length > 0) && (
-                                    <button
-                                        onClick={handleDeleteSelected}
-                                        className="text-[10px] bg-error/10 hover:bg-error/20 text-error px-2 py-0.5 rounded uppercase font-bold tracking-wider transition-colors"
-                                    >
-                                        Delete {selections.length}
-                                    </button>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={handleDuplicateSelected}
+                                            className="text-[10px] bg-primary/10 hover:bg-primary/20 text-primary px-2 py-0.5 rounded uppercase font-bold tracking-wider transition-colors"
+                                        >
+                                            {t("elements.duplicate_n", { count: selections.length })}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleDeleteSelected}
+                                            className="text-[10px] bg-error/10 hover:bg-error/20 text-error px-2 py-0.5 rounded uppercase font-bold tracking-wider transition-colors"
+                                        >
+                                            Delete {selections.length}
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </Inspector.SubHeader>
@@ -238,6 +283,7 @@ const Inspector_Elements: FC = () => {
                                         type={element.type}
                                         isActive={isActive}
                                         onSelect={(e) => handleSelectElement(id, element.type, e)}
+                                        onDuplicate={() => handleDuplicateElement(id)}
                                         onDelete={() => handleDeleteElement(id)}
                                     />
                                 );

@@ -40,7 +40,7 @@ Sidebar tab visibility, expand/collapse, and multi-selection live in **Zustand**
 ## Release / quality
 
 - `npm run typecheck` — `tsc --noEmit`
-- `npm run test:e2e` — Playwright smoke (build + preview; checks `#root` is present)
+- `npm run test:e2e` — Playwright smoke (build + preview; `/` and `/client` shells mount `#root`)
 
 For deeper diagrams, see the internal architecture audit / roadmap in your planning docs.
 

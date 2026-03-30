@@ -61,7 +61,7 @@ const Inspector_Scenes: FC = () => {
       </InputDoubleCountainer>
       <InputCheckbox label="Snap to Grid" value={useGetState(state => state.snapToGrid)} onChange={v => updateState(state => { state.snapToGrid = v })} />
 
-      <Inspector.SubHeader>{t('scenes.section_transitions') || "Global Transitions"}</Inspector.SubHeader>
+      <Inspector.SubHeader>{t('scenes.section_transitions')}</Inspector.SubHeader>
       <InputSelect
         label="Type"
         options={[

@@ -12,14 +12,22 @@ export class PeerjsProvider extends EventTarget {
 
   #peer?: Peer;
   private peers: { [id: string]: DataConnection } = {};
+  #clientLinkParams?: { id: string; host: string; port: string };
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #reconnectAttempts = 0;
+  private static readonly maxClientReconnects = 20;
+
+  /** Stable reference so `dispose` can unregister the same listener. */
+  #onDocumentUpdate = (update: Uint8Array) => {
+    this.broadcastUpdate(this.serializeUpdate(update));
+  };
 
   connectServer(params: {
     id: string,
     host: string,
     port: string
   }) {
-    // track document update
-    this.document.on("update", update => this.broadcastUpdate(this.serializeUpdate(update)));
+    this.document.on("update", this.#onDocumentUpdate);
     this.#peer = new Peer(params.id, {
       host: params.host,
       port:   parseInt(params.port),
@@ -40,13 +48,40 @@ export class PeerjsProvider extends EventTarget {
     this.#peer.on("disconnected", () => {});
   }
 
-  // restart client app
-  private tryReconnectClient() {
+  #clearClientReconnectTimer() {
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+  }
+
+  #destroyClientConnections() {
+    for (const key of Object.keys(this.peers)) {
+      try {
+        this.peers[key]?.close();
+      } catch {
+        /* ignore */
+      }
+      delete this.peers[key];
+    }
     this.#peer?.destroy();
     this.#peer = undefined;
-    setTimeout(() => {
-      location.reload();
-    }, 2000);
+  }
+
+  #scheduleClientReconnect() {
+    if (!this.#clientLinkParams) return;
+    if (this.#reconnectTimer) return;
+    if (this.#reconnectAttempts >= PeerjsProvider.maxClientReconnects) {
+      console.error("[PeerJS] Too many reconnect failures. Reload the page to try again.");
+      return;
+    }
+    const exp = Math.min(this.#reconnectAttempts, 5);
+    const delay = Math.min(30_000, 1000 * Math.pow(2, exp));
+    this.#reconnectAttempts++;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      void this.#runClientConnection(false);
+    }, delay);
   }
 
   async connectClient(params: {
@@ -54,33 +89,78 @@ export class PeerjsProvider extends EventTarget {
     host: string,
     port: string
   }) {
-    await new Promise((resolve, reject) => {
-      this.#peer = new Peer(nanoid(64), {
-        host: params.host,
-        port:   parseInt(params.port),
-        key:    '',
-        path:   'peer',
-        secure: false,
-        debug: 0
-      });
-      if (!this.#peer)
-        reject("No peer");
+    this.#clientLinkParams = params;
+    this.#clearClientReconnectTimer();
+    this.#reconnectAttempts = 0;
+    await this.#runClientConnection(true);
+  }
 
-      this.#peer.on("open", () => {
-        const hostConn = this.#peer!.connect(params.id, {serialization: 'binary'});
-        this.peers[hostConn.connectionId] = hostConn;
-        // try again
-        hostConn.on("close", () => this.tryReconnectClient());
-        hostConn.on("data", handleData => this.readMessage(new Uint8Array(handleData as ArrayBuffer)));
-        hostConn.on("open", () => resolve("connected"));
+  async #runClientConnection(isInitial: boolean): Promise<void> {
+    const params = this.#clientLinkParams;
+    if (!params) {
+      if (isInitial) throw new Error("Missing client link parameters");
+      return;
+    }
+
+    this.#destroyClientConnections();
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (ok: boolean, err?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (ok) resolve();
+        else if (isInitial) reject(err ?? new Error("PeerJS connection failed"));
+        else resolve();
+      };
+
+      let peer: Peer;
+      try {
+        peer = new Peer(nanoid(64), {
+          host: params.host,
+          port: parseInt(params.port, 10),
+          key: "",
+          path: "peer",
+          secure: false,
+          debug: 0,
+        });
+      } catch (e) {
+        this.#scheduleClientReconnect();
+        finish(false, e);
+        return;
+      }
+
+      this.#peer = peer;
+
+      peer.on("error", (err) => {
+        console.error("[PeerJS]", err);
+        this.#scheduleClientReconnect();
+        finish(false, err);
       });
-      this.#peer.on("error", () => this.tryReconnectClient());
-    })
+
+      peer.on("open", () => {
+        const hostConn = peer.connect(params.id, { serialization: "binary" });
+        this.peers[hostConn.connectionId] = hostConn;
+        hostConn.on("data", (handleData) =>
+          this.readMessage(new Uint8Array(handleData as ArrayBuffer))
+        );
+        hostConn.on("close", () => {
+          delete this.peers[hostConn.connectionId];
+          this.#scheduleClientReconnect();
+        });
+        hostConn.on("open", () => {
+          this.#reconnectAttempts = 0;
+          finish(true);
+        });
+      });
+    });
   }
 
   dispose() {
-    this.document.off("update", (update: any) => this.broadcastUpdate(this.serializeUpdate(update)));
-    this.#peer?.destroy();
+    this.#clearClientReconnectTimer();
+    this.#clientLinkParams = undefined;
+    this.document.off("update", this.#onDocumentUpdate);
+    this.#destroyClientConnections();
   }
 
   private readMessage(buffer: Uint8Array) {

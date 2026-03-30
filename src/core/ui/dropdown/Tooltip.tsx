@@ -33,9 +33,7 @@ const Tooltip: FC<PropsWithChildren<HtmlHTMLAttributes<HTMLSpanElement> & Props>
 
 
   return <>
-    <span {...props} {...getReferenceProps({
-      onClick: () => setOpen(false)
-    })} ref={reference}>{children}</span>
+    <span {...props} {...getReferenceProps()} ref={reference}>{children}</span>
     <FloatingPortal id="floating-elements">
       {enable && <AnimatePresence>
         {open && <motion.span

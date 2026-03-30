@@ -52,9 +52,10 @@ const Inspector_VRC: FC = () => {
       <Inspector.SubHeader>VRChat Integration</Inspector.SubHeader>
       <div className="p-2 border-2 border-primary rounded-lg text-xs flex space-x-2 items-center text-primary">
         <RiAlertFill className="text-primary" size={24} />
-        <div className="flex flex-col">
+        <div className="flex flex-col gap-1">
           <span className="font-bold">{t('vrc.notice_title')}</span>
           <span className="font-medium">{t('vrc.notice_desc')}</span>
+          <span className="font-medium opacity-80">{t("vrc.notice_desktop")}</span>
         </div>
       </div>
       <InputCheckbox label="common.field_enable" value={state.enable} onChange={e => up("enable", e)} />

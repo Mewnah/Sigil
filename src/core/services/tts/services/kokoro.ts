@@ -22,12 +22,12 @@ export class TTS_KokoroService implements ITTSService {
 
         try {
             // Set endpoint in backend
-            await invoke("plugin:kokoro_tts|set_kokoro_endpoint", {
+            await invoke("plugin:kokoro-tts|set_kokoro_endpoint", {
                 endpoint: this.#endpoint,
             });
 
             // Check availability
-            const isAvailable = await invoke<boolean>("plugin:kokoro_tts|check_kokoro_availability");
+            const isAvailable = await invoke<boolean>("plugin:kokoro-tts|check_kokoro_availability");
             if (!isAvailable) {
                 this.#receiver.onStop(`Kokoro TTS not available at ${this.#endpoint}. Start with: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu`);
                 return;
@@ -57,7 +57,7 @@ export class TTS_KokoroService implements ITTSService {
 
         try {
             // Get audio bytes from backend
-            const audioBytes = await invoke<number[]>("plugin:kokoro_tts|kokoro_speak", {
+            const audioBytes = await invoke<number[]>("plugin:kokoro-tts|kokoro_speak", {
                 text,
                 voice: this.#voice,
                 speed: this.#speed,
@@ -96,8 +96,8 @@ export class TTS_KokoroService implements ITTSService {
     // Static helper to get available voices
     static async getVoices(endpoint: string = "http://localhost:8880"): Promise<{ name: string }[]> {
         try {
-            await invoke("plugin:kokoro_tts|set_kokoro_endpoint", { endpoint });
-            return await invoke<{ name: string }[]>("plugin:kokoro_tts|get_kokoro_voices");
+            await invoke("plugin:kokoro-tts|set_kokoro_endpoint", { endpoint });
+            return await invoke<{ name: string }[]>("plugin:kokoro-tts|get_kokoro_voices");
         } catch {
             return [];
         }

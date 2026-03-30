@@ -7,6 +7,7 @@ use tauri::{
 };
 
 use crate::services::audio::{play_async, RpcAudioPlayAsync};
+use crate::services::http_client::http_client;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct UberDuckAuth {
@@ -38,8 +39,7 @@ struct SynthRequest {
 
 #[command]
 async fn get_voices(auth: UberDuckAuth) -> Result<Vec<Voice>, String> {
-    let client = reqwest::Client::new();
-    if let Ok(voices) = client
+    if let Ok(voices) = http_client()
         .get("https://api.uberduck.ai/voices?mode=tts-all")
         .basic_auth(auth.api_key, Some(auth.secret_key))
         .send()
@@ -54,8 +54,7 @@ async fn get_voices(auth: UberDuckAuth) -> Result<Vec<Voice>, String> {
 
 #[command]
 async fn speak(data: UberduckRequest) -> Result<(), String> {
-    let client = reqwest::Client::new();
-    if let Ok(resp) = client
+    if let Ok(resp) = http_client()
         .post("https://api.uberduck.ai/speak-synchronous")
         .basic_auth(data.auth.api_key, Some(data.auth.secret_key))
         .json(&SynthRequest {
@@ -79,7 +78,7 @@ async fn speak(data: UberduckRequest) -> Result<(), String> {
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("uberduck_tts")
+    Builder::new("uberduck-tts")
         .invoke_handler(tauri::generate_handler![speak, get_voices])
         .build()
 }

@@ -1,7 +1,7 @@
 
 import ReactDOM from "react-dom/client";
 import "./style.css";
-import ApiServer from "./core";
+import type ApiServer from "./core";
 import ApiClient from "./client";
 import ClientView from "./client/ui/view";
 import React, { ReactNode, Suspense } from "react";
@@ -49,6 +49,10 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
 
 (async function () {
   try {
+    const { runOAuthCallbackIfNeeded } = await import("./oauth/bootstrap");
+    if (await runOAuthCallbackIfNeeded())
+      return;
+
     window.Config = new AppConfiguration();
     window.ApiShared = new ApiShared();
     window.ApiClient = new ApiClient();
@@ -57,6 +61,7 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
     await window.ApiShared.init();
 
     if (window.Config.isClient()) {
+      // PWA: precaches production assets; update handler below avoids stale client bundle after host rebuilds.
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'classic' }).then((sw) => {
           sw.addEventListener("updatefound", async _ => {

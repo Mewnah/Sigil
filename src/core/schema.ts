@@ -12,6 +12,19 @@ import { Service_VRC_Schema } from "./services/vrc/schema";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
+/** Ids for services that can appear in the bottom action bar (order is user-configurable). */
+export const DEFAULT_ACTION_BAR_SERVICE_ORDER = [
+  "stt",
+  "tts",
+  "translation",
+  "transform",
+  "twitch",
+  "kick",
+  "discord",
+  "vrc",
+  "obs",
+] as const;
+
 const zodServiceSchemaFactory = <Data extends z.ZodDefault<z.AnyZodObject>>(schema: Data) => {
   return z.object({
     showActionButton: zSafe(z.coerce.boolean(), false),
@@ -33,6 +46,7 @@ export const BackendSchema = z.object({
   onboardingComplete: zSafe(z.coerce.boolean(), false),
   showOverlayLogs: zSafe(z.coerce.boolean(), false),
   backgroundInputTimer: zSafe(zStringNumber(), "5000"),
+  actionBarServiceOrder: zSafe(z.array(z.string()), [...DEFAULT_ACTION_BAR_SERVICE_ORDER]),
   recentSnapshots: zSafe(z.array(z.object({
     id: z.string(),
     name: z.string(),

@@ -1,12 +1,19 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Ensures the production bundle is served and the HTML shell mounts #root.
- * Full host UI requires Tauri (invoke); this smoke only validates the Vite build + preview pipeline.
+ * Validates `npm run build` output via `vite preview`.
+ * Does not run Tauri; full host flows need the desktop app.
  */
+const routes = [
+  ["index", "/"],
+  ["client shell", "/client?host=127.0.0.1&port=59999&id=server"],
+] as const;
+
 test.describe("preview smoke", () => {
-  test("index serves and contains root mount", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.locator("#root")).toBeAttached();
-  });
+  for (const [label, path] of routes) {
+    test(`${label} mounts #root`, async ({ page }) => {
+      await page.goto(path, { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#root")).toBeAttached();
+    });
+  }
 });

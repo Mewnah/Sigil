@@ -4,7 +4,8 @@ import { ElementType } from "@/client/elements/schema";
 import { useSnapshot } from "valtio";
 import { useAppUIStore } from "../store";
 import { createPortal } from "react-dom";
-import { RiAddCircleFill, RiImageFill, RiTextWrap, RiDeleteBin5Fill, RiCloseLine, RiLayoutMasonryFill, RiSearchLine, RiDragMoveFill, RiFileCopyLine, RiLockLine, RiLockUnlockLine } from "react-icons/ri";
+import { RiAddCircleFill, RiDeleteBin5Fill, RiCloseLine, RiLayoutMasonryFill, RiSearchLine, RiDragMoveFill, RiFileCopyLine, RiLockLine, RiLockUnlockLine } from "react-icons/ri";
+import { ElementTypeIcon } from "../ElementTypeIcon";
 import Tooltip from "../dropdown/Tooltip";
 import classNames from "classnames";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -12,7 +13,6 @@ import { ConfirmModal } from "../components/ConfirmModal";
 // Lazy load element inspectors - use vertical versions for right side panel
 const Inspector_ElementText = lazy(() => import("../inspector/inspector_text"));
 const Inspector_ElementImage = lazy(() => import("../inspector/inspector_image"));
-
 interface ElementRowProps {
     id: string;
     name: string;
@@ -28,8 +28,6 @@ interface ElementRowProps {
 }
 
 const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, index, onSelect, onDelete, onCopy, onDragStart, onDragOver, onDragEnd }) => {
-    const Icon = type === ElementType.text ? RiTextWrap : RiImageFill;
-
     return (
         <div
             draggable
@@ -43,7 +41,7 @@ const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, index,
             onClick={onSelect}
         >
             <RiDragMoveFill className="text-sm text-base-content/30 cursor-grab active:cursor-grabbing flex-shrink-0" />
-            <Icon className="text-base flex-shrink-0" />
+            <ElementTypeIcon type={type} className="text-base flex-shrink-0" />
             <span className="flex-1 truncate font-medium text-xs">{name}</span>
             <span className="hidden sm:block text-[10px] text-base-content/30 uppercase flex-shrink-0">{type}</span>
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
@@ -86,7 +84,9 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
     // Determine if an element is selected
     const selectedElementId = tab?.value;
     const selectedElementType = tab?.tab as ElementType | undefined;
-    const isElementSelected = selectedElementId && (selectedElementType === ElementType.text || selectedElementType === ElementType.image);
+    const isElementSelected =
+        selectedElementId &&
+        (selectedElementType === ElementType.text || selectedElementType === ElementType.image);
 
     // Resizable bottom panel state
     const [panelHeight, setPanelHeight] = useState(280);
@@ -141,7 +141,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
     };
 
     const handleCopyElement = (id: string) => {
-        window.ApiClient.elements.duplicateElement(id, "main");
+        window.ApiClient.elements.duplicateElement(id);
     };
 
     const handleAddText = () => {
@@ -327,16 +327,16 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
             {/* Add Element Section */}
             <div className="px-3 py-3 border-b border-base-content/5 flex-shrink-0 space-y-2">
                 <div className="text-[10px] font-bold uppercase tracking-wide text-base-content/40">Add Element</div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <button
                         onClick={handleAddText}
-                        className="flex-1 flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
+                        className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
                     >
                         <RiAddCircleFill /> Text
                     </button>
                     <button
                         onClick={handleAddImage}
-                        className="flex-1 flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
+                        className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
                     >
                         <RiAddCircleFill /> Image
                     </button>
@@ -445,7 +445,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                 {/* Properties Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-base-content/5 bg-base-200 flex-shrink-0">
                     <div className="flex items-center gap-2">
-                        {selectedElementType === ElementType.text ? <RiTextWrap className="text-base" /> : <RiImageFill className="text-base" />}
+                        {selectedElementType ? <ElementTypeIcon type={selectedElementType} className="text-base" /> : null}
                         <span className="font-bold text-sm">
                             {elements?.[selectedElementId]?.name || "Element"}
                         </span>

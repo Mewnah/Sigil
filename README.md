@@ -89,12 +89,31 @@ Create a `.env` file with your OAuth credentials:
 
 ```env
 # Twitch (https://dev.twitch.tv/console/apps)
+# Client ID is public; “Public” vs “Confidential” is a separate console toggle.
+#
+# • Public: no client secret in console — leave SIGIL_TWITCH_CLIENT_SECRET unset (implicit grant; re-login when token expires).
+#   Register http://localhost:17890/oauth/twitch/implicit and http://localhost:1420/oauth/twitch/implicit
+# • Confidential: set SIGIL_TWITCH_CLIENT_SECRET; auth code + PKCE + refresh. Register …/oauth/twitch/callback on those hosts.
+# Use localhost (not 127.0.0.1) for http loopback.
 SIGIL_TWITCH_CLIENT_ID=your_client_id
+# SIGIL_TWITCH_CLIENT_SECRET=your_client_secret
+# SIGIL_TWITCH_CLIENT_REDIRECT_LOCAL=https://…/oauth/twitch/callback
 
 # Kick (https://kick.com/settings/developer)
+# Register: http://localhost:17890/oauth/kick/callback (desktop) and/or http://localhost:1420/oauth/kick/callback (browser host)
 SIGIL_KICK_CLIENT_ID=your_client_id
 SIGIL_KICK_CLIENT_SECRET=your_client_secret
 ```
+
+### Git and your data
+
+- **Do not commit `.env`** (or copies like `.env.local`, `.env.production`). They are gitignored; only [`.env.example`](.env.example) belongs in the repo, with placeholders.
+- **Twitch `SIGIL_TWITCH_CLIENT_ID`** is a public app identifier (like OAuth “client id”); it is safe to store as a **GitHub Actions encrypted secret** for release builds, as in this repo’s workflow. **Never** put **`SIGIL_TWITCH_CLIENT_SECRET`**, **Kick secrets**, API keys, or **tokens saved after login** into git—those stay in your local `.env` or app state only.
+- **`pnpm build` / `pnpm tauri build`** can embed `SIGIL_*` / `CURSES_*` / `VITE_*` values from your environment into the compiled frontend. The **`dist/`** folder is gitignored; do not upload a zip of a local `dist/` build to a public issue if you built with real secrets.
+
+**GitHub Actions:** the `release` workflow passes a Twitch client ID into `pnpm tauri build` from repository secret **`SIGIL_TWITCH_CLIENT_ID`**, or **`CURSES_TWITCH_CLIENT_ID`** if the former is unset (legacy).
+
+**VRChat (OSC):** captions and OSC commands require the **Tauri desktop** build; the in-browser preview host cannot call the native OSC plugin.
 
 ---
 

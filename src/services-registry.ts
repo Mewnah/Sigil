@@ -8,5 +8,6 @@ export enum Services {
   twitch = "twitch",
   kick = "kick",
   discord = "discord",
+  obs = "obs",
   voice_changer = "voice_changer",
 }

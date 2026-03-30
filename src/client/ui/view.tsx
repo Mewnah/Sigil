@@ -22,8 +22,8 @@ export const ElementSimpleTransform: FC<{ id: string }> = memo(({ id }) => {
 const View: FC = () => {
   const canvas = useGetState(state => state.canvas);
   const ids = useGetState(state => state.elementsIds);
-  return <div className="overflow-hidden w-screen h-screen flex items-center justify-center">
-    <div style={{ width: canvas?.w, height: canvas?.h }} className="relative">
+  return <div className="overflow-auto w-screen h-screen flex items-center justify-center">
+    <div style={{ width: canvas?.w, height: canvas?.h }} className="relative shrink-0">
       {ids?.map((elementId) => <ElementSimpleTransform id={elementId} key={elementId} />)}
     </div>
   </div>

@@ -27,7 +27,7 @@ const Windows: FC = () => {
   const [config, setConfig] = useState<WindowsConfig>();
 
   useEffect(() => {
-    invoke<WindowsConfig>("plugin:windows_tts|get_voices").then(setConfig);
+    invoke<WindowsConfig>("plugin:windows-tts|get_voices").then(setConfig);
   }, []);
 
   return <>
@@ -313,7 +313,7 @@ const UberDuck: FC = () => {
     if (!data.api_key || !data.secret_key)
       return;
     setLoadingVoices(true);
-    invoke("plugin:uberduck_tts|get_voices", {
+    invoke("plugin:uberduck-tts|get_voices", {
       auth: {
         api_key: data.api_key,
         secret_key: data.secret_key,

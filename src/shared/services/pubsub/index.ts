@@ -9,6 +9,14 @@ import { proxyMap } from "valtio/utils";
 
 import { z } from "zod";
 
+/** Application WS ping interval for linked pubsub (see docs/PERFORMANCE_AUDIT.md). */
+export const LINK_PUBSUB_KEEPALIVE_MS = 25_000;
+
+const LINK_PUBSUB_CONNECT_TIMEOUT_MS = 12_000;
+const LINK_PUBSUB_KEEPALIVE_TOPIC = "__sigil_keepalive";
+const LINK_PUBSUB_MAX_RECONNECT_DELAY_MS = 30_000;
+const LINK_PUBSUB_MAX_ATTEMPTS = 25;
+
 const RegisteredEventSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
@@ -27,6 +35,11 @@ export type ExternalSttHandler = (event: TextEvent) => void;
 class Service_PubSub implements IServiceInterface {
   constructor() { }
   #socket?: WebSocket;
+  #linkIntentionalClose = false;
+  #linkFullAddress: string | null = null;
+  #linkReconnectAttempts = 0;
+  #linkReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #linkPingTimer: ReturnType<typeof setInterval> | null = null;
   #textEmoteEnricher?: TextEmoteEnricher;
   #externalSttHandler?: ExternalSttHandler;
   serviceState = proxy({
@@ -48,7 +61,10 @@ class Service_PubSub implements IServiceInterface {
     if (!window.Config.isServer())
       return;
     if (typeof stringEvent === "string") try {
-      const { topic, data }: BaseEvent = JSON.parse(stringEvent);
+      const raw = JSON.parse(stringEvent) as { topic?: string; data?: unknown };
+      if (raw?.topic === LINK_PUBSUB_KEEPALIVE_TOPIC)
+        return;
+      const { topic, data }: BaseEvent = raw as BaseEvent;
       if (typeof data !== "object")
         return;
       const validated = TextEventSchema.safeParse(data);
@@ -98,12 +114,12 @@ class Service_PubSub implements IServiceInterface {
     this.registerEvent({ label: "AI: Original Text (Synced)", value: TextEventSource.transform_source });
     this.registerEvent({ label: "Any text source", value: TextEventSource.any });
 
-    //track text events
-    window.Config.isServer() && this.subscribeText(TextEventSource.any, (event, eventName) => {
+    // Track final text on the host (desktop app): STT, TTS pipeline, typed input, etc. (PubSub bubbles text.* → "text".)
+    !window.Config.isClient() &&
+      this.subscribeText(TextEventSource.any, (event, eventName) => {
       if (event?.type === TextEventType.final) {
-        const _v: any[] = [];
-        // limit to 40
-        if (this.textHistory.list.length >= 40)
+        const maxEntries = 120;
+        if (this.textHistory.list.length >= maxEntries)
           this.textHistory.list.shift();
         const id = nanoid();
         this.textHistory.list.push({ id, event: eventName?.replace("text.", "") || "text", value: event.value });
@@ -176,6 +192,101 @@ class Service_PubSub implements IServiceInterface {
     toast.success("Copied!");
   }
 
+  #clearLinkSchedulers() {
+    if (this.#linkReconnectTimer) {
+      clearTimeout(this.#linkReconnectTimer);
+      this.#linkReconnectTimer = null;
+    }
+    if (this.#linkPingTimer) {
+      clearInterval(this.#linkPingTimer);
+      this.#linkPingTimer = null;
+    }
+  }
+
+  #stopLinkPing() {
+    if (this.#linkPingTimer) {
+      clearInterval(this.#linkPingTimer);
+      this.#linkPingTimer = null;
+    }
+  }
+
+  #startLinkPing() {
+    this.#stopLinkPing();
+    this.#linkPingTimer = setInterval(() => {
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        this.#socket.send(
+          JSON.stringify({ topic: LINK_PUBSUB_KEEPALIVE_TOPIC, data: {} })
+        );
+      }
+    }, LINK_PUBSUB_KEEPALIVE_MS);
+  }
+
+  #scheduleLinkReconnect() {
+    if (this.#linkIntentionalClose || !this.#linkFullAddress || this.#linkReconnectTimer)
+      return;
+    if (this.#linkReconnectAttempts >= LINK_PUBSUB_MAX_ATTEMPTS) {
+      toast.error("PubSub link failed repeatedly. Disconnected.");
+      this.linkDisconnect();
+      return;
+    }
+    const exp = Math.min(this.#linkReconnectAttempts, 5);
+    const delay = Math.min(LINK_PUBSUB_MAX_RECONNECT_DELAY_MS, 1000 * Math.pow(2, exp));
+    this.#linkReconnectAttempts++;
+    this.serviceState.state = ServiceNetworkState.connecting;
+    this.#linkReconnectTimer = setTimeout(() => {
+      this.#linkReconnectTimer = null;
+      this.#openLinkSocket();
+    }, delay);
+  }
+
+  #openLinkSocket() {
+    const fullAddress = this.#linkFullAddress;
+    if (!fullAddress || this.#linkIntentionalClose)
+      return;
+
+    try {
+      this.#socket?.close();
+    } catch {
+      /* ignore */
+    }
+    this.#socket = undefined;
+    this.#stopLinkPing();
+
+    const wsUrl = `ws://${fullAddress}/pubsub?id=${window.ApiServer.state.id}-${Date.now()}`;
+    const socket = new WebSocket(wsUrl);
+    this.#socket = socket;
+
+    const connectTimeout = setTimeout(() => {
+      if (socket.readyState !== WebSocket.OPEN)
+        socket.close();
+    }, LINK_PUBSUB_CONNECT_TIMEOUT_MS);
+
+    socket.onopen = () => {
+      clearTimeout(connectTimeout);
+      this.#linkReconnectAttempts = 0;
+      this.serviceState.state = ServiceNetworkState.connected;
+      socket.onmessage = (msg) => this.consumePubSubMessage(msg.data as string);
+      this.#startLinkPing();
+    };
+
+    socket.onclose = () => {
+      clearTimeout(connectTimeout);
+      this.#stopLinkPing();
+      if (this.#socket === socket)
+        this.#socket = undefined;
+      if (this.#linkIntentionalClose) {
+        this.serviceState.state = ServiceNetworkState.disconnected;
+        return;
+      }
+      this.serviceState.state = ServiceNetworkState.disconnected;
+      this.#scheduleLinkReconnect();
+    };
+
+    socket.onerror = () => {
+      clearTimeout(connectTimeout);
+    };
+  }
+
   linkConnect() {
     const ipValidator = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]):[0-9]+$/;
     const fullAddress = window.ApiServer.state.linkAddress;
@@ -183,34 +294,30 @@ class Service_PubSub implements IServiceInterface {
       return;
 
     const conf = window.Config.serverNetwork;
-    // prevent loop connect
     if (`${conf.ip}:${conf.port}` === fullAddress) {
       toast.error("Cannot connect to self");
       return;
     }
 
-
+    this.#clearLinkSchedulers();
+    this.#linkIntentionalClose = false;
+    this.#linkReconnectAttempts = 0;
+    this.#linkFullAddress = fullAddress;
     this.serviceState.state = ServiceNetworkState.connecting;
-    this.#socket = new WebSocket(`ws://${fullAddress}/pubsub?id=${window.ApiServer.state.id}-${Date.now()}`);
-    const a = setTimeout(() => {
-      this.#socket?.close();
-    }, 5000);
-    this.#socket.onopen = () => {
-      clearTimeout(a);
-      this.serviceState.state = ServiceNetworkState.connected;
-      if (!this.#socket)
-        return;
-      this.#socket.onmessage = (msg) => {
-        return this.consumePubSubMessage(msg.data);
-      };
-    };
-    this.#socket.onclose = () => {
-      this.serviceState.state = ServiceNetworkState.disconnected;
-    }
+    this.#openLinkSocket();
   }
+
   linkDisconnect() {
-    if (this.#socket?.close())
-      this.#socket = undefined;
+    this.#linkIntentionalClose = true;
+    this.#linkFullAddress = null;
+    this.#clearLinkSchedulers();
+    try {
+      this.#socket?.close();
+    } catch {
+      /* ignore */
+    }
+    this.#socket = undefined;
+    this.serviceState.state = ServiceNetworkState.disconnected;
   }
 }
 

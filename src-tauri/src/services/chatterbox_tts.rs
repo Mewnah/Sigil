@@ -1,3 +1,4 @@
+use crate::services::http_client::http_client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -54,7 +55,9 @@ async fn get_chatterbox_voices<R: Runtime>(_app: AppHandle<R>, state: State<'_, 
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/v1/audio/voices", endpoint);
 
-    let response = reqwest::get(&url)
+    let response = http_client()
+        .get(&url)
+        .send()
         .await
         .map_err(|e| format!("Failed to connect to Chatterbox: {}", e))?;
 
@@ -92,7 +95,6 @@ async fn chatterbox_speak<R: Runtime>(
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/v1/audio/speech", endpoint);
 
-    let client = reqwest::Client::new();
     let request_body = SpeechRequest {
         model: "chatterbox".to_string(),
         input: text,
@@ -103,7 +105,7 @@ async fn chatterbox_speak<R: Runtime>(
         response_format: "mp3".to_string(),
     };
 
-    let response = client
+    let response = http_client()
         .post(&url)
         .json(&request_body)
         .send()
@@ -128,14 +130,14 @@ async fn check_chatterbox_availability<R: Runtime>(_app: AppHandle<R>, state: St
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/v1/audio/voices", endpoint);
 
-    match reqwest::get(&url).await {
+    match http_client().get(&url).send().await {
         Ok(response) => Ok(response.status().is_success()),
         Err(_) => Ok(false),
     }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("chatterbox_tts")
+    Builder::new("chatterbox-tts")
         .setup(|app, _api| {
             app.manage(ChatterboxTTSState::new());
             Ok(())

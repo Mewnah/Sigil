@@ -1,5 +1,6 @@
 import { TextEvent, TextEventType } from "@/types";
 import { isObjectVaid } from "@/utils";
+import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { Translation_State } from "../schema";
 import {
   ITranslationReceiver,
@@ -36,8 +37,9 @@ export class Translation_AzureService implements ITranslationService {
     
     link.searchParams.set("to", this.state.language);
     link.search = decodeURIComponent(link.search);
-    const resp = await fetch(link, {
+    const resp = await fetchWithTimeout(link.toString(), {
       method: "POST",
+      timeoutMs: 60_000,
       body: JSON.stringify([{ text: text.value }]),
       headers: {
         "Ocp-Apim-Subscription-Key": key,

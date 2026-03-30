@@ -13,7 +13,7 @@ import {
     RiSettings3Fill,
 } from "react-icons/ri";
 import { ServiceNetworkState } from "@/types";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import Tooltip from "./dropdown/Tooltip";
 import { SttMuteState } from "../services/stt/types";
 

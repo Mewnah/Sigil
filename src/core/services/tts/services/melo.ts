@@ -28,12 +28,12 @@ export class TTS_MeloService implements ITTSService {
 
         try {
             // Set endpoint in backend
-            await invoke("plugin:melo_tts|set_melo_endpoint", {
+            await invoke("plugin:melo-tts|set_melo_endpoint", {
                 endpoint: this.#endpoint,
             });
 
             // Check availability
-            const isAvailable = await invoke<boolean>("plugin:melo_tts|check_melo_availability");
+            const isAvailable = await invoke<boolean>("plugin:melo-tts|check_melo_availability");
             if (!isAvailable) {
                 this.#receiver.onStop(
                     `MeloTTS not available at ${this.#endpoint}. Start with: docker run -p 8888:8888 myshell-ai/melotts`
@@ -65,7 +65,7 @@ export class TTS_MeloService implements ITTSService {
 
         try {
             // Get audio bytes from backend (WAV format)
-            const audioBytes = await invoke<number[]>("plugin:melo_tts|melo_speak", {
+            const audioBytes = await invoke<number[]>("plugin:melo-tts|melo_speak", {
                 text,
                 speakerId: this.#speakerId || null,
                 speed: this.#speed,
@@ -104,8 +104,8 @@ export class TTS_MeloService implements ITTSService {
     // Static helper to get available speakers
     static async getSpeakers(endpoint: string = "http://localhost:8888"): Promise<MeloSpeaker[]> {
         try {
-            await invoke("plugin:melo_tts|set_melo_endpoint", { endpoint });
-            return await invoke<MeloSpeaker[]>("plugin:melo_tts|get_melo_speakers");
+            await invoke("plugin:melo-tts|set_melo_endpoint", { endpoint });
+            return await invoke<MeloSpeaker[]>("plugin:melo-tts|get_melo_speakers");
         } catch {
             return [];
         }

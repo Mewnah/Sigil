@@ -1,10 +1,12 @@
 pub mod audio;
+pub mod http_client;
 pub mod chatterbox_tts;
 pub mod fish_speech;
 pub mod keyboard;
 pub mod kokoro_tts;
 pub mod melo_tts;
 pub mod moonshine_stt;
+pub mod oauth_loopback;
 pub mod osc;
 pub mod translate;
 pub mod uberduck_tts;

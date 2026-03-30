@@ -4,6 +4,7 @@ import { z } from "zod";
 
 export const Service_Twitch_Schema = z.object({
   token: zSafe(z.coerce.string(), ""),
+  refreshToken: zSafe(z.coerce.string(), ""),
   chatPostSource: zSafe(TextEventSourceSchema, TextEventSource.stt),
   chatEnable: zSafe(z.coerce.boolean(), false),
   chatPostEnable: zSafe(z.coerce.boolean(), false),

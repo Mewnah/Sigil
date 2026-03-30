@@ -11,6 +11,8 @@ export enum STT_Backends {
   whisper = "whisper",
   vosk = "vosk",
   moonshine = "moonshine",
+  /** Local server: POST /v1/audio/transcriptions (same request shape as OpenAI; e.g. speaches, LocalAI). */
+  openai_audio = "openai_audio",
 }
 
 export const zodSTT_Backends = z.nativeEnum(STT_Backends);
@@ -68,7 +70,15 @@ export const Service_STT_Schema = z.object({
     device: zSafe(z.coerce.string(), ""),
     endpoint: zSafe(z.coerce.string(), "http://localhost:8090"),
     language: zSafe(z.coerce.string(), "en"),
-  }).default({})
+  }).default({}),
+  openai_audio: z.object({
+    device: zSafe(z.coerce.string(), ""),
+    baseUrl: zSafe(z.coerce.string(), "http://127.0.0.1:8000/v1"),
+    apiKey: zSafe(z.coerce.string(), ""),
+    /** Must match the id configured on your local server (e.g. speaches); not sent to OpenAI cloud unless you point baseUrl there. */
+    model: zSafe(z.coerce.string(), ""),
+    language: zSafe(z.coerce.string(), ""),
+  }).default({}),
 }).default({});
 
 export type STT_State = z.infer<typeof Service_STT_Schema>;

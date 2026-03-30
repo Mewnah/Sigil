@@ -2,24 +2,28 @@ import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { BaseDirectory } from "@tauri-apps/api/path";
+import { readFile } from "@tauri-apps/plugin-fs";
 
-// Available Vosk models - now fetched from Rust backend when available
-export const VOSK_MODELS = [
-    { id: "vosk-model-small-en-us-0.15", name: "English (US)", size: "40 MB" },
-    { id: "vosk-model-small-en-in-0.4", name: "English (India)", size: "36 MB" },
-    { id: "vosk-model-small-cn-0.22", name: "Chinese", size: "42 MB" },
-    { id: "vosk-model-small-ru-0.22", name: "Russian", size: "45 MB" },
-    { id: "vosk-model-small-de-0.15", name: "German", size: "45 MB" },
-    { id: "vosk-model-small-fr-0.22", name: "French", size: "41 MB" },
-    { id: "vosk-model-small-es-0.42", name: "Spanish", size: "39 MB" },
-    { id: "vosk-model-small-pt-0.3", name: "Portuguese", size: "31 MB" },
-    { id: "vosk-model-small-it-0.22", name: "Italian", size: "48 MB" },
-    { id: "vosk-model-small-ja-0.22", name: "Japanese", size: "48 MB" },
-    { id: "vosk-model-small-ko-0.22", name: "Korean", size: "82 MB" },
+/** Mirrors Rust `VoskModel` for `get_vosk_models`. */
+export type VoskCatalogModel = {
+    id: string;
+    name: string;
+    language: string;
+    size: string;
+    url: string;
+};
+
+/** Inspector fallback if `invoke` fails (e.g. non-Tauri dev). */
+export const VOSK_MODELS_FALLBACK: VoskCatalogModel[] = [
+    {
+        id: "vosk-model-small-en-us-0.15",
+        name: "English (US)",
+        language: "en",
+        size: "40 MB",
+        url: "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+    },
 ];
-
-// Default CDN for Vosk models
-const MODEL_CDN_BASE = "https://alphacephei.com/vosk/models";
 
 interface AudioChunkPayload {
     samples: number[];
@@ -28,8 +32,12 @@ interface AudioChunkPayload {
 }
 
 export class STT_VoskService implements ISpeechRecognitionService {
-    private model: any = null;
-    private recognizer: any = null;
+    private model: unknown = null;
+    private recognizer: {
+        remove(): void;
+        acceptWaveform(data: Int16Array): void;
+        on(event: string, cb: (msg: unknown) => void): void;
+    } | null = null;
     private isRunning = false;
     private unlistenAudio?: UnlistenFn;
 
@@ -40,36 +48,38 @@ export class STT_VoskService implements ISpeechRecognitionService {
             console.log("[Vosk] Starting service...");
             this.receiver.onInterim("Loading Vosk...");
 
-            // Determine model URL
             const modelId = params.vosk.model || "vosk-model-small-en-us-0.15";
-            let modelUrl = params.vosk.modelUrl || `${MODEL_CDN_BASE}/${modelId}.zip`;
+            const customUrl = params.vosk.modelUrl?.trim() || null;
 
-            // Try to check if model is already downloaded via Rust backend
-            try {
-                const downloadedModels = await invoke<string[]>("plugin:vosk_stt|list_downloaded_vosk_models");
-                if (downloadedModels.includes(modelId)) {
-                    console.log(`[Vosk] Model ${modelId} already downloaded via Rust backend`);
-                }
-            } catch {
-                // Rust backend not available, use CDN directly
-            }
+            this.receiver.onInterim(`Ensuring model on disk: ${modelId}...`);
 
-            console.log(`[Vosk] Loading model: ${modelId}`);
-            this.receiver.onInterim(`Downloading model: ${modelId}...`);
+            const relPath = await invoke<string>("plugin:vosk-stt|download_vosk_model", {
+                model_id: modelId,
+                url_override: customUrl,
+            });
 
-            // Use vosk-browser WASM for transcription (most compatible)
+            const bytes = await readFile(relPath, { baseDir: BaseDirectory.AppData });
+            const blob = new Blob([bytes], { type: "application/zip" });
+            const objectUrl = URL.createObjectURL(blob);
+
+            console.log(`[Vosk] Loading model from local zip (${bytes.byteLength} bytes)`);
+            this.receiver.onInterim(`Loading Vosk model (${modelId})...`);
+
             const { createModel, KaldiRecognizer } = await import("vosk-browser");
 
-            // Load the model (this may take a while on first load)
-            this.model = await createModel(modelUrl);
+            try {
+                this.model = await createModel(objectUrl);
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
+
             console.log("[Vosk] Model loaded successfully");
 
-            // Create recognizer with sample rate (Vosk works best at 16000)
             const sampleRate = 16000;
-            this.recognizer = new KaldiRecognizer(this.model, sampleRate);
+            this.recognizer = new KaldiRecognizer(this.model as never, sampleRate);
 
-            // Set up result handlers
-            this.recognizer.on("result", (message: any) => {
+            this.recognizer.on("result", (msg: unknown) => {
+                const message = msg as { result?: { text?: string } };
                 const text = message.result?.text || "";
                 if (text.trim()) {
                     console.log("[Vosk] Final result:", text);
@@ -77,7 +87,8 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 }
             });
 
-            this.recognizer.on("partialresult", (message: any) => {
+            this.recognizer.on("partialresult", (msg: unknown) => {
+                const message = msg as { result?: { partial?: string } };
                 const partial = message.result?.partial || "";
                 if (partial.trim()) {
                     console.log("[Vosk] Partial result:", partial);
@@ -85,14 +96,11 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 }
             });
 
-            // Set up Rust audio capture listener
             console.log("[Vosk] Setting up Rust audio capture...");
             this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
                 if (!this.isRunning || !this.recognizer) return;
 
                 const { samples } = event.payload;
-
-                // Convert f32 samples to Int16Array for Vosk
                 const int16Data = new Int16Array(samples.length);
                 for (let i = 0; i < samples.length; i++) {
                     int16Data[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768)));
@@ -101,13 +109,12 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 this.recognizer.acceptWaveform(int16Data);
             });
 
-            // Start Rust audio capture with device selection
             const deviceName = params.vosk.device || window.ApiServer.state.audioInputDevice || "";
             console.log("[Vosk] Starting Rust audio capture with device:", deviceName || "default");
 
             await invoke("plugin:audio|start_audio_capture", {
                 deviceName: deviceName || null,
-                sampleRate: sampleRate,
+                sampleRate,
             });
 
             this.isRunning = true;
@@ -126,20 +133,17 @@ export class STT_VoskService implements ISpeechRecognitionService {
         console.log("[Vosk] Stopping...");
         this.isRunning = false;
 
-        // Stop Rust audio capture
         try {
             await invoke("plugin:audio|stop_audio_capture");
         } catch (error) {
             console.error("[Vosk] Error stopping audio capture:", error);
         }
 
-        // Clean up event listener
         if (this.unlistenAudio) {
             this.unlistenAudio();
             this.unlistenAudio = undefined;
         }
 
-        // Clean up recognizer
         if (this.recognizer) {
             this.recognizer.remove();
             this.recognizer = null;
@@ -150,11 +154,10 @@ export class STT_VoskService implements ISpeechRecognitionService {
     }
 
     dispose() {
-        this.stop();
+        void this.stop();
 
-        // Clean up model
         if (this.model) {
-            this.model.terminate();
+            (this.model as { terminate(): void }).terminate();
             this.model = null;
         }
     }

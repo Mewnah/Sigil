@@ -6,8 +6,7 @@ use tauri::{command, Manager, State};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use windows::{
-    core::PCSTR,
-    s,
+    core::{s, PCSTR},
     Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_ICONWARNING, MB_OK},
 };
 
@@ -81,7 +80,12 @@ fn main() {
             window.set_shadow(true).expect("Unsupported platform!");
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_port, get_native_features, app_close])
+        .invoke_handler(tauri::generate_handler![
+            get_port,
+            get_native_features,
+            app_close,
+            services::oauth_loopback::oauth_loopback_start
+        ])
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppConfiguration { port: args.port })
         .plugin(services::osc::init())

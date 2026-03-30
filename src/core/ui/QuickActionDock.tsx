@@ -11,7 +11,7 @@ import {
     RiSettings3Fill,
 } from "react-icons/ri";
 import { SiObsstudio } from "react-icons/si";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import { ServiceNetworkState } from "@/types";
 import Tooltip from "./dropdown/Tooltip";
 
@@ -146,7 +146,7 @@ const QuickActionDock: FC = memo(() => {
             <DockIcon
                 icon={<SiObsstudio />}
                 label="OBS Studio"
-                onClick={() => window.ApiServer.changeTab({ tab: "obs" })}
+                onClick={() => window.ApiServer.changeTab({ tab: Services.obs })}
             />
 
             {/* Spacer */}

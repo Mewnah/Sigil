@@ -10,15 +10,16 @@ import Modal from "../Modal";
 import { useTranslation } from "react-i18next";
 
 const EmotesInspector: FC = () => {
+  const dict = window.ApiServer.twitch.emotes.dictionary;
+  const keys = Object.keys(dict);
   return <>
-    <Inspector.SubHeader>Emotes ({Object.keys(window.ApiServer.twitch.emotes.dictionary).length})</Inspector.SubHeader>
+    <Inspector.SubHeader>Emotes ({keys.length})</Inspector.SubHeader>
     <div className="grid grid-cols-8 gap-1">
-      {Object.keys(window.ApiServer.twitch.emotes).map((k, i) =>
+      {keys.map((k) =>
         <Tooltip key={k} className="relative aspect-square" placement="top" content={k}>
-          <img className="w-full h-full aspect-square object-contain" src={window.ApiServer.twitch.emotes.dictionary[k]} alt={k} />
+          <img className="w-full h-full aspect-square object-contain" src={dict[k]} alt={k} />
         </Tooltip>
-      )
-      }
+      )}
     </div>
   </>
 }
@@ -92,7 +93,7 @@ const Inspector_Twitch: FC = () => {
           <Inspector.Description>{t('twitch.field_post_in_chat_desc')}</Inspector.Description>
           <InputCheckbox label="twitch.field_post_in_chat_live" value={pr.chatPostLive} onChange={e => up("chatPostLive", e)} />
           <InputText label="twitch.field_post_in_chat_delay" type="number" value={pr.chatSendDelay} onChange={e => up("chatSendDelay", e.target.value)} />
-          <InputTextSource label="common.field_text_source" value={pr.chatPostSource} onChange={e => up("chatPostSource", e)} />
+          <InputTextSource label="common.field_text_source" value={pr.chatPostSource} onChange={e => up("chatPostSource", e)} hideTextfieldOption />
           <InputCheckbox label="common.field_use_keyboard_input" value={pr.chatPostInput} onChange={e => up("chatPostInput", e)} />
           <InputCheckbox label="twitch.field_chat_text" value={pr.chatReceiveEnable} onChange={e => up("chatReceiveEnable", e)} />
           <Inspector.Description>{t('twitch.field_chat_text_desc')}</Inspector.Description>

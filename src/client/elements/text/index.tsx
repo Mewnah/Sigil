@@ -388,7 +388,9 @@ class TextController {
   onStateChange() {
     // detect changes
     const scene = window.ApiClient.scenes.state.activeScene;
-    const storedState = window.ApiClient.document.fileBinder.get().elements[this.id].scenes[scene].data as Element_TextState;
+    const el = window.ApiClient.document.fileBinder.get().elements[this.id];
+    const storedState = el?.scenes[scene]?.data as Element_TextState | undefined;
+    if (!storedState) return;
     if (fastEqual(storedState, this.currentState)) {
       return;
     }
@@ -465,11 +467,15 @@ class TextController {
 const Element_Text: FC<{ id: string }> = memo(({ id }) => {
   const controller = useRef(new TextController(id));
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const state = useGetState(state => (state.elements[id].scenes[activeScene].data as Element_TextState));
+  const state = useGetState(state =>
+    state.elements[id]?.scenes[activeScene]?.data as Element_TextState | undefined
+  );
 
   useEffect(() => {
     return () => controller.current.dispose();
   }, []);
+
+  if (!state) return null;
 
   return <div className="container" ref={ele => controller.current.bindContainer(ele)}>
     <div className="box">

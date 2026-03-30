@@ -1,4 +1,5 @@
 import { FC, memo, useState } from "react";
+import { RiCloseLine } from "react-icons/ri";
 import { useSnapshot } from "valtio";
 import { useShallow } from "zustand/react/shallow";
 import { useAppUIStore } from "../store";
@@ -13,8 +14,12 @@ import CanvasToolbar, { canvasToolbarState } from "../CanvasToolbar";
 import { SigilNavigation } from "./SigilNavigation";
 import { SigilDashboard } from "./SigilDashboard";
 import Inspector, { PropertyInspector } from "../inspector";
-import { BottomPanel } from "../BottomPanel";
+import { StatusFooter } from "./StatusFooter";
+import { StudioRightDefaultPanel } from "./StudioRightDefaultPanel";
 import { AnimatePresence, motion } from "framer-motion";
+import Tooltip from "../dropdown/Tooltip";
+import { toast } from "react-toastify";
+import { useTranslation } from "react-i18next";
 
 const PanelErrorFallback = ({ error, resetErrorBoundary }: FallbackProps) => (
     <div className="p-4 bg-error/10 text-error border border-error rounded-lg h-full overflow-auto flex flex-col gap-3">
@@ -40,11 +45,24 @@ const PanelErrorFallback = ({ error, resetErrorBoundary }: FallbackProps) => (
 );
 
 export const SigilLayout: FC = memo(() => {
+    const { t } = useTranslation();
     const { tab, selections } = useAppUIStore(
         useShallow((s) => ({ tab: s.sidebar.tab, selections: s.sidebar.selections }))
     );
     const toolbarState = useSnapshot(canvasToolbarState);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+    const handleDuplicateSelection = () => {
+        if (!selections || selections.length === 0) return;
+        const created = window.ApiClient.elements.duplicateElements(selections);
+        if (created.length === 0) return;
+        useAppUIStore.getState().setSidebarSelections(created);
+        toast.success(
+            created.length === 1
+                ? t("elements.toast_duplicated_one")
+                : t("elements.toast_duplicated_n", { count: created.length })
+        );
+    };
 
     const handleAlignElements = (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
         if (!selections || selections.length === 0) return;
@@ -120,7 +138,11 @@ export const SigilLayout: FC = memo(() => {
                     {/* CANVAS TOOLBAR (Zoom, Grid, Align) */}
                     {!toolbarState.presentationMode && (
                         <div className="flex-none z-30 relative">
-                            <CanvasToolbar onAlignElements={handleAlignElements} />
+                            <CanvasToolbar
+                                onAlignElements={handleAlignElements}
+                                onDuplicateSelection={handleDuplicateSelection}
+                                duplicateDisabled={!selections || selections.length === 0}
+                            />
                         </div>
                     )}
 
@@ -130,30 +152,31 @@ export const SigilLayout: FC = memo(() => {
                         {/* 0. CANVAS (Background) */}
                         <div className="absolute inset-0 z-0">
                             <EditorViewport />
-                            {/* History Panel */}
-                            {toolbarState.showHistory && !toolbarState.presentationMode && (
-                                <div className="absolute left-4 bottom-4 z-20">
-                                    <HistoryPanel />
-                                </div>
-                            )}
                         </div>
 
                         {/* 1. FLOATING OVERLAYS (TTS) */}
                         {!toolbarState.presentationMode && (
-                            <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-end p-4">
+                            <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-end p-3">
                                 {/* TTS Input (Bottom-Center - Floating above Bottom Panel) */}
-                                <div className="flex-none flex justify-center mt-4 pointer-events-auto mb-4">
-                                    <div className="w-[600px] max-w-full bg-base-100/80 backdrop-blur-xl rounded-full shadow-2xl border border-white/10 p-1">
+                                <div className="flex-none flex justify-center mt-2 pointer-events-auto mb-2">
+                                    <div className="w-[600px] max-w-full bg-base-100/80 backdrop-blur-xl rounded-lg shadow-2xl border border-white/10 p-1">
                                         <TTSInputBar />
                                     </div>
                                 </div>
+                            </div>
+                        )}
+
+                        {/* 2. History — sibling above TTS layer (z-10) so panel stays visible & clickable */}
+                        {toolbarState.showHistory && !toolbarState.presentationMode && (
+                            <div className="pointer-events-auto absolute bottom-4 left-4 z-20">
+                                <HistoryPanel />
                             </div>
                         )}
                     </div>
 
                     {/* BOTTOM PANEL (Service Controls) */}
                     {!toolbarState.presentationMode && (
-                        <BottomPanel />
+                        <StatusFooter />
                     )}
 
                 </div>
@@ -174,17 +197,7 @@ export const SigilLayout: FC = memo(() => {
                                     // A. Property Inspector (When Element Selected)
                                     <PropertyInspector selectionId={activeSelectionId} />
                                 ) : (
-                                    // B. System Logs (Default)
-                                    <div className="flex flex-col h-full p-4 bg-base-100">
-                                        <div className="font-bold border-b border-base-content/10 pb-2 mb-2 flex justify-between items-center text-sm opacity-70">
-                                            <span>System Logs</span>
-                                        </div>
-                                        <div className="flex-1 overflow-auto text-xs font-mono opacity-50 space-y-1 select-text">
-                                            <div className="text-success">[System] Ready.</div>
-                                            <div>[Info] Layout initialized.</div>
-                                            <div className="text-base-content/30 italic">Select an element to view properties.</div>
-                                        </div>
-                                    </div>
+                                    <StudioRightDefaultPanel />
                                 )}
                             </ErrorBoundary>
                         </div>
@@ -192,6 +205,24 @@ export const SigilLayout: FC = memo(() => {
                 )}
 
             </div>
+
+            {toolbarState.presentationMode && (
+                <div className="pointer-events-auto fixed right-3 top-3 z-[100]">
+                    <Tooltip content="Exit presentation (Esc or F11)" placement="left">
+                        <button
+                            type="button"
+                            className="btn btn-sm gap-1 border border-base-content/10 bg-base-300/95 text-base-content shadow-lg backdrop-blur-sm hover:bg-base-300"
+                            onClick={() => {
+                                canvasToolbarState.presentationMode = false;
+                            }}
+                            aria-label="Exit presentation"
+                        >
+                            <RiCloseLine className="text-base" aria-hidden />
+                            Exit presentation
+                        </button>
+                    </Tooltip>
+                </div>
+            )}
 
         </div>
     );

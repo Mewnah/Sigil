@@ -1,7 +1,7 @@
 import { AnimatePresence } from "framer-motion";
 import { FC, lazy, Suspense } from "react";
 import { ErrorBoundary, FallbackProps } from "react-error-boundary";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { InspectorTabPath } from "@/types";
@@ -16,13 +16,13 @@ const Inspector_Transform = lazy(() => import("./inspector_transform"));
 const Inspector_ElementImage = lazy(() => import("./inspector_image"));
 const Inspector_ElementText = lazy(() => import("./inspector_text"));
 const Inspector_Files = lazy(() => import("./inspector_files"));
-const Inspector_ElementAudioViz = lazy(() => import("./inspector_audioviz"));
 const Inspector_Settings = lazy(() => import("./inspector_settings"));
 const Inspector_Twitch = lazy(() => import("./inspector_twitch"));
 const Inspector_Discord = lazy(() => import("./inspector_discord"));
 const Inspector_Kick = lazy(() => import("./inspector_kick"));
 const Inspector_OBS = lazy(() => import("./inspector_obs"));
 const Inspector_Project = lazy(() => import("./inspector_project"));
+const Inspector_Canvas = lazy(() => import("./inspector_canvas"));
 const Inspector_VoiceChanger = lazy(() =>
   import("./inspector_voice_changer").then((m) => ({ default: m.Inspector_VoiceChanger }))
 );
@@ -79,6 +79,8 @@ const propertyInspectorErrorFallback = ({ error, resetErrorBoundary }: FallbackP
 
 // LEFT PANEL INSPECTOR (Navigation Driven)
 const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
+  const canvasKey = path?.tab === "scenes" ? "scenes" : "canvas-elements";
+
   return <div className="w-[22rem] h-full flex-none bg-base-100 rounded-t-box flex flex-col overflow-hidden">
     <div className="flex-grow relative overflow-hidden">
       <ErrorBoundary FallbackComponent={inspectorErrorFallback}>
@@ -87,7 +89,7 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
             {path?.tab === Services.stt && <Inspector_STT key="stt" />}
             {path?.tab === Services.tts && <Inspector_TTS key="tts" />}
             {path?.tab === Services.translation && <Inspector_Translation key="translation" />}
-            {path?.tab === "obs" && <Inspector_OBS key="obs" />}
+            {path?.tab === Services.obs && <Inspector_OBS key="obs" />}
             {path?.tab === Services.vrc && <Inspector_VRC key="vrc" />}
             {path?.tab === Services.transform && <Inspector_Transform key="transform" />}
             {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
@@ -96,8 +98,12 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
             {path?.tab === Services.voice_changer && <Inspector_VoiceChanger key="voice_changer" />}
             {path?.tab === "settings" && <Inspector_Settings key="settings" />}
             {path?.tab === "files" && <Inspector_Files key="files" />}
-            {(path?.tab === "project" || path?.tab === "scenes" || path?.tab === ElementType.text || path?.tab === ElementType.image) && (
-              <Inspector_Project key="project" />
+            {path?.tab === "project" && <Inspector_Project key="project" />}
+            {(path?.tab === "scenes" ||
+              path?.tab === "elements" ||
+              path?.tab === ElementType.text ||
+              path?.tab === ElementType.image) && (
+              <Inspector_Canvas key={canvasKey} />
             )}
           </Suspense>
         </AnimatePresence>
@@ -132,7 +138,6 @@ export const PropertyInspector: FC<{ selectionId: string }> = ({ selectionId }) 
           <Suspense fallback={inspectorFallback}>
             {element.type === ElementType.text && <Inspector_ElementText id={selectionId} />}
             {element.type === ElementType.image && <Inspector_ElementImage id={selectionId} />}
-            {element.type === ElementType.audioViz && <Inspector_ElementAudioViz id={selectionId} />}
           </Suspense>
         </ErrorBoundary>
       </div>

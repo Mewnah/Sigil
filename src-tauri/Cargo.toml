@@ -6,7 +6,7 @@ authors = ["Curses", "Mewnah"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.70"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -19,13 +19,12 @@ tauri-plugin-window-state = "2"
 
 uwuify = "^0.2"
 
-itertools = "0.10.5"
 rosc = "0.9.1"
 warp = "0.3.3"
-tokio = { version = "1.23.0", features = ["full"] }
+tokio = { version = "1.23.0", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "fs"] }
 tokio-stream = "0.1.11"
 futures = "0.3.25"
-windows = { version = "0.44.0", features = [
+windows = { version = "0.61", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Threading",
   "Win32_UI_TextServices",
@@ -40,15 +39,12 @@ windows = { version = "0.44.0", features = [
 clap = { version = "4.4", features = ["derive"] }
 local-ip-address = "0.4.9"
 rodio = "^0.18"
-reqwest = {version = "0.11.15", features = ["json", "stream", "blocking"] }
+reqwest = { version = "0.12", features = ["json", "stream", "native-tls"] }
 cpal = "0.15.2"
-hound = "3.5.0"
-zip = "0.6.6"
 sha2 = "0.10"
 hex = "0.4"
 whisper-rs = "0.16"
 rubato = "0.14"
-vosk = "0.2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"

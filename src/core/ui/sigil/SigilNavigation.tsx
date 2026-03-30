@@ -17,7 +17,7 @@ import {
     RiMagicFill
 } from "react-icons/ri";
 import { KickIcon } from "../icons/KickIcon";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
 
@@ -106,7 +106,7 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                 <NavItem
                     label="Project"
                     icon={<RiStackFill />}
-                    active={tab?.tab === 'project' || tab?.tab === 'scenes' || tab?.tab === 'elements'}
+                    active={tab?.tab === 'project'}
                     collapsed={collapsed}
                     onClick={() => navigate('project')}
                 />
@@ -201,9 +201,9 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                 <NavItem
                     label="OBS Studio"
                     icon={<RiRecordCircleFill />}
-                    active={isActive('obs')}
+                    active={isActive(Services.obs)}
                     collapsed={collapsed}
-                    onClick={() => navigate('obs')}
+                    onClick={() => navigate(Services.obs)}
                 />
                 <NavItem
                     label="VRChat"

@@ -4,7 +4,7 @@ import { exit } from "@tauri-apps/plugin-process";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
 import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine } from "react-icons/ri";
 import { useSnapshot } from "valtio";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
 const appWindow = getCurrentWebviewWindow()
@@ -19,8 +19,10 @@ const TAB_NAMES: Record<string, string> = {
     [Services.kick]: "Kick",
     [Services.discord]: "Discord",
     [Services.vrc]: "VRChat",
-    "obs": "OBS Studio",
+    [Services.obs]: "OBS Studio",
+    [Services.voice_changer]: "Voice Changer",
     "scenes": "Canvas & Elements",
+    "project": "Project",
     "elements": "Elements",
     "files": "Files",
     "settings": "Settings",

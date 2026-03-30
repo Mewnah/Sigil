@@ -36,18 +36,45 @@ export function serviceSubscibeToSource<Obj extends object>(baseProxy: Obj, key:
   };
 }
 
-export function serviceSubscibeToInput<Obj extends object>(baseProxy: Obj, enableKey: keyof Obj, fn: (e?: TextEvent) => void) {
+/** True when the main text source already receives `text.textfield` finals (directly or via hierarchical `text`). */
+export function textfieldSubsumedByChatPostSource(source: unknown): boolean {
+  return source === TextEventSource.textfield || source === TextEventSource.any;
+}
+
+/**
+ * Subscribes to typed/canvas finals on `text.textfield` when `enableKey` is true.
+ * If `dedupeSourceKey` is set, skips the extra subscription when the main post source already includes textfield (avoids double post).
+ */
+export function serviceSubscibeToInput<Obj extends object>(
+  baseProxy: Obj,
+  enableKey: keyof Obj,
+  fn: (e?: TextEvent) => void,
+  dedupeSourceKey?: keyof Obj,
+) {
   let lastSub = "";
-  const unsubKey = subscribeKey(baseProxy, enableKey, (e: any) => {
+  const syncInputSub = () => {
     window.ApiShared.pubsub.unsubscribe(lastSub);
-    if (e)
-      lastSub = window.ApiShared.pubsub.subscribeText(TextEventSource.textfield, fn)
-  });
-  if (baseProxy[enableKey])
+    lastSub = "";
+    if (!baseProxy[enableKey]) return;
+    if (
+      dedupeSourceKey !== undefined &&
+      textfieldSubsumedByChatPostSource(baseProxy[dedupeSourceKey])
+    )
+      return;
     lastSub = window.ApiShared.pubsub.subscribeText(TextEventSource.textfield, fn);
+  };
+
+  const unsubEnable = subscribeKey(baseProxy, enableKey, syncInputSub);
+  const unsubSource =
+    dedupeSourceKey !== undefined
+      ? subscribeKey(baseProxy, dedupeSourceKey, syncInputSub)
+      : () => {};
+
+  syncInputSub();
 
   return () => {
-    unsubKey();
+    unsubEnable();
+    unsubSource();
     window.ApiShared.pubsub.unsubscribe(lastSub);
   };
 }

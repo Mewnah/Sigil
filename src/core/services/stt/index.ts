@@ -10,6 +10,7 @@ import { STT_NativeService } from "./services/native";
 import { STT_WhisperService } from "./services/whisper";
 import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
+import { STT_OpenAI_AudioService } from "./services/openaiAudio";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ISTTReceiver,
@@ -28,6 +29,7 @@ const backends: {
   [STT_Backends.whisper]: STT_WhisperService,
   [STT_Backends.vosk]: STT_VoskService,
   [STT_Backends.moonshine]: STT_MoonshineService,
+  [STT_Backends.openai_audio]: STT_OpenAI_AudioService,
 };
 
 class Service_STT implements IServiceInterface, ISTTReceiver {
@@ -209,6 +211,10 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     this.serviceState.error = "";
 
     let backend = this.data.backend;
+    // Legacy persisted value: treat as Web Speech API (same as native).
+    if (backend === STT_Backends.browser) {
+      backend = STT_Backends.native;
+    }
     if (!(backend in backends) || !backends[backend]) {
       return;
     }

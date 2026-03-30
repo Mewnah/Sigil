@@ -412,7 +412,7 @@ fn is_voice_changer_running(state: State<'_, VoiceChangerState>) -> bool {
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("voice_changer")
+    Builder::new("voice-changer")
         .setup(|app, _api| {
             app.manage(VoiceChangerState::new());
             Ok(())

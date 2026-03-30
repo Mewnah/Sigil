@@ -2,19 +2,16 @@ import { zSafe } from "@/utils";
 import z from "zod";
 import { Element_ImageStateSchemaN } from "./image/schema";
 import { Element_TextStateSchemaN } from "./text/schema";
-import { Element_AudioVizStateSchemaN } from "./audio-viz/schema";
 
 export enum ElementType {
   text = "text",
   image = "image",
-  audioViz = "audioViz",
 }
 const ElementTypeSchema = z.nativeEnum(ElementType);
 
 const ElementSchemaMap: Record<ElementType, z.ZodDefault<z.AnyZodObject>> = {
   [ElementType.image]: Element_ImageStateSchemaN,
   [ElementType.text]: Element_TextStateSchemaN,
-  [ElementType.audioViz]: Element_AudioVizStateSchemaN,
 }
 
 // Animation configuration for enter/exit animations
@@ -60,7 +57,6 @@ export const ElementSceneStateFactory = (type: ElementType) => z.object({
 export const UnionElementStateSchema = z.discriminatedUnion("type", [
   ElementStateFactory(ElementType.image, Element_ImageStateSchemaN),
   ElementStateFactory(ElementType.text, Element_TextStateSchemaN),
-  ElementStateFactory(ElementType.audioViz, Element_AudioVizStateSchemaN),
 ]);
 export type ElementState = z.infer<typeof UnionElementStateSchema>;
 

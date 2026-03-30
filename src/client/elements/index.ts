@@ -80,42 +80,42 @@ class Service_Elements implements IServiceInterface {
     window.ApiShared.pubsub.unregisterEvent(`element.${id}`);
   }
 
-  duplicateElement(id: string, sceneId: string = "main") {
+  /**
+   * Deep-clones an element (all scenes). Returns the new id, or undefined if the source was missing.
+   */
+  duplicateElement(id: string): string | undefined {
+    let newId = "";
     window.ApiClient.document.patch((state) => {
       const original = state.elements[id];
       if (!original) return;
 
-      let newId = nanoid();
+      newId = nanoid();
       while (newId in state.elements) {
         newId = nanoid();
       }
 
       state.elementsIds.push(newId);
-      // Deep clone
-      state.elements[newId] = JSON.parse(JSON.stringify(original));
+      state.elements[newId] = JSON.parse(JSON.stringify(original)) as typeof original;
       state.elements[newId].id = newId;
       state.elements[newId].name = `${original.name} (Copy)`;
-
-      // Since it's a new element, existing scene data is preserved (copied)
     });
 
-    // Register event if text type
-    const elements = window.ApiClient.document.fileBinder.get().elements;
-    // We need to look up the new ID
-    // Actually we can't easily get the new ID here unless we capture it from patch, but patch is sync usually?
-    // Binder get() gets latest state.
-    // However, I need to know WHICH id it is.
-    // The patch function is executed inside.
+    if (!newId) return undefined;
 
-    // Since we generate ID *inside* patch, capture it?
-    // But duplicateElement logic generates ID inside.
+    const el = window.ApiClient.document.fileBinder.get().elements[newId];
+    if (el?.type === ElementType.text) {
+      this.#registerElementEvent(newId, el.name);
+    }
+    return newId;
+  }
 
-    // Refactor:
-    // I should generate ID outside patch?
-    // But 'elements' check needs state.
-
-    // I will trust that nanoid doesn't collide often and just do it.
-    // The event registration is only for Text elements.
+  duplicateElements(ids: readonly string[]): string[] {
+    const created: string[] = [];
+    for (const id of ids) {
+      const nid = this.duplicateElement(id);
+      if (nid) created.push(nid);
+    }
+    return created;
   }
 }
 

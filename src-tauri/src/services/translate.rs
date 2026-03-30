@@ -1,3 +1,4 @@
+use crate::services::http_client::http_client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -64,7 +65,9 @@ async fn get_languages<R: Runtime>(_app: AppHandle<R>, state: State<'_, Translat
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/languages", endpoint);
 
-    let response = reqwest::get(&url)
+    let response = http_client()
+        .get(&url)
+        .send()
         .await
         .map_err(|e| format!("Failed to connect to LibreTranslate: {}. Is the service running?", e))?;
 
@@ -92,10 +95,9 @@ async fn translate<R: Runtime>(
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/translate", endpoint);
 
-    let client = reqwest::Client::new();
     let request_body = TranslateRequest { q: text, source, target };
 
-    let response = client
+    let response = http_client()
         .post(&url)
         .json(&request_body)
         .send()
@@ -124,10 +126,9 @@ async fn detect_language<R: Runtime>(_app: AppHandle<R>, state: State<'_, Transl
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/detect", endpoint);
 
-    let client = reqwest::Client::new();
     let request_body = DetectRequest { q: text };
 
-    let response = client
+    let response = http_client()
         .post(&url)
         .json(&request_body)
         .send()
@@ -155,7 +156,7 @@ async fn check_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_, Tra
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/languages", endpoint);
 
-    match reqwest::get(&url).await {
+    match http_client().get(&url).send().await {
         Ok(response) => Ok(response.status().is_success()),
         Err(_) => Ok(false),
     }

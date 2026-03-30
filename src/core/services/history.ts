@@ -6,6 +6,10 @@ export interface HistorySnapshot {
     data: string;
 }
 
+/**
+ * Placeholder service: document undo/redo is implemented in the client layer
+ * (`documentUndoState` / `ApiClient.document`), not here. Kept on `ApiServer` for API stability.
+ */
 export default class Service_History {
     store = proxy({
         past: [] as HistorySnapshot[],
@@ -14,9 +18,8 @@ export default class Service_History {
         canRedo: false
     });
 
-    init(state: any) {
-        // Stub implementation
-        // Real implementation requires bridging Yjs/Immer and Valtio or using Y.UndoManager
+    init(_state: unknown) {
+        // Intentionally empty — see class docstring.
     }
 
     pushSnapshot(description: string) { }

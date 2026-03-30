@@ -1,8 +1,6 @@
-import { FC, memo } from "react";
-import { useSnapshot } from "valtio";
-import { RiFileAddLine, RiFolderOpenLine, RiTimeLine } from "react-icons/ri";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readTextFile } from "@tauri-apps/plugin-fs";
+import { type FC, memo } from "react";
+import { RiFileAddLine, RiFolderOpenLine } from "react-icons/ri";
+import { resetTemplate } from "../projectFileActions";
 
 const DashboardCard: FC<{
   title: string;
@@ -20,68 +18,6 @@ const DashboardCard: FC<{
 );
 
 export const SigilDashboard: FC<any> = memo(() => {
-  const { recentSnapshots } = useSnapshot(window.ApiServer.state);
-
-  const handleNewProject = () => {
-    if (confirm("Create new project? Unsaved changes will be lost.")) {
-      // Reset elements
-      window.ApiClient.document.patch((state) => {
-        state.elements = {};
-        state.elementsIds = [];
-      });
-
-      // Navigate to editor
-      window.ApiServer.changeTab({ tab: "scenes" });
-    }
-  };
-
-  const handleOpenProject = async () => {
-    try {
-      const selectedPath = await open({
-        multiple: false,
-        filters: [
-          {
-            name: "Sigil Project",
-            extensions: ["json", "sigil"],
-          },
-        ],
-      });
-
-      if (selectedPath && typeof selectedPath === "string") {
-        const contents = await readTextFile(selectedPath);
-        const snapshot = JSON.parse(contents);
-
-        // Load parsed snapshot
-        window.ApiClient.document.patch((state) => {
-          Object.assign(state, snapshot);
-        });
-
-        window.ApiServer.changeTab({ tab: "scenes" });
-      }
-    } catch (error) {
-      console.error("Failed to open project:", error);
-      alert("Failed to open project file.");
-    }
-  };
-
-  const loadSnapshot = async (snap: any) => {
-    try {
-      const contents = await readTextFile(snap.path);
-      const snapshot = JSON.parse(contents);
-
-      window.ApiClient.document.patch((state) => {
-        Object.assign(state, snapshot);
-      });
-
-      window.ApiServer.changeTab({ tab: "scenes" });
-    } catch (error) {
-      console.error("Failed to load snapshot:", error);
-      alert(
-        "Failed to load snapshot. The file may have been moved or deleted.",
-      );
-    }
-  };
-
   return (
     <div className="flex flex-col h-full bg-base-300 p-8 overflow-y-auto">
       <div className="max-w-6xl mx-auto w-full flex flex-col gap-12 mt-12">
@@ -94,72 +30,28 @@ export const SigilDashboard: FC<any> = memo(() => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          {/* Start Section */}
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold border-b border-base-content/10 pb-4">
-              Start
-            </h2>
-            <div className="grid grid-cols-2 gap-6">
-              <DashboardCard
-                title="New Project"
-                icon={RiFileAddLine}
-                onClick={handleNewProject}
-                color="primary"
-              />
-              <DashboardCard
-                title="Open Project"
-                icon={RiFolderOpenLine}
-                onClick={handleOpenProject}
-                color="secondary"
-              />
-            </div>
-          </div>
-
-          {/* Recent Section */}
-          <div className="space-y-6">
-            <div className="flex justify-between items-center border-b border-base-content/10 pb-4">
-              <h2 className="text-2xl font-bold">Recent</h2>
-              {recentSnapshots.length > 0 && (
-                <button
-                  className="btn btn-ghost btn-xs text-error"
-                  onClick={() => {
-                    window.ApiServer.state.recentSnapshots = [];
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {recentSnapshots.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-12 bg-base-200 rounded-2xl border border-dashed border-base-content/10 text-base-content/30 gap-4">
-                <RiTimeLine size={48} />
-                <p className="font-medium">No recent projects</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {recentSnapshots.map((snap) => (
-                  <button
-                    key={snap.id}
-                    onClick={() => loadSnapshot(snap)}
-                    className="w-full p-4 bg-base-200 hover:bg-base-100 border border-base-content/5 rounded-xl flex items-center justify-between group transition-all text-left"
-                  >
-                    <div>
-                      <div className="font-bold group-hover:text-primary transition-colors">
-                        {snap.name}
-                      </div>
-                      <div className="text-xs opacity-50 font-mono mt-1">
-                        {snap.path}
-                      </div>
-                    </div>
-                    <div className="text-xs opacity-50 bg-base-300 px-2 py-1 rounded">
-                      {new Date(snap.date).toLocaleDateString()}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+        <div className="max-w-xl mx-auto w-full space-y-6">
+          <h2 className="text-2xl font-bold border-b border-base-content/10 pb-4 text-center">
+            Start
+          </h2>
+          <p className="text-sm text-base-content/60 text-center">
+            Your layout is one working template (auto-saved on the desktop app). Import a{" "}
+            <code className="text-xs">.sigiltmp</code> backup or a legacy <code className="text-xs">.json</code>{" "}
+            export — or reset to a fresh template.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <DashboardCard
+              title="Reset template"
+              icon={RiFileAddLine}
+              onClick={() => void resetTemplate()}
+              color="primary"
+            />
+            <DashboardCard
+              title="Import template"
+              icon={RiFolderOpenLine}
+              onClick={() => void window.ApiClient.document.importDocument()}
+              color="secondary"
+            />
           </div>
         </div>
       </div>

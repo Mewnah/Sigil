@@ -1,8 +1,10 @@
 import { FC, memo } from "react";
-import { RiAddLine, RiSubtractLine, RiGridLine, RiAlignLeft, RiAlignCenter, RiAlignRight, RiAlignTop, RiAlignVertically, RiAlignBottom, RiEyeLine, RiFullscreenLine, RiHistoryLine } from "react-icons/ri";
+import { RiAddLine, RiSubtractLine, RiGridLine, RiAlignLeft, RiAlignCenter, RiAlignRight, RiAlignTop, RiAlignVertically, RiAlignBottom, RiEyeLine, RiFullscreenLine, RiHistoryLine, RiArrowGoBackLine, RiArrowGoForwardLine, RiFileCopyLine } from "react-icons/ri";
+import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { proxy } from "valtio";
 import classNames from "classnames";
+import { documentUndoState } from "@/client/services/document";
 import Tooltip from "./dropdown/Tooltip";
 
 // Canvas toolbar state
@@ -17,11 +19,15 @@ export const canvasToolbarState = proxy({
 interface CanvasToolbarProps {
     onZoomChange?: (zoom: number) => void;
     onAlignElements?: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
+    onDuplicateSelection?: () => void;
+    duplicateDisabled?: boolean;
     onPresentationMode?: () => void;
 }
 
-const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignElements, onPresentationMode }) => {
+const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignElements, onDuplicateSelection, duplicateDisabled, onPresentationMode }) => {
+    const { t } = useTranslation();
     const state = useSnapshot(canvasToolbarState);
+    const undo = useSnapshot(documentUndoState);
 
     const handleZoomIn = () => {
         const newZoom = Math.min(200, state.zoom + 10);
@@ -46,6 +52,11 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
 
     const toggleHistory = () => {
         canvasToolbarState.showHistory = !canvasToolbarState.showHistory;
+    };
+
+    const togglePresentationMode = () => {
+        canvasToolbarState.presentationMode = !canvasToolbarState.presentationMode;
+        onPresentationMode?.();
     };
 
     return (
@@ -76,6 +87,30 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                 </Tooltip>
             </div>
 
+            {/* Undo / Redo */}
+            <div className="flex items-center gap-0.5 border-r border-base-content/10 pr-2 mr-1">
+                <Tooltip content="Undo (Ctrl+Z)" placement="bottom">
+                    <button
+                        type="button"
+                        disabled={!undo.canUndo}
+                        onClick={() => window.ApiClient.document.undo()}
+                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors disabled:opacity-25 disabled:pointer-events-none"
+                    >
+                        <RiArrowGoBackLine size={14} />
+                    </button>
+                </Tooltip>
+                <Tooltip content="Redo (Ctrl+Y / Ctrl+Shift+Z)" placement="bottom">
+                    <button
+                        type="button"
+                        disabled={!undo.canRedo}
+                        onClick={() => window.ApiClient.document.redo()}
+                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors disabled:opacity-25 disabled:pointer-events-none"
+                    >
+                        <RiArrowGoForwardLine size={14} />
+                    </button>
+                </Tooltip>
+            </div>
+
             {/* Grid Toggle */}
             <Tooltip content={state.showGrid ? "Hide grid" : "Show grid"} placement="bottom">
                 <button
@@ -92,6 +127,19 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
             </Tooltip>
 
             {/* Divider */}
+            <div className="w-px h-4 bg-base-content/10 mx-1" />
+
+            <Tooltip content={t("elements.duplicate_tooltip")} placement="bottom">
+                <button
+                    type="button"
+                    disabled={duplicateDisabled}
+                    onClick={() => onDuplicateSelection?.()}
+                    className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors disabled:opacity-25 disabled:pointer-events-none"
+                >
+                    <RiFileCopyLine size={14} />
+                </button>
+            </Tooltip>
+
             <div className="w-px h-4 bg-base-content/10 mx-1" />
 
             {/* Alignment Tools */}
@@ -151,8 +199,9 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
             <div className="flex-1" />
 
             {/* History Toggle */}
-            <Tooltip content={state.showHistory ? "Hide History" : "Show History"} placement="bottom">
+            <Tooltip content={state.showHistory ? "Hide edit history panel" : "Show edit history (undo / redo)"} placement="bottom">
                 <button
+                    type="button"
                     onClick={toggleHistory}
                     className={classNames(
                         "w-6 h-6 flex items-center justify-center rounded transition-colors mr-2",
@@ -168,7 +217,8 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
             {/* Presentation Mode */}
             <Tooltip content="Presentation mode (F11)" placement="bottom">
                 <button
-                    onClick={onPresentationMode}
+                    type="button"
+                    onClick={togglePresentationMode}
                     className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                 >
                     <RiFullscreenLine size={14} />

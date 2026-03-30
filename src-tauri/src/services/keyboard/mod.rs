@@ -18,10 +18,18 @@ use windows::Win32::{
     },
 };
 
+/// Win32 hook handles are thread-affine; we only touch them from the hook install path and Win32
+/// callbacks. Marking `Send`/`Sync` matches the prior windows crate behavior and satisfies `State<T>`.
+#[repr(transparent)]
+struct SendHhook(Option<HHOOK>);
+
+unsafe impl Send for SendHhook {}
+unsafe impl Sync for SendHhook {}
+
 #[allow(dead_code)]
 struct BgInput {
     tx: mpsc::UnboundedSender<String>,
-    listen_hook_id: RwLock<Option<HHOOK>>,
+    listen_hook_id: RwLock<SendHhook>,
 }
 
 #[allow(dead_code)]
@@ -56,20 +64,20 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
 
                 let mut kb_state = [0_u8; 256_usize];
                 if AttachThreadInput(thread_id, window_thread_id, true).as_bool() {
-                    GetKeyboardState(&mut kb_state);
-                    AttachThreadInput(thread_id, window_thread_id, false);
+                    let _ = GetKeyboardState(&mut kb_state);
+                    let _ = AttachThreadInput(thread_id, window_thread_id, false);
                 } else {
-                    GetKeyboardState(&mut kb_state);
+                    let _ = GetKeyboardState(&mut kb_state);
                 }
 
                 if kb_state[VK_LCONTROL.0 as usize] > 1 {
                     None
                 } else {
                     let kb_layout = GetKeyboardLayout(window_thread_id);
-                    let code = MapVirtualKeyExW(vkCode, MAPVK_VK_TO_VSC_EX, kb_layout) << 16;
+                    let code = MapVirtualKeyExW(vkCode, MAPVK_VK_TO_VSC_EX, Some(kb_layout)) << 16;
 
                     let mut name = [0_u16; 32];
-                    let res_size = ToUnicodeEx(vkCode, code, &kb_state, &mut name, 0, kb_layout);
+                    let res_size = ToUnicodeEx(vkCode, code, &kb_state, &mut name, 0, Some(kb_layout));
                     if res_size > 0 {
                         if let Some(s) = String::from_utf16(&name[..res_size as usize]).ok() {
                             Some(KeyCommand::Key(s))
@@ -105,7 +113,7 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
             .listen_hook_id
             .read()
             .map_err(|_| "Failed to read lock")?;
-        if current_hook_id.is_some() {
+        if current_hook_id.0.is_some() {
             return Err("Already active".into());
         }
     }
@@ -122,27 +130,25 @@ fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
             tx.send(rpc).ok();
         }));
     }
-    let Ok(hook) = (unsafe { SetWindowsHookExA(WH_KEYBOARD_LL, Some(raw_callback), None, 0) }) else {
-        return Err("Could not start listener".into());
-    };
+    let hook = unsafe { SetWindowsHookExA(WH_KEYBOARD_LL, Some(raw_callback), None, 0) }
+        .map_err(|_| "Could not start listener".to_string())?;
     let mut wr = state
         .listen_hook_id
         .write()
         .map_err(|_| "Failed to write lock")?;
-    *wr = Some(hook);
+    wr.0 = Some(hook);
     Ok(())
 }
 
 #[allow(dead_code)]
 #[command]
-fn stop_tracking(state: State<BgInput>) {
+fn stop_tracking(state: State<'_, BgInput>) {
     if let Ok(mut wr) = state.listen_hook_id.write() {
-        if let Some(hook) = *wr {
+        if let Some(hook) = wr.0.take() {
             unsafe {
-                UnhookWindowsHookEx(hook);
+                let _ = UnhookWindowsHookEx(hook);
             }
-        };
-        *wr = None;
+        }
     }
 }
 
@@ -160,7 +166,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _api| {
             app.manage(BgInput {
                 tx: pubsub_output_tx,
-                listen_hook_id: RwLock::new(None),
+                listen_hook_id: RwLock::new(SendHhook(None)),
             });
             let handle = app.clone();
             tauri::async_runtime::spawn(async move {

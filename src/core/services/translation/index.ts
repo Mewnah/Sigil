@@ -5,6 +5,7 @@ import {
   TextEventSource
 } from "@/types";
 import { serviceSubscibeToInput } from "@/utils";
+import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { Translation_Backends } from "./schema";
@@ -47,8 +48,9 @@ class Service_Translation implements IServiceInterface, ITranslationReceiver {
 
   async loadAzure() {
     try {
-      const azureResp = await fetch(
-        "https://api.cognitive.microsofttranslator.com/languages?api-version=3.0"
+      const azureResp = await fetchWithTimeout(
+        "https://api.cognitive.microsofttranslator.com/languages?api-version=3.0",
+        { timeoutMs: 20_000 }
       );
       const json: {
         translation: {

@@ -27,13 +27,19 @@ dist-ssr
 /test-results/
 /playwright-report/
 /playwright/.cache/
+# Secrets and local overrides — never commit real credentials
 .env
+.env.*
+!.env.example
 
 # Local audit / scratch output (keep repo clean for release)
 audit_tsc.txt
 tsc_*.txt
 src-tauri/audit_*.txt
 src-tauri/cargo_*.txt
+gemini_models.txt
+find_free_models.py
+ws_test.js
 
 # Vite rollup visualizer (regenerated locally)
 stats/

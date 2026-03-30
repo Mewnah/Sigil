@@ -1,6 +1,8 @@
 {
   "common": {
     "field_action_bar": "Add to action bar",
+    "drag_reorder_action_bar": "Drag to reorder",
+    "action_bar_drag_ghost_hint": "Release at the bar to place here.",
     "field_auto_start": "Start automatically",
     "field_service": "Service",
     "field_language": "Language",
@@ -11,6 +13,8 @@
     "field_css": "CSS",
     "field_interim_results": "Interim results",
     "field_text_source": "Text source",
+    "text_source_textfield": "Text field",
+    "text_source_any": "Any text source",
     "field_use_keyboard_input": "Use keyboard input",
     "field_volume": "Volume",
     "field_pitch": "Pitch",
@@ -38,6 +42,16 @@
     "status_error": "Error",
     "status_online": "Online",
     "status_offline": "Offline"
+  },
+  "history_panel": {
+    "title": "Edit history",
+    "hint": "Undo or redo recent changes to your template (canvas size, element positions, and other document edits). Use the buttons above or the canvas toolbar, or press Ctrl+Z to undo and Ctrl+Y or Ctrl+Shift+Z to redo. A step-by-step list of named snapshots is not available yet."
+  },
+  "elements": {
+    "duplicate_tooltip": "Duplicate",
+    "duplicate_n": "Duplicate {{count}}",
+    "toast_duplicated_one": "Element duplicated",
+    "toast_duplicated_n": "Duplicated {{count}} elements"
   },
   "main": {
     "btn_show_logs": "Show logs",
@@ -91,7 +105,22 @@
     "azure_profanity_raw": "Raw",
     "azure_secondary_language": "Secondary language",
     "azure_use_secondary_language": "Enable secondary language",
-    "azure_silence_timeout": "Silence timeout"
+    "azure_silence_timeout": "Silence timeout",
+    "provider_moonshine": "Moonshine (local server)",
+    "provider_openai_audio": "Local HTTP API (OpenAI-style)",
+    "moonshine_title": "Moonshine",
+    "moonshine_desc": "Runs Useful Sensors Moonshine in Docker or another process. Endpoint must expose POST /transcribe and GET /health.",
+    "moonshine_endpoint": "Server URL",
+    "moonshine_language": "Language code",
+    "moonshine_language_desc": "e.g. en — must match what your Moonshine server expects.",
+    "openai_audio_title": "Local HTTP transcription API",
+    "openai_audio_desc": "For a server on your machine (e.g. speaches, LocalAI) that implements POST /v1/audio/transcriptions. Audio stays local unless you point the URL at a cloud host.",
+    "openai_audio_base_url": "API base URL",
+    "openai_audio_model": "Model id (local server)",
+    "openai_audio_model_placeholder": "As configured on your server",
+    "openai_audio_api_key": "API key (optional, local servers often skip)",
+    "openai_audio_language": "Language (optional)",
+    "openai_audio_language_desc": "ISO code if the server supports it; leave empty to let the server decide."
   },
   "tts": {
     "title": "Text-to-Speech",
@@ -179,11 +208,11 @@
     "status_chat": "Chat connection",
     "field_enable_chat": "Enable chat",
     "field_post_in_chat": "Post in chat",
-    "field_post_in_chat_desc": "Post Speech-to-Text or translation results in chat",
+    "field_post_in_chat_desc": "Post Speech-to-Text, translation, or other pipeline text in chat. For typed input from the studio bar or overlay, enable Use keyboard input.",
     "field_post_in_chat_live": "Post only when live streaming",
     "field_post_in_chat_delay": "Send delay(ms)",
     "field_chat_text": "Use chat messages",
-    "field_chat_text_desc": "Use your Twitch chat messages as source for Speech-to-Text",
+    "field_chat_text_desc": "Forward viewer chat into the text pipeline (your own chat lines are ignored to avoid echo when posting to chat)",
     "section_emotes": "Emotes",
     "btn_show_emotes": "Show emotes",
     "btn_remap_emotes": "Remap emotes",
@@ -194,6 +223,10 @@
     "title": "Remap emotes",
     "label_dictionary_key": "Word",
     "label_dictionary_value": "Emote"
+  },
+  "kick": {
+    "notice_integration": "Sign-in and stream status use Kick’s API. Post to chat sends messages as your account when enabled. Receiving viewer chat into Sigil and loading Kick emote lists are not implemented yet.",
+    "notice_emotes_modal": "Kick emote names are not loaded from Kick yet. You can still use the remap dictionary for custom text patterns."
   },
   "discord": {
     "title": "Discord",
@@ -207,6 +240,7 @@
     "title": "VRChat chatbox",
     "notice_title": "Enable OSC in VRChat first!",
     "notice_desc": "Radial Menu » Options » OSC » Enable",
+    "notice_desktop": "OSC only works in the Sigil desktop (Tauri) build, not in a browser-only host.",
     "field_target": "Target",
     "btn_send_test": "Send test",
     "textbox_title": "VRC Textbox options",
@@ -220,10 +254,32 @@
     "kfi_pointer_key": "Pointer key",
     "kfi_chat_sync_key": "Char Sync key"
   },
+  "project": {
+    "title": "Project",
+    "confirm_reset_template": "Reset the working template to a fresh layout? This cannot be undone (export a .sigiltmp backup first if you need a copy).",
+    "migrate_toast": "Imported with compatibility updates: {{details}}",
+    "toast_imported": "Template imported.",
+    "section_template": "Template",
+    "template_live_copy": "Sigil keeps one working template. Export a .sigiltmp file to back it up or share it. Import replaces the current template.",
+    "template_autosave_desktop": "After edits, the template is saved automatically to app data (about every 2 seconds).",
+    "template_autosave_client": "Client mode uses the host’s template; this device does not write a local copy.",
+    "btn_reset_template": "Reset template",
+    "btn_import_template": "Import template…",
+    "field_export_author": "Author (export)",
+    "btn_export_template": "Export template",
+    "section_summary": "Document",
+    "field_canvas": "Canvas",
+    "field_scenes": "Scenes",
+    "field_elements": "Elements",
+    "field_author": "Author",
+    "btn_edit_canvas": "Edit canvas & scenes"
+  },
   "scenes": {
     "title": "Canvas and scenes",
     "section_canvas": "Canvas",
+    "section_transitions": "Scene transitions",
     "section_scenes": "Scenes",
+    "canvas_resize_hint": "Double-click the canvas, then drag edges or corners to resize.",
     "field_canvas_size": "Canvas size",
     "scene_menu_title": "Scene",
     "btn_add_scene": "Add scene",

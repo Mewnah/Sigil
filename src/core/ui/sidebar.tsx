@@ -3,21 +3,19 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ButtonHTMLAttributes, FC, memo, PropsWithChildren, ReactNode, useEffect } from "react";
 import {
   RiAddFill,
-  RiBrushFill,
   RiChatVoiceFill,
   RiFolderMusicFill,
-  RiImageFill,
-  RiRobotFill,
   RiMessage2Fill,
   RiSettings2Fill,
   RiStackFill,
   RiTranslate2,
   RiUserVoiceFill,
-  RiSparklingFill
+  RiSparklingFill,
+  RiMagicFill
 } from "react-icons/ri";
 import { MdExtension } from "react-icons/md";
 import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
-import { TbArrowBarToLeft, TbArrowBarToRight, TbTextResize } from "react-icons/tb";
+import { TbArrowBarToLeft, TbArrowBarToRight } from "react-icons/tb";
 import { useSnapshot, proxy } from "valtio";
 import { useShallow } from "zustand/react/shallow";
 import { useAppUIStore } from "./store";
@@ -36,6 +34,7 @@ import Dropdown from "./dropdown/Dropdown";
 import Tooltip from "./dropdown/Tooltip";
 import Inspector from "./inspector";
 import { useTranslation } from "react-i18next";
+import { ElementTypeIcon } from "./ElementTypeIcon";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   tooltip: string; // locale key
@@ -118,8 +117,7 @@ const SidebarElementButton: FC<{ id: string }> = memo(({ id }) => {
   const type = useGetState(state => state.elements[id].type);
   return <Dropdown interact="context" placement="right" content={<ElementMenu title={name} id={id} />}>
     <SideBarButton tab={{ tab: type, value: id }} tooltip={name}>
-      {type === ElementType.text && <TbTextResize />}
-      {type === ElementType.image && <RiImageFill />}
+      <ElementTypeIcon type={type} className="text-xl" />
     </SideBarButton>
   </Dropdown>
 
@@ -175,11 +173,12 @@ const Sidebar: FC = memo(() => {
 
           <SIdebarDivider expand={expand}>{t('main.section_integrations')}</SIdebarDivider>
           <div className="flex flex-col transition-spacing space-y-1">
-            <SideBarButton tab={{ tab: "obs" }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.obs }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
             <SideBarButton tab={{ tab: Services.twitch }} tooltip={t("twitch.title")}><SiTwitch /></SideBarButton>
             <SideBarButton tab={{ tab: Services.kick }} tooltip="Kick"><KickIcon /></SideBarButton>
             <SideBarButton tab={{ tab: Services.discord }} tooltip={t("discord.title")}><SiDiscord /></SideBarButton>
             <SideBarButton tab={{ tab: Services.vrc }} tooltip={t("vrc.title")}><RiMessage2Fill /></SideBarButton>
+            <SideBarButton tab={{ tab: Services.voice_changer }} tooltip="Voice Changer"><RiMagicFill /></SideBarButton>
           </div>
           <SIdebarDivider expand={expand}>{t('main.section_elements')}</SIdebarDivider>
           <div className="flex flex-col space-y-1 transition-spacing">

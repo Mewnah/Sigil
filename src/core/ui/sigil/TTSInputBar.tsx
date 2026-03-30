@@ -1,5 +1,5 @@
 import { FC, memo, useState, KeyboardEvent } from "react";
-import { RiVolumeUpFill, RiSendPlaneFill } from "react-icons/ri";
+import { RiSendPlaneFill } from "react-icons/ri";
 import { TextEventSource, TextEventType } from "@/types";
 
 export const TTSInputBar: FC = memo(() => {
@@ -25,15 +25,15 @@ export const TTSInputBar: FC = memo(() => {
     };
 
     return (
-        <div className="flex-shrink-0 bg-transparent px-2 py-2">
-            <div className="flex items-center gap-2">
+        <div className="flex-shrink-0 bg-transparent px-1 py-1">
+            <div className="flex items-center gap-1.5">
                 <input
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="Type to speak..."
-                    className="flex-1 h-9 px-3 text-sm bg-base-300 border border-base-content/10 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 placeholder:text-base-content/30"
+                    className="flex-1 h-9 px-2.5 text-sm bg-base-300 border border-base-content/10 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 placeholder:text-base-content/30"
                 />
                 <button
                     onClick={handleSubmit}

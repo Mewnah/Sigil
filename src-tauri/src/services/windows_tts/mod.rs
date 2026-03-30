@@ -53,10 +53,11 @@ impl ISpeechToken {
 
 impl WindowsTTSPlugin {
     fn new() -> Self {
-        let Ok(()) = (unsafe { CoInitialize(None) }) else {
+        let hr = unsafe { CoInitialize(None) };
+        if hr.is_err() {
             return Self::default();
-        };
-        let Ok(instance): Result<ISpeechVoice, windows::core::Error> = (unsafe { CoCreateInstance(&SpVoice, None, CLSCTX_ALL) }) else {
+        }
+        let Ok(instance) = (unsafe { CoCreateInstance(&SpVoice, None, CLSCTX_ALL) }) else {
             return Self::default();
         };
 
@@ -178,7 +179,7 @@ fn speak(data: RpcWindowsTTSSpeak, state: State<'_, WindowsTTSPlugin>) -> Result
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("windows_tts")
+    Builder::new("windows-tts")
         .invoke_handler(tauri::generate_handler![speak, get_voices])
         .setup(|app, _api| {
             app.manage(WindowsTTSPlugin::new());

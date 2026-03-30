@@ -289,15 +289,22 @@ export const InputEvent: FC<EventProps> = memo(({ label, value, onChange }) => {
 
 interface TextSourceProps extends InputBaseProps {
     onChange: (value: TextEventSource) => void,
-    value: string
+    value: string,
+    /** Hide “Text field” for chat/webhook targets; use “Use keyboard input” for typed/canvas input instead. */
+    hideTextfieldOption?: boolean,
 }
-export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChange }) => {
+export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChange, hideTextfieldOption }) => {
     const { t } = useTranslation();
-    return <InputSelect label={label} value={value} options={[
+    const options = [
         { label: t('stt.title'), value: TextEventSource.stt },
+        ...(!hideTextfieldOption
+            ? [{ label: t('common.text_source_textfield'), value: TextEventSource.textfield }]
+            : []),
         { label: t('transl.title'), value: TextEventSource.translation },
         { label: t('transform.title') ?? "AI Transform", value: TextEventSource.transform },
-    ]} onValueChange={onChange} />
+        { label: t('common.text_source_any'), value: TextEventSource.any },
+    ];
+    return <InputSelect label={label} value={value} options={options} onValueChange={onChange} />
 });
 
 interface CodeProps extends InputBaseProps {
@@ -517,7 +524,7 @@ interface AudioOutputProps extends InputBaseProps {
 export const InputNativeAudioOutput: FC<AudioOutputProps> = memo(({ label, value, onChange }) => {
     const [config, setConfig] = useState<WindowsConfig>();
     useEffect(() => {
-        invoke<WindowsConfig>("plugin:windows_tts|get_voices").then(setConfig);
+        invoke<WindowsConfig>("plugin:windows-tts|get_voices").then(setConfig);
     }, []);
 
     return <InputSelect

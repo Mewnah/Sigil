@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { TTS_State } from "../schema";
 import { ITTSReceiver, ITTSService } from "../types";
 
@@ -38,8 +39,9 @@ export class TTS_VoicevoxService implements ITTSService {
 
     try {
       // Verify VoiceVox server is running
-      const response = await fetch(`${host}/version`, {
+      const response = await fetchWithTimeout(`${host}/version`, {
         method: "GET",
+        timeoutMs: 15_000,
       });
 
       if (!response.ok) {
@@ -69,11 +71,12 @@ export class TTS_VoicevoxService implements ITTSService {
       const signal = this.#abortController.signal;
 
       // Step 1: Create audio query
-      const queryResponse = await fetch(
+      const queryResponse = await fetchWithTimeout(
         `${host}/audio_query?text=${encodeURIComponent(text)}&speaker=${speaker}`,
         {
           method: "POST",
           signal,
+          timeoutMs: 120_000,
         }
       );
 
@@ -90,7 +93,7 @@ export class TTS_VoicevoxService implements ITTSService {
       audioQuery.volumeScale = parseFloat(volumeScale) || 1.0;
 
       // Step 2: Synthesize audio
-      const synthesisResponse = await fetch(
+      const synthesisResponse = await fetchWithTimeout(
         `${host}/synthesis?speaker=${speaker}`,
         {
           method: "POST",
@@ -99,6 +102,7 @@ export class TTS_VoicevoxService implements ITTSService {
           },
           body: JSON.stringify(audioQuery),
           signal,
+          timeoutMs: 120_000,
         }
       );
 
@@ -134,7 +138,7 @@ export class TTS_VoicevoxService implements ITTSService {
 // Utility function to fetch speakers from VoiceVox
 export async function fetchVoicevoxSpeakers(host: string): Promise<VoicevoxSpeaker[]> {
   try {
-    const response = await fetch(`${host}/speakers`);
+    const response = await fetchWithTimeout(`${host}/speakers`, { timeoutMs: 15_000 });
     if (!response.ok) {
       throw new Error(`Failed to fetch speakers: ${response.status}`);
     }

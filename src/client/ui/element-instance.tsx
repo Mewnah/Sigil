@@ -3,7 +3,6 @@ import root from 'react-shadow';
 import { useGetState } from "../index";
 import Element_Image from "../elements/image";
 import Element_Text from "../elements/text";
-import Element_AudioViz from "../elements/audio-viz";
 import { ElementType, AnimationConfig } from "../elements/schema";
 import { useSnapshot } from "valtio";
 import { motion, Variants } from "framer-motion";
@@ -63,7 +62,6 @@ export const ElementInstance: FC<{ id: string; }> = memo(({ id }) => {
     switch (type) {
       case ElementType.text: return <Element_Text id={id} />;
       case ElementType.image: return <Element_Image id={id} />;
-      case ElementType.audioViz: return <Element_AudioViz id={id} />;
       default: return <>unknown element</>;
     }
   }
@@ -73,13 +71,13 @@ export const ElementInstance: FC<{ id: string; }> = memo(({ id }) => {
   // Wrap in motion.div if animations are configured
   if (variants) {
     return (
-      <root.div className="absolute inset-0">
+      <root.div className="absolute inset-0 min-h-0 min-w-0 overflow-hidden">
         <motion.div
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={variants}
-          className="w-full h-full"
+          className="h-full min-h-0 w-full min-w-0 overflow-hidden"
         >
           {content}
         </motion.div>
@@ -87,5 +85,7 @@ export const ElementInstance: FC<{ id: string; }> = memo(({ id }) => {
     );
   }
 
-  return <root.div className="absolute inset-0">{content}</root.div>;
+  return (
+    <root.div className="absolute inset-0 min-h-0 min-w-0 overflow-hidden">{content}</root.div>
+  );
 });

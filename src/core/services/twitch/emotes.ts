@@ -102,14 +102,18 @@ class TwitchEmotesApi {
     
   }
 
-  async loadEmotes(id: string, apiClient: ApiClient) {
+  async loadEmotes(
+    id: string,
+    apiClient: ApiClient,
+    channelLogin: string
+  ) {
     this.updateReplacementsCache();
     if (!id || !apiClient)
       return;
 
     await apiClient.chat.getChannelEmotes(id).then(resp => this.addTwitchEmotes(resp));
     await apiClient.chat.getGlobalEmotes().then(resp => this.addTwitchEmotes(resp));
-    await Load_FFZ_CHANNEL(id).then(resp => this.addEmotes(resp));
+    await Load_FFZ_CHANNEL(channelLogin).then((resp) => this.addEmotes(resp));
     await Load_FFZ_GLOBAL().then(resp => this.addEmotes(resp));
     await Load_BTTV_CHANNEL(id).then(resp => this.addEmotes(resp));
     await Load_BTTV_GLOBAL().then(resp => this.addEmotes(resp));

@@ -1,4 +1,12 @@
-import { IServiceInterface, ServiceNetworkState, TextEventType } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-shell";
+import { pushSystemLog } from "@/core/services/systemLog";
+import { IServiceInterface, ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
+import { getKickClientId, getKickClientSecret, getKickRedirectUri } from "@/utils/integrationEnv";
+import { generateOAuthCodeChallenge, generateOAuthRandomString } from "@/utils/oauthPkce";
+import { isOAuthTauri, listenOAuthPayload } from "@/utils/oauthPopup";
+import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
 import {
@@ -8,29 +16,7 @@ import {
 import KickChatApi from "./chat";
 import KickEmotesApi from "./emotes";
 
-// OAuth scopes for Kick
 const scope = ["user:read", "channel:read", "chat:write", "chat:read"];
-
-// PKCE helper functions
-function generateRandomString(length: number): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let result = '';
-    const randomValues = crypto.getRandomValues(new Uint8Array(length));
-    for (let i = 0; i < length; i++) {
-        result += chars[randomValues[i] % chars.length];
-    }
-    return result;
-}
-
-async function generateCodeChallenge(verifier: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(verifier);
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    return btoa(String.fromCharCode(...new Uint8Array(digest)))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-}
 
 class Service_Kick implements IServiceInterface {
     constructor() { }
@@ -44,6 +30,7 @@ class Service_Kick implements IServiceInterface {
     // Store PKCE verifier for OAuth flow
     private codeVerifier: string = "";
     private oauthState: string = "";
+    private lastOAuthRedirectUri = "";
 
     state = proxy<{
         user: { name: string, id: string, profilePictureUrl: string } | null;
@@ -57,11 +44,65 @@ class Service_Kick implements IServiceInterface {
         return window.ApiServer.state.services.kick;
     }
 
+    #stopLiveCheckInterval() {
+        if (this.liveCheckInterval != null) {
+            clearInterval(this.liveCheckInterval);
+            this.liveCheckInterval = undefined;
+        }
+    }
+
+    async #checkLive() {
+        if (!this.state.user?.name) {
+            this.state.liveStatus = ServiceNetworkState.disconnected;
+            return;
+        }
+        try {
+            const response = await fetchWithTimeout(
+                `https://api.kick.com/public/v1/channels?broadcaster_user_id=${this.state.user.id}`,
+                {
+                    timeoutMs: 25_000,
+                    headers: {
+                        "Authorization": `Bearer ${this.#state.data.token}`,
+                    },
+                }
+            );
+
+            if (response.ok) {
+                const data = (await response.json()) as {
+                    data?: Array<{ stream?: { is_live?: boolean } | null }>;
+                };
+                const stream = data.data?.[0]?.stream;
+                const isLive =
+                    stream != null &&
+                    typeof stream === "object" &&
+                    stream.is_live === true;
+                this.state.liveStatus = isLive ? ServiceNetworkState.connected : ServiceNetworkState.disconnected;
+            } else {
+                this.state.liveStatus = ServiceNetworkState.disconnected;
+            }
+        } catch (error) {
+            this.state.liveStatus = ServiceNetworkState.disconnected;
+        }
+    }
+
+    #startLiveCheckInterval() {
+        if (this.liveCheckInterval != null) return;
+        this.liveCheckInterval = setInterval(() => this.#checkLive(), 4000);
+    }
+
+    /** Legacy: “Text field” as sole source is replaced by STT + “Use keyboard input”. */
+    #migrateChatPostTextfieldSource() {
+        const d = this.#state.data;
+        if (d.chatPostSource !== TextEventSource.textfield) return;
+        d.chatPostSource = TextEventSource.stt;
+        d.chatPostInput = d.chatPostInput || true;
+    }
+
     async init() {
         this.emotes = new KickEmotesApi();
         this.chat = new KickChatApi();
-        // check live status
-        this.liveCheckInterval = setInterval(() => this.#checkLive(), 4000);
+
+        this.#migrateChatPostTextfieldSource();
 
         // login with token if available
         this.connect();
@@ -96,83 +137,142 @@ class Service_Kick implements IServiceInterface {
                 data?.value &&
                 data?.type === TextEventType.final &&
                 this.chat.post(data.value);
-        }));
+        }, "chatPostSource"));
     }
 
     async login() {
         try {
-            const clientId = import.meta.env.CURSES_KICK_CLIENT_ID;
+            const clientId = getKickClientId();
             if (!clientId) {
-                console.error("[Kick] No client ID configured. Please set CURSES_KICK_CLIENT_ID in .env");
+                toast.warning("Kick: set SIGIL_KICK_CLIENT_ID in .env (CURSES_KICK_CLIENT_ID still works)");
+                pushSystemLog(
+                  "Kick",
+                  "Missing client id: set SIGIL_KICK_CLIENT_ID or CURSES_KICK_CLIENT_ID in .env",
+                  "warning"
+                );
                 return;
             }
 
-            const redirect =
-                import.meta.env.MODE === "development"
-                    ? "http://localhost:1420/oauth_kick.html"
-                    : import.meta.env.CURSES_KICK_CLIENT_REDIRECT_LOCAL || "http://localhost:1420/oauth_kick.html";
-
-            // Generate PKCE code verifier and challenge
-            this.codeVerifier = generateRandomString(64);
-            this.oauthState = generateRandomString(32);
-            const codeChallenge = await generateCodeChallenge(this.codeVerifier);
+            this.codeVerifier = generateOAuthRandomString(64);
+            this.oauthState = generateOAuthRandomString(32);
+            const codeChallenge = await generateOAuthCodeChallenge(this.codeVerifier);
 
             const link = new URL("https://id.kick.com/oauth/authorize");
             link.searchParams.set("client_id", clientId);
-            link.searchParams.set("redirect_uri", redirect);
             link.searchParams.set("response_type", "code");
             link.searchParams.set("scope", scope.join(" "));
             link.searchParams.set("state", this.oauthState);
             link.searchParams.set("code_challenge", codeChallenge);
             link.searchParams.set("code_challenge_method", "S256");
 
-            const auth_window = window.open(link.toString(), "", "width=600,height=700");
             const thisRef = this;
 
-            const handleMessage = async (msg: MessageEvent<unknown>) => {
-                if (typeof msg.data === "string") {
-                    if (msg.data.startsWith("smplstt_kick_auth:")) {
-                        const parts = msg.data.split(":");
-                        const code = parts[1];
-                        const state = parts[2];
+            const finishWithError = (summary: string, userMessage?: string) => {
+                pushSystemLog("Kick", summary, "error");
+                if (userMessage)
+                    toast.error(userMessage);
+            };
 
-                        if (state !== thisRef.oauthState) {
-                            console.error("[Kick] OAuth state mismatch");
-                            window.removeEventListener("message", handleMessage, true);
-                            return;
-                        }
+            const handleSuccess = async (code: string, state: string) => {
+                if (state !== thisRef.oauthState) {
+                    finishWithError("OAuth state mismatch");
+                    return;
+                }
+                await thisRef.exchangeCodeForToken(code);
+            };
 
-                        await thisRef.exchangeCodeForToken(code);
-                        window.removeEventListener("message", handleMessage, true);
-                    } else if (msg.data.startsWith("smplstt_kick_auth_error:")) {
-                        console.error("[Kick] OAuth error:", msg.data.split(":")[1]);
-                        window.removeEventListener("message", handleMessage, true);
+            let unlistenTauri: (() => void) | undefined;
+            const cleanupTauri = () => {
+                unlistenTauri?.();
+                unlistenTauri = undefined;
+            };
+
+            if (isOAuthTauri()) {
+                unlistenTauri = await listenOAuthPayload("kick", async (p) => {
+                    if (p.error) {
+                        finishWithError(`OAuth error: ${p.error}`, "Kick login was cancelled or denied.");
+                        cleanupTauri();
+                        return;
                     }
+                    if (p.code && p.state) {
+                        await handleSuccess(p.code, p.state);
+                        cleanupTauri();
+                    }
+                });
+
+                let redirectUri: string;
+                try {
+                    redirectUri = await invoke<string>("oauth_loopback_start", { provider: "kick" });
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    finishWithError(`OAuth listener failed: ${msg}`, "Could not start sign-in (check port 17890).");
+                    cleanupTauri();
+                    return;
+                }
+                thisRef.lastOAuthRedirectUri = redirectUri;
+                link.searchParams.set("redirect_uri", redirectUri);
+                const authUrlTauri = link.toString();
+                try {
+                    await open(authUrlTauri);
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    finishWithError(`Open browser failed: ${msg}`, "Could not open your default browser.");
+                    cleanupTauri();
+                }
+                return;
+            }
+
+            this.lastOAuthRedirectUri = getKickRedirectUri();
+            link.searchParams.set("redirect_uri", this.lastOAuthRedirectUri);
+            const authUrl = link.toString();
+
+            const handleMessage = async (msg: MessageEvent<unknown>) => {
+                if (typeof msg.data !== "string")
+                    return;
+                if (msg.data.startsWith("smplstt_kick_auth:")) {
+                    const rest = msg.data.slice("smplstt_kick_auth:".length);
+                    const idx = rest.indexOf(":");
+                    const code = idx === -1 ? rest : rest.slice(0, idx);
+                    const state = idx === -1 ? "" : rest.slice(idx + 1);
+                    if (state !== thisRef.oauthState) {
+                        finishWithError("OAuth state mismatch");
+                        window.removeEventListener("message", handleMessage, true);
+                        return;
+                    }
+                    await thisRef.exchangeCodeForToken(code);
+                    window.removeEventListener("message", handleMessage, true);
+                } else if (msg.data.startsWith("smplstt_kick_auth_error:")) {
+                    const err = msg.data.slice("smplstt_kick_auth_error:".length).split(":")[0] ?? "error";
+                    finishWithError(`OAuth error: ${err}`, "Kick login was cancelled or denied.");
+                    window.removeEventListener("message", handleMessage, true);
                 }
             };
 
-            if (auth_window) {
-                window.addEventListener("message", handleMessage, true);
-                auth_window.onbeforeunload = () => {
-                    window?.removeEventListener("message", handleMessage, true);
-                };
+            const auth_window = window.open(authUrl, "sigil_oauth_kick", "width=600,height=700");
+            if (!auth_window) {
+                toast.error("Pop-up was blocked. Allow pop-ups for this site or use the desktop app.");
+                pushSystemLog("Kick", "Pop-up blocked; allow pop-ups for this host or use the Sigil desktop build", "warning");
+                return;
             }
+            window.addEventListener("message", handleMessage, true);
+            auth_window.onbeforeunload = () => {
+                window.removeEventListener("message", handleMessage, true);
+            };
         } catch (error) {
-            console.error("[Kick] Login error:", error);
+            const msg = error instanceof Error ? error.message : String(error);
+            pushSystemLog("Kick", `Login error: ${msg}`, "error");
         }
     }
 
     private async exchangeCodeForToken(code: string) {
         try {
-            const clientId = import.meta.env.CURSES_KICK_CLIENT_ID;
-            const clientSecret = import.meta.env.CURSES_KICK_CLIENT_SECRET;
-            const redirect =
-                import.meta.env.MODE === "development"
-                    ? "http://localhost:1420/oauth_kick.html"
-                    : import.meta.env.CURSES_KICK_CLIENT_REDIRECT_LOCAL || "http://localhost:1420/oauth_kick.html";
+            const clientId = getKickClientId();
+            const clientSecret = getKickClientSecret();
+            const redirect = this.lastOAuthRedirectUri || getKickRedirectUri();
 
-            const response = await fetch("https://id.kick.com/oauth/token", {
+            const response = await fetchWithTimeout("https://id.kick.com/oauth/token", {
                 method: "POST",
+                timeoutMs: 30_000,
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
@@ -201,6 +301,8 @@ class Service_Kick implements IServiceInterface {
     }
 
     logout() {
+        this.#stopLiveCheckInterval();
+        this.lastOAuthRedirectUri = "";
         this.#state.data.token = "";
         this.#state.data.refreshToken = "";
         this.chat.dispose();
@@ -210,35 +312,11 @@ class Service_Kick implements IServiceInterface {
     }
 
     dispose() {
-        clearInterval(this.liveCheckInterval);
+        this.#stopLiveCheckInterval();
         this.eventDisposers.forEach(d => d());
         this.eventDisposers = [];
         this.chat.dispose();
         this.emotes.dispose();
-    }
-
-    async #checkLive() {
-        if (!this.state.user?.name) {
-            this.state.liveStatus = ServiceNetworkState.disconnected;
-            return;
-        }
-        try {
-            // Check if user is live via Kick API
-            const response = await fetch(`https://api.kick.com/public/v1/channels?broadcaster_user_id=${this.state.user.id}`, {
-                headers: {
-                    "Authorization": `Bearer ${this.#state.data.token}`,
-                },
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                const isLive = data.data?.[0]?.stream !== null;
-                this.state.liveStatus = isLive ? ServiceNetworkState.connected : ServiceNetworkState.disconnected;
-            }
-        } catch (error) {
-            // Don't log every failed check, just mark as disconnected
-            this.state.liveStatus = ServiceNetworkState.disconnected;
-        }
     }
 
     async connect() {
@@ -246,7 +324,8 @@ class Service_Kick implements IServiceInterface {
             if (!this.#state.data.token) return this.logout();
 
             // Fetch user info from Kick API
-            const response = await fetch("https://api.kick.com/public/v1/users", {
+            const response = await fetchWithTimeout("https://api.kick.com/public/v1/users", {
+                timeoutMs: 30_000,
                 headers: {
                     "Authorization": `Bearer ${this.#state.data.token}`,
                 },
@@ -272,6 +351,7 @@ class Service_Kick implements IServiceInterface {
 
             // initial live check
             this.#checkLive();
+            this.#startLiveCheckInterval();
 
             this.emotes.loadEmotes(this.state.user.id);
             if (this.#state.data.chatEnable)

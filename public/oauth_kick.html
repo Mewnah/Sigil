@@ -1,30 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kick auth</title>
+  <title>Redirecting…</title>
 </head>
-
 <body>
-
+  <p style="font-family:system-ui,sans-serif;padding:16px;">Redirecting…</p>
   <script>
-    // Handle OAuth callback - extract authorization code from URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const state = urlParams.get('state');
-    const error = urlParams.get('error');
-
-    if (error) {
-      window.opener?.postMessage(`smplstt_kick_auth_error:${error}`, '*');
-    } else if (code && state) {
-      // Send code and state back to opener window
-      window.opener?.postMessage(`smplstt_kick_auth:${code}:${state}`, '*');
-    }
-
-    window.close();
+    var q = location.search || '';
+    location.replace(location.origin + '/oauth/kick/callback' + q);
   </script>
 </body>
-
 </html>

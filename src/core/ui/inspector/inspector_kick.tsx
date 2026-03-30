@@ -29,12 +29,13 @@ const KickIcon: FC<{ size?: number }> = ({ size = 20 }) => (
 );
 
 const KickEmotesModal: FC = () => {
+    const { t } = useTranslation();
     return (
         <Modal.Body width={420}>
             <Modal.Header>Kick Emotes</Modal.Header>
             <Modal.Content>
                 <div className="p-4 flex flex-col space-y-2">
-                    <p className="text-sm opacity-50">Emote inspection not yet implemented for Kick.</p>
+                    <p className="text-sm opacity-70">{t("kick.notice_emotes_modal")}</p>
                 </div>
             </Modal.Content>
         </Modal.Body>
@@ -68,6 +69,7 @@ const Inspector_Kick: FC = () => {
     const kickService = window.ApiServer.kick;
     const kickState = kickService?.state || proxy({ user: null, liveStatus: ServiceNetworkState.disconnected });
     const { user, liveStatus } = useSnapshot(kickState);
+    const { connection: kickChatConnection } = useSnapshot(window.ApiServer.kick.chat.state);
 
     const handleLogin = () => kickService?.login();
     const handleLogout = () => kickService?.logout();
@@ -93,6 +95,7 @@ const Inspector_Kick: FC = () => {
         <Inspector.Header><KickIcon /> Kick Integration</Inspector.Header>
         <Inspector.Content>
             <Inspector.SubHeader>Kick Configuration</Inspector.SubHeader>
+            <Inspector.Description>{t("kick.notice_integration")}</Inspector.Description>
             {user && <div className="flex items-center space-x-4">
                 {user.profilePictureUrl && <img className="rounded-full aspect-square w-10 ring-2 ring-success ring-offset-base-100 ring-offset-2" src={user.profilePictureUrl} alt={user.name} />}
                 {!user.profilePictureUrl && <div className="rounded-full aspect-square w-10 bg-[#53fc18] flex items-center justify-center font-bold text-lg text-black">{user.name[0].toUpperCase()}</div>}
@@ -106,6 +109,7 @@ const Inspector_Kick: FC = () => {
 
             <Inspector.Switchable visible={!!user}>
                 <InputNetworkStatus label="twitch.status_stream" value={liveStatus} />
+                <InputNetworkStatus label="twitch.status_chat" value={kickChatConnection} />
 
                 <InputCheckbox label="twitch.field_enable_chat" value={pr.chatEnable} onChange={e => up("chatEnable", e)} />
                 <Inspector.Switchable visible={pr.chatEnable}>
@@ -113,7 +117,7 @@ const Inspector_Kick: FC = () => {
                     <Inspector.Description>{t('twitch.field_post_in_chat_desc')}</Inspector.Description>
                     <InputCheckbox label="twitch.field_post_in_chat_live" value={pr.chatPostLive} onChange={e => up("chatPostLive", e)} />
                     <InputText label="twitch.field_post_in_chat_delay" type="number" value={pr.chatSendDelay} onChange={e => up("chatSendDelay", e.target.value)} />
-                    <InputTextSource label="common.field_text_source" value={pr.chatPostSource} onChange={e => up("chatPostSource", e)} />
+                    <InputTextSource label="common.field_text_source" value={pr.chatPostSource} onChange={e => up("chatPostSource", e)} hideTextfieldOption />
                     <InputCheckbox label="common.field_use_keyboard_input" value={pr.chatPostInput} onChange={e => up("chatPostInput", e)} />
                     <InputCheckbox label="twitch.field_chat_text" value={pr.chatReceiveEnable} onChange={e => up("chatReceiveEnable", e)} />
                     <Inspector.Description>{t('twitch.field_chat_text_desc')}</Inspector.Description>

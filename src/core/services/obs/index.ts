@@ -67,19 +67,20 @@ class Service_OBS implements IServiceInterface {
 
   private processTextEvent(data?: TextEvent) {
     if (
-      // this.#state.enable && 
-      this.wsState.status === ServiceNetworkState.connected &&
-      data?.value
-      && (
-        data?.type === TextEventType.final ||
-        (data?.type === TextEventType.interim && this.#state.interim)
+      !this.#state.captionsEnable ||
+      this.wsState.status !== ServiceNetworkState.connected ||
+      !data?.value ||
+      !(
+        data.type === TextEventType.final ||
+        (data.type === TextEventType.interim && this.#state.interim)
       )
     ) {
-      this.wsInstance.call("SendStreamCaption", { captionText: data.value }).catch((e: OBSWebSocketError) => {
-        if (e.code !== 501)
-          this.toastError(e);
-      });
+      return;
     }
+    this.wsInstance.call("SendStreamCaption", { captionText: data.value }).catch((e: OBSWebSocketError) => {
+      if (e.code !== 501)
+        this.toastError(e);
+    });
   }
 
   private toastError(e: OBSWebSocketError) {

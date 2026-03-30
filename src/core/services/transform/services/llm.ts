@@ -48,7 +48,9 @@ export class Transform_LLMService implements ITransformService {
             apiKey = "dummy";
         }
 
-        console.log(`[LLM] STARTING. Key Present: ${apiKey !== "dummy"} (${apiKey.substring(0, 8)}...)`);
+        if (import.meta.env.DEV) {
+            console.log(`[LLM] starting (${data.provider}), api key configured: ${apiKey !== "dummy"}`);
+        }
 
         const defaultHeaders: Record<string, string> = {
             // "Authorization": `Bearer ${apiKey}`, // SDK handles this

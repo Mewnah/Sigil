@@ -1,6 +1,8 @@
 {
   "common": {
     "field_action_bar": "添加到操作欄",
+    "drag_reorder_action_bar": "拖曳以排序",
+    "action_bar_drag_ghost_hint": "在標記處放開即可插入；其他服務維持已儲存順序。",
     "field_auto_start": "自動啟動",
     "field_service": "服務",
     "field_language": "語言",
@@ -11,6 +13,8 @@
     "field_css": "CSS",
     "field_interim_results": "臨時結果",
     "field_text_source": "文本源",
+    "text_source_textfield": "文字輸入欄",
+    "text_source_any": "任意文字來源",
     "field_use_keyboard_input": "使用鍵盤輸入",
     "field_volume": "音量",
     "field_pitch": "音調",
@@ -38,6 +42,16 @@
     "status_error": "錯誤",
     "status_online": "在線",
     "status_offline": "離線"
+  },
+  "history_panel": {
+    "title": "編輯歷史",
+    "hint": "可復原或重做最近對範本的變更（畫布尺寸、元素位置等）。請使用上方按鈕或畫布工具列，或按 Ctrl+Z 復原、Ctrl+Y 或 Ctrl+Shift+Z 重做。尚不支援依步驟列出的命名快照清單。"
+  },
+  "elements": {
+    "duplicate_tooltip": "複製",
+    "duplicate_n": "複製 {{count}} 個",
+    "toast_duplicated_one": "已複製元素",
+    "toast_duplicated_n": "已複製 {{count}} 個元素"
   },
   "main": {
     "btn_show_logs": "顯示日誌",
@@ -91,7 +105,22 @@
     "azure_profanity_masked": "隱藏",
     "azure_profanity_removed": "移除",
     "azure_profanity_raw": "不處理",
-    "azure_silence_timeout": "靜音超時"
+    "azure_silence_timeout": "靜音超時",
+    "provider_moonshine": "Moonshine（本機服務）",
+    "provider_openai_audio": "本機 HTTP API（OpenAI 格式）",
+    "moonshine_title": "Moonshine",
+    "moonshine_desc": "在 Docker 或其他程序中執行 Useful Sensors Moonshine。伺服器需提供 POST /transcribe 與 GET /health。",
+    "moonshine_endpoint": "服務位址",
+    "moonshine_language": "語言代碼",
+    "moonshine_language_desc": "例如 en，須與伺服器約定一致。",
+    "openai_audio_title": "本機 HTTP 轉寫 API",
+    "openai_audio_desc": "於本機執行的服務（如 speaches、LocalAI），需實作 POST /v1/audio/transcriptions。除非將 URL 指向雲端，否則音訊不離開本機。",
+    "openai_audio_base_url": "API 根位址",
+    "openai_audio_model": "模型 ID（本機服務）",
+    "openai_audio_model_placeholder": "依你的伺服器設定填寫",
+    "openai_audio_api_key": "API 金鑰（選填，本機常留空）",
+    "openai_audio_language": "語言（選填）",
+    "openai_audio_language_desc": "若伺服器支援可填 ISO 代碼；留空則由伺服器決定。"
   },
   "tts": {
     "title": "文本轉語音",
@@ -183,10 +212,10 @@
     "status_chat": "連接聊天",
     "field_enable_chat": "啟用聊天",
     "field_post_in_chat": "在聊天中發布",
-    "field_post_in_chat_desc": "將語音轉文本或翻譯的結果發送至聊天中",
+    "field_post_in_chat_desc": "將語音轉文字、翻譯或其他管線文字發送到聊天。若要從工作室輸入列或覆蓋層打字發送，請啟用「使用鍵盤輸入」。",
     "field_post_in_chat_live": "僅在在線時發布",
     "field_chat_text": "使用聊天消息",
-    "field_chat_text_desc": "使用你的 Twitch 聊天消息作為語音轉文本的來源",
+    "field_chat_text_desc": "將觀眾聊天送入文字流程（略過你自己送出的訊息，以免同時往聊天室發文時產生回音）",
 
     "section_emotes": "表情",
     "btn_show_emotes": "顯示表情",
@@ -198,6 +227,10 @@
     "title": "重新映射表情",
     "label_dictionary_key": "詞語",
     "label_dictionary_value": "表情"
+  },
+  "kick": {
+    "notice_integration": "登入與開播狀態使用 Kick API。啟用後可用你的帳號將訊息發送到聊天。將觀眾聊天接入 Sigil 與從 Kick 載入表情清單尚未實作。",
+    "notice_emotes_modal": "尚未從 Kick 載入表情名稱。仍可使用重新對應字典比對自訂文字。"
   },
   "discord": {
     "title": "Discord",
@@ -211,6 +244,7 @@
     "title": "VRChat chatbox",
     "notice_title": "請先在 VRChat 中啟用 OSC!",
     "notice_desc": "菜單 » 設置 » OSC » 啟用",
+    "notice_desktop": "OSC 僅在 Sigil 桌面（Tauri）版可用，純瀏覽器宿主無法呼叫。",
     "field_target": "目標",
     "btn_send_test": "發送測試",
 
@@ -226,10 +260,32 @@
     "kfi_pointer_key": "Pointer key",
     "kfi_chat_sync_key": "Char Sync key"
   },
+  "project": {
+    "title": "專案",
+    "confirm_reset_template": "將目前工作範本重設為空白版面？此動作無法復原（請先匯出 .sigiltmp 備份）。",
+    "migrate_toast": "已匯入並完成相容處理：{{details}}",
+    "toast_imported": "範本已匯入。",
+    "section_template": "範本",
+    "template_live_copy": "Sigil 只維護一份工作範本。可匯出 .sigiltmp 備份或分享；匯入會取代目前範本。",
+    "template_autosave_desktop": "編輯後範本會自動儲存至應用程式資料（約每 2 秒）。",
+    "template_autosave_client": "客戶端模式使用主機的範本，本機不寫入本機檔案。",
+    "btn_reset_template": "重設範本",
+    "btn_import_template": "匯入範本…",
+    "field_export_author": "作者（匯出）",
+    "btn_export_template": "匯出範本",
+    "section_summary": "文件",
+    "field_canvas": "畫布",
+    "field_scenes": "場景",
+    "field_elements": "元素",
+    "field_author": "作者",
+    "btn_edit_canvas": "編輯畫布與場景"
+  },
   "scenes": {
     "title": "畫布和場景",
     "section_canvas": "畫布",
+    "section_transitions": "場景轉場",
     "section_scenes": "場景",
+    "canvas_resize_hint": "雙擊畫布選中後，拖曳邊緣或角落控制點調整尺寸。",
     "field_canvas_size": "畫布大小",
     "scene_menu_title": "場景", 
     "btn_add_scene": "添加場景",

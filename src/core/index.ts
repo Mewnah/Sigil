@@ -17,6 +17,7 @@ import Service_Kick from "./services/kick";
 import Service_VRC from "./services/vrc";
 import Service_History from "./services/history";
 import { VoiceChangerService } from "./services/voice_changer";
+import { initSystemLogListeners, pushSystemLog } from "./services/systemLog";
 import { changeLanguage, initI18n } from '@/i18n';
 
 export { Services };
@@ -91,6 +92,7 @@ class ApiServer {
       this.obs.init(),
       this.keyboard.init(),
       this.voiceChanger.init(),
+      this.sound.init(),
     ]);
 
     const serviceInitLabels = [
@@ -105,12 +107,17 @@ class ApiServer {
       "OBS",
       "Keyboard",
       "Voice changer",
+      "Sound effects",
     ] as const;
     const failedLabels: string[] = [];
     results.forEach((result, index) => {
+      const label = serviceInitLabels[index] ?? `Service ${index}`;
       if (result.status === "rejected") {
         console.error(`[ApiServer] Service initialization failed (index ${index}):`, result.reason);
-        failedLabels.push(serviceInitLabels[index] ?? `Service ${index}`);
+        failedLabels.push(label);
+        const msg =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        pushSystemLog(label, `Initialization failed: ${msg}`, "error");
       }
     });
     if (failedLabels.length > 0) {
@@ -119,6 +126,8 @@ class ApiServer {
         { autoClose: 10_000 }
       );
     }
+
+    initSystemLogListeners();
 
     await initI18n(this.state.uiLanguage);
     this.changeTheme(this.state.clientTheme);

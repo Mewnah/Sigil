@@ -57,7 +57,9 @@ export function buildStateStyle(state: any): string {
   }
   .box{
     transform: translate3d(0,0,0);
-    overflow-y: scroll;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     justify-content: start;
     width: ${state.boxAutoWidth ? 'auto' : '100%'};
     height: ${state.boxAutoHeight ? 'auto' : '100%'};
@@ -84,7 +86,16 @@ export function buildStateStyle(state: any): string {
     `}
   }
   .box::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;
+  }
+  .box::-webkit-scrollbar-thumb,
+  .box::-webkit-scrollbar-track,
+  .box::-webkit-scrollbar-button {
     display: none;
+    width: 0;
+    height: 0;
   }
 
   .text-container{
@@ -132,10 +143,21 @@ export function buildStateStyle(state: any): string {
     min-height: 100%;
     min-width: 100%;
     max-height: 100%;
-    overflow-y: scroll;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
   .scroll-container::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;
+  }
+  .scroll-container::-webkit-scrollbar-thumb,
+  .scroll-container::-webkit-scrollbar-track,
+  .scroll-container::-webkit-scrollbar-button {
     display: none;
+    width: 0;
+    height: 0;
   }
   `
 

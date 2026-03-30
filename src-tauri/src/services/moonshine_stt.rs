@@ -1,3 +1,4 @@
+use crate::services::http_client::http_client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -59,13 +60,12 @@ async fn moonshine_transcribe<R: Runtime>(
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/transcribe", endpoint);
 
-    let client = reqwest::Client::new();
     let request_body = TranscribeRequest {
         audio: audio_base64,
         language,
     };
 
-    let response = client
+    let response = http_client()
         .post(&url)
         .json(&request_body)
         .send()
@@ -90,14 +90,14 @@ async fn check_moonshine_availability<R: Runtime>(_app: AppHandle<R>, state: Sta
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
     let url = format!("{}/health", endpoint);
 
-    match reqwest::get(&url).await {
+    match http_client().get(&url).send().await {
         Ok(response) => Ok(response.status().is_success()),
         Err(_) => Ok(false),
     }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("moonshine_stt")
+    Builder::new("moonshine-stt")
         .setup(|app, _api| {
             app.manage(MoonshineSttState::new());
             Ok(())

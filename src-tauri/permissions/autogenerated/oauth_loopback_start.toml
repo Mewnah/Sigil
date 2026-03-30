@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-oauth-loopback-start"
+description = "Enables the oauth_loopback_start command without any pre-configured scope."
+commands.allow = ["oauth_loopback_start"]
+
+[[permission]]
+identifier = "deny-oauth-loopback-start"
+description = "Denies the oauth_loopback_start command without any pre-configured scope."
+commands.deny = ["oauth_loopback_start"]

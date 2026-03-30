@@ -2,7 +2,7 @@ import { FC, memo } from "react";
 import { motion } from "framer-motion";
 import { useSnapshot } from "valtio";
 import { ServiceNetworkState, InspectorTabPath } from "@/types";
-import { Services } from "@/core";
+import { Services } from "@/services-registry";
 import {
     RiUserVoiceFill,
     RiChatVoiceFill,

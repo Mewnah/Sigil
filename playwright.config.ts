@@ -38,9 +38,6 @@ const config: PlaywrightTestConfig = {
     },
   ],
 
-  /* Folder for test artifacts such as screenshots, videos, traces, etc. */
-  // outputDir: 'test-results/',
-
   webServer: {
     command: 'npm run build && npx vite preview --port 4173 --strictPort',
     url: 'http://localhost:4173',

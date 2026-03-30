@@ -2,6 +2,20 @@ import { InspectorTabPath } from "@/types";
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 
+export type CanvasInspectorSubTab = "elements" | "scenes";
+
+const CANVAS_INSPECTOR_SUBTAB_KEY = "sigil.canvasInspectorSubTab";
+
+function readStoredCanvasInspectorSubTab(): CanvasInspectorSubTab {
+  try {
+    const v = localStorage.getItem(CANVAS_INSPECTOR_SUBTAB_KEY);
+    if (v === "elements" || v === "scenes") return v;
+  } catch {
+    //
+  }
+  return "elements";
+}
+
 export type SidebarSlice = {
   tab: InspectorTabPath | undefined;
   show: boolean;
@@ -13,6 +27,10 @@ interface AppUIState {
   statsPanelCollapsed: boolean;
   toggleStatsPanel: () => void;
   setStatsPanelCollapsed: (collapsed: boolean) => void;
+
+  /** Last-selected Elements vs Scenes in the Canvas & Elements inspector; persisted in localStorage. */
+  canvasInspectorSubTab: CanvasInspectorSubTab;
+  setCanvasInspectorSubTab: (subTab: CanvasInspectorSubTab) => void;
 
   sidebar: SidebarSlice;
   changeTab: (v?: InspectorTabPath) => void;
@@ -37,6 +55,16 @@ export const useAppUIStore = create<AppUIState>()(
         set((s) => ({ statsPanelCollapsed: !s.statsPanelCollapsed })),
       setStatsPanelCollapsed: (collapsed: boolean) =>
         set({ statsPanelCollapsed: collapsed }),
+
+      canvasInspectorSubTab: readStoredCanvasInspectorSubTab(),
+      setCanvasInspectorSubTab: (subTab) => {
+        try {
+          localStorage.setItem(CANVAS_INSPECTOR_SUBTAB_KEY, subTab);
+        } catch {
+          //
+        }
+        set({ canvasInspectorSubTab: subTab });
+      },
 
       sidebar: { ...initialSidebar },
 

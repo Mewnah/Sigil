@@ -1,6 +1,8 @@
 {
   "common": {
     "field_action_bar": "添加到操作栏",
+    "drag_reorder_action_bar": "拖动以排序",
+    "action_bar_drag_ghost_hint": "在标记处松开即可插入；其他服务保持已保存顺序。",
     "field_auto_start": "自动启动",
     "field_service": "服务",
     "field_language": "语言",
@@ -11,6 +13,8 @@
     "field_css": "CSS",
     "field_interim_results": "临时结果",
     "field_text_source": "文本源",
+    "text_source_textfield": "文本输入框",
+    "text_source_any": "任意文本源",
     "field_use_keyboard_input": "使用键盘输入",
     "field_volume": "音量",
     "field_pitch": "音调",
@@ -38,6 +42,16 @@
     "status_error": "错误",
     "status_online": "在线",
     "status_offline": "离线"
+  },
+  "history_panel": {
+    "title": "编辑历史",
+    "hint": "可撤销或重做最近对模板的修改（画布尺寸、元素位置等）。请使用上方按钮或画布工具栏，或使用 Ctrl+Z 撤销、Ctrl+Y 或 Ctrl+Shift+Z 重做。暂不支持按步骤列出的命名快照列表。"
+  },
+  "elements": {
+    "duplicate_tooltip": "复制",
+    "duplicate_n": "复制 {{count}} 个",
+    "toast_duplicated_one": "已复制元素",
+    "toast_duplicated_n": "已复制 {{count}} 个元素"
   },
   "main": {
     "btn_show_logs": "显示日志",
@@ -91,7 +105,22 @@
     "azure_profanity_masked": "隐藏",
     "azure_profanity_removed": "移除",
     "azure_profanity_raw": "不处理",
-    "azure_silence_timeout": "静音超时"
+    "azure_silence_timeout": "静音超时",
+    "provider_moonshine": "Moonshine（本地服务）",
+    "provider_openai_audio": "本地 HTTP API（OpenAI 格式）",
+    "moonshine_title": "Moonshine",
+    "moonshine_desc": "在 Docker 或其他进程中运行 Useful Sensors Moonshine。服务端需提供 POST /transcribe 与 GET /health。",
+    "moonshine_endpoint": "服务地址",
+    "moonshine_language": "语言代码",
+    "moonshine_language_desc": "例如 en，需与服务端约定一致。",
+    "openai_audio_title": "本地 HTTP 转写 API",
+    "openai_audio_desc": "本机运行的服务（如 speaches、LocalAI），需实现 POST /v1/audio/transcriptions。除非把 URL 指向云端，否则音频不离开本机。",
+    "openai_audio_base_url": "API 根地址",
+    "openai_audio_model": "模型 ID（本地服务）",
+    "openai_audio_model_placeholder": "按你的服务端配置填写",
+    "openai_audio_api_key": "API 密钥（可选，本地常留空）",
+    "openai_audio_language": "语言（可选）",
+    "openai_audio_language_desc": "若服务端支持可填 ISO 代码；留空则由服务端自动处理。"
   },
   "tts": {
     "title": "文本转语音",
@@ -183,10 +212,10 @@
     "status_chat": "连接聊天",
     "field_enable_chat": "启用聊天",
     "field_post_in_chat": "在聊天中发布",
-    "field_post_in_chat_desc": "将语音转文本或翻译的结果发送至聊天中",
+    "field_post_in_chat_desc": "将语音转文本、翻译或其他管道文本发送到聊天。若要从工作室输入栏或覆盖层打字发送，请启用「使用键盘输入」。",
     "field_post_in_chat_live": "仅在在线时发布",
     "field_chat_text": "使用聊天消息",
-    "field_chat_text_desc": "使用你的 Twitch 聊天消息作为语音转文本的来源",
+    "field_chat_text_desc": "将观众聊天送入文本流程（忽略你自己发送的消息，以免在同时向聊天发帖时产生回声）",
 
     "section_emotes": "表情",
     "btn_show_emotes": "显示表情",
@@ -198,6 +227,10 @@
     "title": "重新映射表情",
     "label_dictionary_key": "词语",
     "label_dictionary_value": "表情"
+  },
+  "kick": {
+    "notice_integration": "登录与开播状态使用 Kick API。启用后可将消息以你的账号发送到聊天。将观众聊天接入 Sigil 与从 Kick 加载表情列表尚未实现。",
+    "notice_emotes_modal": "尚未从 Kick 加载表情名称。仍可使用重映射字典匹配自定义文本。"
   },
   "discord": {
     "title": "Discord",
@@ -211,6 +244,7 @@
     "title": "VRChat chatbox",
     "notice_title": "请先在 VRChat 中启用 OSC!",
     "notice_desc": "菜单 » 设置 » OSC » 启用",
+    "notice_desktop": "OSC 仅在 Sigil 桌面（Tauri）版可用，纯浏览器宿主无法调用。",
     "field_target": "目标",
     "btn_send_test": "发送测试",
 
@@ -226,10 +260,32 @@
     "kfi_pointer_key": "Pointer key",
     "kfi_chat_sync_key": "Char Sync key"
   },
+  "project": {
+    "title": "项目",
+    "confirm_reset_template": "将当前工作模板重置为空白布局？此操作无法撤销（请先导出 .sigiltmp 备份）。",
+    "migrate_toast": "已导入并完成兼容处理：{{details}}",
+    "toast_imported": "模板已导入。",
+    "section_template": "模板",
+    "template_live_copy": "Sigil 只维护一份工作模板。可导出 .sigiltmp 备份或分享；导入会替换当前模板。",
+    "template_autosave_desktop": "编辑后模板会自动保存到应用数据（约每 2 秒）。",
+    "template_autosave_client": "客户端模式使用宿主的模板，本机不写入本地文件。",
+    "btn_reset_template": "重置模板",
+    "btn_import_template": "导入模板…",
+    "field_export_author": "作者（导出）",
+    "btn_export_template": "导出模板",
+    "section_summary": "文档",
+    "field_canvas": "画布",
+    "field_scenes": "场景",
+    "field_elements": "元素",
+    "field_author": "作者",
+    "btn_edit_canvas": "编辑画布与场景"
+  },
   "scenes": {
     "title": "画布和场景",
     "section_canvas": "画布",
+    "section_transitions": "场景过渡",
     "section_scenes": "场景",
+    "canvas_resize_hint": "双击画布选中后，拖动边缘或角落控制点调整尺寸。",
     "field_canvas_size": "画布大小",
     "scene_menu_title": "场景", 
     "btn_add_scene": "添加场景",

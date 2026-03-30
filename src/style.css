@@ -831,3 +831,9 @@ fieldset>input[type="color"]::-webkit-color-swatch {
   flex: 1 1 0% !important;
   min-width: 0 !important;
 }
+
+/* react-shadow `root.div` → <core-div>: inline host breaks % height inside canvas element slots */
+core-div {
+  display: block;
+  box-sizing: border-box;
+}

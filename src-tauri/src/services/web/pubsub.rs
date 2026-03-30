@@ -58,11 +58,7 @@ pub async fn peer_handler<R: Runtime>(ws: WebSocket, peers: Peers, output: mpsc:
     let rx = UnboundedReceiverStream::new(rx);
     tauri::async_runtime::spawn(rx.forward(peer_tx));
 
-    if peers.read().await.contains_key(&query.id) {
-        println!("already registered");
-        return;
-    }
-
+    // Replace any existing peer with the same id (e.g. reconnect) so the map stays consistent.
     peers.write().await.insert(query.id.clone(), tx);
 
     while let Some(result) = peer_rx.next().await {

@@ -34,7 +34,8 @@ jobs:
       - name: compile
         run: pnpm tauri build
         env:
-          CURSES_TWITCH_CLIENT_ID: ${{secrets.CURSES_TWITCH_CLIENT_ID}}
+          # Prefer SIGIL_TWITCH_CLIENT_ID; CI may still only have CURSES_TWITCH_CLIENT_ID from older repo secrets.
+          SIGIL_TWITCH_CLIENT_ID: ${{ secrets.SIGIL_TWITCH_CLIENT_ID || secrets.CURSES_TWITCH_CLIENT_ID }}
 
       - name: create release
         uses: softprops/action-gh-release@v1

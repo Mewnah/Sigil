@@ -23,11 +23,11 @@ export class TTS_ChatterboxService implements ITTSService {
         this.#exaggeration = parseFloat(config.exaggeration);
 
         try {
-            await invoke("plugin:chatterbox_tts|set_chatterbox_endpoint", {
+            await invoke("plugin:chatterbox-tts|set_chatterbox_endpoint", {
                 endpoint: this.#endpoint,
             });
 
-            const isAvailable = await invoke<boolean>("plugin:chatterbox_tts|check_chatterbox_availability");
+            const isAvailable = await invoke<boolean>("plugin:chatterbox-tts|check_chatterbox_availability");
             if (!isAvailable) {
                 this.#receiver.onStop(
                     `Chatterbox not available at ${this.#endpoint}. Start with: docker compose up -d`
@@ -57,7 +57,7 @@ export class TTS_ChatterboxService implements ITTSService {
         if (!this.#isRunning || !text.trim()) return;
 
         try {
-            const audioBytes = await invoke<number[]>("plugin:chatterbox_tts|chatterbox_speak", {
+            const audioBytes = await invoke<number[]>("plugin:chatterbox-tts|chatterbox_speak", {
                 text,
                 voice: this.#voice,
                 speed: this.#speed,
@@ -93,8 +93,8 @@ export class TTS_ChatterboxService implements ITTSService {
 
     static async getVoices(endpoint: string = "http://localhost:5555"): Promise<{ id: string; name: string }[]> {
         try {
-            await invoke("plugin:chatterbox_tts|set_chatterbox_endpoint", { endpoint });
-            return await invoke<{ id: string; name: string }[]>("plugin:chatterbox_tts|get_chatterbox_voices");
+            await invoke("plugin:chatterbox-tts|set_chatterbox_endpoint", { endpoint });
+            return await invoke<{ id: string; name: string }[]>("plugin:chatterbox-tts|get_chatterbox_voices");
         } catch {
             return [];
         }

@@ -19,11 +19,11 @@ export class TTS_FishSpeechService implements ITTSService {
         this.#referenceId = config.referenceId;
 
         try {
-            await invoke("plugin:fish_speech|set_fish_endpoint", {
+            await invoke("plugin:fish-speech|set_fish_endpoint", {
                 endpoint: this.#endpoint,
             });
 
-            const isAvailable = await invoke<boolean>("plugin:fish_speech|check_fish_availability");
+            const isAvailable = await invoke<boolean>("plugin:fish-speech|check_fish_availability");
             if (!isAvailable) {
                 this.#receiver.onStop(
                     `Fish Speech not available at ${this.#endpoint}. Start with: docker run -p 8080:8080 fishaudio/fish-speech`
@@ -53,7 +53,7 @@ export class TTS_FishSpeechService implements ITTSService {
         if (!this.#isRunning || !text.trim()) return;
 
         try {
-            const audioBytes = await invoke<number[]>("plugin:fish_speech|fish_speak", {
+            const audioBytes = await invoke<number[]>("plugin:fish-speech|fish_speak", {
                 text,
                 referenceId: this.#referenceId || null,
             });
@@ -87,8 +87,8 @@ export class TTS_FishSpeechService implements ITTSService {
 
     static async getVoices(endpoint: string = "http://localhost:8080"): Promise<{ id: string; name: string }[]> {
         try {
-            await invoke("plugin:fish_speech|set_fish_endpoint", { endpoint });
-            return await invoke<{ id: string; name: string }[]>("plugin:fish_speech|get_fish_voices");
+            await invoke("plugin:fish-speech|set_fish_endpoint", { endpoint });
+            return await invoke<{ id: string; name: string }[]>("plugin:fish-speech|get_fish_voices");
         } catch {
             return [];
         }
