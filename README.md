@@ -4,9 +4,6 @@
 
 Sigil is an open-source desktop app (Tauri + React) for real-time speech-to-text, text-to-speech, translation, and on-screen text. Configure integrations once on the **host**, then drive captions from OBS, a second machine, or a browser **client** synced over the network.
 
-**Repository:** [github.com/Mewnah/Sigil](https://github.com/Mewnah/Sigil)  
-*(If the URL 404s briefly, your GitHub remote may still be the previous name until you finish renaming the repo in Settings → General.)*
-
 ## Features
 
 ### Speech-to-text (STT)
