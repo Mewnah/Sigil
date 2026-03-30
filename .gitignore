@@ -27,6 +27,12 @@ dist-ssr
 /test-results/
 /playwright-report/
 /playwright/.cache/
+# Cursor / local agent state (not part of the app)
+.agent/
+
+# npm lockfile — this repo standardizes on pnpm (see pnpm-lock.yaml)
+package-lock.json
+
 # Secrets and local overrides — never commit real credentials
 .env
 .env.*
