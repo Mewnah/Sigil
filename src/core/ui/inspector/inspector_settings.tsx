@@ -116,13 +116,13 @@ const Inspector_Settings: FC = memo(() => {
         <div className="self-center text-sm opacity-70 mt-2">
           Crafted with 💜 by <span className="text-primary font-semibold">Mewnah</span>
         </div>
-        <div className="self-center text-xs opacity-50">Built on the magic of Curses by mmpneo</div>
+        <div className="self-center text-xs opacity-50">Sigil — fork of Curses by mmpneo</div>
         <div className="self-center text-xs opacity-40 mt-1">v.{version}</div>
         <div className="flex space-x-1 self-center mt-3">
           <Tooltip content="Join the Party!" body={<span>Discord community for updates,<br />help, and good vibes 🎉</span>}>
             <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/Sw6pw8fGYS" aria-label="Discord" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiDiscord /></a>
           </Tooltip>
-          <Tooltip content="Where it all began" body={<span>The OG Curses project 🙏<br />Go give mmpneo some love!</span>}>
+          <Tooltip content="Upstream project" body={<span>Sigil builds on Curses by mmpneo.<br />Star the original repo.</span>}>
             <a target="_blank" rel="noopener noreferrer" href="https://github.com/mmpneo/curses" aria-label="GitHub" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiGithub /></a>
           </Tooltip>
         </div>

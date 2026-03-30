@@ -2,9 +2,9 @@
 name = "sigil"
 version = "0.2.0"
 description = "Sigil desktop application"
-authors = ["Curses", "Mewnah"]
+authors = ["Sigil contributors", "Mewnah"]
 license = ""
-repository = ""
+repository = "https://github.com/Mewnah/Sigil"
 edition = "2021"
 rust-version = "1.70"
 
