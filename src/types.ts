@@ -51,6 +51,16 @@ export enum TextEventSource {
 
 export const TextEventSourceSchema = z.nativeEnum(TextEventSource);
 
+export const ObsCaptionEnvelopeSchema = z.object({
+  v: z.literal(1),
+  source: TextEventSourceSchema,
+  type: z.enum(["final", "interim"]),
+  value: z.string(),
+  at: z.number(),
+});
+
+export type ObsCaptionEnvelope = z.infer<typeof ObsCaptionEnvelopeSchema>;
+
 export type InspectorTabPath = {
   tab: Services | ElementType | "settings" | "integrations" | "scenes" | "files" | "fonts" | "project" | "elements",
   value?: string

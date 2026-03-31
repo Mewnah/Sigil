@@ -93,9 +93,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     .or(pubsub::path(pubsub_input_rx, pubsub_output_tx, app_handle))
                     .or(assets::path(a));
 
+                // Match upstream Curses: bind all IPv4 interfaces so `http://localhost:PORT/client`
+                // works the same as in the original app (127.0.0.1-only rejects some localhost paths).
                 loop {
                     warp::serve(routes.clone())
-                        .run(([127, 0, 0, 1], app_port))
+                        .run(([0, 0, 0, 0], app_port))
                         .await
                 }
             });

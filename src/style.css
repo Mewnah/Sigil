@@ -585,15 +585,15 @@
   --radius-box: 0;
 }
 
-/* toasts */
+/* toasts — DaisyUI 5 uses --color-* (OKLCH/hex); legacy --in/--er are unset, so hsl(var(--er)/1) was invalid and backgrounds looked transparent */
 .toasts {
-  --toastify-color-light: #fff;
-  --toastify-color-dark: #121212;
-  --toastify-color-info: hsl(var(--in) / 1);
-  --toastify-color-success: hsl(var(--su) / 1);
-  --toastify-color-warning: hsl(var(--wa) / 1);
-  --toastify-color-error: hsl(var(--er) / 1);
-  --toastify-color-transparent: rgba(255, 255, 255, 0.7);
+  --toastify-color-light: var(--color-base-100);
+  --toastify-color-dark: var(--color-base-300);
+  --toastify-color-info: var(--color-info);
+  --toastify-color-success: var(--color-success);
+  --toastify-color-warning: var(--color-warning);
+  --toastify-color-error: var(--color-error);
+  --toastify-color-transparent: color-mix(in oklab, var(--color-base-100) 80%, transparent);
 
   --toastify-icon-color-info: var(--toastify-color-info);
   --toastify-icon-color-success: var(--toastify-color-success);
@@ -601,20 +601,20 @@
   --toastify-icon-color-error: var(--toastify-color-error);
 
   --toastify-toast-width: 320px;
-  --toastify-toast-background: #fff;
+  --toastify-toast-background: var(--color-base-100);
   --toastify-toast-min-height: 2rem;
   --toastify-toast-max-height: 800px;
   --toastify-font-family: sans-serif;
   --toastify-z-index: 9999;
 
-  --toastify-text-color-light: #757575;
-  --toastify-text-color-dark: #fff;
+  --toastify-text-color-light: var(--color-base-content);
+  --toastify-text-color-dark: var(--color-base-content);
 
-  /* //Used only for colored theme */
-  --toastify-text-color-info: hsl(var(--inc, var(--nc))/1);
-  --toastify-text-color-success: hsl(var(--suc, var(--nc))/1);
-  --toastify-text-color-warning: hsl(var(--wac, var(--nc))/1);
-  --toastify-text-color-error: hsl(var(--erc, var(--nc))/1);
+  /* colored theme: match DaisyUI semantic content when present */
+  --toastify-text-color-info: var(--color-info-content, var(--color-base-100));
+  --toastify-text-color-success: var(--color-success-content, var(--color-base-100));
+  --toastify-text-color-warning: var(--color-warning-content, var(--color-base-content));
+  --toastify-text-color-error: var(--color-error-content, var(--color-base-100));
 
   --toastify-spinner-color: #616161;
   --toastify-spinner-color-empty-area: #e0e0e0;
@@ -836,4 +836,21 @@ fieldset>input[type="color"]::-webkit-color-swatch {
 core-div {
   display: block;
   box-sizing: border-box;
+}
+
+/*
+ * OBS browser source uses CEF, often older than desktop Chrome. Tailwind v4’s @layer properties
+ * can no-op there, so utility classes (colors, spacing) may not apply. These plain fallbacks keep
+ * the /client mirror readable and visibly “alive” while PeerJS connects.
+ */
+html[data-sigil-client="1"],
+html[data-sigil-client="1"] body {
+  background-color: transparent;
+  color: #ebe7f7;
+  min-height: 100%;
+}
+
+html[data-sigil-client="1"] #root {
+  min-height: 100vh;
+  background-color: transparent;
 }

@@ -11,6 +11,7 @@ import { STT_WhisperService } from "./services/whisper";
 import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
 import { STT_OpenAI_AudioService } from "./services/openaiAudio";
+import { STT_ExternalMicService } from "./services/externalMic";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ISTTReceiver,
@@ -23,6 +24,8 @@ const backends: {
   [k in STT_Backends]?: ISTTServiceConstructor;
 } = {
   [STT_Backends.native]: STT_NativeService,
+  [STT_Backends.chrome]: STT_ExternalMicService,
+  [STT_Backends.edge]: STT_ExternalMicService,
   [STT_Backends.browser]: undefined,
   [STT_Backends.azure]: STT_AzureService,
   [STT_Backends.deepgram]: STT_DeepgramService,

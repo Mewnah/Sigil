@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
  */
 const routes = [
   ["index", "/"],
-  ["client shell", "/client?host=127.0.0.1&port=59999&id=server"],
+  ["client shell", "/client"],
 ] as const;
 
 test.describe("preview smoke", () => {
