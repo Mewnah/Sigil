@@ -1,6 +1,6 @@
 [package]
 name = "sigil"
-version = "0.2.0"
+version = "0.3.0"
 description = "Sigil desktop application"
 authors = ["Sigil contributors", "Mewnah"]
 license = ""
@@ -45,6 +45,7 @@ sha2 = "0.10"
 hex = "0.4"
 whisper-rs = "0.16"
 rubato = "0.14"
+pitch_shift = "1.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"

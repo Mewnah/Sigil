@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import { devLog } from "@/utils/devLog";
 import { TTS_State } from "../schema";
 import { ITTSReceiver, ITTSService } from "../types";
 
@@ -49,7 +50,7 @@ export class TTS_VoicevoxService implements ITTSService {
       }
 
       const version = await response.text();
-      console.log(`[VoiceVox] Connected to server version: ${version}`);
+      devLog(`[VoiceVox] Connected to server version: ${version}`);
 
       this.bindings.onStart();
     } catch (error: any) {

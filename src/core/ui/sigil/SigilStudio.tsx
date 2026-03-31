@@ -9,6 +9,7 @@ import { ElementTypeIcon } from "../ElementTypeIcon";
 import Tooltip from "../dropdown/Tooltip";
 import classNames from "classnames";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { devLog } from "@/utils/devLog";
 
 // Lazy load element inspectors - use vertical versions for right side panel
 const Inspector_ElementText = lazy(() => import("../inspector/inspector_text"));
@@ -200,7 +201,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
 
         // Logic to reorder elements would go here, updating state via API
         // For now, this is visual only
-        console.log(`Reorder: ${sourceIndex} -> ${targetIndex}`);
+        devLog(`Reorder: ${sourceIndex} -> ${targetIndex}`);
     };
 
     // --------------------------------------------------------------------------------

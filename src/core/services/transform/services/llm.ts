@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { Service_Transform_Schema } from "../schema";
 import { ITransformReceiver, ITransformService } from "../types";
 import { TextEvent } from "@/types";
+import { devLog } from "@/utils/devLog";
 import { z } from "zod";
 
 type TransformData = z.infer<typeof Service_Transform_Schema>;
@@ -48,9 +49,7 @@ export class Transform_LLMService implements ITransformService {
             apiKey = "dummy";
         }
 
-        if (import.meta.env.DEV) {
-            console.log(`[LLM] starting (${data.provider}), api key configured: ${apiKey !== "dummy"}`);
-        }
+        devLog(`[LLM] starting (${data.provider}), api key configured: ${apiKey !== "dummy"}`);
 
         const defaultHeaders: Record<string, string> = {
             // "Authorization": `Bearer ${apiKey}`, // SDK handles this

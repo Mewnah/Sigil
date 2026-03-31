@@ -71,13 +71,15 @@
     "btn_add_text": "添加文本",
     "btn_add_image": "添加图像",
     "section_elements": "元素",
-    "section_integrations": "集成"
+    "section_integrations": "集成",
+    "section_services": "服务"
   },
   "stt": {
     "title": "语音转文本",
     "field_enable_interim_results": "启用临时结果",
     "field_uwu_filter": "生成颜文字",
     "field_uwu_filter_desc": "只能在英语下使用 (* ^ ω ^)!!1",
+    "field_stop_with_stream": "随 Twitch 直播结束而停止",
     "state_muted": "静音",
     "state_": "静音",
 
@@ -86,6 +88,7 @@
     "browser_title": "浏览器",
     "browser_open_edge": "打开 Edge",
     "browser_open_chrome": "打开 Chrome",
+    "field_sync_timing": "与 AI 转换同步时间轴",
 
     "speechly_title": "Speechly",
     "speechly_appid": "App ID",
@@ -105,9 +108,11 @@
     "azure_profanity_masked": "隐藏",
     "azure_profanity_removed": "移除",
     "azure_profanity_raw": "不处理",
+    "azure_secondary_language": "第二语言",
+    "azure_use_secondary_language": "启用第二语言",
     "azure_silence_timeout": "静音超时",
-    "provider_moonshine": "Moonshine（本地服务）",
-    "provider_openai_audio": "本地 HTTP API（OpenAI 格式）",
+    "provider_moonshine": "Moonshine",
+    "provider_openai_audio": "本地 HTTP API",
     "moonshine_title": "Moonshine",
     "moonshine_desc": "在 Docker 或其他进程中运行 Useful Sensors Moonshine。服务端需提供 POST /transcribe 与 GET /health。",
     "moonshine_endpoint": "服务地址",
@@ -120,11 +125,14 @@
     "openai_audio_model_placeholder": "按你的服务端配置填写",
     "openai_audio_api_key": "API 密钥（可选，本地常留空）",
     "openai_audio_language": "语言（可选）",
-    "openai_audio_language_desc": "若服务端支持可填 ISO 代码；留空则由服务端自动处理。"
+    "openai_audio_language_desc": "若服务端支持可填 ISO 代码；留空则由服务端自动处理。",
+    "whisper_downloading": "正在下载 {{file}}…",
+    "whisper_download_complete": "下载完成 — {{file}}"
   },
   "tts": {
     "title": "文本转语音",
     "field_voice": "音色",
+    "field_stop_with_stream": "随 Twitch 直播结束而停止",
 
     "uberduck_title": "Uberduck",
     "uberduck_api_key": "Api key",
@@ -163,6 +171,10 @@
     "azure_profanity_raw": "不处理"
   },
 
+  "transform": {
+    "title": "AI 转换"
+  },
+
   "settings": {
     "title": "设置",
     "desc_1": "本应用由 Mmp 制作",
@@ -177,7 +189,11 @@
     "field_app_theme": "应用主题",
     "field_ui_scale": "UI 大小",
     "field_language": "语言",
-    "field_ip_address": "IP地址"
+    "field_ip_address": "IP地址",
+    "credits_mmpneo": "衷心感谢 mmpneo 创建并以开源方式分享 Curses。没有这份基础，就不会有 Sigil。",
+    "tooltip_curses_github_title": "Curses（GitHub）",
+    "tooltip_curses_github_body": "Sigil 所基于的原始应用，作者为 mmpneo。若对你有帮助，欢迎为上游仓库点星。",
+    "footer_vrchat": "为 VRChat 社区而做"
   },
 
   "word_replacements": {
@@ -238,6 +254,7 @@
     "field_post_in_chat": "在聊天中发布",
     "field_post_in_chat_desc": "将语音转文本、翻译或其他管道文本发送到聊天。若要从工作室输入栏或覆盖层打字发送，请启用「使用键盘输入」。",
     "field_post_in_chat_live": "仅在在线时发布",
+    "field_post_in_chat_delay": "发送延迟（毫秒）",
     "field_chat_text": "使用聊天消息",
     "field_chat_text_desc": "将观众聊天送入文本流程（忽略你自己发送的消息，以免在同时向聊天发帖时产生回声）",
 
@@ -290,7 +307,7 @@
     "migrate_toast": "已导入并完成兼容处理：{{details}}",
     "toast_imported": "模板已导入。",
     "section_template": "模板",
-    "template_live_copy": "Sigil 只维护一份工作模板。可导出 .sigiltmp 备份或分享；导入会替换当前模板。",
+    "template_live_copy": "Sigil 只维护一份工作模板。可导出 .sigiltmp 备份或分享。导入支持 .sigiltmp、Curses 的 .cursestmp 或 JSON，并会替换当前模板。",
     "template_autosave_desktop": "编辑后模板会自动保存到应用数据（约每 2 秒）。",
     "template_autosave_client": "客户端模式使用宿主的模板，本机不写入本地文件。",
     "btn_reset_template": "重置模板",

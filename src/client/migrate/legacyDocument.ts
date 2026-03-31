@@ -104,15 +104,24 @@ function pickActiveScene(active: unknown, sceneKeys: string[]): string {
   return sceneKeys[0] ?? "main";
 }
 
+export type MigratedDocument =
+  | {
+      ok: true;
+      doc: DocumentState;
+      notes: string[];
+      /** When {@link migrateLegacyJsonDocument} was called with `fileBinaries`, aligned to `doc.filesMeta` indices. */
+      alignedFileBinaries?: Uint8Array[];
+    }
+  | { ok: false; error: string };
+
 /**
  * Normalizes JSON from Sigil, Curses, or close forks, then validates with {@link DocumentSchema}.
  * Curses exports omitted `snapToGrid`, `transition`, per-scene `animation`, and newer text sources.
+ *
+ * Pass `fileBinaries` (same order as `filesMeta` in the template) when importing a Yjs template (e.g. `.cursestmp`)
+ * so dropped invalid file rows stay in sync with embedded asset blobs.
  */
-export function migrateLegacyJsonDocument(input: unknown): {
-  ok: true;
-  doc: DocumentState;
-  notes: string[];
-} | { ok: false; error: string } {
+export function migrateLegacyJsonDocument(input: unknown, fileBinaries?: Uint8Array[]): MigratedDocument {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "File is not a JSON object." };
   }
@@ -161,11 +170,33 @@ export function migrateLegacyJsonDocument(input: unknown): {
   raw.activeScene = pickActiveScene(raw.activeScene, sceneKeyList);
 
   const prevFiles = Array.isArray(raw.filesMeta) ? raw.filesMeta : [];
-  const prevFilesLen = prevFiles.length;
-  const nextFiles = sanitizeFilesMeta(raw.filesMeta);
-  raw.filesMeta = nextFiles;
-  if (prevFilesLen > nextFiles.length) {
-    notes.push(`Dropped ${prevFilesLen - nextFiles.length} invalid file metadata entr(y/ies).`);
+  let alignedFileBinaries: Uint8Array[] | undefined;
+
+  if (fileBinaries !== undefined) {
+    const nextMeta: unknown[] = [];
+    const aligned: Uint8Array[] = [];
+    let dropped = 0;
+    for (let i = 0; i < prevFiles.length; i++) {
+      if (!FileStateSchema.safeParse(prevFiles[i]).success) {
+        dropped++;
+        continue;
+      }
+      nextMeta.push(cloneJson(prevFiles[i]));
+      const b = i < fileBinaries.length ? fileBinaries[i] : new Uint8Array();
+      aligned.push(b instanceof Uint8Array ? new Uint8Array(b) : new Uint8Array());
+    }
+    raw.filesMeta = nextMeta;
+    if (dropped > 0) {
+      notes.push(`Dropped ${dropped} invalid file metadata entr(y/ies) and matching asset data.`);
+    }
+    alignedFileBinaries = aligned;
+  } else {
+    const prevFilesLen = prevFiles.length;
+    const nextFiles = sanitizeFilesMeta(raw.filesMeta);
+    raw.filesMeta = nextFiles;
+    if (prevFilesLen > nextFiles.length) {
+      notes.push(`Dropped ${prevFilesLen - nextFiles.length} invalid file metadata entr(y/ies).`);
+    }
   }
 
   if (ensureSceneAnimations(elements)) {
@@ -182,5 +213,10 @@ export function migrateLegacyJsonDocument(input: unknown): {
     return { ok: false, error: `Invalid project data after migration: ${msg}` };
   }
 
-  return { ok: true, doc: parsed.data, notes };
+  return {
+    ok: true,
+    doc: parsed.data,
+    notes,
+    ...(alignedFileBinaries !== undefined ? { alignedFileBinaries } : {}),
+  };
 }

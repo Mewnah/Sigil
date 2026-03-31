@@ -175,6 +175,10 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   }
 
   async #sendInterim(sentence: string) {
+    if (sentence.trim() === "") {
+      this.updateLastMessage("", false);
+      return;
+    }
     let value = sentence;
     if (this.data.uwu) {
       value = await invoke<string>("plugin:uwu|translate", { value: sentence });

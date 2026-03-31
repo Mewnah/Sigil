@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
 import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 export class STT_WhisperService implements ISpeechRecognitionService {
     private unlistenProgress?: UnlistenFn;
@@ -13,18 +14,18 @@ export class STT_WhisperService implements ISpeechRecognitionService {
 
     async start(params: STT_State) {
         try {
-            console.log("[Whisper] Starting service...");
+            devLog("[Whisper] Starting service...");
             this.receiver.onStart();
             this.accumulatedText = ""; // Reset on start
 
             // Listen for download progress
             this.unlistenProgress = await listen("whisper:download_progress", (event) => {
                 const payload = event.payload as { file: string; progress: number };
-                console.log(`[Whisper] Downloading ${payload.file}: ${payload.progress.toFixed(1)}%`);
+                devLog(`[Whisper] Downloading ${payload.file}: ${payload.progress.toFixed(1)}%`);
                 this.receiver.onInterim(`Downloading ${payload.file}: ${payload.progress.toFixed(0)}%...`);
             });
 
-            console.log("[Whisper] Ensuring dependencies...", { model: params.whisper.model, language: params.whisper.language });
+            devLog("[Whisper] Ensuring dependencies...", { model: params.whisper.model, language: params.whisper.language });
             await invoke("plugin:whisper|ensure_dependencies", {
                 model: params.whisper.model,
                 language: params.whisper.language,
@@ -34,10 +35,11 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 this.unlistenProgress();
                 this.unlistenProgress = undefined;
             }
+            this.receiver.onInterim("");
 
             // IMPORTANT: Set up partial result listener BEFORE starting recording
             // to ensure we don't miss any events from early chunks
-            console.log("[Whisper] Setting up partial result listener...");
+            devLog("[Whisper] Setting up partial result listener...");
             this.unlistenPartial = await listen("whisper:partial_result", (event) => {
                 let text = event.payload as string;
                 // console.log("[Whisper] Partial result received:", text);
@@ -54,7 +56,7 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 }
             });
 
-            console.log("[Whisper] Starting recording...");
+            devLog("[Whisper] Starting recording...");
             // Use service device setting or global fallback
             const deviceName = params.whisper.device || window.ApiServer.state.audioInputDevice || "";
             await invoke("plugin:whisper|start_recording", {
@@ -66,10 +68,15 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 captureLocal: true,
             });
             this.isRecording = true;
-            console.log("[Whisper] Recording started - real-time transcription active");
+            devLog("[Whisper] Recording started - real-time transcription active");
         } catch (error) {
             console.error("[Whisper] Error starting:", error);
             this.isRecording = false;
+            if (this.unlistenProgress) {
+                this.unlistenProgress();
+                this.unlistenProgress = undefined;
+            }
+            void emit("whisper:download_dismiss", {});
             if (this.unlistenPartial) {
                 this.unlistenPartial();
                 this.unlistenPartial = undefined;
@@ -94,7 +101,7 @@ export class STT_WhisperService implements ISpeechRecognitionService {
         }
 
         try {
-            console.log("[Whisper] Stopping recording...");
+            devLog("[Whisper] Stopping recording...");
             await invoke<string>("plugin:whisper|stop_recording");
 
             // No need to emit final accumulated text as we emit segments in real-time
@@ -107,13 +114,14 @@ export class STT_WhisperService implements ISpeechRecognitionService {
     }
 
     dispose() {
-        console.log("[Whisper] Disposing service");
+        devLog("[Whisper] Disposing service");
         this.isRecording = false;
         this.accumulatedText = "";
 
         if (this.unlistenProgress) {
             this.unlistenProgress();
             this.unlistenProgress = undefined;
+            void emit("whisper:download_dismiss", {});
         }
 
         if (this.unlistenPartial) {

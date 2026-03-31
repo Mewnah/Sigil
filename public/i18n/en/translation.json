@@ -106,8 +106,8 @@
     "azure_secondary_language": "Secondary language",
     "azure_use_secondary_language": "Enable secondary language",
     "azure_silence_timeout": "Silence timeout",
-    "provider_moonshine": "Moonshine (local server)",
-    "provider_openai_audio": "Local HTTP API (OpenAI-style)",
+    "provider_moonshine": "Moonshine",
+    "provider_openai_audio": "Local HTTP API",
     "moonshine_title": "Moonshine",
     "moonshine_desc": "Runs Useful Sensors Moonshine in Docker or another process. Endpoint must expose POST /transcribe and GET /health.",
     "moonshine_endpoint": "Server URL",
@@ -120,7 +120,9 @@
     "openai_audio_model_placeholder": "As configured on your server",
     "openai_audio_api_key": "API key (optional, local servers often skip)",
     "openai_audio_language": "Language (optional)",
-    "openai_audio_language_desc": "ISO code if the server supports it; leave empty to let the server decide."
+    "openai_audio_language_desc": "ISO code if the server supports it; leave empty to let the server decide.",
+    "whisper_downloading": "Downloading {{file}}…",
+    "whisper_download_complete": "Download complete — {{file}}"
   },
   "tts": {
     "title": "Text-to-Speech",
@@ -176,7 +178,11 @@
     "field_app_theme": "App theme",
     "field_ui_scale": "UI scale",
     "field_language": "Language",
-    "field_ip_address": "IP address"
+    "field_ip_address": "IP address",
+    "credits_mmpneo": "Huge thanks to mmpneo for creating and open-sourcing Curses. Sigil wouldn't exist without that foundation.",
+    "tooltip_curses_github_title": "Curses on GitHub",
+    "tooltip_curses_github_body": "The original app by mmpneo that Sigil builds on. Star the repo if their work helped you.",
+    "footer_vrchat": "Made for the VRChat community"
   },
   "word_replacements": {
     "title": "Word replacements",
@@ -284,7 +290,7 @@
     "migrate_toast": "Imported with compatibility updates: {{details}}",
     "toast_imported": "Template imported.",
     "section_template": "Template",
-    "template_live_copy": "Sigil keeps one working template. Export a .sigiltmp file to back it up or share it. Import replaces the current template.",
+    "template_live_copy": "Sigil keeps one working template. Export a .sigiltmp file to back it up or share it. Import accepts .sigiltmp, Curses .cursestmp, or JSON and replaces the current template.",
     "template_autosave_desktop": "After edits, the template is saved automatically to app data (about every 2 seconds).",
     "template_autosave_client": "Client mode uses the host’s template; this device does not write a local copy.",
     "btn_reset_template": "Reset template",
@@ -430,15 +436,5 @@
     "install_google": "Install from google fonts",
     "install_google_desc": "Find font at Google Fonts and copypaste it's name here.",
     "btn_install": "Install from file system"
-  },
-  "Engine": "Engine",
-  "AI Provider": "AI Provider",
-  "API Key": "API Key",
-  "API URL": "API URL",
-  "Model Name": "Model Name",
-  "System Prompt": "System Prompt",
-  "Enable VAD (Auto-transcribe on silence)": "Enable VAD (Auto-transcribe on silence)",
-  "Silence Threshold (dB)": "Silence Threshold (dB)",
-  "Silence Duration (ms)": "Silence Duration (ms)",
-  "Minimum Chunk Duration (ms)": "Minimum Chunk Duration (ms)"
+  }
 }

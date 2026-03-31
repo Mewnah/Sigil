@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver, ITTSService } from "../types";
 import { TTS_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 export class TTS_FishSpeechService implements ITTSService {
     #receiver: ITTSReceiver;
@@ -34,7 +35,7 @@ export class TTS_FishSpeechService implements ITTSService {
             this.#audioContext = new AudioContext();
             this.#isRunning = true;
             this.#receiver.onStart();
-            console.log("[Fish Speech] Service started");
+            devLog("[Fish Speech] Service started");
         } catch (error) {
             console.error("[Fish Speech] Failed to start:", error);
             this.#receiver.onStop(String(error));

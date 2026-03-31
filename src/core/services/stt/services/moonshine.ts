@@ -3,6 +3,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { floatSamplesToWavBase64 } from "../encodeWav";
 import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 interface AudioChunkPayload {
   samples: number[];
@@ -38,7 +39,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
 
   async start(params: STT_State) {
     try {
-      console.log("[Moonshine] Starting service...");
+      devLog("[Moonshine] Starting service...");
       this.receiver.onInterim("Connecting to Moonshine...");
 
       const config = params.moonshine;
@@ -63,7 +64,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
         return;
       }
 
-      console.log("[Moonshine] Server connected");
+      devLog("[Moonshine] Server connected");
 
       this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
         if (!this.isRunning) return;
@@ -84,7 +85,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
       }, 500);
 
       this.receiver.onStart();
-      console.log("[Moonshine] Recording started");
+      devLog("[Moonshine] Recording started");
     } catch (error) {
       console.error("[Moonshine] Error starting:", error);
       await this.teardownPipeline();
@@ -119,7 +120,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
       });
 
       if (text.trim()) {
-        console.log("[Moonshine] Result:", text);
+        devLog("[Moonshine] Result:", text);
         this.receiver.onFinal(text);
       }
     } catch (error) {
@@ -134,10 +135,10 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
   async stop() {
     if (!this.isRunning && !this.unlistenAudio && !this.processingInterval) return;
 
-    console.log("[Moonshine] Stopping...");
+    devLog("[Moonshine] Stopping...");
     await this.teardownPipeline();
     this.receiver.onStop();
-    console.log("[Moonshine] Stopped");
+    devLog("[Moonshine] Stopped");
   }
 
   dispose() {

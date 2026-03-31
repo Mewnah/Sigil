@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { BaseDirectory } from "@tauri-apps/api/path";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { devLog } from "@/utils/devLog";
 
 /** Mirrors Rust `VoskModel` for `get_vosk_models`. */
 export type VoskCatalogModel = {
@@ -31,21 +32,69 @@ interface AudioChunkPayload {
     channels: number;
 }
 
+/** Loaded model from `vosk-browser` `createModel()` — `KaldiRecognizer` is a getter, not a module export. */
+type VoskLoadedModel = {
+    KaldiRecognizer: new (sampleRate: number, grammar?: string) => VoskRecognizer;
+    terminate(): void;
+};
+
+type VoskRecognizer = {
+    remove(): void;
+    acceptWaveformFloat(buffer: Float32Array, sampleRate: number): void;
+    on(event: string, cb: (msg: unknown) => void): void;
+};
+
+function toMonoFloat32(samples: number[], channels: number): Float32Array {
+    if (channels <= 1) {
+        return new Float32Array(samples);
+    }
+    const n = Math.floor(samples.length / channels);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        let sum = 0;
+        for (let c = 0; c < channels; c++) {
+            sum += samples[i * channels + c]!;
+        }
+        out[i] = sum / channels;
+    }
+    return out;
+}
+
 export class STT_VoskService implements ISpeechRecognitionService {
-    private model: unknown = null;
-    private recognizer: {
-        remove(): void;
-        acceptWaveform(data: Int16Array): void;
-        on(event: string, cb: (msg: unknown) => void): void;
-    } | null = null;
+    private model: VoskLoadedModel | null = null;
+    private recognizer: VoskRecognizer | null = null;
     private isRunning = false;
     private unlistenAudio?: UnlistenFn;
 
     constructor(private readonly receiver: ISTTReceiver) { }
 
+    #ensureRecognizer(sampleRate: number) {
+        if (this.recognizer || !this.model) return;
+        const Rec = this.model.KaldiRecognizer;
+        this.recognizer = new Rec(sampleRate);
+
+        this.recognizer.on("result", (msg: unknown) => {
+            const message = msg as { result?: { text?: string } };
+            const text = message.result?.text || "";
+            if (text.trim()) {
+                devLog("[Vosk] Final result:", text);
+                this.receiver.onFinal(text);
+            }
+        });
+
+        this.recognizer.on("partialresult", (msg: unknown) => {
+            const message = msg as { result?: { partial?: string } };
+            const partial = message.result?.partial || "";
+            if (partial.trim()) {
+                devLog("[Vosk] Partial result:", partial);
+                this.receiver.onInterim(partial);
+            }
+        });
+    }
+
     async start(params: STT_State) {
         try {
-            console.log("[Vosk] Starting service...");
+            devLog("[Vosk] Starting service...");
             this.receiver.onInterim("Loading Vosk...");
 
             const modelId = params.vosk.model || "vosk-model-small-en-us-0.15";
@@ -54,75 +103,61 @@ export class STT_VoskService implements ISpeechRecognitionService {
             this.receiver.onInterim(`Ensuring model on disk: ${modelId}...`);
 
             const relPath = await invoke<string>("plugin:vosk-stt|download_vosk_model", {
-                model_id: modelId,
-                url_override: customUrl,
+                modelId,
+                urlOverride: customUrl,
             });
 
             const bytes = await readFile(relPath, { baseDir: BaseDirectory.AppData });
             const blob = new Blob([bytes], { type: "application/zip" });
             const objectUrl = URL.createObjectURL(blob);
 
-            console.log(`[Vosk] Loading model from local zip (${bytes.byteLength} bytes)`);
+            devLog(`[Vosk] Loading model from local zip (${bytes.byteLength} bytes)`);
             this.receiver.onInterim(`Loading Vosk model (${modelId})...`);
 
-            const { createModel, KaldiRecognizer } = await import("vosk-browser");
+            const { createModel } = await import("vosk-browser");
 
             try {
-                this.model = await createModel(objectUrl);
+                this.model = (await createModel(objectUrl)) as VoskLoadedModel;
             } finally {
                 URL.revokeObjectURL(objectUrl);
             }
 
-            console.log("[Vosk] Model loaded successfully");
-
-            const sampleRate = 16000;
-            this.recognizer = new KaldiRecognizer(this.model as never, sampleRate);
-
-            this.recognizer.on("result", (msg: unknown) => {
-                const message = msg as { result?: { text?: string } };
-                const text = message.result?.text || "";
-                if (text.trim()) {
-                    console.log("[Vosk] Final result:", text);
-                    this.receiver.onFinal(text);
-                }
-            });
-
-            this.recognizer.on("partialresult", (msg: unknown) => {
-                const message = msg as { result?: { partial?: string } };
-                const partial = message.result?.partial || "";
-                if (partial.trim()) {
-                    console.log("[Vosk] Partial result:", partial);
-                    this.receiver.onInterim(partial);
-                }
-            });
-
-            console.log("[Vosk] Setting up Rust audio capture...");
-            this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
-                if (!this.isRunning || !this.recognizer) return;
-
-                const { samples } = event.payload;
-                const int16Data = new Int16Array(samples.length);
-                for (let i = 0; i < samples.length; i++) {
-                    int16Data[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768)));
-                }
-
-                this.recognizer.acceptWaveform(int16Data);
-            });
+            devLog("[Vosk] Model loaded successfully");
 
             const deviceName = params.vosk.device || window.ApiServer.state.audioInputDevice || "";
-            console.log("[Vosk] Starting Rust audio capture with device:", deviceName || "default");
+            devLog("[Vosk] Setting up Rust audio capture...");
+
+            this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
+                if (!this.isRunning || !this.model) return;
+
+                const { samples, sample_rate, channels } = event.payload;
+                this.#ensureRecognizer(sample_rate);
+                if (!this.recognizer) return;
+
+                const floats = toMonoFloat32(samples, channels);
+                this.recognizer.acceptWaveformFloat(floats, sample_rate);
+            });
+
+            devLog("[Vosk] Starting Rust audio capture with device:", deviceName || "default");
+
+            // Set before capture starts so the first `audio:chunk` is not dropped (Rust uses device native rate).
+            this.isRunning = true;
 
             await invoke("plugin:audio|start_audio_capture", {
                 deviceName: deviceName || null,
-                sampleRate,
+                sampleRate: 16000,
             });
 
-            this.isRunning = true;
             this.receiver.onStart();
-            console.log("[Vosk] Recording started via Rust audio capture");
+            devLog("[Vosk] Recording started via Rust audio capture");
 
         } catch (error) {
             console.error("[Vosk] Error starting:", error);
+            this.isRunning = false;
+            if (this.unlistenAudio) {
+                this.unlistenAudio();
+                this.unlistenAudio = undefined;
+            }
             this.receiver.onStop(String(error));
         }
     }
@@ -130,7 +165,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
     async stop() {
         if (!this.isRunning) return;
 
-        console.log("[Vosk] Stopping...");
+        devLog("[Vosk] Stopping...");
         this.isRunning = false;
 
         try {
@@ -150,14 +185,14 @@ export class STT_VoskService implements ISpeechRecognitionService {
         }
 
         this.receiver.onStop();
-        console.log("[Vosk] Stopped");
+        devLog("[Vosk] Stopped");
     }
 
     dispose() {
         void this.stop();
 
         if (this.model) {
-            (this.model as { terminate(): void }).terminate();
+            this.model.terminate();
             this.model = null;
         }
     }

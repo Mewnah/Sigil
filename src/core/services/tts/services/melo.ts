@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver, ITTSService } from "../types";
 import { TTS_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 interface MeloSpeaker {
     id: string;
@@ -44,7 +45,7 @@ export class TTS_MeloService implements ITTSService {
             this.#audioContext = new AudioContext();
             this.#isRunning = true;
             this.#receiver.onStart();
-            console.log("[MeloTTS] Service started");
+            devLog("[MeloTTS] Service started");
         } catch (error) {
             console.error("[MeloTTS] Failed to start:", error);
             this.#receiver.onStop(String(error));
@@ -57,7 +58,7 @@ export class TTS_MeloService implements ITTSService {
             this.#audioContext.close();
             this.#audioContext = null;
         }
-        console.log("[MeloTTS] Service stopped");
+        devLog("[MeloTTS] Service stopped");
     }
 
     async play(text: string): Promise<void> {

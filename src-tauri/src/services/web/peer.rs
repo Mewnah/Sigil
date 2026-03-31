@@ -40,7 +40,8 @@ pub async fn peer_handler(ws: WebSocket, peers: Peers, query: PeerQueryData) {
     tauri::async_runtime::spawn(rx.forward(peer_tx));
 
     if peers.read().await.contains_key(&query.id) {
-        println!("already registered");
+        #[cfg(debug_assertions)]
+        eprintln!("[peer] already registered: {}", query.id);
         return;
     }
 

@@ -4,6 +4,7 @@ import {decoding, encoding}                                                     
 import {readSyncMessage, writeUpdate} from "y-protocols/sync";
 import {nanoid}      from "nanoid";
 import { BaseEvent } from "@/types";
+import { devLog } from "@/utils/devLog";
 
 /** PeerJS uses `ws://{host}:{port}/peer/…`. Normalize loopback names to IPv4 so signaling hits the Warp listener. */
 function peerSignalingHost(host: string): string {
@@ -53,7 +54,7 @@ export class PeerjsProvider extends EventTarget {
       debug: 0});
     this.#peer.on("open", () => {});
     this.#peer.on("connection", clientConn => {
-      console.log("connected client", clientConn);
+      devLog("connected client", clientConn);
       this.peers[clientConn.connectionId] = clientConn;
       clientConn.on("open", () => {
         this.dispatchEvent(new CustomEvent("on_client_connected", {detail: clientConn.connectionId}))

@@ -4,6 +4,7 @@ import { BackendState } from "@/core/schema";
 import { TextEvent, TextEventSource } from "@/types";
 import { z } from "zod";
 import { useSnapshot } from "valtio";
+import { devLog } from "./devLog";
 
 export function GetArrayDiff(source: string[], target: string[]) {
   const add = difference(target, source);
@@ -97,7 +98,7 @@ export type WordReplacementsCache = {
 
 export function buildWordReplacementsCache(map: Record<string, string>, caseInsensitive: boolean): WordReplacementsCache {
   let trimKeys = Object.fromEntries(Object.entries(map).map(([k, v]) => [k.trim(), v]));
-  console.log(trimKeys);
+  devLog(trimKeys);
   let _map = {}
   if (caseInsensitive) {
     _map = Object.fromEntries(Object.entries(map).map(([k, v]) => [k.toLowerCase(), v]));

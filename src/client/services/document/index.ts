@@ -71,6 +71,19 @@ class Service_Document implements IServiceInterface {
     }
   }
 
+  /** Replaces the Yjs `files` array (embedded fonts/images) used with `filesMeta`. */
+  #replaceYFileBinaries(chunks: Uint8Array[]) {
+    const dest = this.#file.getArray<Uint8Array>("files");
+    this.#file.transact(() => {
+      if (dest.length > 0) {
+        dest.delete(0, dest.length);
+      }
+      for (const u of chunks) {
+        dest.push([new Uint8Array(u)]);
+      }
+    });
+  }
+
   #syncDocumentUndoState = () => {
     documentUndoState.canUndo = this.#undoManager.canUndo();
     documentUndoState.canRedo = this.#undoManager.canRedo();
@@ -148,8 +161,8 @@ class Service_Document implements IServiceInterface {
     const path = await open({
       filters: [
         {
-          name: "Sigil template (.sigiltmp, JSON)",
-          extensions: ["sigiltmp", "json", "sigil"],
+          name: "Template (.sigiltmp, .cursestmp, JSON)",
+          extensions: ["sigiltmp", "cursestmp", "json", "sigil"],
         },
       ],
     });
@@ -198,18 +211,45 @@ class Service_Document implements IServiceInterface {
       return;
     }
     const tempBinder = bind<DocumentState>(tempDoc.getMap("template"));
-    const parsed = DocumentSchema.safeParse(tempBinder.get());
-    if (!parsed.success) {
-      toast.error("Invalid template file.");
+    const snapshot = tempBinder.get();
+
+    const yFiles = tempDoc.getArray<Uint8Array>("files");
+    const fileBinaries: Uint8Array[] = [];
+    for (let i = 0; i < yFiles.length; i++) {
+      const chunk = yFiles.get(i);
+      fileBinaries.push(chunk instanceof Uint8Array ? new Uint8Array(chunk) : new Uint8Array());
+    }
+
+    const parsed = DocumentSchema.safeParse(snapshot);
+    if (parsed.success) {
+      this.#replaceYFileBinaries(fileBinaries);
+      this.patch((state) => {
+        this.patchState(state, parsed.data);
+      });
+      this.#undoManager.clear(true, true);
+      this.#syncDocumentUndoState();
+      await this.#saveDocumentNative(this.#file);
+      toast.success(i18n.t("project.toast_imported"));
       return;
     }
+
+    const migrated = migrateLegacyJsonDocument(snapshot, fileBinaries);
+    if (!migrated.ok) {
+      toast.error(migrated.error);
+      return;
+    }
+    this.#replaceYFileBinaries(migrated.alignedFileBinaries ?? []);
     this.patch((state) => {
-      this.patchState(state, parsed.data);
+      this.patchState(state, migrated.doc);
     });
     this.#undoManager.clear(true, true);
     this.#syncDocumentUndoState();
     await this.#saveDocumentNative(this.#file);
-    toast.success(i18n.t("project.toast_imported"));
+    if (migrated.notes.length > 0) {
+      toast.info(i18n.t("project.migrate_toast", { details: migrated.notes.join(" ") }));
+    } else {
+      toast.success(i18n.t("project.toast_imported"));
+    }
   }
 
   /** Replace the working template with defaults (new canvas + one text element). Saves immediately. */

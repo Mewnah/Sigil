@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver, ITTSService } from "../types";
 import { TTS_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 export class TTS_ChatterboxService implements ITTSService {
     #receiver: ITTSReceiver;
@@ -38,7 +39,7 @@ export class TTS_ChatterboxService implements ITTSService {
             this.#audioContext = new AudioContext();
             this.#isRunning = true;
             this.#receiver.onStart();
-            console.log("[Chatterbox] Service started");
+            devLog("[Chatterbox] Service started");
         } catch (error) {
             console.error("[Chatterbox] Failed to start:", error);
             this.#receiver.onStop(String(error));

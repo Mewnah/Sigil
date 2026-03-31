@@ -8,6 +8,7 @@ import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { serviceSubscibeToInput, serviceSubscibeToSource } from "../../../utils";
 import { OBS_State } from "./schema";
+import { devLog } from "@/utils/devLog";
 
 export class ObsControlService {
   private wsInstance!: OBSWebSocket;
@@ -109,7 +110,7 @@ export class ObsControlService {
 
   private triggerReconnect() {
     const delay = Math.min(1000 * (2 ** this.reconnectAttempts), 30000);
-    console.log(`[OBS] Reconnecting in ${delay}ms (Attempt ${this.reconnectAttempts + 1})`);
+    devLog(`[OBS] Reconnecting in ${delay}ms (Attempt ${this.reconnectAttempts + 1})`);
 
     this.reconnectTimeoutHandle = setTimeout(() => {
       this.reconnectAttempts++;

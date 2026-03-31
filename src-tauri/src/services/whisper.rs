@@ -158,6 +158,11 @@ struct ProgressPayload {
     progress: f64,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct DownloadCompletePayload {
+    file: String,
+}
+
 fn calculate_rms_db(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return -100.0;
@@ -215,7 +220,9 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
         ctx_guard.is_none() || !model_path.exists()
     };
 
+    let mut downloaded_model = false;
     if !model_path.exists() {
+        downloaded_model = true;
         let partial_path = whisper_dir.join(format!("{}.partial", model_filename));
         let _ = fs::remove_file(&partial_path);
 
@@ -260,7 +267,25 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
                             progress: (downloaded as f64 / total as f64) * 100.0,
                         },
                     );
+                } else if downloaded > 0 {
+                    // Unknown total length: still show activity (indeterminate % in UI)
+                    let _ = app.emit(
+                        "whisper:download_progress",
+                        ProgressPayload {
+                            file: model_filename.to_string(),
+                            progress: 0.0,
+                        },
+                    );
                 }
+            }
+            if total > 0 {
+                let _ = app.emit(
+                    "whisper:download_progress",
+                    ProgressPayload {
+                        file: model_filename.to_string(),
+                        progress: 100.0,
+                    },
+                );
             }
         }
 
@@ -294,6 +319,15 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
         let ctx =
             WhisperContext::new_with_params(path_str, WhisperContextParameters::default()).map_err(|e| format!("Failed to load context: {}", e))?;
         *ctx_guard = Some(ctx);
+    }
+
+    if downloaded_model {
+        let _ = app.emit(
+            "whisper:download_complete",
+            DownloadCompletePayload {
+                file: model_filename.to_string(),
+            },
+        );
     }
     Ok(())
 }

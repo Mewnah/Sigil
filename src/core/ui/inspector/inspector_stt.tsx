@@ -1,7 +1,7 @@
 import { STT_Backends, STT_State } from "@/core/services/stt/schema";
 import { ServiceNetworkState } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { FC, useState, useEffect } from "react";
 import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";
 import { SiGooglechrome, SiMicrosoftedge } from "react-icons/si";
@@ -193,20 +193,42 @@ const Deepgram: FC = () => {
   </>
 }
 
+type WhisperDownloadUi =
+  | null
+  | { file: string; progress: number; phase: "loading" }
+  | { file: string; progress: number; phase: "complete" };
+
 const Whisper: FC = () => {
   const { t } = useTranslation();
-  const [downloadProgress, setDownloadProgress] = useState<{ file: string, progress: number } | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<WhisperDownloadUi>(null);
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.whisper);
   const up = <K extends keyof STT_State["whisper"]>(key: K, v: STT_State["whisper"][K]) => window.ApiServer.state.services.stt.data.whisper[key] = v;
 
   useEffect(() => {
-    const unlisten = listen("whisper:download_progress", (event) => {
+    let dismissTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsubs: UnlistenFn[] = [];
+
+    listen("whisper:download_progress", (event) => {
       const payload = event.payload as { file: string; progress: number };
-      setDownloadProgress(payload);
-    });
+      setDownloadProgress({ file: payload.file, progress: payload.progress, phase: "loading" });
+    }).then((u) => unsubs.push(u));
+
+    listen("whisper:download_complete", (event) => {
+      const file = (event.payload as { file?: string }).file ?? "";
+      if (dismissTimer) clearTimeout(dismissTimer);
+      setDownloadProgress({ file, progress: 100, phase: "complete" });
+      dismissTimer = setTimeout(() => setDownloadProgress(null), 2000);
+    }).then((u) => unsubs.push(u));
+
+    listen("whisper:download_dismiss", () => {
+      if (dismissTimer) clearTimeout(dismissTimer);
+      setDownloadProgress(null);
+    }).then((u) => unsubs.push(u));
+
     return () => {
-      unlisten.then(f => f());
-    }
+      if (dismissTimer) clearTimeout(dismissTimer);
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
   return <>
@@ -264,11 +286,26 @@ const Whisper: FC = () => {
 
     {downloadProgress && (
       <div className="flex flex-col gap-1 mb-2">
-        <div className="flex justify-between text-xs">
-          <span>Downloading {downloadProgress.file}...</span>
-          <span>{downloadProgress.progress.toFixed(0)}%</span>
-        </div>
-        <progress className="progress progress-primary w-full" value={downloadProgress.progress} max="100"></progress>
+        {downloadProgress.phase === "complete" ? (
+          <div className="flex items-center justify-between text-xs text-success">
+            <span>{t("stt.whisper_download_complete", { file: downloadProgress.file })}</span>
+            <span aria-hidden>✓</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-between text-xs">
+              <span>{t("stt.whisper_downloading", { file: downloadProgress.file })}</span>
+              <span>
+                {downloadProgress.progress > 0 ? `${downloadProgress.progress.toFixed(0)}%` : "…"}
+              </span>
+            </div>
+            <progress
+              className="progress progress-primary w-full"
+              value={downloadProgress.progress > 0 ? downloadProgress.progress : undefined}
+              max={100}
+            />
+          </>
+        )}
       </div>
     )}
 
@@ -411,7 +448,7 @@ const Vosk: FC = () => {
   }));
 
   return <>
-    <Inspector.SubHeader>Vosk (Offline)</Inspector.SubHeader>
+    <Inspector.SubHeader>Vosk</Inspector.SubHeader>
     <div className="text-xs text-base-content/70 mb-2">
       Models download once into app data as a zip, then load locally (WASM). Rust captures audio; no repeat CDN fetch for the same model.
     </div>
@@ -465,12 +502,12 @@ const Inspector_STT: FC = () => {
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
-          { label: "Chrome (Browser)", value: STT_Backends.chrome },
-          { label: "Edge (Browser)", value: STT_Backends.edge },
+          { label: "Chrome", value: STT_Backends.chrome },
+          { label: "Edge", value: STT_Backends.edge },
           { label: "Azure", value: STT_Backends.azure },
           { label: "Deepgram", value: STT_Backends.deepgram },
-          { label: "Whisper (Local AI)", value: STT_Backends.whisper },
-          { label: "Vosk (Offline)", value: STT_Backends.vosk },
+          { label: "Whisper", value: STT_Backends.whisper },
+          { label: "Vosk", value: STT_Backends.vosk },
           { label: t("stt.provider_moonshine"), value: STT_Backends.moonshine },
           { label: t("stt.provider_openai_audio"), value: STT_Backends.openai_audio },
         ]} label="common.field_service" value={data.data.backend} onValueChange={e => up("backend", e as STT_Backends)} />

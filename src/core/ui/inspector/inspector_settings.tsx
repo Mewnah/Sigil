@@ -116,17 +116,19 @@ const Inspector_Settings: FC = memo(() => {
         <div className="self-center text-sm opacity-70 mt-2">
           Crafted with 💜 by <span className="text-primary font-semibold">Mewnah</span>
         </div>
-        <div className="self-center text-xs opacity-50">Sigil — fork of Curses by mmpneo</div>
-        <div className="self-center text-xs opacity-40 mt-1">v.{version}</div>
+        <p className="self-center text-xs opacity-55 text-center max-w-[22rem] leading-relaxed px-2">
+          {t("settings.credits_mmpneo")}
+        </p>
+        <div className="self-center text-xs opacity-40 mt-1">{version ? `v${version}` : ""}</div>
         <div className="flex space-x-1 self-center mt-3">
           <Tooltip content="Join the Party!" body={<span>Discord community for updates,<br />help, and good vibes 🎉</span>}>
             <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/Sw6pw8fGYS" aria-label="Discord" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiDiscord /></a>
           </Tooltip>
-          <Tooltip content="Upstream project" body={<span>Sigil builds on Curses by mmpneo.<br />Star the original repo.</span>}>
+          <Tooltip content={t("settings.tooltip_curses_github_title")} body={<span>{t("settings.tooltip_curses_github_body")}</span>}>
             <a target="_blank" rel="noopener noreferrer" href="https://github.com/mmpneo/curses" aria-label="GitHub" className="btn text-primary btn-ghost btn-circle text-2xl hover:scale-110 transition-transform"><SiGithub /></a>
           </Tooltip>
         </div>
-        <div className="self-center text-[10px] opacity-30 mt-2">Made for the VRChat community 🦊</div>
+        <div className="self-center text-[10px] opacity-30 mt-2">{t("settings.footer_vrchat")}</div>
       </div>
       <div className="divider"></div>
       <Inspector.SubHeader>Application Settings</Inspector.SubHeader>

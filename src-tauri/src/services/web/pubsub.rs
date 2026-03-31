@@ -51,6 +51,7 @@ pub fn path<R: Runtime>(mut input: mpsc::Receiver<String>, output: mpsc::Sender<
 }
 
 pub async fn peer_handler<R: Runtime>(ws: WebSocket, peers: Peers, output: mpsc::Sender<String>, app: AppHandle<R>, query: PeerQueryData) {
+    #[cfg(debug_assertions)]
     eprintln!("[PubSub] New peer connection request: {}", query.id);
     let (peer_tx, mut peer_rx) = ws.split();
 
@@ -68,6 +69,7 @@ pub async fn peer_handler<R: Runtime>(ws: WebSocket, peers: Peers, output: mpsc:
 
         if msg.is_binary() {
             let bytes = msg.as_bytes();
+            #[cfg(debug_assertions)]
             eprintln!("[PubSub] Received binary message: {} bytes", bytes.len());
 
             // Convert bytes to f32 (assuming Little Endian Float32)

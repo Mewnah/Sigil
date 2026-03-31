@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver, ITTSService } from "../types";
 import { TTS_State } from "../schema";
+import { devLog } from "@/utils/devLog";
 
 export class TTS_KokoroService implements ITTSService {
     #receiver: ITTSReceiver;
@@ -36,7 +37,7 @@ export class TTS_KokoroService implements ITTSService {
             this.#audioContext = new AudioContext();
             this.#isRunning = true;
             this.#receiver.onStart();
-            console.log("[Kokoro] TTS service started");
+            devLog("[Kokoro] TTS service started");
         } catch (error) {
             console.error("[Kokoro] Failed to start:", error);
             this.#receiver.onStop(String(error));
@@ -49,7 +50,7 @@ export class TTS_KokoroService implements ITTSService {
             this.#audioContext.close();
             this.#audioContext = null;
         }
-        console.log("[Kokoro] TTS service stopped");
+        devLog("[Kokoro] TTS service stopped");
     }
 
     async play(text: string): Promise<void> {

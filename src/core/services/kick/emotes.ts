@@ -1,13 +1,15 @@
+import { devLog } from "@/utils/devLog";
+
 export default class KickEmotesApi {
     constructor() { }
 
     dictionary: Record<string, string> = {};
 
     loadEmotes(channelId: string) {
-        console.log("KickEmotesApi: loadEmotes", channelId);
+        devLog("KickEmotesApi: loadEmotes", channelId);
     }
 
     dispose() {
-        console.log("KickEmotesApi: dispose");
+        devLog("KickEmotesApi: dispose");
     }
 }

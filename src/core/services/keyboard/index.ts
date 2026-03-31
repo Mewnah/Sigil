@@ -7,6 +7,7 @@ import { proxy }                                             from "valtio";
 import { IServiceInterface, TextEventSource, TextEventType } from "@/types";
 import { BackendState }                                      from "../../schema";
 import * as globalShortcut from "@tauri-apps/plugin-global-shortcut"
+import { devLog } from "@/utils/devLog";
 
 type ShortcutKeys = keyof BackendState["shortcuts"];
 type InputCommands = "submit" | "delete" | "cancel";
@@ -135,7 +136,7 @@ class Service_Keyboard implements IServiceInterface {
       }).catch(err => {
         toast.error(`Invalid shortkey ${window.ApiServer.state.shortcuts[key]}`);
         window.ApiServer.state.shortcuts[key] = ""
-        console.log("sc error", err);
+        devLog("sc error", err);
       });
     }
     // globalShortcut.registerAll(Object.entries(window.API.state.shortcuts), shortcut => {

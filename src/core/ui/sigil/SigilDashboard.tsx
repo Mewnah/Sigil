@@ -36,8 +36,8 @@ export const SigilDashboard: FC<any> = memo(() => {
           </h2>
           <p className="text-sm text-base-content/60 text-center">
             Your layout is one working template (auto-saved on the desktop app). Import a{" "}
-            <code className="text-xs">.sigiltmp</code> backup or a legacy <code className="text-xs">.json</code>{" "}
-            export — or reset to a fresh template.
+            <code className="text-xs">.sigiltmp</code> or Curses <code className="text-xs">.cursestmp</code> backup, a legacy{" "}
+            <code className="text-xs">.json</code> export — or reset to a fresh template.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <DashboardCard
