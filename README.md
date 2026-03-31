@@ -27,16 +27,11 @@ STT is configured on the **desktop host**. The lightweight **`/client`** page do
 - **Azure** — cloud voices
 - **Uberduck** — API-backed voices (Rust plugin)
 - **VOICEVOX** — HTTP to a local VOICEVOX engine
-- **Kokoro / Melo / Chatterbox / Fish Speech** — HTTP or plugin-backed self-hosted stacks
 - **Native / Web Speech** — browser synthesis where available
 
 ### AI transform
 
 Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** LLM endpoints (configured in the inspector).
-
-### Translation
-
-- **LibreTranslate** path via Tauri `translate` plugin; **Azure** translator in JS where configured.
 
 ### Streaming and chat
 
@@ -114,8 +109,4 @@ Sigil is licensed under the **GNU Affero General Public License v3.0** — see [
 
 Sigil is a fork of **[Curses](https://github.com/mmpneo/curses)** by **mmpneo**. Huge thanks to the original author and everyone who shaped that project—this one stands on their work.
 
-If Sigil helps your stream or world, consider starring the [original Curses repository](https://github.com/mmpneo/curses) too.
-
----
-
-Built for VRChat worlds, late-night streams, and setups that should not work but somehow do. Pull requests and bug reports are welcome.
+If Sigil is helpful to you, consider starring the [original Curses repository](https://github.com/mmpneo/curses) and supporting them too.
