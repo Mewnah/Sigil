@@ -23,8 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Text-to-speech
 
-- **Kokoro**, **MeloTTS**, **Chatterbox**, **Fish Speech** — New HTTP/plugin-backed engines alongside existing Windows SAPI, Azure, Uberduck, VOICEVOX, native/web.
-
 ### Translation
 
 - **LibreTranslate** — Full backend and UI path replacing the previous translate stub.
