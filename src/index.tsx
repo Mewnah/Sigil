@@ -8,6 +8,7 @@ import React, { ReactNode, Suspense } from "react";
 import AppConfiguration from "@/config";
 import ApiShared from "@/shared";
 import ClientLoadingView from "./client/ui/view_loading";
+import { initI18n } from "@/i18n";
 
 declare global {
   interface Window {
@@ -19,6 +20,17 @@ declare global {
   }
 }
 window.global ||= window;
+
+/** Canvas mirror (/client) is often opened in OBS’s embedded browser (older CEF than Chrome). Mark early so CSS fallbacks apply before paint. */
+if (window.location.pathname.startsWith("/client")) {
+  document.documentElement.setAttribute("data-sigil-client", "1");
+  // OBS browser source can hold stale service workers across builds; disable SW control for mirror pages.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => {
+      regs.forEach(reg => reg.unregister());
+    }).catch(() => {});
+  }
+}
 
 // prevent rightclicks
 window.addEventListener('contextmenu', e => {
@@ -61,16 +73,8 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
     await window.ApiShared.init();
 
     if (window.Config.isClient()) {
-      // PWA: precaches production assets; update handler below avoids stale client bundle after host rebuilds.
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'classic' }).then((sw) => {
-          sw.addEventListener("updatefound", async _ => {
-            console.log("found update");
-            await sw.update();
-            location.reload();
-          })
-        });
-      }
+      await initI18n("en");
+      renderView(<ClientLoadingView />);
     }
 
     // Initialize ApiClient (always needed)
@@ -99,8 +103,8 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
       const isClient = window.Config?.isClient?.() === true;
       const cn = window.Config?.clientNetwork;
       const clientHint = isClient && cn
-        ? `<p style="color:#ccc;margin:12px 0;">Remote client could not connect to the Sigil host. Check that the desktop app is running on this machine or your LAN, then open the client link from the host again (includes <code>host</code>, <code>port</code>, and <code>id</code> in the URL).</p>
-           <p style="color:#888;font-size:13px;">Trying: <code>${cn.host}:${cn.port}</code></p>`
+        ? `<p style="color:#ccc;margin:12px 0;">The OBS browser source could not connect to Sigil (PeerJS). Keep the desktop app running on this PC, use <code>http://${cn.host}:${cn.port}/client</code> (same pattern as Curses), and check that nothing blocks WebSockets to that host and port.</p>
+           <p style="color:#888;font-size:13px;">Trying Peer server: <code>${cn.host}:${cn.port}</code></p>`
         : "";
       root_ele.innerHTML = `
         <div style="padding: 24px; color: #f87171; background: #1a1a1a; height: 100vh; font-family: system-ui, sans-serif;">

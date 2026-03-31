@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sigil OBS Captions</title>
+  <style>
+    :root {
+      --font-size: 54px;
+      --line-height: 1.15;
+      --max-lines: 2;
+      --pad: 22px;
+      --bg: rgba(0, 0, 0, 0.35);
+      --fg: #ffffff;
+      --stroke: rgba(0, 0, 0, 0.86);
+      --radius: 14px;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      color: var(--fg);
+      font-family: "Segoe UI", "Inter", Arial, sans-serif;
+    }
+
+    #wrap {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: var(--pad);
+      box-sizing: border-box;
+    }
+
+    #caption {
+      width: min(96vw, 1800px);
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      text-align: center;
+      background: var(--bg);
+      border-radius: var(--radius);
+      padding: 0.3em 0.5em;
+      box-sizing: border-box;
+      text-shadow:
+        -1px -1px 0 var(--stroke),
+        1px -1px 0 var(--stroke),
+        -1px 1px 0 var(--stroke),
+        1px 1px 0 var(--stroke),
+        0 2px 8px rgba(0, 0, 0, 0.7);
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: var(--max-lines);
+      overflow: hidden;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    #status {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      font-size: 12px;
+      padding: 6px 8px;
+      text-align: center;
+      color: #ffd37d;
+      background: rgba(20, 20, 20, 0.8);
+    }
+
+    #status.ok {
+      color: #8bffbf;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">connecting…</div>
+  <div id="wrap"><div id="caption"></div></div>
+
+  <script>
+    (() => {
+      const q = new URLSearchParams(window.location.search.substring(1));
+      const host = q.get("host") || location.hostname;
+      const port = q.get("port") || location.port;
+      const fontSize = parseInt(q.get("size") || "", 10);
+      const maxLines = parseInt(q.get("lines") || "", 10);
+      const plain = q.get("mode") === "plain";
+      const statusEl = document.getElementById("status");
+      const captionEl = document.getElementById("caption");
+
+      if (Number.isFinite(fontSize) && fontSize > 8 && fontSize < 200) {
+        document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
+      }
+      if (Number.isFinite(maxLines) && maxLines > 0 && maxLines < 8) {
+        document.documentElement.style.setProperty("--max-lines", String(maxLines));
+      }
+      if (plain) {
+        document.documentElement.style.setProperty("--bg", "transparent");
+        document.documentElement.style.setProperty("--stroke", "transparent");
+      }
+
+      let finalText = "";
+      let interimText = "";
+      let reconnectTimer = null;
+      let reconnectDelay = 1200;
+
+      const setStatus = (text, ok) => {
+        statusEl.textContent = text;
+        statusEl.className = ok ? "ok" : "";
+      };
+
+      const render = () => {
+        const value = interimText || finalText;
+        captionEl.textContent = value || "";
+      };
+
+      const parseEnvelope = (raw) => {
+        if (!raw || typeof raw !== "object") return null;
+        if (raw.topic !== "obs.caption") return null;
+        const d = raw.data;
+        if (!d || typeof d !== "object") return null;
+        if (d.v !== 1) return null;
+        if (d.type !== "final" && d.type !== "interim") return null;
+        if (typeof d.value !== "string") return null;
+        return d;
+      };
+
+      const openSocket = () => {
+        if (!host || !port) {
+          setStatus("missing host/port in URL", false);
+          return;
+        }
+        setStatus(`connecting to ${host}:${port}`, false);
+        const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=obs-captions-${Date.now()}`);
+
+        ws.onopen = () => {
+          reconnectDelay = 1200;
+          setStatus(`connected ${host}:${port}`, true);
+        };
+        ws.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            const d = parseEnvelope(payload);
+            if (!d) return;
+            if (d.type === "final") {
+              finalText = d.value;
+              interimText = "";
+            } else {
+              interimText = d.value;
+            }
+            render();
+          } catch (_) {
+            // ignore non-JSON payloads
+          }
+        };
+        ws.onclose = () => {
+          setStatus("disconnected, retrying…", false);
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            reconnectDelay = Math.min(reconnectDelay * 1.8, 12000);
+            openSocket();
+          }, reconnectDelay);
+        };
+        ws.onerror = () => {
+          setStatus("connection error", false);
+        };
+      };
+
+      openSocket();
+    })();
+  </script>
+</body>
+</html>

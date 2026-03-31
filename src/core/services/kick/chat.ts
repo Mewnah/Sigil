@@ -41,19 +41,13 @@ export default class KickChatApi {
     if (!trimmed) return;
 
     const kick = this.#kickData;
-    if (!kick?.data) {
-      pushSystemLog("Kick", "Cannot post chat: Kick service not available", "warning");
-      return;
-    }
+    if (!kick?.data) return;
 
     const token = kick.data.token;
     const userIdStr = window.ApiServer.kick.state.user?.id;
     const broadcasterUserId = userIdStr ? parseInt(userIdStr, 10) : NaN;
 
-    if (!token || !Number.isFinite(broadcasterUserId) || broadcasterUserId <= 0) {
-      pushSystemLog("Kick", "Cannot post chat: missing token or broadcaster id", "warning");
-      return;
-    }
+    if (!token || !Number.isFinite(broadcasterUserId) || broadcasterUserId <= 0) return;
 
     const content = trimmed.slice(0, KICK_CHAT_MAX_LEN);
     const delayMs = parseFloat(kick.data.chatSendDelay) || 0;

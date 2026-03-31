@@ -259,11 +259,11 @@
       const selectLang = document.getElementById("select-lang");
       const selectDial = document.getElementById("select-dial");
 
-      let host = location.hostname;
-      let port = location.port;
       const q = new URLSearchParams(window.location.search.substring(1));
-      if (q.has("host")) host = q.get("host");
-      if (q.has("port")) port = q.get("port");
+      let host = location.hostname;
+      let port = location.port || (q.get("port") ?? "");
+      if (q.has("host")) host = q.get("host") || host;
+      if (q.has("port")) port = q.get("port") || port;
 
       let recognition = null;
       let isStreaming = false;
@@ -328,12 +328,20 @@
             }
           }
 
-          if (finalTranscript || interimTranscript) {
-            // Send text over WebSocket
-            if (ws.readyState === WebSocket.OPEN) {
+          // Sigil host expects the same shape as internal pubsub: topic + TextEvent data.
+          const EVT_FINAL = 0;
+          const EVT_INTERIM = 1;
+          if (ws.readyState === WebSocket.OPEN) {
+            if (interimTranscript) {
               ws.send(JSON.stringify({
-                final: finalTranscript,
-                interim: interimTranscript
+                topic: "text.stt",
+                data: { type: EVT_INTERIM, value: interimTranscript, emotes: {} }
+              }));
+            }
+            if (finalTranscript) {
+              ws.send(JSON.stringify({
+                topic: "text.stt",
+                data: { type: EVT_FINAL, value: finalTranscript, emotes: {} }
               }));
             }
           }

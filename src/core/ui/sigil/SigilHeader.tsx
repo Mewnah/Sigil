@@ -7,7 +7,13 @@ import { useSnapshot } from "valtio";
 import { Services } from "@/services-registry";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
-const appWindow = getCurrentWebviewWindow()
+
+/** Lazy singleton – only call Tauri API when actually rendered inside the desktop window. */
+let _appWindow: ReturnType<typeof getCurrentWebviewWindow> | null = null;
+function getAppWindow() {
+  if (!_appWindow) _appWindow = getCurrentWebviewWindow();
+  return _appWindow;
+}
 
 // Map tab IDs to human-readable names
 const TAB_NAMES: Record<string, string> = {
@@ -33,7 +39,7 @@ const TAB_NAMES: Record<string, string> = {
 const WindowControls: FC = memo(() => {
     const handleMinimize = async () => {
         try {
-            await appWindow.minimize();
+            await getAppWindow().minimize();
         } catch (e) {
             console.error("Failed to minimize:", e);
         }
@@ -41,7 +47,7 @@ const WindowControls: FC = memo(() => {
 
     const handleMaximize = async () => {
         try {
-            await appWindow.toggleMaximize();
+            await getAppWindow().toggleMaximize();
         } catch (e) {
             console.error("Failed to toggle maximize:", e);
         }
@@ -49,7 +55,7 @@ const WindowControls: FC = memo(() => {
 
     const handleClose = async () => {
         try {
-            await appWindow.close();
+            await getAppWindow().close();
         } catch (e) {
             console.error("Failed to close:", e);
             try {

@@ -102,10 +102,14 @@ class Service_Document implements IServiceInterface {
     this.#initUndoManager();
 
     if (window.Config.isClient()) {
-      // wait for initial push from server
-      await new Promise((res, rej) => {
-        this.#file.once("update", res);
-      });
+      // Initial Yjs sync is applied during peer.startClient() on this same Doc, often *before*
+      // we attach a listener — `once("update")` would then hang forever and the mirror never finishes init.
+      const template = this.#file.getMap("template");
+      if (template.size === 0) {
+        await new Promise<void>((resolve) => {
+          this.#file.once("update", () => resolve());
+        });
+      }
       this.#undoManager.clear(true, true);
       this.#syncDocumentUndoState();
       return;

@@ -1,4 +1,4 @@
-import { BaseEvent, IServiceInterface, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSchema, TextEventSource, TextEventType } from "@/types";
+import { BaseEvent, IServiceInterface, ObsCaptionEnvelopeSchema, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSchema, TextEventSource, TextEventType } from "@/types";
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
@@ -67,6 +67,16 @@ class Service_PubSub implements IServiceInterface {
       const { topic, data }: BaseEvent = raw as BaseEvent;
       if (typeof data !== "object")
         return;
+
+      if (topic === "obs.caption") {
+        const caption = ObsCaptionEnvelopeSchema.safeParse(data);
+        if (!caption.success) return;
+        const msg = { topic, data: caption.data };
+        this.publishLocally(msg);
+        this.#publishPeers(msg);
+        return;
+      }
+
       const validated = TextEventSchema.safeParse(data);
       if (!validated.success)
         return;
@@ -118,11 +128,20 @@ class Service_PubSub implements IServiceInterface {
     !window.Config.isClient() &&
       this.subscribeText(TextEventSource.any, (event, eventName) => {
       if (event?.type === TextEventType.final) {
+        const suffix = eventName?.replace("text.", "") || "text";
+        // Transform echoes STT to transform_source/transform_raw for canvas sync; when AI is off, that duplicates the STT line in the transcript.
+        const transformStatus = window.ApiServer?.transform?.serviceState?.status;
+        if (
+          (suffix === "transform_source" || suffix === "transform_raw") &&
+          transformStatus !== ServiceNetworkState.connected
+        ) {
+          return;
+        }
         const maxEntries = 120;
         if (this.textHistory.list.length >= maxEntries)
           this.textHistory.list.shift();
         const id = nanoid();
-        this.textHistory.list.push({ id, event: eventName?.replace("text.", "") || "text", value: event.value });
+        this.textHistory.list.push({ id, event: suffix, value: event.value });
         this.textHistory.lastId = id;
       }
     });

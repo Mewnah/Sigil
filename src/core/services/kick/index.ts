@@ -111,7 +111,14 @@ class Service_Kick implements IServiceInterface {
             if (value) {
                 if (this.state.user)
                     this.chat.connect(this.state.user.name);
-            } else this.chat.disconnect();
+            } else {
+                this.chat.disconnect();
+                window.ApiServer.patchService("kick", (s) => {
+                    s.data.chatPostEnable = false;
+                    s.data.chatPostLive = false;
+                    s.data.chatReceiveEnable = false;
+                });
+            }
         }));
 
         this.eventDisposers.push(serviceSubscibeToSource(this.#state.data, "chatPostSource", (data) => {
@@ -120,7 +127,8 @@ class Service_Kick implements IServiceInterface {
                 this.state.liveStatus !== ServiceNetworkState.connected
             )
                 return;
-            this.#state.data.chatPostEnable &&
+            this.#state.data.chatEnable &&
+                this.#state.data.chatPostEnable &&
                 data?.value &&
                 data?.type === TextEventType.final &&
                 this.chat.post(data.value);
@@ -132,12 +140,21 @@ class Service_Kick implements IServiceInterface {
                 this.state.liveStatus !== ServiceNetworkState.connected
             )
                 return;
-            this.#state.data.chatPostEnable &&
+            this.#state.data.chatEnable &&
+                this.#state.data.chatPostEnable &&
                 data?.textFieldType !== "kickChat" &&
                 data?.value &&
                 data?.type === TextEventType.final &&
                 this.chat.post(data.value);
         }, "chatPostSource"));
+
+        if (!this.#state.data.chatEnable) {
+            window.ApiServer.patchService("kick", (s) => {
+                s.data.chatPostEnable = false;
+                s.data.chatPostLive = false;
+                s.data.chatReceiveEnable = false;
+            });
+        }
     }
 
     async login() {

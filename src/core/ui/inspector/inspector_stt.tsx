@@ -60,13 +60,18 @@ const Native: FC = () => {
   </>
 }
 
+const micPageUrl = () => {
+  const p = String(window.Config.serverNetwork.port);
+  return `http://127.0.0.1:${p}/mic.html?port=${encodeURIComponent(p)}`;
+};
+
 const Chrome: FC = () => {
   const { t } = useTranslation();
   const handleOpenChrome = () => {
     invoke("plugin:web|open_browser", {
       data: {
         browser: "chrome",
-        url: `http://127.0.0.1:${window.Config.serverNetwork.port}/mic.html`
+        url: micPageUrl()
       }
     });
   };
@@ -83,7 +88,7 @@ const Edge: FC = () => {
     invoke("plugin:web|open_browser", {
       data: {
         browser: "edge",
-        url: `http://127.0.0.1:${window.Config.serverNetwork.port}/mic.html`
+        url: micPageUrl()
       }
     });
   };

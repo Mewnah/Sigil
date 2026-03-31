@@ -14,7 +14,13 @@ import Logo from "./logo";
 import { invoke } from "@tauri-apps/api/core";
 import { SttMuteState } from "../services/stt/types";
 import { useTranslation } from "react-i18next";
-const appWindow = getCurrentWebviewWindow()
+
+/** Lazy singleton – avoids crashing non-Tauri browsers (/client mirror, OBS). */
+let _appWindow: ReturnType<typeof getCurrentWebviewWindow> | null = null;
+function getAppWindow() {
+  if (!_appWindow) _appWindow = getCurrentWebviewWindow();
+  return _appWindow;
+}
 
 const Divider: FC = () => {
   return <div className="flex-none h-4 w-1 bg-neutral rounded-full"></div>
@@ -142,10 +148,10 @@ const AppActions: FC = () => {
 
 const WindowActions: FC = () => {
   const { t } = useTranslation();
-  const handleMinimize = () => window.Config.isApp() && appWindow.minimize();
+  const handleMinimize = () => window.Config.isApp() && getAppWindow().minimize();
   const handleMaximize = async () => {
-    const state = await appWindow.isMaximized();
-    state ? appWindow.unmaximize() : appWindow.maximize();
+    const state = await getAppWindow().isMaximized();
+    state ? getAppWindow().unmaximize() : getAppWindow().maximize();
   };
 
 

@@ -64,8 +64,8 @@ class AppConfiguration {
       this.clientNetwork = {
         serverId: q.get("id") ?? "",
         host: q.get("host") ?? location.hostname,
-        port: q.get("port") ?? location.port
-      }
+        port: q.get("port") ?? location.port,
+      };
     }
     // server is always app
     // load network params from rust
@@ -73,9 +73,10 @@ class AppConfiguration {
       const appConfig = await invoke<any>("plugin:web|config");
       this.serverNetwork = {
         ip: appConfig.local_ip,
-        host: "127.0.0.1",
-        port: appConfig.port
-      }
+        // Same as upstream Curses: advertise localhost so OBS/browser sources match `localhost:PORT/client`.
+        host: "localhost",
+        port: appConfig.port,
+      };
     }
   }
 

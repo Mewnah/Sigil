@@ -1,9 +1,25 @@
-import {applyUpdate, Doc, encodeStateAsUpdate}                                              from "yjs";
+import { Doc, encodeStateAsUpdate }                                              from "yjs";
 import Peer, {DataConnection}                                                               from "peerjs";
 import {decoding, encoding}                                                                 from "lib0";
-import {messageYjsSyncStep1, messageYjsSyncStep2, readSyncMessage, readUpdate, writeUpdate} from 'y-protocols/sync'
+import {readSyncMessage, writeUpdate} from "y-protocols/sync";
 import {nanoid}      from "nanoid";
 import { BaseEvent } from "@/types";
+
+/** PeerJS uses `ws://{host}:{port}/peer/…`. Normalize loopback names to IPv4 so signaling hits the Warp listener. */
+function peerSignalingHost(host: string): string {
+  const h = host.trim().toLowerCase();
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return "127.0.0.1";
+  return host;
+}
+
+/** Dispatched on the browser `/client` PeerJS path for connection diagnostics (OBS, etc.). */
+export const PEER_CLIENT_MIRROR_EVENT = "peer_client_mirror";
+
+export type PeerClientMirrorDetail =
+  | { phase: "synced" }
+  | { phase: "reconnecting" }
+  | { phase: "error"; message?: string }
+  | { phase: "failed"; message?: string };
 
 export class PeerjsProvider extends EventTarget {
   constructor(
@@ -29,7 +45,7 @@ export class PeerjsProvider extends EventTarget {
   }) {
     this.document.on("update", this.#onDocumentUpdate);
     this.#peer = new Peer(params.id, {
-      host: params.host,
+      host: peerSignalingHost(params.host),
       port:   parseInt(params.port),
       key:    '',
       path:   'peer',
@@ -73,6 +89,15 @@ export class PeerjsProvider extends EventTarget {
     if (this.#reconnectTimer) return;
     if (this.#reconnectAttempts >= PeerjsProvider.maxClientReconnects) {
       console.error("[PeerJS] Too many reconnect failures. Reload the page to try again.");
+      this.dispatchEvent(
+        new CustomEvent<PeerClientMirrorDetail>(PEER_CLIENT_MIRROR_EVENT, {
+          detail: {
+            phase: "failed",
+            message:
+              "Too many reconnect failures. Reload this source or re-copy the client URL from Sigil.",
+          },
+        }),
+      );
       return;
     }
     const exp = Math.min(this.#reconnectAttempts, 5);
@@ -117,7 +142,7 @@ export class PeerjsProvider extends EventTarget {
       let peer: Peer;
       try {
         peer = new Peer(nanoid(64), {
-          host: params.host,
+          host: peerSignalingHost(params.host),
           port: parseInt(params.port, 10),
           key: "",
           path: "peer",
@@ -132,8 +157,19 @@ export class PeerjsProvider extends EventTarget {
 
       this.#peer = peer;
 
-      peer.on("error", (err) => {
+      peer.on("error", (err: unknown) => {
         console.error("[PeerJS]", err);
+        const message =
+          err && typeof err === "object" && "type" in err
+            ? String((err as { type?: string }).type)
+            : err instanceof Error
+              ? err.message
+              : String(err ?? "");
+        this.dispatchEvent(
+          new CustomEvent<PeerClientMirrorDetail>(PEER_CLIENT_MIRROR_EVENT, {
+            detail: { phase: "error", message },
+          }),
+        );
         this.#scheduleClientReconnect();
         finish(false, err);
       });
@@ -146,10 +182,20 @@ export class PeerjsProvider extends EventTarget {
         );
         hostConn.on("close", () => {
           delete this.peers[hostConn.connectionId];
+          this.dispatchEvent(
+            new CustomEvent<PeerClientMirrorDetail>(PEER_CLIENT_MIRROR_EVENT, {
+              detail: { phase: "reconnecting" },
+            }),
+          );
           this.#scheduleClientReconnect();
         });
         hostConn.on("open", () => {
           this.#reconnectAttempts = 0;
+          this.dispatchEvent(
+            new CustomEvent<PeerClientMirrorDetail>(PEER_CLIENT_MIRROR_EVENT, {
+              detail: { phase: "synced" },
+            }),
+          );
           finish(true);
         });
       });
@@ -169,14 +215,8 @@ export class PeerjsProvider extends EventTarget {
     const messageType = decoding.readVarUint(decoder);
 
     if (messageType === 0) {
-      const syncMessageType = readSyncMessage(decoder, encoder, this.document, 0);
-
-      if (syncMessageType === messageYjsSyncStep2) {
-        applyUpdate(this.document, decoder.arr);
-        readUpdate(decoder, this.document, 0);
-      }
-      if (syncMessageType === messageYjsSyncStep1) {
-      }
+      // readSyncMessage already applies sync step updates to the document.
+      readSyncMessage(decoder, encoder, this.document, 0);
     }
     else if (messageType === 1) {
       try {

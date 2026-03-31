@@ -15,6 +15,12 @@ pub fn path<R: Runtime>(resolver: Arc<AssetResolver<R>>) -> BoxedFilter<(impl Re
 
 async fn file_response<R: Runtime>(path: FullPath, resolver: Arc<AssetResolver<R>>) -> Result<impl Reply, Rejection> {
     let path = path.as_str();
+    let path = match path {
+        "/obs-captions" | "/obs-captions/" | "/obs-captions.html" | "/obs-captions.html/" => {
+            "/obs-captions.html"
+        }
+        p => p,
+    };
 
     let Some(asset) = resolver.get(path.to_string()) else {
         let Some(index_asset) = resolver.get("/index.html".to_string()) else {
