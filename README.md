@@ -2,7 +2,7 @@
 
 **Voice, captions, and stream tooling for VRChat and live streaming.**
 
-Sigil is for people who spend their time in voice: an open-source desktop app (Tauri + React) that turns speech into text, text into speech, and both into something your viewers can actually read. Wire up STT, TTS, translation, chat, and OBS in one place instead of juggling a handful of half-connected tools.
+Sigil is an open-source desktop app (Tauri + React) that turns speech into text, text into speech, and both into something your viewers can actually read. Wire up STT, TTS, translation, chat, and OBS in one place instead of juggling a handful of half-connected tools.
 
 Configure the heavy lifting once on the **host**, then drive captions from OBS, another machine, or a slim browser **client**—everything stays synced over the network when you want it distributed.
 

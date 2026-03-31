@@ -37,6 +37,7 @@ class TextController {
   private eventTextInputRef: any;
   private storeEventCancelToken?: () => void;
   private sceneChangeEventCancelToken?: () => void;
+  private fileUrlsUnsub?: () => void;
 
   private currentState!: Element_TextState;
   private sentenceQueue: SentenceState[] = [];
@@ -449,6 +450,14 @@ class TextController {
     // subscribe to store updates
     this.sceneChangeEventCancelToken = subscribe(window.ApiClient.scenes.state, () => this.onStateChange());
     this.storeEventCancelToken = window.ApiClient.document.fileBinder.subscribe(data => this.onStateChange());
+    this.fileUrlsUnsub = subscribe(window.ApiClient.files.fileUrls, () => {
+      if (this.disposed || !this.stateStyleElement) return;
+      const scene = window.ApiClient.scenes.state.activeScene;
+      const el = window.ApiClient.document.fileBinder.get().elements[this.id];
+      const storedState = el?.scenes[scene]?.data as Element_TextState | undefined;
+      if (!storedState) return;
+      this.stateStyleElement.innerHTML = buildStateStyle(storedState);
+    });
 
     this.onStateChange();
   }
@@ -458,6 +467,7 @@ class TextController {
     this.textObserver.disconnect();
     this.sceneChangeEventCancelToken?.();
     this.storeEventCancelToken?.();
+    this.fileUrlsUnsub?.();
     window.ApiShared.pubsub.unsubscribe(this.eventTextRef);
     window.ApiShared.pubsub.unsubscribe(this.eventTextInputRef);
     clearTimeout(this.animationTimerHandle);

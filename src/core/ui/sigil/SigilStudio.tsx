@@ -48,6 +48,7 @@ const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, index,
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
                 <Tooltip content="Duplicate" placement="top">
                     <button
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); onCopy(); }}
                         title="Duplicate element"
                         className="p-0.5 rounded hover:bg-base-content/10 transition-all"
@@ -57,6 +58,7 @@ const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, index,
                 </Tooltip>
                 <Tooltip content="Delete" placement="top">
                     <button
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); onDelete(); }}
                         title="Delete element"
                         className="p-0.5 rounded hover:bg-error/20 hover:text-error transition-all"
@@ -120,8 +122,13 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
             window.ApiClient.elements.removeElement(id);
         } else {
             setElementToDelete(id);
-            setDeleteModalOpen(true);
+            setTimeout(() => setDeleteModalOpen(true), 0);
         }
+    };
+
+    const handleDeleteCancel = () => {
+        setDeleteModalOpen(false);
+        setElementToDelete(null);
     };
 
     const confirmDelete = (dontAskAgain: boolean) => {
@@ -266,6 +273,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                 <div className="px-3 py-2 border-b border-base-content/5 flex items-center justify-between">
                     <div className="text-[10px] font-bold uppercase tracking-wide text-base-content/40">Scenes</div>
                     <button
+                        type="button"
                         onClick={() => window.ApiClient.scenes.addScene()}
                         title="Add Scene"
                         className="text-base-content/40 hover:text-primary transition-colors"
@@ -299,6 +307,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                                 />
                                 <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button
+                                        type="button"
                                         onClick={() => window.ApiClient.scenes.duplicateScene(sceneId)}
                                         title="Duplicate"
                                         className="p-1 hover:text-primary transition-colors"
@@ -307,6 +316,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                                     </button>
                                     {sceneId !== 'main' && (
                                         <button
+                                            type="button"
                                             onClick={() => window.ApiClient.scenes.deleteScene(sceneId)}
                                             title="Delete"
                                             className="p-1 hover:text-error transition-colors"
@@ -330,12 +340,14 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                 <div className="text-[10px] font-bold uppercase tracking-wide text-base-content/40">Add Element</div>
                 <div className="flex flex-wrap gap-2">
                     <button
+                        type="button"
                         onClick={handleAddText}
                         className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
                     >
                         <RiAddCircleFill /> Text
                     </button>
                     <button
+                        type="button"
                         onClick={handleAddImage}
                         className="flex-1 min-w-[5rem] flex items-center justify-center gap-2 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-semibold transition-colors border border-primary/20"
                     >
@@ -399,6 +411,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
             {/* Tabs */}
             <div className="flex border-b border-base-content/5 bg-base-100 flex-shrink-0">
                 <button
+                    type="button"
                     onClick={() => setLeftTab('elements')}
                     className={classNames(
                         "flex-1 py-3 text-sm font-semibold transition-colors relative",
@@ -409,6 +422,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                     {leftTab === 'elements' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" />}
                 </button>
                 <button
+                    type="button"
                     onClick={() => setLeftTab('scene')}
                     className={classNames(
                         "flex-1 py-3 text-sm font-semibold transition-colors relative",
@@ -422,18 +436,6 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
 
             {/* Content */}
             {leftTab === 'elements' ? renderElementsList() : renderScenePanel()}
-
-            {/* Delete Modal (Rendered here within portal context) */}
-            <ConfirmModal
-                isOpen={deleteModalOpen}
-                title="Delete Element"
-                message="Are you sure you want to delete this element? This action cannot be undone."
-                confirmText="Delete"
-                variant="danger"
-                onConfirm={confirmDelete}
-                onCancel={() => setDeleteModalOpen(false)}
-                showDontAskAgain={true}
-            />
         </div>
     );
 
@@ -452,6 +454,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                         </span>
                     </div>
                     <button
+                        type="button"
                         onClick={handleCloseProperties}
                         title="Close properties"
                         className="p-1 rounded hover:bg-base-content/10 transition-colors"
@@ -478,6 +481,19 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
         <>
             {slots.left && createPortal(renderElementsPanel(), slots.left)}
             {slots.right && createPortal(renderPropertiesPanel(), slots.right)}
+            {createPortal(
+                <ConfirmModal
+                    isOpen={deleteModalOpen}
+                    title="Delete Element"
+                    message="Are you sure you want to delete this element? This action cannot be undone."
+                    confirmText="Delete"
+                    variant="danger"
+                    onConfirm={confirmDelete}
+                    onCancel={handleDeleteCancel}
+                    showDontAskAgain={true}
+                />,
+                document.body
+            )}
         </>
     );
 });

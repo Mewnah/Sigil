@@ -9,6 +9,7 @@ import { initializeUIShortcuts, cleanupUIShortcuts } from "../shortcuts";
 import OverlayInput from "../overlay-input";
 import BackgroundInput from "../background-input";
 import { SigilLayout } from "./SigilLayout";
+import "../file-modal";
 
 // Shortcut Recorder (Inline for now or import if extracted)
 // We'll reuse the logic from EditorView if possible, or just re-implement simple version

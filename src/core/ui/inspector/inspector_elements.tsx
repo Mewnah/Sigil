@@ -1,6 +1,7 @@
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { FC, memo, useState, MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { RiAddCircleFill, RiDeleteBin5Fill, RiFileCopyLine, RiLayoutMasonryFill, RiSave3Fill, RiTextWrap, RiImageFill } from "react-icons/ri";
 import { ElementTypeIcon } from "../ElementTypeIcon";
 import { useSnapshot } from "valtio";
@@ -11,6 +12,7 @@ import Tooltip from "../dropdown/Tooltip";
 import { useTranslation } from "react-i18next";
 import classNames from "classnames";
 import { toast } from "react-toastify";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 interface ElementRowProps {
     id: string;
@@ -96,6 +98,41 @@ const Inspector_Elements: FC = () => {
         useShallow((s) => ({ tab: s.sidebar.tab, selections: s.sidebar.selections }))
     );
     const [view, setView] = useState<'active' | 'templates'>('active');
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [elementIdsPendingDelete, setElementIdsPendingDelete] = useState<string[]>([]);
+
+    const requestDeleteElements = (ids: string[]) => {
+        if (ids.length === 0) return;
+        setElementIdsPendingDelete(ids);
+        setTimeout(() => setDeleteModalOpen(true), 0);
+    };
+
+    const handleDeleteModalCancel = () => {
+        setDeleteModalOpen(false);
+        setElementIdsPendingDelete([]);
+    };
+
+    const confirmDeleteElements = () => {
+        const ids = elementIdsPendingDelete;
+        if (ids.length === 0) return;
+
+        if (ids.length === 1) {
+            const id = ids[0];
+            window.ApiClient.elements.removeElement(id);
+            const currentSelections = useAppUIStore.getState().sidebar.selections ?? [];
+            if (currentSelections.includes(id)) {
+                useAppUIStore.getState().setSidebarSelections(currentSelections.filter((pid) => pid !== id));
+            }
+        } else {
+            ids.forEach((id) => window.ApiClient.elements.removeElement(id));
+            useAppUIStore.getState().setSidebarSelections([]);
+            window.ApiServer.changeTab({ tab: undefined as any });
+            toast.success("Deleted selected elements");
+        }
+
+        setDeleteModalOpen(false);
+        setElementIdsPendingDelete([]);
+    };
 
     const handleAddText = () => {
         window.ApiClient.elements.addElement(ElementType.text, "main");
@@ -128,14 +165,7 @@ const Inspector_Elements: FC = () => {
     };
 
     const handleDeleteElement = (id: string) => {
-        if (confirm("Are you sure you want to delete this element?")) {
-            window.ApiClient.elements.removeElement(id);
-            // Cleanup selections
-            const currentSelections = useAppUIStore.getState().sidebar.selections;
-            if (currentSelections.includes(id)) {
-                useAppUIStore.getState().setSidebarSelections(currentSelections.filter((pid) => pid !== id));
-            }
-        }
+        requestDeleteElements([id]);
     };
 
     const handleDuplicateElement = (id: string) => {
@@ -159,12 +189,7 @@ const Inspector_Elements: FC = () => {
 
     const handleDeleteSelected = () => {
         if (!selections || selections.length === 0) return;
-        if (confirm(`Delete ${selections.length} selected elements?`)) {
-            selections.forEach(id => window.ApiClient.elements.removeElement(id));
-            useAppUIStore.getState().setSidebarSelections([]);
-            window.ApiServer.changeTab({ tab: undefined as any });
-            toast.success("Deleted selected elements");
-        }
+        requestDeleteElements([...selections]);
     };
 
     const handleSaveTemplate = () => {
@@ -206,7 +231,13 @@ const Inspector_Elements: FC = () => {
         }
     };
 
+    const deleteModalMessage =
+        elementIdsPendingDelete.length <= 1
+            ? "Are you sure you want to delete this element? This action cannot be undone."
+            : `Are you sure you want to delete ${elementIdsPendingDelete.length} selected elements? This action cannot be undone.`;
+
     return (
+        <>
         <Inspector.Body>
             <Inspector.Header>
                 <div className="flex gap-2 p-1 bg-base-300 rounded-lg w-full">
@@ -334,6 +365,20 @@ const Inspector_Elements: FC = () => {
                 )}
             </Inspector.Content>
         </Inspector.Body>
+        {createPortal(
+            <ConfirmModal
+                isOpen={deleteModalOpen}
+                title={elementIdsPendingDelete.length <= 1 ? "Delete Element" : "Delete Elements"}
+                message={deleteModalMessage}
+                confirmText="Delete"
+                variant="danger"
+                onConfirm={() => confirmDeleteElements()}
+                onCancel={handleDeleteModalCancel}
+                showDontAskAgain={false}
+            />,
+            document.body
+        )}
+        </>
     );
 };
 

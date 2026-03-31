@@ -8,7 +8,10 @@ import { useSnapshot } from "valtio";
 
 const Element_Image: FC<{ id: string }> = memo(({ id }) => {
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
+  useSnapshot(window.ApiClient.files.fileUrls);
   const state = useGetState(state => (state.elements[id].scenes[activeScene].data as Element_ImageState));
+  const fileUrl = window.ApiClient.files.getFileUrl(state.fileId);
+  const activeFileUrl = window.ApiClient.files.getFileUrl(state.activeFileId);
   const attributeController = useRef<StyleToEventController>();
 
   const [attributes, setAttributes] = useState<Record<string, string>>({})
@@ -56,7 +59,7 @@ const Element_Image: FC<{ id: string }> = memo(({ id }) => {
         margin: auto;
         object-fit: contain;
         opacity: ${state.styleOpacity};
-        background-image: url("${window.ApiClient.files.getFileUrl(state.fileId)}");
+        background-image: ${fileUrl ? `url("${fileUrl}")` : "none"};
         transition: opacity ${state.activeTransitionDuration}ms ease-in-out, background-image ${state.activeTransitionDuration}ms ease-in-out;
         background-size: contain;
         background-position: center;
@@ -64,7 +67,7 @@ const Element_Image: FC<{ id: string }> = memo(({ id }) => {
       }
       .image.active{
         opacity: ${state.activeStyleOpacity};
-        background-image: url("${window.ApiClient.files.getFileUrl(state.activeFileId)}");
+        background-image: ${activeFileUrl ? `url("${activeFileUrl}")` : "none"};
       }
       `}
     </style>
