@@ -107,6 +107,11 @@ Sigil is licensed under the **GNU Affero General Public License v3.0** — see [
 
 ## Credits
 
-Sigil is a fork of **[Curses](https://github.com/mmpneo/curses)** by **mmpneo**. Huge thanks to the original author and everyone who shaped that project—this one stands on their work.
+**Sigil** began as a modern evolution of [curses](https://github.com/mmpneo/curses). **Please consider supporting the developers of the original curses application!** None of this would have been possible without their work.
 
-If Sigil is helpful to you, consider starring the [original Curses repository](https://github.com/mmpneo/curses) and supporting them too.
+### ☕ Support the development of Sigil
+If Sigil has made your workflow smoother, saved you from "cloud-tax" via local models, or you just enjoy the new features, consider supporting my work! Your contributions help me dedicate time to new features, localizations, and keeping the engine running.
+
+[![Ko-fi](https://img.shields.io/badge/Support%20Me%20on%20Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/mewnah)
+
+*Every coffee helps fuel the next update. Thank you for being part of the Sigil community!*
