@@ -25,8 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Translation
 
-- **LibreTranslate** — Full backend and UI path replacing the previous translate stub.
-
 ### Voice, audio, and VRChat
 
 - **Voice changer** — Real-time pitch (semitones), formant control, presets, input/output device selection (Tauri plugin).
