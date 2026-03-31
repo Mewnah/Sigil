@@ -2,9 +2,13 @@
 
 **Voice, captions, and stream tooling for VRChat and live streaming.**
 
-Sigil is an open-source desktop app (Tauri + React) for real-time speech-to-text, text-to-speech, translation, and on-screen text. Configure integrations once on the **host**, then drive captions from OBS, a second machine, or a browser **client** synced over the network.
+Sigil is for people who spend their time in voice: an open-source desktop app (Tauri + React) that turns speech into text, text into speech, and both into something your viewers can actually read. Wire up STT, TTS, translation, chat, and OBS in one place instead of juggling a handful of half-connected tools.
+
+Configure the heavy lifting once on the **host**, then drive captions from OBS, another machine, or a slim browser **client**—everything stays synced over the network when you want it distributed.
 
 ## Features
+
+There is a lot under the hood; mix local models, cloud APIs, and browser fallbacks however your setup prefers.
 
 ### Speech-to-text (STT)
 
@@ -28,7 +32,7 @@ STT is configured on the **desktop host**. The lightweight **`/client`** page do
 
 ### AI transform
 
-- Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** LLM endpoints (configured in the inspector).
+Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** LLM endpoints (configured in the inspector).
 
 ### Translation
 
@@ -95,6 +99,8 @@ SIGIL_KICK_CLIENT_SECRET=your_client_secret
 
 ## Development
 
+Sanity checks before you open a PR (or when something feels off):
+
 ```bash
 pnpm typecheck
 pnpm test:e2e          # Playwright (build + preview smoke)
@@ -106,10 +112,10 @@ Sigil is licensed under the **GNU Affero General Public License v3.0** — see [
 
 ## Credits
 
-Sigil is a fork of **[Curses](https://github.com/mmpneo/curses)** by **mmpneo**. Thank you to the original author and community for the foundation this project builds on.
+Sigil is a fork of **[Curses](https://github.com/mmpneo/curses)** by **mmpneo**. Huge thanks to the original author and everyone who shaped that project—this one stands on their work.
 
-If you use Sigil, consider starring the [original Curses repository](https://github.com/mmpneo/curses) as well.
+If Sigil helps your stream or world, consider starring the [original Curses repository](https://github.com/mmpneo/curses) too.
 
 ---
 
-Made for the VRChat and streaming communities.
+Built for VRChat worlds, late-night streams, and setups that should not work but somehow do. Pull requests and bug reports are welcome.
