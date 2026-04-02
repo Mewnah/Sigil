@@ -57,6 +57,7 @@ fn main() {
     match port_availability {
         Ok(l) => l.set_nonblocking(true).expect("Failed to set nonblocking"),
         Err(_err) => {
+            // Native pre-webview errors stay English (P3: optional Tauri locale bridge if product needs localized OS dialogs).
             unsafe {
                 MessageBoxA(
                     None,

@@ -1,4 +1,5 @@
 import { BaseEvent, IServiceInterface } from "@/types";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import {
@@ -31,7 +32,7 @@ class Service_Peer implements IServiceInterface {
 
   copyClientLink(pathname = "/client") {
     navigator.clipboard.writeText(getApiShared().peer.getClientLink(pathname));
-    toast.success("Copied!");
+    toast.success(i18n.t("toasts.copied"));
   }
 
   startServer() {

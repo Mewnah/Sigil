@@ -301,12 +301,12 @@ export const StatusFooter: FC = memo(() => {
             if (srv.serviceState?.status !== ServiceNetworkState.disconnected) return;
             const tts = window.ApiServer.state.services.tts.data;
             if (tts.backend === TTS_Backends.native && !tts.native.voice?.trim()) {
-                toast.info("Choose a voice in Text to Speech settings, then start again.", { autoClose: 6000 });
+                toast.info(t("toasts.tts_choose_voice"), { autoClose: 6000 });
                 window.ApiServer.changeTab({ tab: Services.tts });
                 return;
             }
             if (tts.backend === TTS_Backends.windows && (!tts.windows.voice?.trim() || !tts.windows.device?.trim())) {
-                toast.info("Choose output device and voice in Text to Speech settings, then start again.", { autoClose: 6000 });
+                toast.info(t("toasts.tts_choose_output"), { autoClose: 6000 });
                 window.ApiServer.changeTab({ tab: Services.tts });
                 return;
             }

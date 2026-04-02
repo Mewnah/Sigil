@@ -127,7 +127,7 @@ const Inspector_Elements: FC = () => {
             ids.forEach((id) => window.ApiClient.elements.removeElement(id));
             useAppUIStore.getState().setSidebarSelections([]);
             window.ApiServer.changeTab({ tab: undefined as any });
-            toast.success("Deleted selected elements");
+            toast.success(t("elements.toast_deleted_selected"));
         }
 
         setDeleteModalOpen(false);
@@ -180,11 +180,7 @@ const Inspector_Elements: FC = () => {
         const created = window.ApiClient.elements.duplicateElements(selections);
         if (created.length === 0) return;
         useAppUIStore.getState().setSidebarSelections(created);
-        toast.success(
-            created.length === 1
-                ? t("elements.toast_duplicated_one")
-                : t("elements.toast_duplicated_n", { count: created.length })
-        );
+        toast.success(t("elements.toast_duplicated_n", { count: created.length }));
     };
 
     const handleDeleteSelected = () => {
@@ -205,7 +201,7 @@ const Inspector_Elements: FC = () => {
             type: element.type,
             data: JSON.parse(JSON.stringify(element))
         });
-        toast.success("Template saved!");
+        toast.success(t("elements.toast_template_saved"));
     };
 
     const handleInstantiateTemplate = (template: any) => {
@@ -219,11 +215,11 @@ const Inspector_Elements: FC = () => {
             state.elementsIds.push(newId);
         });
 
-        toast.success("Added from template");
+        toast.success(t("elements.toast_added_from_template"));
     };
 
     const handleDeleteTemplate = (id: string) => {
-        if (confirm("Delete this template?")) {
+        if (confirm(t("elements.confirm_delete_template"))) {
             const index = window.ApiServer.state.elementTemplates.findIndex((t: any) => t.id === id);
             if (index !== -1) {
                 window.ApiServer.state.elementTemplates.splice(index, 1);

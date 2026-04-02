@@ -57,11 +57,7 @@ export const SigilLayout: FC = memo(() => {
         const created = window.ApiClient.elements.duplicateElements(selections);
         if (created.length === 0) return;
         useAppUIStore.getState().setSidebarSelections(created);
-        toast.success(
-            created.length === 1
-                ? t("elements.toast_duplicated_one")
-                : t("elements.toast_duplicated_n", { count: created.length })
-        );
+        toast.success(t("elements.toast_duplicated_n", { count: created.length }));
     };
 
     const handleAlignElements = (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {

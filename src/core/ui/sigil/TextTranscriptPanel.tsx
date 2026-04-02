@@ -44,7 +44,7 @@ export const TextTranscriptPanel: FC = memo(() => {
         />
         Show only speech-to-text
       </label>
-      <div className="flex-1 min-h-0 overflow-y-auto text-xs space-y-2 pr-1 custom-scrollbar select-text">
+      <div className="flex-1 min-h-0 overflow-y-auto text-xs space-y-2 pe-1 custom-scrollbar select-text">
         {filtered.length === 0 ? (
           <div className="text-base-content/40 leading-relaxed text-[11px]">
             {sttOnly

@@ -137,7 +137,7 @@ class Service_Document implements IServiceInterface {
           this.patchState(state, patchState.data);
         }
         else {
-          toast.error("Invalid template");
+          toast.error(i18n.t("toasts.invalid_template"));
           this.createNewState();
         }
       });
@@ -155,7 +155,7 @@ class Service_Document implements IServiceInterface {
 
   async importDocument() {
     if (window.Config.isClient()) {
-      toast.error("Import template is only available on the host app.");
+      toast.error(i18n.t("toasts.import_host_only"));
       return;
     }
     const path = await open({
@@ -207,7 +207,7 @@ class Service_Document implements IServiceInterface {
     try {
       Y.applyUpdate(tempDoc, data);
     } catch {
-      toast.error("Invalid template file.");
+      toast.error(i18n.t("toasts.invalid_template_file"));
       return;
     }
     const tempBinder = bind<DocumentState>(tempDoc.getMap("template"));
@@ -255,7 +255,7 @@ class Service_Document implements IServiceInterface {
   /** Replace the working template with defaults (new canvas + one text element). Saves immediately. */
   async resetTemplate(): Promise<void> {
     if (window.Config.isClient()) {
-      toast.error("Reset template is only available on the host app.");
+      toast.error(i18n.t("toasts.reset_host_only"));
       return;
     }
     this.createNewState();

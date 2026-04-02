@@ -38,6 +38,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: setup pnpm deps
         run: pnpm i
+      - name: i18n key parity
+        run: pnpm i18n:check
       - name: compile
         run: pnpm tauri build
         env:

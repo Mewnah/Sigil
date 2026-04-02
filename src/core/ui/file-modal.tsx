@@ -21,7 +21,7 @@ const FilesModal: FC = () => {
 
   const handleCopyStyle = (id: string) => {
     navigator.clipboard.writeText(`[file-${id}]`)
-    toast.success("Copied style");
+    toast.success(t("toasts.copied_style"));
   };
   const handleRemove = (id: string) => { window.ApiClient.files.removeFile(id) };
 
@@ -41,7 +41,7 @@ const FilesModal: FC = () => {
 
     <Modal.Header>
       {t('select_file.title')}
-      {!args?.select && <button className=" absolute right-4 top-4 btn btn-accent btn-sm" onClick={() => window.ApiClient.files.addFile()}>{t('files.add_file')}</button>}
+      {!args?.select && <button className=" absolute end-4 top-4 btn btn-accent btn-sm" onClick={() => window.ApiClient.files.addFile()}>{t('files.add_file')}</button>}
     </Modal.Header>
     <Modal.Content>
       <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">

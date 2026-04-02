@@ -16,6 +16,8 @@ type NativeFeatures = {
 
 type InitialData = {
   scene: string
+  /** Host UI language so the /client mirror can match Settings (omitted by older hosts). */
+  uiLanguage?: string
 }
 
 type ClientNetwork = {

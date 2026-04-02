@@ -49,9 +49,15 @@
   },
   "elements": {
     "duplicate_tooltip": "複製",
-    "duplicate_n": "複製 {{count}} 個",
     "toast_duplicated_one": "已複製元素",
-    "toast_duplicated_n": "已複製 {{count}} 個元素"
+    "toast_deleted_selected": "已刪除所選元素",
+    "toast_template_saved": "範本已儲存！",
+    "toast_added_from_template": "已從範本新增",
+    "confirm_delete_template": "確定刪除此範本？",
+    "duplicate_n_one": "複製 {{count}} 個",
+    "duplicate_n_other": "複製 {{count}} 個",
+    "toast_duplicated_n_one": "已複製元素",
+    "toast_duplicated_n_other": "已複製 {{count}} 個元素"
   },
   "main": {
     "btn_show_logs": "顯示日誌",
@@ -82,17 +88,13 @@
     "field_stop_with_stream": "隨 Twitch 直播結束而停止",
     "state_muted": "靜音",
     "state_": "靜音",
-
     "native_title": "本地",
-
     "browser_title": "瀏覽器",
     "browser_open_edge": "打開 Edge",
     "browser_open_chrome": "打開 Chrome",
     "field_sync_timing": "與 AI 轉換同步時間軸",
-
     "speechly_title": "Speechly",
     "speechly_appid": "App ID",
-
     "deepgram_title": "Deepgram",
     "deepgram_key": "Key",
     "deepgram_quality": "質量",
@@ -100,7 +102,6 @@
     "deepgram_punctuate": "標點符號",
     "deepgram_quality_notice": "某些語言無法與 \"enhanced\" 質量選項一起使用",
     "deepgram_quality_notice_link": "查看語言表",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "位置",
@@ -133,7 +134,6 @@
     "title": "文本轉語音",
     "field_voice": "音色",
     "field_stop_with_stream": "隨 Twitch 直播結束而停止",
-
     "uberduck_title": "Uberduck",
     "uberduck_api_key": "Api key",
     "uberduck_secret": "Secret",
@@ -142,7 +142,6 @@
     "uberduck_voice_desc_link": "查看可用的聲音",
     "uberduck_voice_status_reload": "加載語音",
     "uberduck_voice_status_updating": "正在加載語音..",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "位置",
@@ -152,9 +151,7 @@
     "azure_voice_rate": "速度",
     "azure_voice_pitch": "音調",
     "azure_voice_range": "音域",
-
     "native_title": "本地",
-
     "tiktok_title": "抖音",
     "windows_title": "Windows"
   },
@@ -170,11 +167,9 @@
     "azure_profanity_removed": "移除",
     "azure_profanity_raw": "不處理"
   },
-
   "transform": {
     "title": "AI 轉換"
   },
-
   "settings": {
     "title": "設置",
     "desc_1": "本應用由 Mmp 製作",
@@ -193,9 +188,32 @@
     "credits_mmpneo": "衷心感謝 mmpneo 建立並以開源方式分享 Curses。沒有這份基礎，就不會有 Sigil。",
     "tooltip_curses_github_title": "Curses（GitHub）",
     "tooltip_curses_github_body": "Sigil 所依據的原始應用，作者為 mmpneo。若對你有幫助，歡迎為上游儲存庫按星星。",
-    "footer_vrchat": "為 VRChat 社群而做"
+    "footer_vrchat": "為 VRChat 社群而做",
+    "hero_tagline": "你的聲音，由你定義 ✨",
+    "credits_line_before": "傾情打造 💜 ",
+    "credits_author_name": "Mewnah",
+    "discord_tooltip_title": "加入派對！",
+    "discord_tooltip_body": "Discord 社群：取得更新、\n說明與好心情 🎉",
+    "section_application": "應用程式設定",
+    "section_audio": "音訊設定",
+    "field_default_input_device": "預設輸入裝置",
+    "field_default_output_device": "預設輸出裝置",
+    "audio_devices_hint": "以上為預設裝置。各服務可在自己的設定中覆寫。",
+    "created_by": "建立者：{{author}}",
+    "section_background_input": "背景輸入",
+    "field_shortcut": "快速鍵",
+    "field_bg_timer": "計時（毫秒）",
+    "background_input_hint": "按 Esc 取消輸入，Enter 送出，Backspace 刪除",
+    "theme_group_core_tech": "核心與科技",
+    "theme_group_nature": "自然與元素",
+    "theme_group_vibes": "美學與氛圍",
+    "theme_group_luxury": "奢華與貴重",
+    "theme_group_space": "太空與科幻",
+    "ui_scale_s": "S",
+    "ui_scale_m": "M",
+    "ui_scale_l": "L",
+    "ui_scale_x": "X"
   },
-
   "word_replacements": {
     "title": "詞語替換",
     "field_ignore_case": "忽略字母大小寫",
@@ -233,11 +251,9 @@
     "browser_source_tips": "OBS 使用內建瀏覽器（CEF），不是本機 Chrome。若 Chrome 正常而 OBS 空白，請更新 OBS，在 設定 → 進階 開啟「瀏覽器來源硬體加速」，並在瀏覽器來源上右鍵 → 重新整理。\n本機服務與原版 Curses 相同：<code>http://localhost:連接埠/client</code>（形式同 Curses 的 <code>localhost:3030/client</code>，連接埠換成本機實際值）。\n串流時請保持 Sigil 運行。\n若需要可見字幕，請在畫布上新增文字元素。\n在 OBS 中關閉「在不可見時關閉來源」，避免隱藏時停更。",
     "btn_copy_browser_source_link": "複製瀏覽器來源 URL",
     "btn_setup_browser_source": "在 OBS 中建立瀏覽器來源",
-
     "section_websocket": "Websocket 連接",
     "websocket_desc": "需要 obs-websocket 插件.",
     "field_auto_connect": "自動連接",
-
     "section_native_captions": "原生字幕流",
     "section_scenes": "場景",
     "section_scenes_desc": "自動更改 Sigil 的場景以匹配 OBS 的場景",
@@ -257,7 +273,6 @@
     "field_post_in_chat_delay": "發送延遲（毫秒）",
     "field_chat_text": "使用聊天消息",
     "field_chat_text_desc": "將觀眾聊天送入文字流程（略過你自己送出的訊息，以免同時往聊天室發文時產生回音）",
-
     "section_emotes": "表情",
     "btn_show_emotes": "顯示表情",
     "btn_remap_emotes": "重新映射表情",
@@ -288,10 +303,8 @@
     "notice_desktop": "OSC 僅在 Sigil 桌面（Tauri）版可用，純瀏覽器宿主無法呼叫。",
     "field_target": "目標",
     "btn_send_test": "發送測試",
-
     "textbox_title": "VRC 文本框設置",
     "textbox_show_indicator": "顯示指示器",
-
     "kfi_title": "KillFrenzy 設置",
     "kfi_split_large": "拆分長消息",
     "kfi_hide_after": "延遲關閉",
@@ -328,7 +341,7 @@
     "section_scenes": "場景",
     "canvas_resize_hint": "雙擊畫布選中後，拖曳邊緣或角落控制點調整尺寸。",
     "field_canvas_size": "畫布大小",
-    "scene_menu_title": "場景", 
+    "scene_menu_title": "場景",
     "btn_add_scene": "添加場景",
     "btn_duplicate_scene": "復製場景",
     "btn_remove_scene": "刪除場景"
@@ -338,7 +351,6 @@
     "section_text_source": "文本源",
     "section_text_source_desc": "從哪裏獲取文本",
     "field_text_profanity_mask": "臟話屏蔽",
-    
     "section_font": "字體",
     "section_font_desc": "顏色, 大小, 陰影, 輪廓",
     "font_color": "顏色",
@@ -352,16 +364,13 @@
     "font_horizontal_align": "水平對齊",
     "font_vertical_align": "豎直對齊",
     "font_line_height": "行間距",
-
     "section_text_shadow": "文本陰影",
     "text_shadow_position": "位置",
     "text_shadow_blur": "模糊",
     "text_shadow_color": "顏色",
-
     "section_text_outline": "輪廓",
     "text_outline_size": "大小",
     "text_outline_color": "顏色",
-
     "section_box": "文本框",
     "section_box_desc": "背景, 邊框, 大小",
     "box_auto_width": "自動寬度",
@@ -371,13 +380,11 @@
     "box_text_padding": "文本填充",
     "box_horizontal_offset": "水平偏移",
     "box_vertical_offset": "垂直偏移",
-
     "section_box_shadow": "文本陰影",
     "box_shadow_position": "位置",
     "box_shadow_blur": "模糊",
     "box_shadow_spread": "模糊",
     "box_shadow_color": "顏色",
-
     "section_box_background": "背景",
     "box_bg_type": "類型",
     "box_bg_type_solid": "全填充",
@@ -394,7 +401,6 @@
     "box_bg_slice_right": "右側",
     "box_bg_slice_bottom": "底部",
     "box_bg_slice_left": "左側",
-
     "section_behaviour": "行為",
     "section_behaviour_desc": "自動清理和動畫",
     "section_animation": "動畫",
@@ -404,12 +410,10 @@
     "animation_interval_sentences": "句子",
     "animation_emit_event": "事件",
     "btn_copy_event_css": "復製事件 css",
-
     "section_cleanup": "清理",
     "cleanup_clear_after": "清除之後的文本",
     "cleanup_clear_animation_delay": "清除動畫延遲",
     "cleanup_replace_previous_sentence": "替換前一句",
-
     "section_effects": "效果",
     "section_effects_desc": "聲音和粒子",
     "section_audio": "音頻",
@@ -420,7 +424,6 @@
     "audio_params": "參數",
     "audio_detune": "降噪",
     "audio_playback": "回放",
-
     "section_particles": "粒子",
     "particles_first": "粒子 1",
     "particles_second": "粒子 2",
@@ -432,7 +435,6 @@
     "particles_direction_y": "Y",
     "particles_scale": "範圍",
     "particles_rotation": "旋轉",
-
     "section_css": "CSS 樣式"
   },
   "avatar": {
@@ -464,5 +466,47 @@
     "install_google": "從 Google 字體安裝",
     "install_google_desc": "在這兒粘貼文字，在 Google 字體中搜索.",
     "btn_install": "從系統文件安裝"
+  },
+  "app": {
+    "service_init_warning": "部分功能未能啟動：{{list}}。詳情請查看主控台。"
+  },
+  "toasts": {
+    "copied": "已複製！",
+    "pubsub_failed": "應用程式連結多次失敗，已中斷。",
+    "cannot_connect_self": "不能連線到自己",
+    "invalid_shortkey": "無效快速鍵 {{key}}",
+    "invalid_template": "無效範本",
+    "import_host_only": "匯入範本僅在主機應用程式中可用。",
+    "invalid_template_file": "無效的範本檔案。",
+    "reset_host_only": "重設範本僅在主機應用程式中可用。",
+    "obs_updated": "已更新 OBS",
+    "copied_style": "已複製樣式",
+    "tts_choose_voice": "請在文字轉語音設定中選擇語音後再試。",
+    "tts_choose_output": "請在文字轉語音設定中選擇輸出裝置與語音後再試。"
+  },
+  "settings_export": {
+    "menu_title": "匯出範本",
+    "author": "作者",
+    "btn_export": "匯出"
+  },
+  "integrations": {
+    "oauth_popup_blocked": "彈出視窗遭阻擋。請允許本站彈出視窗，或使用桌面應用程式。",
+    "oauth_listen_failed": "無法開始登入（請檢查連接埠 17890）。",
+    "oauth_open_browser_failed": "無法開啟預設瀏覽器。",
+    "twitch": {
+      "missing_client_id": "Twitch：請在 .env 中設定 SIGIL_TWITCH_CLIENT_ID（仍可使用 CURSES_TWITCH_CLIENT_ID）",
+      "login_token_exchange_failed": "Twitch 登入失敗（權杖交換）。{{hint}}請查看系統日誌。",
+      "token_exchange_hint_invalid_client": " 請檢查 .env 中的 Twitch 用戶端 ID/密鑰（SIGIL_* 或舊版 CURSES_*），或移除密鑰以使用公開應用程式的隱含登入。",
+      "signed_in_implicit_info": "Twitch：已登入。若聊天在權杖過期後停止，請重新登入。",
+      "login_cancelled": "Twitch 登入已取消或遭拒。"
+    },
+    "kick": {
+      "missing_client_id": "Kick：請在 .env 中設定 SIGIL_KICK_CLIENT_ID（仍可使用 CURSES_KICK_CLIENT_ID）",
+      "login_cancelled": "Kick 登入已取消或遭拒。",
+      "chat_session_expired": "Kick：工作階段已過期或無效，請重新登入。",
+      "chat_with_detail": "Kick 聊天：{{detail}}",
+      "chat_failed_status": "Kick 聊天失敗（{{status}}）",
+      "chat_request_failed": "Kick 聊天請求失敗"
+    }
   }
 }

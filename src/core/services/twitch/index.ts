@@ -5,6 +5,7 @@ import { ApiClient, HelixUser } from "@twurple/api";
 import { StaticAuthProvider } from "@twurple/auth";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import {
   serviceSubscibeToInput,
@@ -209,11 +210,10 @@ class Service_Twitch implements IServiceInterface {
       if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText);
         pushSystemLog("Twitch", `Token exchange failed: ${res.status} ${errText}`, "error");
-        const hint =
-          /invalid client/i.test(errText)
-            ? " Check Twitch client ID/secret in .env (SIGIL_* or legacy CURSES_*), or remove the secret for Public-app implicit sign-in."
-            : "";
-        toast.error(`Twitch login failed (token exchange).${hint} See System Logs.`);
+        const hint = /invalid client/i.test(errText)
+          ? i18n.t("integrations.twitch.token_exchange_hint_invalid_client")
+          : "";
+        toast.error(i18n.t("integrations.twitch.login_token_exchange_failed", { hint }));
         return;
       }
       const data: { access_token?: string; refresh_token?: string } = await res.json();
@@ -234,7 +234,7 @@ class Service_Twitch implements IServiceInterface {
   login() {
     const clientId = getTwitchClientId();
     if (!clientId) {
-      toast.warning("Twitch: set SIGIL_TWITCH_CLIENT_ID in .env (CURSES_TWITCH_CLIENT_ID still works)");
+      toast.warning(i18n.t("integrations.twitch.missing_client_id"));
       pushSystemLog(
         "Twitch",
         "Missing client id: set SIGIL_TWITCH_CLIENT_ID or CURSES_TWITCH_CLIENT_ID in .env",
@@ -281,7 +281,7 @@ class Service_Twitch implements IServiceInterface {
           thisRef.#state.data.token = access_token;
           void thisRef.connect();
           pushSystemLog("Twitch", "Signed in (Public app / implicit). No refresh token.", "info");
-          toast.info("Twitch: signed in. Re-login if chat stops when your token expires.");
+          toast.info(i18n.t("integrations.twitch.signed_in_implicit_info"));
         };
 
         const handleSuccess = async (code: string, state: string) => {
@@ -303,7 +303,7 @@ class Service_Twitch implements IServiceInterface {
             if (p.error) {
               finishWithError(
                 `OAuth error: ${p.error}${p.error_description ? ` — ${p.error_description}` : ""}`,
-                "Twitch login was cancelled or denied."
+                i18n.t("integrations.twitch.login_cancelled")
               );
               cleanupTauri();
               return;
@@ -327,7 +327,7 @@ class Service_Twitch implements IServiceInterface {
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            finishWithError(`OAuth listener failed: ${msg}`, "Could not start sign-in (check port 17890).");
+            finishWithError(`OAuth listener failed: ${msg}`, i18n.t("integrations.oauth_listen_failed"));
             cleanupTauri();
             return;
           }
@@ -338,7 +338,7 @@ class Service_Twitch implements IServiceInterface {
             await open(authUrlTauri);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            finishWithError(`Open browser failed: ${msg}`, "Could not open your default browser.");
+            finishWithError(`Open browser failed: ${msg}`, i18n.t("integrations.oauth_open_browser_failed"));
             cleanupTauri();
           }
           return;
@@ -357,7 +357,7 @@ class Service_Twitch implements IServiceInterface {
               if (typeof d.error === "string" && d.error) {
                 const desc = typeof d.error_description === "string" ? d.error_description : "";
                 pushSystemLog("Twitch", `OAuth error: ${d.error}${desc ? ` — ${desc}` : ""}`, "error");
-                toast.error("Twitch login was cancelled or denied.");
+                toast.error(i18n.t("integrations.twitch.login_cancelled"));
                 window.removeEventListener("message", handleMessage, true);
                 return;
               }
@@ -388,14 +388,14 @@ class Service_Twitch implements IServiceInterface {
             const err = idx === -1 ? rest : rest.slice(0, idx);
             const desc = idx === -1 ? "" : rest.slice(idx + 1);
             pushSystemLog("Twitch", `OAuth error: ${err}${desc ? ` — ${desc}` : ""}`, "error");
-            toast.error("Twitch login was cancelled or denied.");
+            toast.error(i18n.t("integrations.twitch.login_cancelled"));
             window.removeEventListener("message", handleMessage, true);
           }
         };
 
         const auth_window = window.open(authUrl, "sigil_oauth_twitch", "width=600,height=600");
         if (!auth_window) {
-          toast.error("Pop-up was blocked. Allow pop-ups for this site or use the desktop app.");
+          toast.error(i18n.t("integrations.oauth_popup_blocked"));
           pushSystemLog("Twitch", "Pop-up blocked; allow pop-ups for this host or use the Sigil desktop build", "warning");
           return;
         }

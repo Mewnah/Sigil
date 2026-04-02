@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import hotkeys from "hotkeys-js";
 import uniqBy from "lodash/uniqBy";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy }                                             from "valtio";
 import { IServiceInterface, TextEventSource, TextEventType } from "@/types";
@@ -134,7 +135,7 @@ class Service_Keyboard implements IServiceInterface {
       window.ApiServer.state.shortcuts[key] !== "" && globalShortcut.register(window.ApiServer.state.shortcuts[key], k => {
         this.processShortcut(key);
       }).catch(err => {
-        toast.error(`Invalid shortkey ${window.ApiServer.state.shortcuts[key]}`);
+        toast.error(i18n.t("toasts.invalid_shortkey", { key: window.ApiServer.state.shortcuts[key] }));
         window.ApiServer.state.shortcuts[key] = ""
         devLog("sc error", err);
       });

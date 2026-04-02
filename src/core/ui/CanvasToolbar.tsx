@@ -62,7 +62,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
     return (
         <div className="flex items-center gap-1 h-8 px-2 bg-base-100 border-b border-base-content/5">
             {/* Zoom Controls */}
-            <div className="flex items-center gap-1 border-r border-base-content/10 pr-2 mr-1">
+            <div className="flex items-center gap-1 border-e border-base-content/10 pe-2 me-1">
                 <Tooltip content="Zoom out" placement="bottom">
                     <button
                         onClick={handleZoomOut}
@@ -88,7 +88,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
             </div>
 
             {/* Undo / Redo */}
-            <div className="flex items-center gap-0.5 border-r border-base-content/10 pr-2 mr-1">
+            <div className="flex items-center gap-0.5 border-e border-base-content/10 pe-2 me-1">
                 <Tooltip content="Undo (Ctrl+Z)" placement="bottom">
                     <button
                         type="button"
@@ -204,7 +204,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                     type="button"
                     onClick={toggleHistory}
                     className={classNames(
-                        "w-6 h-6 flex items-center justify-center rounded transition-colors mr-2",
+                        "w-6 h-6 flex items-center justify-center rounded transition-colors me-2",
                         state.showHistory
                             ? "bg-primary/20 text-primary"
                             : "text-base-content/60 hover:text-base-content hover:bg-base-content/10"

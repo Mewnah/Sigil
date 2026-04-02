@@ -17,6 +17,7 @@ const detailsClass =
   "rounded-lg border border-base-content/10 mt-2 [&_summary]:cursor-pointer [&_summary]:list-none [&_summary::-webkit-details-marker]:hidden";
 
 const ObsSetupDropdown: FC = () => {
+  const { t } = useTranslation();
   const dropdown = useDropdown();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -31,7 +32,7 @@ const ObsSetupDropdown: FC = () => {
     setLoading(true);
     const resp = await window.ApiServer.obs.setupObsScene({ port, password, name });
     if (!resp) {
-      toast.success("Updated OBS");
+      toast.success(t("toasts.obs_updated"));
       dropdown.close();
     }
     else

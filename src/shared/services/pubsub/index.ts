@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
 import PubSub from "pubsub-js";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { proxyMap } from "valtio/utils";
@@ -208,7 +209,7 @@ class Service_PubSub implements IServiceInterface {
   copyLinkAddress() {
     const conf = window.Config.serverNetwork;
     navigator.clipboard.writeText(`${conf.ip}:${conf.port}`)
-    toast.success("Copied!");
+    toast.success(i18n.t("toasts.copied"));
   }
 
   #clearLinkSchedulers() {
@@ -244,7 +245,7 @@ class Service_PubSub implements IServiceInterface {
     if (this.#linkIntentionalClose || !this.#linkFullAddress || this.#linkReconnectTimer)
       return;
     if (this.#linkReconnectAttempts >= LINK_PUBSUB_MAX_ATTEMPTS) {
-      toast.error("PubSub link failed repeatedly. Disconnected.");
+      toast.error(i18n.t("toasts.pubsub_failed"));
       this.linkDisconnect();
       return;
     }
@@ -314,7 +315,7 @@ class Service_PubSub implements IServiceInterface {
 
     const conf = window.Config.serverNetwork;
     if (`${conf.ip}:${conf.port}` === fullAddress) {
-      toast.error("Cannot connect to self");
+      toast.error(i18n.t("toasts.cannot_connect_self"));
       return;
     }
 

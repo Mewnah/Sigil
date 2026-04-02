@@ -8,7 +8,7 @@ import React, { ReactNode, Suspense } from "react";
 import AppConfiguration from "@/config";
 import ApiShared from "@/shared";
 import ClientLoadingView from "./client/ui/view_loading";
-import { initI18n } from "@/i18n";
+import { changeLanguage, initI18n } from "@/i18n";
 
 declare global {
   interface Window {
@@ -82,6 +82,8 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
 
     // Determine Mode & Initialize Server API if needed
     if (window.Config.isClient()) {
+      const hostLang = window.Config.clientInitialState?.uiLanguage ?? "en";
+      await changeLanguage(hostLang);
       renderView(<ClientView />);
     } else {
       // Assume Server/App Mode if not explicitly Client

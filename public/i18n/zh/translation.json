@@ -49,9 +49,15 @@
   },
   "elements": {
     "duplicate_tooltip": "复制",
-    "duplicate_n": "复制 {{count}} 个",
     "toast_duplicated_one": "已复制元素",
-    "toast_duplicated_n": "已复制 {{count}} 个元素"
+    "toast_deleted_selected": "已删除所选元素",
+    "toast_template_saved": "模板已保存！",
+    "toast_added_from_template": "已从模板添加",
+    "confirm_delete_template": "确定删除此模板？",
+    "duplicate_n_one": "复制 {{count}} 个",
+    "duplicate_n_other": "复制 {{count}} 个",
+    "toast_duplicated_n_one": "已复制元素",
+    "toast_duplicated_n_other": "已复制 {{count}} 个元素"
   },
   "main": {
     "btn_show_logs": "显示日志",
@@ -82,17 +88,13 @@
     "field_stop_with_stream": "随 Twitch 直播结束而停止",
     "state_muted": "静音",
     "state_": "静音",
-
     "native_title": "本地",
-
     "browser_title": "浏览器",
     "browser_open_edge": "打开 Edge",
     "browser_open_chrome": "打开 Chrome",
     "field_sync_timing": "与 AI 转换同步时间轴",
-
     "speechly_title": "Speechly",
     "speechly_appid": "App ID",
-
     "deepgram_title": "Deepgram",
     "deepgram_key": "Key",
     "deepgram_quality": "质量",
@@ -100,7 +102,6 @@
     "deepgram_punctuate": "标点符号",
     "deepgram_quality_notice": "某些语言无法与 \"enhanced\" 质量选项一起使用",
     "deepgram_quality_notice_link": "查看语言表",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "位置",
@@ -133,7 +134,6 @@
     "title": "文本转语音",
     "field_voice": "音色",
     "field_stop_with_stream": "随 Twitch 直播结束而停止",
-
     "uberduck_title": "Uberduck",
     "uberduck_api_key": "Api key",
     "uberduck_secret": "Secret",
@@ -142,7 +142,6 @@
     "uberduck_voice_desc_link": "查看可用的声音",
     "uberduck_voice_status_reload": "加载语音",
     "uberduck_voice_status_updating": "正在加载语音..",
-
     "azure_title": "Azure",
     "azure_key": "Key",
     "azure_location": "位置",
@@ -152,9 +151,7 @@
     "azure_voice_rate": "速度",
     "azure_voice_pitch": "音调",
     "azure_voice_range": "音域",
-
     "native_title": "本地",
-
     "tiktok_title": "抖音",
     "windows_title": "Windows"
   },
@@ -170,11 +167,9 @@
     "azure_profanity_removed": "移除",
     "azure_profanity_raw": "不处理"
   },
-
   "transform": {
     "title": "AI 转换"
   },
-
   "settings": {
     "title": "设置",
     "desc_1": "本应用由 Mmp 制作",
@@ -193,9 +188,32 @@
     "credits_mmpneo": "衷心感谢 mmpneo 创建并以开源方式分享 Curses。没有这份基础，就不会有 Sigil。",
     "tooltip_curses_github_title": "Curses（GitHub）",
     "tooltip_curses_github_body": "Sigil 所基于的原始应用，作者为 mmpneo。若对你有帮助，欢迎为上游仓库点星。",
-    "footer_vrchat": "为 VRChat 社区而做"
+    "footer_vrchat": "为 VRChat 社区而做",
+    "hero_tagline": "你的声音，由你定义 ✨",
+    "credits_line_before": "倾情打造 💜 ",
+    "credits_author_name": "Mewnah",
+    "discord_tooltip_title": "加入派对！",
+    "discord_tooltip_body": "Discord 社区：获取更新、\n帮助与好心情 🎉",
+    "section_application": "应用程序设置",
+    "section_audio": "音频设置",
+    "field_default_input_device": "默认输入设备",
+    "field_default_output_device": "默认输出设备",
+    "audio_devices_hint": "以上为默认设备。各服务可在自己的设置中覆盖。",
+    "created_by": "创建者：{{author}}",
+    "section_background_input": "后台输入",
+    "field_shortcut": "快捷键",
+    "field_bg_timer": "计时（毫秒）",
+    "background_input_hint": "按 Esc 取消输入，Enter 提交，Backspace 删除",
+    "theme_group_core_tech": "核心与科技",
+    "theme_group_nature": "自然与元素",
+    "theme_group_vibes": "美学与氛围",
+    "theme_group_luxury": "奢华与贵重",
+    "theme_group_space": "太空与科幻",
+    "ui_scale_s": "S",
+    "ui_scale_m": "M",
+    "ui_scale_l": "L",
+    "ui_scale_x": "X"
   },
-
   "word_replacements": {
     "title": "词语替换",
     "field_ignore_case": "忽略字母大小写",
@@ -233,11 +251,9 @@
     "browser_source_tips": "OBS 使用内置浏览器（CEF），不是本机 Chrome。若 Chrome 正常而 OBS 空白，请更新 OBS，在 设置 → 高级 开启「浏览器源硬件加速」，并右键浏览器源 → 刷新。\n本地服务与原版 Curses 一致：使用 <code>http://localhost:端口/client</code>（与 Curses 的 <code>localhost:3030/client</code> 相同形式，端口换成本机实际端口）。\n推流时请保持 Sigil 运行。\n若需要可见字幕，请在画布上添加文本元素。\n在 OBS 中关闭「在不可见时关闭源」，避免隐藏时停更。",
     "btn_copy_browser_source_link": "复制浏览器源 URL",
     "btn_setup_browser_source": "在 OBS 中创建浏览器源",
-
     "section_websocket": "Websocket 连接",
     "websocket_desc": "需要 obs-websocket 插件.",
     "field_auto_connect": "自动连接",
-
     "section_native_captions": "原生字幕流",
     "section_scenes": "场景",
     "section_scenes_desc": "自动更改 Sigil 的场景以匹配 OBS 的场景",
@@ -257,7 +273,6 @@
     "field_post_in_chat_delay": "发送延迟（毫秒）",
     "field_chat_text": "使用聊天消息",
     "field_chat_text_desc": "将观众聊天送入文本流程（忽略你自己发送的消息，以免在同时向聊天发帖时产生回声）",
-
     "section_emotes": "表情",
     "btn_show_emotes": "显示表情",
     "btn_remap_emotes": "重新映射表情",
@@ -288,10 +303,8 @@
     "notice_desktop": "OSC 仅在 Sigil 桌面（Tauri）版可用，纯浏览器宿主无法调用。",
     "field_target": "目标",
     "btn_send_test": "发送测试",
-
     "textbox_title": "VRC 文本框设置",
     "textbox_show_indicator": "显示指示器",
-
     "kfi_title": "KillFrenzy 设置",
     "kfi_split_large": "拆分长消息",
     "kfi_hide_after": "延迟关闭",
@@ -328,7 +341,7 @@
     "section_scenes": "场景",
     "canvas_resize_hint": "双击画布选中后，拖动边缘或角落控制点调整尺寸。",
     "field_canvas_size": "画布大小",
-    "scene_menu_title": "场景", 
+    "scene_menu_title": "场景",
     "btn_add_scene": "添加场景",
     "btn_duplicate_scene": "复制场景",
     "btn_remove_scene": "删除场景"
@@ -338,7 +351,6 @@
     "section_text_source": "文本源",
     "section_text_source_desc": "从哪里获取文本",
     "field_text_profanity_mask": "脏话屏蔽",
-    
     "section_font": "字体",
     "section_font_desc": "颜色, 大小, 阴影, 轮廓",
     "font_color": "颜色",
@@ -352,16 +364,13 @@
     "font_horizontal_align": "水平对齐",
     "font_vertical_align": "竖直对齐",
     "font_line_height": "行间距",
-
     "section_text_shadow": "文本阴影",
     "text_shadow_position": "位置",
     "text_shadow_blur": "模糊",
     "text_shadow_color": "颜色",
-
     "section_text_outline": "轮廓",
     "text_outline_size": "大小",
     "text_outline_color": "颜色",
-
     "section_box": "文本框",
     "section_box_desc": "背景, 边框, 大小",
     "box_auto_width": "自动宽度",
@@ -371,13 +380,11 @@
     "box_text_padding": "文本填充",
     "box_horizontal_offset": "水平偏移",
     "box_vertical_offset": "垂直偏移",
-
     "section_box_shadow": "文本阴影",
     "box_shadow_position": "位置",
     "box_shadow_blur": "模糊",
     "box_shadow_spread": "模糊",
     "box_shadow_color": "颜色",
-
     "section_box_background": "背景",
     "box_bg_type": "类型",
     "box_bg_type_solid": "全填充",
@@ -394,7 +401,6 @@
     "box_bg_slice_right": "右侧",
     "box_bg_slice_bottom": "底部",
     "box_bg_slice_left": "左侧",
-
     "section_behaviour": "行为",
     "section_behaviour_desc": "自动清理和动画",
     "section_animation": "动画",
@@ -404,12 +410,10 @@
     "animation_interval_sentences": "句子",
     "animation_emit_event": "事件",
     "btn_copy_event_css": "复制事件 css",
-
     "section_cleanup": "清理",
     "cleanup_clear_after": "清除之后的文本",
     "cleanup_clear_animation_delay": "清除动画延迟",
     "cleanup_replace_previous_sentence": "替换前一句",
-
     "section_effects": "效果",
     "section_effects_desc": "声音和粒子",
     "section_audio": "音频",
@@ -420,7 +424,6 @@
     "audio_params": "参数",
     "audio_detune": "降噪",
     "audio_playback": "回放",
-
     "section_particles": "粒子",
     "particles_first": "粒子 1",
     "particles_second": "粒子 2",
@@ -432,7 +435,6 @@
     "particles_direction_y": "Y",
     "particles_scale": "范围",
     "particles_rotation": "旋转",
-
     "section_css": "CSS 样式"
   },
   "avatar": {
@@ -464,5 +466,47 @@
     "install_google": "从 Google 字体安装",
     "install_google_desc": "在这儿粘贴文字，在 Google 字体中搜索.",
     "btn_install": "从系统文件安装"
+  },
+  "app": {
+    "service_init_warning": "部分功能未能启动：{{list}}。详情请查看控制台。"
+  },
+  "toasts": {
+    "copied": "已复制！",
+    "pubsub_failed": "应用链接多次失败，已断开。",
+    "cannot_connect_self": "不能连接到自己",
+    "invalid_shortkey": "无效快捷键 {{key}}",
+    "invalid_template": "无效模板",
+    "import_host_only": "导入模板仅在主机应用中可用。",
+    "invalid_template_file": "无效的模板文件。",
+    "reset_host_only": "重置模板仅在主机应用中可用。",
+    "obs_updated": "已更新 OBS",
+    "copied_style": "已复制样式",
+    "tts_choose_voice": "请在文字转语音设置中选择语音后重试。",
+    "tts_choose_output": "请在文字转语音设置中选择输出设备与语音后重试。"
+  },
+  "settings_export": {
+    "menu_title": "导出模板",
+    "author": "作者",
+    "btn_export": "导出"
+  },
+  "integrations": {
+    "oauth_popup_blocked": "弹窗被拦截。请允许本站弹窗，或使用桌面应用。",
+    "oauth_listen_failed": "无法开始登录（请检查端口 17890）。",
+    "oauth_open_browser_failed": "无法打开默认浏览器。",
+    "twitch": {
+      "missing_client_id": "Twitch：请在 .env 中设置 SIGIL_TWITCH_CLIENT_ID（仍可使用 CURSES_TWITCH_CLIENT_ID）",
+      "login_token_exchange_failed": "Twitch 登录失败（令牌交换）。{{hint}}请查看系统日志。",
+      "token_exchange_hint_invalid_client": " 请检查 .env 中的 Twitch 客户端 ID/密钥（SIGIL_* 或旧版 CURSES_*），或移除密钥以使用公开应用的隐式登录。",
+      "signed_in_implicit_info": "Twitch：已登录。若聊天在令牌过期后停止，请重新登录。",
+      "login_cancelled": "Twitch 登录已取消或遭拒。"
+    },
+    "kick": {
+      "missing_client_id": "Kick：请在 .env 中设置 SIGIL_KICK_CLIENT_ID（仍可使用 CURSES_KICK_CLIENT_ID）",
+      "login_cancelled": "Kick 登录已取消或遭拒。",
+      "chat_session_expired": "Kick：会话已过期或无效，请重新登录。",
+      "chat_with_detail": "Kick 聊天：{{detail}}",
+      "chat_failed_status": "Kick 聊天失败（{{status}}）",
+      "chat_request_failed": "Kick 聊天请求失败"
+    }
   }
 }

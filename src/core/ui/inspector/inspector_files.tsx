@@ -37,7 +37,7 @@ const Inspector_Files: FC = memo(() => {
 
   const handleCopyStyle = (id: string) => {
     navigator.clipboard.writeText(`[file-${id}]`)
-    toast.success("Copied style");
+    toast.success(t("toasts.copied_style"));
   };
   const handleRemove = (id: string) => { window.ApiClient.files.removeFile(id) };
 

@@ -1,6 +1,7 @@
 import { pushSystemLog } from "@/core/services/systemLog";
 import { ServiceNetworkState } from "@/types";
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 
@@ -83,10 +84,14 @@ export default class KickChatApi {
               `Chat post failed (401): ${detail}. Try logging in again.`,
               "error",
             );
-            toast.error("Kick: session expired or invalid. Try logging in again.");
+            toast.error(i18n.t("integrations.kick.chat_session_expired"));
           } else {
             pushSystemLog("Kick", `Chat post failed (${response.status}): ${detail}`, "error");
-            toast.error(detail ? `Kick chat: ${detail}` : `Kick chat failed (${response.status})`);
+            toast.error(
+              detail
+                ? i18n.t("integrations.kick.chat_with_detail", { detail })
+                : i18n.t("integrations.kick.chat_failed_status", { status: String(response.status) }),
+            );
           }
           return;
         }
@@ -97,7 +102,7 @@ export default class KickChatApi {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         pushSystemLog("Kick", `Chat post error: ${msg}`, "error");
-        toast.error("Kick chat request failed");
+        toast.error(i18n.t("integrations.kick.chat_request_failed"));
       }
     }, delayMs);
   }

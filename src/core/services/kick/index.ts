@@ -6,6 +6,7 @@ import { getKickClientId, getKickClientSecret, getKickRedirectUri } from "@/util
 import { generateOAuthCodeChallenge, generateOAuthRandomString } from "@/utils/oauthPkce";
 import { isOAuthTauri, listenOAuthPayload } from "@/utils/oauthPopup";
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
@@ -161,7 +162,7 @@ class Service_Kick implements IServiceInterface {
         try {
             const clientId = getKickClientId();
             if (!clientId) {
-                toast.warning("Kick: set SIGIL_KICK_CLIENT_ID in .env (CURSES_KICK_CLIENT_ID still works)");
+                toast.warning(i18n.t("integrations.kick.missing_client_id"));
                 pushSystemLog(
                   "Kick",
                   "Missing client id: set SIGIL_KICK_CLIENT_ID or CURSES_KICK_CLIENT_ID in .env",
@@ -207,7 +208,7 @@ class Service_Kick implements IServiceInterface {
             if (isOAuthTauri()) {
                 unlistenTauri = await listenOAuthPayload("kick", async (p) => {
                     if (p.error) {
-                        finishWithError(`OAuth error: ${p.error}`, "Kick login was cancelled or denied.");
+                        finishWithError(`OAuth error: ${p.error}`, i18n.t("integrations.kick.login_cancelled"));
                         cleanupTauri();
                         return;
                     }
@@ -222,7 +223,7 @@ class Service_Kick implements IServiceInterface {
                     redirectUri = await invoke<string>("oauth_loopback_start", { provider: "kick" });
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
-                    finishWithError(`OAuth listener failed: ${msg}`, "Could not start sign-in (check port 17890).");
+                    finishWithError(`OAuth listener failed: ${msg}`, i18n.t("integrations.oauth_listen_failed"));
                     cleanupTauri();
                     return;
                 }
@@ -233,7 +234,7 @@ class Service_Kick implements IServiceInterface {
                     await open(authUrlTauri);
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
-                    finishWithError(`Open browser failed: ${msg}`, "Could not open your default browser.");
+                    finishWithError(`Open browser failed: ${msg}`, i18n.t("integrations.oauth_open_browser_failed"));
                     cleanupTauri();
                 }
                 return;
@@ -267,7 +268,7 @@ class Service_Kick implements IServiceInterface {
 
             const auth_window = window.open(authUrl, "sigil_oauth_kick", "width=600,height=700");
             if (!auth_window) {
-                toast.error("Pop-up was blocked. Allow pop-ups for this site or use the desktop app.");
+                toast.error(i18n.t("integrations.oauth_popup_blocked"));
                 pushSystemLog("Kick", "Pop-up blocked; allow pop-ups for this host or use the Sigil desktop build", "warning");
                 return;
             }

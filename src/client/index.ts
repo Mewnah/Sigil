@@ -30,7 +30,9 @@ class ApiClient {
   }
   getInitialConfig(): AppConfiguration["clientInitialState"] {
     return {
-      scene: this.scenes.state.activeScene
+      scene: this.scenes.state.activeScene,
+      uiLanguage:
+        typeof window.ApiServer !== "undefined" ? window.ApiServer.state.uiLanguage : "en",
     }
   }
 }

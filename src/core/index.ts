@@ -18,6 +18,7 @@ import Service_VRC from "./services/vrc";
 import Service_History from "./services/history";
 import { VoiceChangerService } from "./services/voice_changer";
 import { initSystemLogListeners, pushSystemLog } from "./services/systemLog";
+import i18n from "i18next";
 import { changeLanguage, initI18n } from '@/i18n';
 
 export { Services };
@@ -70,7 +71,7 @@ class ApiServer {
   }
   public changeLanguage(value: string) {
     this.state.uiLanguage = value;
-    changeLanguage(value);
+    void changeLanguage(value);
   }
 
   public async init() {
@@ -120,16 +121,15 @@ class ApiServer {
         pushSystemLog(label, `Initialization failed: ${msg}`, "error");
       }
     });
-    if (failedLabels.length > 0) {
-      toast.warning(
-        `Some features failed to start: ${failedLabels.join(", ")}. Check the console for details.`,
-        { autoClose: 10_000 }
-      );
-    }
-
     initSystemLogListeners();
 
     await initI18n(this.state.uiLanguage);
+    if (failedLabels.length > 0) {
+      toast.warning(
+        i18n.t("app.service_init_warning", { list: failedLabels.join(", ") }),
+        { autoClose: 10_000 }
+      );
+    }
     this.changeTheme(this.state.clientTheme);
     this.changeScale(this.state.uiScale);
 

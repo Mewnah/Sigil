@@ -167,7 +167,7 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
                             <div className="font-semibold">{opt.name}</div>
                             <div className="text-xs text-base-content/60">{opt.desc}</div>
                         </div>
-                        {selected === opt.id && <RiCheckLine className="ml-auto text-xl text-primary" />}
+                        {selected === opt.id && <RiCheckLine className="ms-auto text-xl text-primary" />}
                     </button>
                 ))}
             </div>
@@ -215,7 +215,7 @@ const IntegrationsStep: FC<StepProps> = ({ onNext, onBack }) => {
                             <div className="font-semibold">{int.name}</div>
                             <div className="text-xs text-base-content/60">{int.desc}</div>
                         </div>
-                        <RiArrowRightLine className="ml-auto text-base-content/30" />
+                        <RiArrowRightLine className="ms-auto text-base-content/30" />
                     </button>
                 ))}
             </div>

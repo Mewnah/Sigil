@@ -49,9 +49,15 @@
   },
   "elements": {
     "duplicate_tooltip": "Duplicate",
-    "duplicate_n": "Duplicate {{count}}",
+    "duplicate_n_one": "Duplicate {{count}}",
+    "duplicate_n_other": "Duplicate {{count}}",
     "toast_duplicated_one": "Element duplicated",
-    "toast_duplicated_n": "Duplicated {{count}} elements"
+    "toast_duplicated_n_one": "Element duplicated",
+    "toast_duplicated_n_other": "Duplicated {{count}} elements",
+    "toast_deleted_selected": "Deleted selected elements",
+    "toast_template_saved": "Template saved!",
+    "toast_added_from_template": "Added from template",
+    "confirm_delete_template": "Delete this template?"
   },
   "main": {
     "btn_show_logs": "Show logs",
@@ -182,7 +188,31 @@
     "credits_mmpneo": "Huge thanks to mmpneo for creating and open-sourcing Curses. Sigil wouldn't exist without that foundation.",
     "tooltip_curses_github_title": "Curses on GitHub",
     "tooltip_curses_github_body": "The original app by mmpneo that Sigil builds on. Star the repo if their work helped you.",
-    "footer_vrchat": "Made for the VRChat community"
+    "footer_vrchat": "Made for the VRChat community",
+    "hero_tagline": "Your voice, your way ✨",
+    "credits_line_before": "Crafted with 💜 by ",
+    "credits_author_name": "Mewnah",
+    "discord_tooltip_title": "Join the Party!",
+    "discord_tooltip_body": "Discord community for updates,\nhelp, and good vibes 🎉",
+    "section_application": "Application settings",
+    "section_audio": "Audio settings",
+    "field_default_input_device": "Default input device",
+    "field_default_output_device": "Default output device",
+    "audio_devices_hint": "These are the default devices. Services may override with their own settings.",
+    "created_by": "Created by {{author}}",
+    "section_background_input": "Background input",
+    "field_shortcut": "Shortcut",
+    "field_bg_timer": "Timer",
+    "background_input_hint": "Use Esc to cancel input, Enter to submit and Backspace to delete",
+    "theme_group_core_tech": "Core & Tech",
+    "theme_group_nature": "Nature & Elements",
+    "theme_group_vibes": "Aesthetic & Vibes",
+    "theme_group_luxury": "Luxury & Precious",
+    "theme_group_space": "Space & Sci-Fi",
+    "ui_scale_s": "S",
+    "ui_scale_m": "M",
+    "ui_scale_l": "L",
+    "ui_scale_x": "X"
   },
   "word_replacements": {
     "title": "Word replacements",
@@ -436,5 +466,47 @@
     "install_google": "Install from google fonts",
     "install_google_desc": "Find font at Google Fonts and copypaste it's name here.",
     "btn_install": "Install from file system"
+  },
+  "app": {
+    "service_init_warning": "Some features failed to start: {{list}}. Check the console for details."
+  },
+  "toasts": {
+    "copied": "Copied!",
+    "pubsub_failed": "PubSub link failed repeatedly. Disconnected.",
+    "cannot_connect_self": "Cannot connect to self",
+    "invalid_shortkey": "Invalid shortcut {{key}}",
+    "invalid_template": "Invalid template",
+    "import_host_only": "Import template is only available on the host app.",
+    "invalid_template_file": "Invalid template file.",
+    "reset_host_only": "Reset template is only available on the host app.",
+    "obs_updated": "Updated OBS",
+    "copied_style": "Copied style",
+    "tts_choose_voice": "Choose a voice in Text to Speech settings, then start again.",
+    "tts_choose_output": "Choose output device and voice in Text to Speech settings, then start again."
+  },
+  "settings_export": {
+    "menu_title": "Export template",
+    "author": "Author",
+    "btn_export": "Export"
+  },
+  "integrations": {
+    "oauth_popup_blocked": "Pop-up was blocked. Allow pop-ups for this site or use the desktop app.",
+    "oauth_listen_failed": "Could not start sign-in (check port 17890).",
+    "oauth_open_browser_failed": "Could not open your default browser.",
+    "twitch": {
+      "missing_client_id": "Twitch: set SIGIL_TWITCH_CLIENT_ID in .env (CURSES_TWITCH_CLIENT_ID still works)",
+      "login_token_exchange_failed": "Twitch login failed (token exchange).{{hint}} See System Logs.",
+      "token_exchange_hint_invalid_client": " Check Twitch client ID/secret in .env (SIGIL_* or legacy CURSES_*), or remove the secret for Public-app implicit sign-in.",
+      "signed_in_implicit_info": "Twitch: signed in. Re-login if chat stops when your token expires.",
+      "login_cancelled": "Twitch login was cancelled or denied."
+    },
+    "kick": {
+      "missing_client_id": "Kick: set SIGIL_KICK_CLIENT_ID in .env (CURSES_KICK_CLIENT_ID still works)",
+      "login_cancelled": "Kick login was cancelled or denied.",
+      "chat_session_expired": "Kick: session expired or invalid. Try logging in again.",
+      "chat_with_detail": "Kick chat: {{detail}}",
+      "chat_failed_status": "Kick chat failed ({{status}})",
+      "chat_request_failed": "Kick chat request failed"
+    }
   }
 }

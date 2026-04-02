@@ -107,7 +107,7 @@ const ElementMenu: FC<{ id: string, title: string }> = ({ id, title }) => {
 
 const SIdebarDivider: FC<PropsWithChildren<{ expand: boolean }>> = ({ children, expand }) => {
   if (!expand) return <Divider />;
-  return <div className="flex flex-nowrap items-center text-xs font-bold text-base-content/40 uppercase tracking-widest ml-3 mt-4 mb-2 truncate">
+  return <div className="flex flex-nowrap items-center text-xs font-bold text-base-content/40 uppercase tracking-widest ms-3 mt-4 mb-2 truncate">
     <span className={classNames("transition-opacity", expand ? "opacity-100" : "opacity-0")}>{children}</span>
   </div>
 }

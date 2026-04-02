@@ -19,7 +19,7 @@ const StatCard: FC<StatCardProps> = memo(({ label, value, unit, color = "text-ba
         <div className="text-xs text-base-content/60 mb-1">{label}</div>
         <div className={classNames("text-lg font-bold", color)}>
             {value}
-            {unit && <span className="text-sm font-normal ml-1">{unit}</span>}
+            {unit && <span className="text-sm font-normal ms-1">{unit}</span>}
         </div>
     </div>
 ));

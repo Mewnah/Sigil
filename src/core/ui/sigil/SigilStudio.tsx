@@ -360,13 +360,13 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
             {elementsIds && elementsIds.length > 0 && (
                 <div className="px-3 py-2 border-b border-base-content/5 flex-shrink-0">
                     <div className="relative">
-                        <RiSearchLine className="absolute left-2 top-1/2 -translate-y-1/2 text-base-content/30" />
+                        <RiSearchLine className="absolute start-2 top-1/2 -translate-y-1/2 text-base-content/30" />
                         <input
                             type="text"
                             placeholder="Search elements..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full h-7 pl-7 pr-2 text-xs bg-base-content/5 rounded border-none outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-base-content/30"
+                            className="w-full h-7 ps-7 pe-2 text-xs bg-base-content/5 rounded border-none outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-base-content/30"
                         />
                     </div>
                 </div>
@@ -404,7 +404,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
         <div className="flex flex-col h-full bg-base-200 overflow-hidden pointer-events-auto">
             {/* Header - Match inspector header style */}
             <div className="flex font-header items-center px-4 py-4 text-lg font-bold uppercase tracking-wide text-base-content border-b border-base-content/5 bg-base-100 flex-shrink-0">
-                <RiLayoutMasonryFill className="mr-2" />
+                <RiLayoutMasonryFill className="me-2" />
                 Canvas & Elements
             </div>
 
@@ -430,7 +430,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
                     )}
                 >
                     Scene
-                    {leftTab === 'scene' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" />}
+                    {leftTab === 'scene' && <div className="absolute bottom-0 start-0 w-full h-0.5 bg-primary" />}
                 </button>
             </div>
 

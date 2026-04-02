@@ -39,8 +39,28 @@ Sidebar tab visibility, expand/collapse, and multi-selection live in **Zustand**
 
 ## Release / quality
 
-- `npm run typecheck` — `tsc --noEmit`
-- `npm run test:e2e` — Playwright smoke (build + preview; `/` and `/client` shells mount `#root`)
+- `pnpm typecheck` — `tsc --noEmit`
+- `pnpm test:e2e` — Playwright smoke (build + preview; `/` and `/client` shells mount `#root`)
+- `pnpm i18n:check` — locale JSON key parity vs `public/i18n/en/translation.json` and registered codes in `src/i18n.ts`
+- `pnpm i18n:sync` — merge missing keys from English into other locale files (new keys copy English until translated)
+- `pnpm i18n:report` — list keys whose value still matches English (prioritize refresh / human review)
+- `pnpm i18n:translate` — regenerate MT locales from English via `scripts/build-translations.py` (slow; excludes `zh` / `zh_cn` / `zh_tw`, which are maintained manually)
+
+### Translation review (human / community)
+
+Priority locales for native or fluent review: **ja**, **ko**, **ar**, **ur**, **zh_cn**, **zh_tw**, then high-traffic EU languages.
+
+Reviewers should preserve **`{{placeholders}}`**, **`<code>...</code>`** spans, product names (**OBS**, **VRChat**, **Twitch**, **Kick**, **Discord**), and abbreviations (**STT**, **TTS**). Prefer domain-correct wording for streaming and voice tooling over literal machine translation.
+
+Use **`pnpm i18n:report`** to list keys that still match English; fix or file follow-up PRs per locale.
+
+### RTL smoke checklist (`ar`, `ur`)
+
+1. Switch UI language to **Arabic** or **Urdu** in Settings and confirm `<html dir="rtl" lang="…">` (handled in `src/i18n.ts`).
+2. Open **Settings**, **sidebar**, and at least one **inspector**; confirm no clipped text or overlapping controls.
+3. Open a **modal** and a **dropdown**; confirm menus align readably and close affordances are reachable.
+4. Trigger a **toast**; confirm it does not sit off-screen or mirror incorrectly.
+5. Prefer **logical** Tailwind on shared chrome (`ms-`/`me-`, `ps-`/`pe-`, `border-s`/`border-e`, `start-`/`end-`) instead of physical `ml-`/`mr-`/`pl-`/`pr-` where mirroring matters.
 
 For deeper diagrams, see the internal architecture audit / roadmap in your planning docs.
 

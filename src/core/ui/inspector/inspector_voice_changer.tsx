@@ -105,11 +105,11 @@ export const Inspector_VoiceChanger: FC = () => {
                     >
                         {isRunning ? (
                             <>
-                                <RiStopFill className="mr-1" /> Stop
+                                <RiStopFill className="me-1" /> Stop
                             </>
                         ) : (
                             <>
-                                <RiPlayFill className="mr-1" /> Start
+                                <RiPlayFill className="me-1" /> Start
                             </>
                         )}
                     </button>
