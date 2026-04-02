@@ -3,6 +3,37 @@
 All notable changes to **Sigil** are documented here. Sigil continues from the **Curses / Curses+** lineage; compare **0.3.0** to **Curses+ 0.2.2** for the largest delta.
 
 
+## [0.3.1] - 2026-03-31
+
+### Internationalization
+
+- **New locale bundles:** Arabic, Bengali, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Thai, Turkish, Urdu, and Vietnamese (`public/i18n/<code>/translation.json`), plus refreshed Simplified / Traditional Chinese (`zh`, `zh_cn`, `zh_tw`).
+- **Tooling:** `pnpm i18n:check` (key parity vs English + registered codes), `pnpm i18n:sync` (merge missing keys from `en`), `pnpm i18n:report` (keys still identical to English), `pnpm i18n:translate` → `scripts/build-translations.py` (optional Google MT refresh).
+- **RTL:** `ar` and `ur` set `dir` / `lang` on `<html>`; shared UI chrome uses logical Tailwind (`ms`/`me`, `ps`/`pe`, `start`/`end`, etc.) where mirroring matters.
+- **i18next plural forms** for multi-element duplicate actions and toasts (`elements.duplicate_n_*`, `elements.toast_duplicated_n_*`).
+- **Client mirror** respects host **UI language** after peer init.
+
+### Fixes and polish
+
+- **Tauri CSP:** allow `blob:` for release WebView image rendering.
+- **0.3.0 follow-ups:** image blob handling, file library modal, and delete confirmation flow.
+
+### CI and quality
+
+- **GitHub Actions:** `ci.yml` (pnpm, Node 20, `i18n:check`, typecheck); Playwright workflow aligned to **pnpm** + **Node 20** with `i18n:check` before tests; release workflow runs locale checks before build.
+- **Playwright:** preview server uses `pnpm`; smoke tests verify `ar` / `ur` translation assets and basic RTL `dir` sanity.
+- **Docs:** `ARCHITECTURE.md` — translation review checklist, RTL smoke checklist, i18n script summary.
+
+### Native (Rust)
+
+- Pre-webview **MessageBox** strings remain English; inline note defers optional localized OS dialogs to a future bridge.
+
+### Documentation
+
+- README updates from the community (synced on `master` before this release).
+
+---
+
 ## [0.3.0] - 2026-03-30
 
 ### Highlights
@@ -71,3 +102,4 @@ Sigil is a fork of **[Curses](https://github.com/mmpneo/curses)** by **mmpneo**.
 Last pre-Sigil milestone in this fork’s history: **Whisper FFI refactor** for high-performance local STT. For full detail, see git history at tag/commit `Release v0.2.2: Whisper FFI Refactor`.
 
 [0.3.0]: https://github.com/Mewnah/Sigil/releases/tag/v0.3.0
+[0.3.1]: https://github.com/Mewnah/Sigil/releases/tag/v0.3.1
