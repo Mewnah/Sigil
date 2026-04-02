@@ -3,7 +3,7 @@
 All notable changes to **Sigil** are documented here. Sigil continues from the **Curses / Curses+** lineage; compare **0.3.0** to **Curses+ 0.2.2** for the largest delta.
 
 
-## [0.3.1] - 2026-03-31
+## [0.3.1] - 2026-04-02
 
 ### Internationalization
 
