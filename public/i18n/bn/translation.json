@@ -159,7 +159,7 @@
     "neural_onnx_hub": "Hugging Face repo id",
     "neural_onnx_voice": "Voice name",
     "neural_onnx_speed": "Speed",
-    "neural_onnx_ep": "Execution provider (hint)",
+    "neural_onnx_ep": "Execution provider",
     "neural_sidecar_title": "Neural sidecar (HTTP)",
     "neural_sidecar_desc": "Uses your own server: GET /health and POST /speech with JSON { text, voice }. Example script: scripts/neural-sidecar/tts_sidecar.py (port 8766).",
     "neural_sidecar_endpoint": "Base URL",
@@ -209,7 +209,8 @@
     "fish_title": "Fish Speech",
     "fish_desc": "Fish Speech API. Example: docker run -p 8080:8080 fishaudio/fish-speech",
     "fish_endpoint": "Server URL",
-    "fish_reference_id": "Reference / voice id"
+    "fish_reference_id": "Reference / voice id",
+    "neural_onnx_ep_help": "Chooses whether the local speech model uses your processor or a graphics chip. It does not change your microphone or speakers. GPU options only work if your installed Sigil build includes that support."
   },
   "transl": {
     "title": "অনুবাদ",
@@ -612,7 +613,7 @@
     "sidecar_postprocess_divider": "After the server (brightness and smoothing)",
     "onnx_model_path": "ONNX model file path",
     "onnx_model_hint": "Float32 in/out; choose a .onnx file. Use the repo identity model to test the path. Sigil adjusts chunk shape when it does not match your mic.",
-    "onnx_execution_provider": "Execution provider (hint)",
+    "onnx_execution_provider": "Execution provider",
     "status_running": "Voice changer is on",
     "status_stopped": "Voice changer is off",
     "tooltip_start": "Start voice changer",
@@ -685,6 +686,27 @@
     "monitor_hint": "Send processed audio to a second output (e.g. headphones) while the main output goes to a virtual cable for VRChat or OBS. Uses the same buffer settings as the main output; gain is independent of main output gain.",
     "monitor_device": "Monitor output device",
     "monitor_off": "Off",
-    "monitor_gain": "Monitor gain"
+    "monitor_gain": "Monitor gain",
+    "sidecar_ws_info": "Use ws:// or wss:// (for example ws://127.0.0.1:8765). Start your converter before Sigil; see scripts/neural-sidecar/README.md.\n\nPitch shift is not applied after the WebSocket server. Use the server for voice identity; the sliders in Sound only affect brightness and smoothing after it returns audio.",
+    "section_how_it_works": "How it works",
+    "section_how_it_works_info": "Pick built-in processing, a WebSocket converter you run separately, or a local ONNX file. WebSocket and ONNX handle the main voice change; the controls in “Sound” still tweak tone and smoothness afterward.",
+    "section_timing_buffer": "Timing and playback buffer",
+    "section_timing_buffer_info": "Chunk size trades responsiveness vs CPU load. Smaller chunks react faster but work the processor harder. Prefill and max queue control how much audio is buffered before you hear output—lower values feel snappier but may glitch if your PC cannot keep up.",
+    "section_sound": "Sound (pitch, tone, smoothing)",
+    "section_sound_info": "Built-in mode: pitch shifts your voice here. WebSocket or ONNX mode: identity comes from your server or model; these sliders mostly change brightness and the phase-vocoder smoothing after that.",
+    "section_levels": "Input and output levels",
+    "section_devices": "Microphones and speakers",
+    "section_devices_info": "Main output is what viewers or VRChat hear. Monitor is an optional second output (for example headphones) while the main device stays on a virtual cable.",
+    "section_advanced": "Advanced",
+    "section_advanced_info": "Silence-based trim drops queued audio when the tail stays quiet—useful to catch up delay. GPU note: heavy models can contend with games and streaming software.",
+    "info_learn_more": "Learn more",
+    "info_close_overlay": "Close",
+    "latency_shorter_suggested": "Use shorter-delay values",
+    "latency_smoother_suggested": "Use smoother-playback values",
+    "onnx_files_info": "Float32 in/out; pick a .onnx file. Use the repo identity model to test the path. Sigil adjusts chunk shape when it does not match your mic.\n\nPitch shift is not applied after the ONNX model. Brightness and phase-vocoder settings still refine the model output.",
+    "onnx_ep_help": "Same idea as local speech: CPU is the safest. NVIDIA or DirectML only help if this Sigil build was compiled with that support. Does not affect mic or speaker routing.",
+    "chunk_frames_row": "{{frames}} samples (~{{ms}} ms at 48 kHz)",
+    "pitch_unit_semitones": "semitones",
+    "unit_ms": "ms"
   }
 }

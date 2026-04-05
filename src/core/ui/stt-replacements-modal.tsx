@@ -17,6 +17,7 @@ const WordsReplacementModal: FC = () => {
         <Modal.Header>{t('word_replacements.title')}</Modal.Header>
         <Modal.Content>
             <div className="p-4 flex flex-col space-y-2">
+                <Inspector.Description>{t('word_replacements.desc_stt_pipeline')}</Inspector.Description>
                 <InputCheckbox label="word_replacements.field_ignore_case" value={data.data.replaceWordsIgnoreCase} onChange={v => up("replaceWordsIgnoreCase", v)} />
                 {data.data.replaceWordsIgnoreCase && <>
                     <InputCheckbox label="word_replacements.field_preserve_capitalization" value={data.data.replaceWordsPreserveCase} onChange={v => up("replaceWordsPreserveCase", v)} />

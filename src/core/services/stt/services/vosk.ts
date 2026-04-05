@@ -32,6 +32,8 @@ interface AudioChunkPayload {
     channels: number;
 }
 
+const VOSK_CREATE_MODEL_TIMEOUT_MS = 120_000;
+
 /** Loaded model from `vosk-browser` `createModel()` — `KaldiRecognizer` is a getter, not a module export. */
 type VoskLoadedModel = {
     KaldiRecognizer: new (sampleRate: number, grammar?: string) => VoskRecognizer;
@@ -60,11 +62,32 @@ function toMonoFloat32(samples: number[], channels: number): Float32Array {
     return out;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`${label} (${ms / 1000}s)`)), ms);
+        promise.then(
+            (v) => {
+                clearTimeout(t);
+                resolve(v);
+            },
+            (e) => {
+                clearTimeout(t);
+                reject(e);
+            }
+        );
+    });
+}
+
 export class STT_VoskService implements ISpeechRecognitionService {
     private model: VoskLoadedModel | null = null;
     private recognizer: VoskRecognizer | null = null;
     private isRunning = false;
     private unlistenAudio?: UnlistenFn;
+    /** True from start() until success, failure, cancel, or stop. */
+    private starting = false;
+    private startAborted = false;
+    /** stop() requested UI reset via onStop (avoids double onStop with start catch). */
+    private stopNotified = false;
 
     constructor(private readonly receiver: ISTTReceiver) { }
 
@@ -92,20 +115,55 @@ export class STT_VoskService implements ISpeechRecognitionService {
         });
     }
 
+    #teardownModelAndRecognizer() {
+        if (this.recognizer) {
+            this.recognizer.remove();
+            this.recognizer = null;
+        }
+        if (this.model) {
+            this.model.terminate();
+            this.model = null;
+        }
+    }
+
+    #resetStopNotified() {
+        this.stopNotified = false;
+    }
+
+    #notifyStopOnce(error?: string) {
+        if (this.stopNotified) return;
+        this.stopNotified = true;
+        this.receiver.onStop(error);
+    }
+
     async start(params: STT_State) {
+        this.startAborted = false;
+        this.starting = true;
+        this.#resetStopNotified();
         try {
             devLog("[Vosk] Starting service...");
             this.receiver.onInterim("Loading Vosk...");
 
             const modelId = params.vosk.model || "vosk-model-small-en-us-0.15";
             const customUrl = params.vosk.modelUrl?.trim() || null;
+            const localZip =
+                params.vosk.useLocalZip && params.vosk.localZipPath?.trim()
+                    ? params.vosk.localZipPath.trim()
+                    : null;
 
             this.receiver.onInterim(`Ensuring model on disk: ${modelId}...`);
 
             const relPath = await invoke<string>("plugin:vosk-stt|download_vosk_model", {
                 modelId,
                 urlOverride: customUrl,
+                localZipPath: localZip && localZip.length > 0 ? localZip : null,
             });
+
+            if (this.startAborted) {
+                this.#teardownModelAndRecognizer();
+                this.#notifyStopOnce();
+                return;
+            }
 
             const bytes = await readFile(relPath, { baseDir: BaseDirectory.AppData });
             const blob = new Blob([bytes], { type: "application/zip" });
@@ -117,9 +175,19 @@ export class STT_VoskService implements ISpeechRecognitionService {
             const { createModel } = await import("vosk-browser");
 
             try {
-                this.model = (await createModel(objectUrl)) as VoskLoadedModel;
+                this.model = (await withTimeout(
+                    createModel(objectUrl) as Promise<VoskLoadedModel>,
+                    VOSK_CREATE_MODEL_TIMEOUT_MS,
+                    "Vosk model load timed out"
+                )) as VoskLoadedModel;
             } finally {
                 URL.revokeObjectURL(objectUrl);
+            }
+
+            if (this.startAborted) {
+                this.#teardownModelAndRecognizer();
+                this.#notifyStopOnce();
+                return;
             }
 
             devLog("[Vosk] Model loaded successfully");
@@ -138,9 +206,18 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 this.recognizer.acceptWaveformFloat(floats, sample_rate);
             });
 
+            if (this.startAborted) {
+                if (this.unlistenAudio) {
+                    this.unlistenAudio();
+                    this.unlistenAudio = undefined;
+                }
+                this.#teardownModelAndRecognizer();
+                this.#notifyStopOnce();
+                return;
+            }
+
             devLog("[Vosk] Starting Rust audio capture with device:", deviceName || "default");
 
-            // Set before capture starts so the first `audio:chunk` is not dropped (Rust uses device native rate).
             this.isRunning = true;
 
             await invoke("plugin:audio|start_audio_capture", {
@@ -148,9 +225,26 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 sampleRate: 16000,
             });
 
+            if (this.startAborted) {
+                this.isRunning = false;
+                try {
+                    await invoke("plugin:audio|stop_audio_capture");
+                } catch {
+                    /* ignore */
+                }
+                if (this.unlistenAudio) {
+                    this.unlistenAudio();
+                    this.unlistenAudio = undefined;
+                }
+                this.#teardownModelAndRecognizer();
+                this.#notifyStopOnce();
+                return;
+            }
+
+            this.starting = false;
+            this.receiver.onInterim("");
             this.receiver.onStart();
             devLog("[Vosk] Recording started via Rust audio capture");
-
         } catch (error) {
             console.error("[Vosk] Error starting:", error);
             this.isRunning = false;
@@ -158,20 +252,26 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 this.unlistenAudio();
                 this.unlistenAudio = undefined;
             }
-            this.receiver.onStop(String(error));
+            this.#teardownModelAndRecognizer();
+            if (!this.startAborted) {
+                this.#notifyStopOnce(String(error));
+            }
+        } finally {
+            this.starting = false;
         }
     }
 
     async stop() {
-        if (!this.isRunning) return;
+        this.startAborted = true;
+        const hadSession =
+            this.isRunning || this.starting || !!this.unlistenAudio || !!this.model || !!this.recognizer;
 
-        devLog("[Vosk] Stopping...");
         this.isRunning = false;
 
         try {
             await invoke("plugin:audio|stop_audio_capture");
-        } catch (error) {
-            console.error("[Vosk] Error stopping audio capture:", error);
+        } catch {
+            /* ignore */
         }
 
         if (this.unlistenAudio) {
@@ -179,21 +279,15 @@ export class STT_VoskService implements ISpeechRecognitionService {
             this.unlistenAudio = undefined;
         }
 
-        if (this.recognizer) {
-            this.recognizer.remove();
-            this.recognizer = null;
-        }
+        this.#teardownModelAndRecognizer();
 
-        this.receiver.onStop();
+        if (hadSession) {
+            this.#notifyStopOnce();
+        }
         devLog("[Vosk] Stopped");
     }
 
     dispose() {
         void this.stop();
-
-        if (this.model) {
-            this.model.terminate();
-            this.model = null;
-        }
     }
 }

@@ -50,6 +50,9 @@ export const Service_STT_Schema = z.object({
     silenceThresholdDb: zSafe(zStringNumber(), "-40"),
     silenceDurationMs: zSafe(zStringNumber(), "1500"),
     minChunkDurationMs: zSafe(zStringNumber(), "1000"),
+    /** When true, `localModelPath` is copied into app data instead of downloading from Hugging Face. */
+    useLocalModel: zSafe(z.coerce.boolean(), false),
+    localModelPath: zSafe(z.coerce.string(), ""),
   }).default({}),
   deepgram: z.object({
     device: zSafe(z.coerce.string(), "default"),
@@ -65,6 +68,9 @@ export const Service_STT_Schema = z.object({
     device: zSafe(z.coerce.string(), ""),
     model: zSafe(z.coerce.string(), "vosk-model-small-en-us-0.15"),
     modelUrl: zSafe(z.coerce.string(), ""),
+    /** When set, this zip is copied into app data instead of downloading from the catalog URL. */
+    useLocalZip: zSafe(z.coerce.boolean(), false),
+    localZipPath: zSafe(z.coerce.string(), ""),
   }).default({}),
   moonshine: z.object({
     device: zSafe(z.coerce.string(), ""),

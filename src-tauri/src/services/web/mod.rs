@@ -52,24 +52,99 @@ struct OpenBrowserCommand {
     browser: String,
     url: String,
 }
+
+fn spawn_browser_windows_exe(exe: &str, url: &str) -> Result<(), std::io::Error> {
+    Command::new(exe).arg(url).spawn().map(|_| ())
+}
+
+/// Opens `url` in a named browser when possible, otherwise the OS default handler.
 #[command]
-fn open_browser(data: OpenBrowserCommand) {
-    // Validate URL scheme to prevent arbitrary command execution
+fn open_browser(data: OpenBrowserCommand) -> Result<(), String> {
     if !data.url.starts_with("http://") && !data.url.starts_with("https://") {
-        return;
+        return Err("Only http and https URLs are allowed".to_string());
     }
+
+    let browser = data.browser.as_str();
 
     if cfg!(target_os = "windows") {
-        let browser_path = match data.browser.as_str() {
-            "chrome" => "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-            "edge" => "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-            _ => "", // Default to system default if unknown
-        };
+        if browser == "chrome" {
+            for exe in [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            ] {
+                if spawn_browser_windows_exe(exe, &data.url).is_ok() {
+                    return Ok(());
+                }
+            }
+        } else if browser == "edge" {
+            for exe in [
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ] {
+                if spawn_browser_windows_exe(exe, &data.url).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
 
-        if !browser_path.is_empty() {
-            Command::new(browser_path).arg(&data.url).spawn().ok();
+        return Command::new("cmd")
+            .args(["/C", "start", "", &data.url])
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))
+            .map(|_| ());
+    }
+
+    if cfg!(target_os = "macos") {
+        if browser == "chrome" {
+            if Command::new("open")
+                .args(["-a", "Google Chrome", &data.url])
+                .spawn()
+                .is_ok()
+            {
+                return Ok(());
+            }
+        } else if browser == "edge" {
+            if Command::new("open")
+                .args(["-a", "Microsoft Edge", &data.url])
+                .spawn()
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+
+        return Command::new("open")
+            .arg(&data.url)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))
+            .map(|_| ());
+    }
+
+    // Linux, *BSD, etc.
+    if browser == "chrome" {
+        for bin in [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ] {
+            if Command::new(bin).arg(&data.url).spawn().is_ok() {
+                return Ok(());
+            }
+        }
+    } else if browser == "edge" {
+        for bin in ["microsoft-edge", "microsoft-edge-stable"] {
+            if Command::new(bin).arg(&data.url).spawn().is_ok() {
+                return Ok(());
+            }
         }
     }
+
+    Command::new("xdg-open")
+        .arg(&data.url)
+        .spawn()
+        .map_err(|e| format!("Failed to open browser (xdg-open): {}", e))?;
+    Ok(())
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

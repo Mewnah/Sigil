@@ -33,8 +33,42 @@ export type TextEmoteEnricher = (
 /** Host registers STT forwarding for external `text.stt` pubsub (keeps shared free of ApiServer). */
 export type ExternalSttHandler = (event: TextEvent) => void;
 
+/** Chrome/Edge mic.html → host: recognition actually started or stopped. */
+export type ExternalMicLifecycleHandler = (active: boolean) => void;
+
+export const PUBSUB_STT_EXTERNAL_STATE = "stt.external.state";
+export const PUBSUB_STT_EXTERNAL_COMMAND = "stt.external.command";
+
+const ExternalMicLifecycleStateSchema = z.object({ active: z.boolean() });
+
+const TEXT_HISTORY_CAP = 120;
+
 class Service_PubSub implements IServiceInterface {
   constructor() { }
+  #historyBuf: { id: string; event: string; value: string }[] = [];
+  #historyHead = 0;
+  #historyCount = 0;
+
+  #appendTextHistoryLine(entry: { id: string; event: string; value: string }) {
+    const cap = TEXT_HISTORY_CAP;
+    if (this.#historyBuf.length < cap) {
+      this.#historyBuf.push(entry);
+      this.#historyCount = this.#historyBuf.length;
+    } else {
+      this.#historyBuf[this.#historyHead] = entry;
+      this.#historyHead = (this.#historyHead + 1) % cap;
+      this.#historyCount = cap;
+    }
+    const n = this.#historyBuf.length;
+    const start = n < cap ? 0 : this.#historyHead;
+    const list: { id: string; event: string; value: string }[] = [];
+    for (let i = 0; i < this.#historyCount; i++) {
+      list.push(this.#historyBuf[(start + i) % n]!);
+    }
+    this.textHistory.list = list;
+    this.textHistory.lastId = entry.id;
+  }
+
   #socket?: WebSocket;
   #linkIntentionalClose = false;
   #linkFullAddress: string | null = null;
@@ -43,6 +77,7 @@ class Service_PubSub implements IServiceInterface {
   #linkPingTimer: ReturnType<typeof setInterval> | null = null;
   #textEmoteEnricher?: TextEmoteEnricher;
   #externalSttHandler?: ExternalSttHandler;
+  #externalMicLifecycleHandler?: ExternalMicLifecycleHandler;
   serviceState = proxy({
     state: ServiceNetworkState.disconnected,
   });
@@ -74,7 +109,14 @@ class Service_PubSub implements IServiceInterface {
         if (!caption.success) return;
         const msg = { topic, data: caption.data };
         this.publishLocally(msg);
-        this.#publishPeers(msg);
+        this.#fanOutPubSubRemote(topic, caption.data);
+        return;
+      }
+
+      if (topic === PUBSUB_STT_EXTERNAL_STATE) {
+        const parsed = ExternalMicLifecycleStateSchema.safeParse(data);
+        if (!parsed.success) return;
+        this.#externalMicLifecycleHandler?.(parsed.data.active);
         return;
       }
 
@@ -93,7 +135,7 @@ class Service_PubSub implements IServiceInterface {
 
       const msg = { topic, data: textEvent };
       this.publishLocally(msg);
-      this.#publishPeers(msg);
+      this.#fanOutPubSubRemote(topic, textEvent);
     } catch (error) {
       // just ignore invalid messages
     }
@@ -111,6 +153,16 @@ class Service_PubSub implements IServiceInterface {
 
   setExternalSttHandler(fn: ExternalSttHandler | undefined) {
     this.#externalSttHandler = fn;
+  }
+
+  setExternalMicLifecycleHandler(fn: ExternalMicLifecycleHandler | undefined) {
+    this.#externalMicLifecycleHandler = fn;
+  }
+
+  /** Localhost pubsub WebSocket peers only (mic.html); does not fan out to PeerJS or link socket. */
+  broadcastLocalWebSocketOnly(msg: BaseEvent) {
+    window.Config.isApp() &&
+      invoke("plugin:web|pubsub_broadcast", { value: JSON.stringify(msg) });
   }
 
   async init() {
@@ -138,12 +190,8 @@ class Service_PubSub implements IServiceInterface {
         ) {
           return;
         }
-        const maxEntries = 120;
-        if (this.textHistory.list.length >= maxEntries)
-          this.textHistory.list.shift();
         const id = nanoid();
-        this.textHistory.list.push({ id, event: suffix, value: event.value });
-        this.textHistory.lastId = id;
+        this.#appendTextHistoryLine({ id, event: suffix, value: event.value });
       }
     });
   }
@@ -159,26 +207,24 @@ class Service_PubSub implements IServiceInterface {
   publishLocally({ topic, data }: BaseEvent) {
     PubSub.publishSync(topic, data);
   }
-  #publishPubSub(msg: BaseEvent) {
-    window.Config.isApp() &&
-      invoke("plugin:web|pubsub_broadcast", { value: JSON.stringify(msg) });
-  }
-  #publishLink(msg: BaseEvent) {
+
+  /** PeerJS + localhost WS + link socket; local PubSub already handled separately when needed. */
+  #fanOutPubSubRemote(topic: string, data: unknown) {
+    const dataJson = JSON.stringify(data);
+    window.ApiShared.peer.broadcastPubSubParts(topic, dataJson);
+    const wire = `{"topic":${JSON.stringify(topic)},"data":${dataJson}}`;
+    if (window.Config.isApp())
+      void invoke("plugin:web|pubsub_broadcast", { value: wire });
     if (this.#socket && this.#socket.readyState === this.#socket.OPEN)
-      this.#socket.send(JSON.stringify(msg));
-  }
-  #publishPeers(msg: BaseEvent) {
-    window.ApiShared.peer.broadcast(msg);
+      this.#socket.send(wire);
   }
 
   publish(topic: string, data: any) {
     if (window.Config.isClient())
       return;
-    let msg = { topic, data };
+    const msg = { topic, data };
     this.publishLocally(msg);
-    this.#publishPeers(msg);
-    this.#publishPubSub(msg);
-    this.#publishLink(msg);
+    this.#fanOutPubSubRemote(topic, data);
   }
   publishText(topic: TextEventSource, textData: PartialWithRequired<TextEvent, "type" | "value">) {
     let data = this.applyEmotes(textData);

@@ -11,6 +11,7 @@ import { proxy } from "valtio";
 import { Translation_Backends } from "./schema";
 import { Translation_AzureService } from "./services/azure";
 import { Translation_LibreTranslateService } from "./services/libretranslate";
+import { Translation_OnDeviceService } from "./services/onDevice";
 import {
   ITranslationReceiver,
   ITranslationService,
@@ -27,6 +28,7 @@ const backends: {
 } = {
   [Translation_Backends.azure]: Translation_AzureService,
   [Translation_Backends.libretranslate]: Translation_LibreTranslateService,
+  [Translation_Backends.onDevice]: Translation_OnDeviceService,
 };
 
 class Service_Translation implements IServiceInterface, ITranslationReceiver {

@@ -1,7 +1,30 @@
 import { pushSystemLog } from "@/core/services/systemLog";
 import { IServiceInterface, ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
 import { serviceSubscibeToInput, serviceSubscibeToSource } from "@/utils";
-import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import {
+  buildDiscordExecuteUrl,
+  buildDiscordWebhookJsonBody,
+  chunkDiscordContent,
+  normalizeDiscordWebhookUrl,
+  postDiscordContentChunks,
+} from "./webhookExecute";
+
+async function logDiscordErrorResponse(res: Response, context: string) {
+  let detail = "";
+  try {
+    const t = await res.text();
+    if (t) detail = t.length > 400 ? `${t.slice(0, 400)}…` : t;
+  } catch {
+    /* ignore */
+  }
+  pushSystemLog(
+    "Discord",
+    detail
+      ? `Webhook ${context}: HTTP ${res.status} — ${detail}`
+      : `Webhook ${context}: HTTP ${res.status}`,
+    "warning",
+  );
+}
 
 class Service_Discord implements IServiceInterface {
   get #state() {
@@ -10,11 +33,14 @@ class Service_Discord implements IServiceInterface {
 
   private eventDisposers: (() => void)[] = [];
 
-  get checkTwitch() {
-    return (
-      this.#state.data.postWithTwitchLive &&
-      window.ApiServer.twitch.state.liveStatus !== ServiceNetworkState.connected
-    );
+  /** When enabled, block posts unless Twitch or Kick reports live. */
+  get #blockBecauseNotLive() {
+    if (!this.#state.data.postOnlyWhenLive) return false;
+    const twitchLive =
+      window.ApiServer.twitch.state.liveStatus === ServiceNetworkState.connected;
+    const kickLive =
+      window.ApiServer.kick.state.liveStatus === ServiceNetworkState.connected;
+    return !twitchLive && !kickLive;
   }
 
   #migratePostTextfieldSource() {
@@ -27,52 +53,75 @@ class Service_Discord implements IServiceInterface {
   async init() {
     this.#migratePostTextfieldSource();
 
-    this.eventDisposers.push(serviceSubscibeToSource(this.#state.data, "postSource", (data) => {
-      if (this.checkTwitch) return;
-      this.#state.data.postEnable &&
-        data?.value &&
-        data?.type === TextEventType.final &&
-        this.say(data.value);
-    }));
-    this.eventDisposers.push(serviceSubscibeToInput(this.#state.data, "postInput", (data) => {
-      if (this.checkTwitch) return;
+    this.eventDisposers.push(
+      serviceSubscibeToSource(this.#state.data, "postSource", (data) => {
+        if (this.#blockBecauseNotLive) return;
+        this.#state.data.postEnable &&
+          data?.value &&
+          data?.type === TextEventType.final &&
+          this.say(data.value);
+      }),
+    );
+    this.eventDisposers.push(
+      serviceSubscibeToInput(
+        this.#state.data,
+        "postInput",
+        (data) => {
+          if (this.#blockBecauseNotLive) return;
 
-      this.#state.data.postEnable &&
-        data?.value &&
-        data?.type === TextEventType.final &&
-        this.say(data.value);
-    }, "postSource"));
+          this.#state.data.postEnable &&
+            data?.value &&
+            data?.type === TextEventType.final &&
+            this.say(data.value);
+        },
+        "postSource",
+      ),
+    );
+  }
+
+  sendTest(): void {
+    this.say("Sigil — Discord webhook test. If you see this, the integration is working.");
   }
 
   say(value: string) {
-    const hook = this.#state.data.channelHook;
-    if (!hook) return;
+    if (!value) return;
+    const rawHook = this.#state.data.channelHook;
+    const hook = normalizeDiscordWebhookUrl(rawHook);
+    if (!hook) {
+      if (rawHook.trim())
+        pushSystemLog(
+          "Discord",
+          "Invalid webhook URL (use https://discord.com/api/webhooks/… from channel settings).",
+          "warning",
+        );
+      return;
+    }
+
+    const d = this.#state.data;
+    const executeUrl = buildDiscordExecuteUrl(hook, {
+      threadId: d.webhookThreadId,
+      wait: true,
+    });
+    const chunks = chunkDiscordContent(value);
+
     void (async () => {
       try {
-        const res = await fetchWithTimeout(hook, {
-          method: "POST",
-          timeoutMs: 25_000,
-          headers: {
-            "Content-type": "application/json",
-          },
-          body: JSON.stringify({
-            content: value,
-            embeds: null,
-            username: this.#state.data.channelBotName || "Sigil",
-            avatar_url: this.#state.data.channelAvatarUrl || "",
-            attachments: [],
+        const last = await postDiscordContentChunks(executeUrl, chunks, (chunk) =>
+          buildDiscordWebhookJsonBody(chunk, {
+            channelBotName: d.channelBotName,
+            channelAvatarUrl: d.channelAvatarUrl,
+            webhookThreadName: d.webhookThreadName,
           }),
-        });
-        if (!res.ok)
-          pushSystemLog("Discord", `Webhook rejected: HTTP ${res.status}`, "warning");
+        );
+        if (!last.ok) await logDiscordErrorResponse(last, "rejected");
       } catch {
-        pushSystemLog("Discord", "Webhook request failed (network or invalid URL)", "warning");
+        pushSystemLog("Discord", "Webhook request failed (network or timeout)", "warning");
       }
     })();
   }
 
   dispose() {
-    this.eventDisposers.forEach(d => d());
+    this.eventDisposers.forEach((d) => d());
     this.eventDisposers = [];
   }
 }

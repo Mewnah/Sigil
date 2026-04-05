@@ -4,32 +4,75 @@ import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
 import { devLog } from "@/utils/devLog";
 
+/** Strip Whisper non-speech markers like `[CHIRPING]` / `(water splashing)` from partials. */
+const WHISPER_NOISE_TOKEN_RE = /(\[[^\]]+\]|\([^\)]+\))/g;
+
 export class STT_WhisperService implements ISpeechRecognitionService {
     private unlistenProgress?: UnlistenFn;
     private unlistenPartial?: UnlistenFn;
     private isRecording = false;
     private accumulatedText = "";
+    private starting = false;
+    private startAborted = false;
+    private stopNotified = false;
 
     constructor(private readonly receiver: ISTTReceiver) { }
 
+    #resetStopNotified() {
+        this.stopNotified = false;
+    }
+
+    #notifyStopOnce(error?: string) {
+        if (this.stopNotified) return;
+        this.stopNotified = true;
+        this.receiver.onStop(error);
+    }
+
     async start(params: STT_State) {
+        this.startAborted = false;
+        this.starting = true;
+        this.#resetStopNotified();
         try {
             devLog("[Whisper] Starting service...");
-            this.receiver.onStart();
-            this.accumulatedText = ""; // Reset on start
+            this.accumulatedText = "";
 
-            // Listen for download progress
             this.unlistenProgress = await listen("whisper:download_progress", (event) => {
                 const payload = event.payload as { file: string; progress: number };
                 devLog(`[Whisper] Downloading ${payload.file}: ${payload.progress.toFixed(1)}%`);
                 this.receiver.onInterim(`Downloading ${payload.file}: ${payload.progress.toFixed(0)}%...`);
             });
 
+            if (this.startAborted) {
+                if (this.unlistenProgress) {
+                    this.unlistenProgress();
+                    this.unlistenProgress = undefined;
+                }
+                void emit("whisper:download_dismiss", {});
+                this.#notifyStopOnce();
+                return;
+            }
+
+            const localPath =
+                params.whisper.useLocalModel && params.whisper.localModelPath?.trim()
+                    ? params.whisper.localModelPath.trim()
+                    : null;
+
             devLog("[Whisper] Ensuring dependencies...", { model: params.whisper.model, language: params.whisper.language });
             await invoke("plugin:whisper|ensure_dependencies", {
                 model: params.whisper.model,
                 language: params.whisper.language,
+                localModelPath: localPath,
             });
+
+            if (this.startAborted) {
+                if (this.unlistenProgress) {
+                    this.unlistenProgress();
+                    this.unlistenProgress = undefined;
+                }
+                void emit("whisper:download_dismiss", {});
+                this.#notifyStopOnce();
+                return;
+            }
 
             if (this.unlistenProgress) {
                 this.unlistenProgress();
@@ -37,27 +80,27 @@ export class STT_WhisperService implements ISpeechRecognitionService {
             }
             this.receiver.onInterim("");
 
-            // IMPORTANT: Set up partial result listener BEFORE starting recording
-            // to ensure we don't miss any events from early chunks
             devLog("[Whisper] Setting up partial result listener...");
             this.unlistenPartial = await listen("whisper:partial_result", (event) => {
                 let text = event.payload as string;
-                // console.log("[Whisper] Partial result received:", text);
-
-                // Filter out blank audio tokens and other non-speech sounds (e.g. [CHIRPING], (water splashing))
-                text = text.replace(/(\[[^\]]+\]|\([^\)]+\))/g, "").trim();
+                text = text.replace(WHISPER_NOISE_TOKEN_RE, "").trim();
 
                 if (text) {
-                    // console.log("[Whisper] Emitting final segment:", text);
-                    // Emit as final immediately since Whisper processes distinct chunks
                     this.receiver.onFinal(text);
-                } else {
-                    // console.log("[Whisper] Skipping empty/blank segment");
                 }
             });
 
+            if (this.startAborted) {
+                if (this.unlistenPartial) {
+                    this.unlistenPartial();
+                    this.unlistenPartial = undefined;
+                }
+                void emit("whisper:download_dismiss", {});
+                this.#notifyStopOnce();
+                return;
+            }
+
             devLog("[Whisper] Starting recording...");
-            // Use service device setting or global fallback
             const deviceName = params.whisper.device || window.ApiServer.state.audioInputDevice || "";
             await invoke("plugin:whisper|start_recording", {
                 deviceName: deviceName || null,
@@ -67,7 +110,25 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 minChunkDurationMs: parseInt(params.whisper.minChunkDurationMs),
                 captureLocal: true,
             });
+
+            if (this.startAborted) {
+                this.isRecording = false;
+                try {
+                    await invoke<string>("plugin:whisper|stop_recording");
+                } catch {
+                    /* ignore */
+                }
+                if (this.unlistenPartial) {
+                    this.unlistenPartial();
+                    this.unlistenPartial = undefined;
+                }
+                void emit("whisper:download_dismiss", {});
+                this.#notifyStopOnce();
+                return;
+            }
+
             this.isRecording = true;
+            this.receiver.onStart();
             devLog("[Whisper] Recording started - real-time transcription active");
         } catch (error) {
             console.error("[Whisper] Error starting:", error);
@@ -81,40 +142,45 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                 this.unlistenPartial();
                 this.unlistenPartial = undefined;
             }
-            this.receiver.onStop(String(error));
+            if (!this.startAborted) {
+                this.#notifyStopOnce(String(error));
+            }
+        } finally {
+            this.starting = false;
         }
     }
 
     async stop() {
-        if (!this.isRecording) {
-            console.warn("[Whisper] Stop called but not recording (ignoring duplicate call)");
-            return; // Silently ignore duplicate calls
-        }
-
-        // Set to false immediately to prevent re-entrant calls
+        this.startAborted = true;
+        const hadWork = this.starting || this.isRecording;
         this.isRecording = false;
 
-        // Clean up partial result listener
+        if (this.unlistenProgress) {
+            this.unlistenProgress();
+            this.unlistenProgress = undefined;
+        }
+        void emit("whisper:download_dismiss", {});
+
         if (this.unlistenPartial) {
             this.unlistenPartial();
             this.unlistenPartial = undefined;
         }
 
         try {
-            devLog("[Whisper] Stopping recording...");
             await invoke<string>("plugin:whisper|stop_recording");
-
-            // No need to emit final accumulated text as we emit segments in real-time
-
-        } catch (error) {
-            console.error("[Whisper] Error stopping:", error);
-        } finally {
-            this.receiver.onStop();
+        } catch {
+            /* ignore — may not have been recording */
         }
+
+        if (hadWork) {
+            this.#notifyStopOnce();
+        }
+        devLog("[Whisper] Stopped");
     }
 
     dispose() {
         devLog("[Whisper] Disposing service");
+        this.startAborted = true;
         this.isRecording = false;
         this.accumulatedText = "";
 

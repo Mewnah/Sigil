@@ -1,31 +1,19 @@
 import { AnimatePresence } from "framer-motion";
 import { FC, lazy, Suspense } from "react";
 import { ErrorBoundary, FallbackProps } from "react-error-boundary";
-import { Services } from "@/services-registry";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { InspectorTabPath } from "@/types";
 import { RiCloseLine } from "react-icons/ri";
+import { HostServiceInspector, isHostServiceInspectorTab } from "../servicePanels";
 import { useAppUIStore } from "../store";
 
-const Inspector_STT = lazy(() => import("./inspector_stt"));
-const Inspector_Translation = lazy(() => import("./inspector_translation"));
-const Inspector_TTS = lazy(() => import("./inspector_tts"));
-const Inspector_VRC = lazy(() => import("./inspector_vrc"));
-const Inspector_Transform = lazy(() => import("./inspector_transform"));
 const Inspector_ElementImage = lazy(() => import("./inspector_image"));
 const Inspector_ElementText = lazy(() => import("./inspector_text"));
 const Inspector_Files = lazy(() => import("./inspector_files"));
 const Inspector_Settings = lazy(() => import("./inspector_settings"));
-const Inspector_Twitch = lazy(() => import("./inspector_twitch"));
-const Inspector_Discord = lazy(() => import("./inspector_discord"));
-const Inspector_Kick = lazy(() => import("./inspector_kick"));
-const Inspector_OBS = lazy(() => import("./inspector_obs"));
 const Inspector_Project = lazy(() => import("./inspector_project"));
 const Inspector_Canvas = lazy(() => import("./inspector_canvas"));
-const Inspector_VoiceChanger = lazy(() =>
-  import("./inspector_voice_changer").then((m) => ({ default: m.Inspector_VoiceChanger }))
-);
 
 const inspectorFallback = (
   <div className="flex items-center justify-center h-full min-h-[8rem] text-sm text-base-content/50">
@@ -86,16 +74,7 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
       <ErrorBoundary FallbackComponent={inspectorErrorFallback}>
         <AnimatePresence initial={false} mode="wait">
           <Suspense fallback={inspectorFallback}>
-            {path?.tab === Services.stt && <Inspector_STT key="stt" />}
-            {path?.tab === Services.tts && <Inspector_TTS key="tts" />}
-            {path?.tab === Services.translation && <Inspector_Translation key="translation" />}
-            {path?.tab === Services.obs && <Inspector_OBS key="obs" />}
-            {path?.tab === Services.vrc && <Inspector_VRC key="vrc" />}
-            {path?.tab === Services.transform && <Inspector_Transform key="transform" />}
-            {path?.tab === Services.twitch && <Inspector_Twitch key="twitch" />}
-            {path?.tab === Services.kick && <Inspector_Kick key="kick" />}
-            {path?.tab === Services.discord && <Inspector_Discord key="discord" />}
-            {path?.tab === Services.voice_changer && <Inspector_VoiceChanger key="voice_changer" />}
+            {isHostServiceInspectorTab(path?.tab) && <HostServiceInspector tab={path.tab} />}
             {path?.tab === "settings" && <Inspector_Settings key="settings" />}
             {path?.tab === "files" && <Inspector_Files key="files" />}
             {path?.tab === "project" && <Inspector_Project key="project" />}

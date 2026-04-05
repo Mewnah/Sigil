@@ -19,7 +19,7 @@ fn main() {
                 (
                     "osc",
                     tauri_build::InlinedPlugin::new()
-                        .commands(&["send"])
+                        .commands(&["send", "bind_status"])
                         .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
                 ),
                 (
@@ -63,6 +63,7 @@ fn main() {
                     tauri_build::InlinedPlugin::new()
                         .commands(&[
                             "ensure_dependencies",
+                            "import_whisper_model",
                             "start_recording",
                             "stop_recording",
                             "feed_audio_chunk",
@@ -74,6 +75,7 @@ fn main() {
                     tauri_build::InlinedPlugin::new()
                         .commands(&[
                             "set_endpoint",
+                            "set_api_key",
                             "get_languages",
                             "translate",
                             "detect_language",
@@ -136,6 +138,34 @@ fn main() {
                         .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
                 ),
                 (
+                    "neural-onnx-tts",
+                    tauri_build::InlinedPlugin::new()
+                        .commands(&[
+                            "neural_onnx_tts_set_execution_hint",
+                            "neural_onnx_tts_set_hub_id",
+                            "neural_onnx_tts_set_model_source",
+                            "neural_onnx_tts_set_local_package_format",
+                            "neural_onnx_tts_set_voice_speed",
+                            "neural_onnx_tts_load_model",
+                            "neural_onnx_tts_list_voices",
+                            "neural_onnx_tts_speak",
+                            "neural_onnx_tts_speak_into_voice_changer",
+                            "neural_onnx_tts_is_loaded",
+                        ])
+                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+                ),
+                (
+                    "neural-sidecar-tts",
+                    tauri_build::InlinedPlugin::new()
+                        .commands(&[
+                            "set_neural_sidecar_tts_endpoint",
+                            "neural_sidecar_tts_speak",
+                            "neural_sidecar_tts_speak_into_voice_changer",
+                            "check_neural_sidecar_tts",
+                        ])
+                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+                ),
+                (
                     "voice-changer",
                     tauri_build::InlinedPlugin::new()
                         .commands(&[
@@ -147,6 +177,9 @@ fn main() {
                             "start_voice_changer",
                             "stop_voice_changer",
                             "is_voice_changer_running",
+                            "get_voice_changer_metrics",
+                            "voice_changer_push_aux_pcm",
+                            "voice_changer_push_aux_wav",
                         ])
                         .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
                 ),
@@ -160,6 +193,8 @@ fn main() {
                             "get_vosk_model_path",
                             "vosk_native_transcribe",
                             "download_vosk_model",
+                            "import_vosk_model_zip",
+                            "vosk_model_zip_relative_path",
                             "list_downloaded_vosk_models",
                         ])
                         .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),

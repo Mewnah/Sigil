@@ -9,11 +9,11 @@ Automated Playwright tests use Vite preview only; native Tauri behavior requires
 - [ ] **Whisper** — download or load model path; start recording; partial transcript event fires.
 - [ ] **One STT path** — e.g. native or engine you ship; Start/Stop from bottom bar or inspector.
 - [ ] **One TTS path** — voice selected; Start; speak or trigger text event.
-- [ ] **Twitch** — `SIGIL_TWITCH_CLIENT_ID` set; console includes the right loopback URL: **Public** → `http://localhost:17890/oauth/twitch/implicit` (and `…/1420/…/implicit` if browser host); **Confidential** → `http://localhost:17890/oauth/twitch/callback`; OAuth completes; optional: IRC chat + post/receive.
+- [ ] **Twitch** — `SIGIL_TWITCH_CLIENT_ID` set; Twitch console lists **loopback** URLs: **Public** → `http://localhost:17890/oauth/twitch/implicit`; **Confidential** → `http://localhost:17890/oauth/twitch/callback`; plus **Vite** `http://localhost:1420/oauth/...` if you use `pnpm dev`, and the **packaged app** `https` origin + path if flows hit the webview (see [docs/manual/oauth-and-ports.md](manual/oauth-and-ports.md)); OAuth completes; optional: IRC chat + post/receive.
 - [ ] **Discord** — webhook URL; one post with “post only when live” on and off if you use that gate.
 - [ ] **OBS** — WebSocket connect; captions only send when “Enable” is on under native captions.
 - [ ] **VRChat OSC** — desktop build only; verify chatbox / OSC target with VRChat running.
-- [ ] **Kick** — optional: OAuth only; register `http://localhost:17890/oauth/kick/callback` for desktop (chat/emotes not wired yet).
+- [ ] **Kick** — optional: OAuth only; register `http://localhost:17890/oauth/kick/callback` for desktop and any packaged/dev webview URLs per [docs/manual/oauth-and-ports.md](manual/oauth-and-ports.md) (chat/emotes not wired yet).
 
 ## Remote client (`/client`)
 

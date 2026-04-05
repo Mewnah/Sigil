@@ -1,13 +1,14 @@
-use crate::services::http_client::http_client;
+use crate::services::http_client::{describe_failed_response, http_download_get};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
@@ -106,6 +107,51 @@ fn get_model_info(model: &str) -> (&'static str, &'static str) {
     }
 }
 
+const MIN_WHISPER_BIN_BYTES: u64 = 100 * 1024;
+
+fn huggingface_model_url(base: &str) -> String {
+    if base.contains('?') {
+        base.to_string()
+    } else {
+        format!("{base}?download=true")
+    }
+}
+
+fn validate_whisper_bin_src(path: &Path) -> Result<(), String> {
+    let meta = fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() < MIN_WHISPER_BIN_BYTES {
+        return Err(
+            "File is too small to be a valid Whisper model (expected a .bin GGML file)."
+                .to_string(),
+        );
+    }
+    let mut sniff = [0u8; 8];
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    let n = f.read(&mut sniff).map_err(|e| e.to_string())?;
+    if n > 0 && sniff[0] == b'<' {
+        return Err("File looks like HTML, not a GGML Whisper model.".to_string());
+    }
+    Ok(())
+}
+
+fn copy_whisper_bin_to_model_path(src: &Path, dest: &Path) -> Result<(), String> {
+    validate_whisper_bin_src(src)?;
+    if let Some(parent) = dest.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let partial_path = dest.with_extension("bin.partial_import");
+    let _ = fs::remove_file(&partial_path);
+    fs::copy(src, &partial_path).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(dest);
+    fs::rename(&partial_path, dest).map_err(|e| {
+        let _ = fs::remove_file(&partial_path);
+        e.to_string()
+    })?;
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct VadConfig {
     enabled: bool,
@@ -196,12 +242,19 @@ fn verify_file(path: &std::path::Path, expected_hash: &str) -> Result<(), String
 }
 
 #[command]
-async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, WhisperState>, model: String, language: String) -> Result<(), String> {
+async fn ensure_dependencies<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, WhisperState>,
+    model: String,
+    language: String,
+    local_model_path: Option<String>,
+) -> Result<(), String> {
     // Store the model and language in state
     *state.current_model.lock().map_err(|_| "Lock failed")? = model.clone();
     *state.current_language.lock().map_err(|_| "Lock failed")? = language.clone();
 
-    let (model_url, model_filename) = get_model_info(&model);
+    let (model_url_base, model_filename) = get_model_info(&model);
+    let model_url = huggingface_model_url(model_url_base);
 
     let app_data_dir = app
         .path()
@@ -222,23 +275,28 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
 
     let mut downloaded_model = false;
     if !model_path.exists() {
-        downloaded_model = true;
-        let partial_path = whisper_dir.join(format!("{}.partial", model_filename));
-        let _ = fs::remove_file(&partial_path);
-
-        let response = http_client()
-            .get(model_url)
-            .timeout(Duration::from_secs(7200))
-            .send()
-            .await
-            .map_err(|e| format!("Model download failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!(
-                "Model download failed: HTTP {}",
-                response.status()
-            ));
+        if let Some(ref lp) = local_model_path {
+            let trimmed = lp.trim();
+            if !trimmed.is_empty() {
+                copy_whisper_bin_to_model_path(Path::new(trimmed), &model_path)?;
+                downloaded_model = false;
+            }
         }
+
+        if !model_path.exists() {
+            downloaded_model = true;
+            let partial_path = whisper_dir.join(format!("{}.partial", model_filename));
+            let _ = fs::remove_file(&partial_path);
+
+            let response = http_download_get(&model_url)
+                .send()
+                .await
+                .map_err(|e| format!("Model download failed: {}", e))?;
+
+            if !response.status().is_success() {
+                let detail = describe_failed_response(response).await;
+                return Err(format!("Model download failed: {detail}"));
+            }
 
         let total = response.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
@@ -290,7 +348,6 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
         }
 
         let meta = fs::metadata(&partial_path).map_err(|e| e.to_string())?;
-        const MIN_WHISPER_BIN_BYTES: u64 = 100 * 1024;
         if meta.len() < MIN_WHISPER_BIN_BYTES {
             let _ = fs::remove_file(&partial_path);
             return Err(
@@ -311,6 +368,7 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
             let _ = fs::remove_file(&partial_path);
             e.to_string()
         })?;
+        }
     }
 
     if need_reload {
@@ -329,6 +387,24 @@ async fn ensure_dependencies<R: Runtime>(app: AppHandle<R>, state: State<'_, Whi
             },
         );
     }
+    Ok(())
+}
+
+/// Copy a user-selected `.bin` into app data for the given catalog model id (same layout as download).
+#[command]
+async fn import_whisper_model<R: Runtime>(
+    app: AppHandle<R>,
+    model: String,
+    source_path: String,
+) -> Result<(), String> {
+    let (_, model_filename) = get_model_info(&model);
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let whisper_dir = app_data_dir.join("whisper");
+    if !whisper_dir.exists() {
+        fs::create_dir_all(&whisper_dir).map_err(|e| e.to_string())?;
+    }
+    let dest = whisper_dir.join(model_filename);
+    copy_whisper_bin_to_model_path(Path::new(source_path.trim()), &dest)?;
     Ok(())
 }
 
@@ -574,6 +650,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         })
         .invoke_handler(tauri::generate_handler![
             ensure_dependencies,
+            import_whisper_model,
             start_recording,
             stop_recording,
             feed_audio_chunk

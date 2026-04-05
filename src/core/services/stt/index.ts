@@ -1,6 +1,8 @@
 import { IServiceInterface, ServiceNetworkState, TextEvent, TextEventSource, TextEventType } from "@/types";
 import { WordReplacementsCache, buildWordReplacementsCache } from "@/utils";
+import i18n from "i18next";
 import { toast } from "react-toastify";
+import { PUBSUB_STT_EXTERNAL_COMMAND } from "@/shared/services/pubsub";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
 import { STT_Backends } from "./schema";
@@ -35,6 +37,8 @@ const backends: {
   [STT_Backends.openai_audio]: STT_OpenAI_AudioService,
 };
 
+const EXTERNAL_MIC_CONNECT_TIMEOUT_MS = 6000;
+
 class Service_STT implements IServiceInterface, ISTTReceiver {
   #serviceInstance?: ISpeechRecognitionService;
   #lastMessageState = {
@@ -44,6 +48,7 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
 
   #_wordReplacementsCache!: WordReplacementsCache;
   private eventDisposers: (() => void)[] = [];
+  #externalMicConnectingTimer: ReturnType<typeof setTimeout> | null = null;
 
   updateLastMessage(value: string, isInterim: boolean) {
     this.#lastMessageState = { value, isInterim };
@@ -63,8 +68,61 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     return window.ApiServer.state.services.stt.data;
   }
 
+  #isChromeOrEdgeBackend(): boolean {
+    return this.data.backend === STT_Backends.chrome || this.data.backend === STT_Backends.edge;
+  }
+
+  #clearExternalMicConnectingTimeout(): void {
+    if (this.#externalMicConnectingTimer != null) {
+      clearTimeout(this.#externalMicConnectingTimer);
+      this.#externalMicConnectingTimer = null;
+    }
+  }
+
+  #scheduleExternalMicConnectingTimeout(): void {
+    this.#clearExternalMicConnectingTimeout();
+    this.#externalMicConnectingTimer = setTimeout(() => {
+      this.#externalMicConnectingTimer = null;
+      if (!this.#isChromeOrEdgeBackend())
+        return;
+      if (this.serviceState.status !== ServiceNetworkState.connecting)
+        return;
+      toast.warning(i18n.t("toasts.stt_external_mic_timeout"));
+      this.#setStatus(ServiceNetworkState.disconnected);
+    }, EXTERNAL_MIC_CONNECT_TIMEOUT_MS);
+  }
+
+  /** mic.html → host: Web Speech actually started or stopped. */
+  syncExternalMicLifecycle(active: boolean): void {
+    if (!this.#isChromeOrEdgeBackend())
+      return;
+    this.#clearExternalMicConnectingTimeout();
+    if (active) {
+      this.#setStatus(ServiceNetworkState.connected);
+    }
+    else if (
+      this.serviceState.status === ServiceNetworkState.connected ||
+      this.serviceState.status === ServiceNetworkState.connecting
+    ) {
+      this.#setStatus(ServiceNetworkState.disconnected);
+    }
+  }
+
   stop(): void {
-    this.#serviceInstance?.stop();
+    this.#clearExternalMicConnectingTimeout();
+    const ext = this.#isChromeOrEdgeBackend();
+    const live =
+      this.serviceState.status === ServiceNetworkState.connected ||
+      this.serviceState.status === ServiceNetworkState.connecting;
+    if (this.#serviceInstance)
+      this.#serviceInstance.stop();
+    else if (ext && live) {
+      window.ApiShared.pubsub.broadcastLocalWebSocketOnly({
+        topic: PUBSUB_STT_EXTERNAL_COMMAND,
+        data: { cmd: "stop" },
+      });
+      this.onStop();
+    }
     this.tryCancelSentence();
   }
 
@@ -232,6 +290,8 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     this.#serviceInstance = new serviceConstructor(this);
     this.#setStatus(ServiceNetworkState.connecting);
     this.#serviceInstance.start(this.data);
+    if (this.#isChromeOrEdgeBackend())
+      this.#scheduleExternalMicConnectingTimeout();
   }
 
   dispose() {

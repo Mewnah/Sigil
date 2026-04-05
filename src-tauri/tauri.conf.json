@@ -34,7 +34,7 @@
   },
   "productName": "Sigil",
   "mainBinaryName": "Sigil",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "identifier": "com.sigil.app",
   "plugins": {},
   "app": {

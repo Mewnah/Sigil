@@ -1,6 +1,6 @@
 [package]
 name = "sigil"
-version = "0.3.1"
+version = "0.4.0"
 description = "Sigil desktop application"
 authors = ["Sigil contributors", "Mewnah"]
 license = ""
@@ -46,10 +46,17 @@ hex = "0.4"
 whisper-rs = "0.16"
 rubato = "0.14"
 pitch_shift = "1.0"
+tungstenite = { version = "0.24", features = ["native-tls"] }
+hound = "3.5"
+base64 = "0.22"
+kittentts = { version = "0.3.0", features = ["espeak"] }
+ort = { version = "2.0.0-rc.11", default-features = true }
+ndarray = "0.17"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-fs = "2"
+rtrb = "0.3"
 
 [profile.release]
 lto = true
@@ -60,6 +67,7 @@ strip = true
 default = ["custom-protocol"]
 background_input = []
 custom-protocol = ["tauri/custom-protocol"]
+# Local speech TTS uses `kittentts` for the supported speech-package format; GPU execution depends on the ORT build. The UI sends a hint (`cpu` / `cuda` / `dml`) when loading the model.
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

@@ -15,6 +15,8 @@ export const Service_Twitch_Schema = z.object({
   emotesEnableReplacements: zSafe(z.coerce.boolean(), true),
   emotesCaseSensitive: zSafe(z.coerce.boolean(), true),
   emotesReplacements: zSafe(z.record(z.coerce.string(), z.coerce.string()), {}),
+  /** Replace remapped words with emote codes in outgoing Twitch IRC chat (after STT replacements). */
+  emotesApplyRemapToChat: zSafe(z.coerce.boolean(), false),
 }).default({});
 
 export type Twitch_State = z.infer<typeof Service_Twitch_Schema>;

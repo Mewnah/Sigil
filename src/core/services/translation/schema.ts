@@ -4,6 +4,7 @@ import { z } from "zod";
 export enum Translation_Backends {
   azure = "azure",
   libretranslate = "libretranslate",
+  onDevice = "onDevice",
 }
 const zodTranslation_Backends = z.nativeEnum(Translation_Backends);
 
@@ -21,10 +22,18 @@ export const Service_Translation_Schema = z.object({
   }).default({}),
   libretranslate: z.object({
     endpoint: zSafe(z.coerce.string(), "http://localhost:5000"),
+    apiKey: zSafe(z.coerce.string(), ""),
     languageFrom: zSafe(z.coerce.string(), "en"),
     language: zSafe(z.coerce.string(), "es"),
-    autoDetect: zSafe(z.coerce.boolean(), false)
-  }).default({})
+    autoDetect: zSafe(z.coerce.boolean(), false),
+    interim: zSafe(z.coerce.boolean(), true),
+  }).default({}),
+  onDevice: z.object({
+    languageFrom: zSafe(z.coerce.string(), "en"),
+    language: zSafe(z.coerce.string(), "es"),
+    autoDetect: zSafe(z.coerce.boolean(), false),
+    interim: zSafe(z.coerce.boolean(), true),
+  }).default({}),
 }).default({});
 
 export type Translation_State = z.infer<typeof Service_Translation_Schema>;

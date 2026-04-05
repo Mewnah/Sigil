@@ -189,7 +189,7 @@ const IntegrationsStep: FC<StepProps> = ({ onNext, onBack }) => {
     const integrations = [
         { id: "twitch", name: "Twitch", icon: <SiTwitch />, desc: "Connect your Twitch chat" },
         { id: "kick", name: "Kick", icon: <KickIcon />, desc: "Connect your Kick chat" },
-        { id: "discord", name: "Discord", icon: <SiDiscord />, desc: "Voice channel integration" },
+        { id: "discord", name: "Discord", icon: <SiDiscord />, desc: "Post captions to a channel via webhook" },
     ];
 
     return (

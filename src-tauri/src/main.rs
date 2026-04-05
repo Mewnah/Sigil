@@ -103,6 +103,8 @@ fn main() {
         .plugin(services::melo_tts::init())
         .plugin(services::chatterbox_tts::init())
         .plugin(services::fish_speech::init())
+        .plugin(services::neural_onnx_tts::init())
+        .plugin(services::neural_sidecar_tts::init())
         .plugin(services::voice_changer::init())
         .plugin(services::vosk_stt::init())
         .run(tauri::generate_context!())

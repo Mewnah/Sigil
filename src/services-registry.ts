@@ -1,4 +1,8 @@
-/** Host integration service ids — kept free of core/client imports to avoid circular deps. */
+/**
+ * Host integration / inspector tab ids — kept free of core/client imports to avoid circular deps.
+ * Not every value has persisted settings: see `PersistedHostServiceKey` in `src/core/schema.ts`
+ * and `docs/architecture/HOST_SERVICES.md`.
+ */
 export enum Services {
   vrc = "vrc",
   stt = "stt",

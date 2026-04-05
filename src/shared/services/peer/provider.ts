@@ -237,16 +237,21 @@ export class PeerjsProvider extends EventTarget {
     return encoding.toUint8Array(encoder);
   }
 
-  serializeEvent(msg: BaseEvent) {
+  /** Binary frame for pubsub; `dataJson` must be `JSON.stringify(data)` (avoids double-serializing `data`). */
+  serializePubSubParts(topic: string, dataJson: string): Uint8Array | undefined {
     try {
       const encoder = encoding.createEncoder();
       encoding.writeVarInt(encoder, 1);
-      encoding.writeVarString(encoder, msg.topic);
-      encoding.writeVarString(encoder, JSON.stringify(msg.data));
+      encoding.writeVarString(encoder, topic);
+      encoding.writeVarString(encoder, dataJson);
       return encoding.toUint8Array(encoder);
     } catch (error) {
       console.error(error);
     }
+  }
+
+  serializeEvent(msg: BaseEvent) {
+    return this.serializePubSubParts(msg.topic, JSON.stringify(msg.data));
   }
 
   broadcastPubSubSingle(clientId: string, msg: BaseEvent) {
@@ -258,7 +263,11 @@ export class PeerjsProvider extends EventTarget {
   }
 
   broadcastPubSub(msg: BaseEvent) {
-    const serialized = this.serializeEvent(msg);
+    this.broadcastPubSubParts(msg.topic, JSON.stringify(msg.data));
+  }
+
+  broadcastPubSubParts(topic: string, dataJson: string) {
+    const serialized = this.serializePubSubParts(topic, dataJson);
     serialized && this.broadcastUpdate(serialized);
   }
 

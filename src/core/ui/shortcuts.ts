@@ -15,6 +15,12 @@ function isEditableEventTarget(e: KeyboardEvent): boolean {
  * Separate from recording shortcuts in keyboard service
  */
 export const initializeUIShortcuts = () => {
+    // Ctrl/Cmd + B: Toggle sidebar navigation collapse
+    hotkeys("ctrl+b,cmd+b", (e) => {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("sigil:toggle-sidebar-nav"));
+    });
+
     // Ctrl/Cmd + I: Toggle Stats Panel
     hotkeys("ctrl+i,cmd+i", (e) => {
         e.preventDefault();
@@ -92,6 +98,7 @@ export const initializeUIShortcuts = () => {
 };
 
 export const cleanupUIShortcuts = () => {
+    hotkeys.unbind("ctrl+b,cmd+b");
     hotkeys.unbind("ctrl+i,cmd+i");
     hotkeys.unbind("ctrl+comma,cmd+comma");
     hotkeys.unbind("ctrl+1,cmd+1");

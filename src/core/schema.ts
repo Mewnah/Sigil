@@ -9,6 +9,7 @@ import { Service_TTS_Schema } from "./services/tts/schema";
 import { Service_Twitch_Schema } from "./services/twitch/schema";
 import { Service_VRC_Schema } from "./services/vrc/schema";
 
+import type { Services } from "@/services-registry";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
@@ -25,7 +26,7 @@ export const DEFAULT_ACTION_BAR_SERVICE_ORDER = [
   "obs",
 ] as const;
 
-const zodServiceSchemaFactory = <Data extends z.ZodDefault<z.AnyZodObject>>(schema: Data) => {
+const zodServiceSchemaFactory = <Data extends z.ZodTypeAny>(schema: Data) => {
   return z.object({
     showActionButton: zSafe(z.coerce.boolean(), false),
     data: schema
@@ -78,3 +79,31 @@ export const BackendSchema = z.object({
   }).default({})
 }).default({});
 export type BackendState = z.infer<typeof BackendSchema>;
+
+/** Keys under `BackendState.services` (Zod-persisted). Not every `Services` tab has a persisted slice (e.g. voice changer). */
+export type PersistedHostServiceKey = keyof BackendState["services"];
+
+/**
+ * Runtime list of persisted service keys — must match `BackendSchema.services` shape exactly
+ * (TypeScript errors if a key is missing or extra).
+ */
+export const PERSISTED_SERVICE_KEYS = [
+  "vrc",
+  "stt",
+  "tts",
+  "translation",
+  "transform",
+  "twitch",
+  "kick",
+  "discord",
+  "obs",
+] as const satisfies readonly PersistedHostServiceKey[];
+
+export function isPersistedServiceKey(id: string): id is PersistedHostServiceKey {
+  return (PERSISTED_SERVICE_KEYS as readonly string[]).includes(id);
+}
+
+/** `Services` tab id that also has a `BackendState.services` slice (excludes e.g. voice changer). */
+export function isPersistedServicesTab(tab: Services): tab is Services & PersistedHostServiceKey {
+  return isPersistedServiceKey(tab);
+}

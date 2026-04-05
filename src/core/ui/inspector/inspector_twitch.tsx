@@ -102,9 +102,13 @@ const Inspector_Twitch: FC = () => {
         <span>
           <span className="link link-accent link-hover font-semibold text-xs" onClick={handleShowEmotes}>{t('twitch.btn_show_emotes')}</span> | <span className="link link-accent link-hover font-semibold text-xs" onClick={handleShowEmotesMapper}>{t('twitch.btn_remap_emotes')}</span>
         </span>
+        <Inspector.Description>{t('twitch.desc_emotes_remap_vs_chat')}</Inspector.Description>
         <div className="contents">
           <InputCheckbox label="twitch.field_enable_captions_emotes" value={pr.emotesEnableReplacements} onChange={e => up("emotesEnableReplacements", e)} />
+          <Inspector.Description>{t('twitch.field_enable_captions_emotes_desc')}</Inspector.Description>
           <InputCheckbox label="twitch.field_case_sensitive" value={pr.emotesCaseSensitive} onChange={e => up("emotesCaseSensitive", e)} />
+          <InputCheckbox label="twitch.field_apply_emote_remap_to_chat" value={pr.emotesApplyRemapToChat} onChange={e => up("emotesApplyRemapToChat", e)} />
+          <Inspector.Description>{t('twitch.field_apply_emote_remap_to_chat_desc')}</Inspector.Description>
         </div>
       </Inspector.Switchable>
     </Inspector.Content>

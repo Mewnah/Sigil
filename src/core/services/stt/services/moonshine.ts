@@ -11,6 +11,21 @@ interface AudioChunkPayload {
   channels: number;
 }
 
+const MOONSHINE_F32_POOL: Float32Array[] = [];
+const MOONSHINE_F32_POOL_MAX = 8;
+
+function takeMoonshineF32(minLen: number): Float32Array {
+  while (MOONSHINE_F32_POOL.length > 0) {
+    const b = MOONSHINE_F32_POOL.pop()!;
+    if (b.length >= minLen) return b;
+  }
+  return new Float32Array(minLen);
+}
+
+function recycleMoonshineF32(buf: Float32Array) {
+  if (MOONSHINE_F32_POOL.length < MOONSHINE_F32_POOL_MAX) MOONSHINE_F32_POOL.push(buf);
+}
+
 export class STT_MoonshineService implements ISpeechRecognitionService {
   private isRunning = false;
   private unlistenAudio?: UnlistenFn;
@@ -69,7 +84,9 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
       this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
         if (!this.isRunning) return;
         const { samples } = event.payload;
-        this.audioBuffer.push(new Float32Array(samples));
+        const buf = takeMoonshineF32(samples.length);
+        buf.set(samples);
+        this.audioBuffer.push(buf);
       });
 
       this.isRunning = true;
@@ -106,6 +123,7 @@ export class STT_MoonshineService implements ISpeechRecognitionService {
     for (const chunk of this.audioBuffer) {
       combined.set(chunk, offset);
       offset += chunk.length;
+      recycleMoonshineF32(chunk);
     }
     this.audioBuffer = [];
 

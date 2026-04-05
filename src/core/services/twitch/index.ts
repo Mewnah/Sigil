@@ -94,7 +94,7 @@ class Service_Twitch implements IServiceInterface {
         this.#state.data.chatPostEnable &&
         data?.value &&
         data?.type === TextEventType.final &&
-        this.chat.post(data.value);
+        this.chat.post(this.emotes.remapOutgoingChatText(data.value));
     }));
 
     this.eventDisposers.push(serviceSubscibeToInput(this.#state.data, "chatPostInput", (data) => {
@@ -108,7 +108,7 @@ class Service_Twitch implements IServiceInterface {
         data?.textFieldType !== "twitchChat" &&
         data?.value &&
         data?.type === TextEventType.final &&
-        this.chat.post(data.value);
+        this.chat.post(this.emotes.remapOutgoingChatText(data.value));
     }, "chatPostSource"));
 
     if (!this.#state.data.chatEnable) {

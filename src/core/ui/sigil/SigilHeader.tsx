@@ -2,11 +2,12 @@ import { FC, memo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { exit } from "@tauri-apps/plugin-process";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
-import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine } from "react-icons/ri";
+import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine, RiBookReadLine } from "react-icons/ri";
+import { HelpManualModal } from "../HelpManualModal";
 import { useSnapshot } from "valtio";
-import { Services } from "@/services-registry";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
+import { getInspectorHeaderTitle } from "../servicePanels";
 
 /** Lazy singleton – only call Tauri API when actually rendered inside the desktop window. */
 let _appWindow: ReturnType<typeof getCurrentWebviewWindow> | null = null;
@@ -14,27 +15,6 @@ function getAppWindow() {
   if (!_appWindow) _appWindow = getCurrentWebviewWindow();
   return _appWindow;
 }
-
-// Map tab IDs to human-readable names
-const TAB_NAMES: Record<string, string> = {
-    [Services.stt]: "Speech to Text",
-    [Services.tts]: "Text to Speech",
-    [Services.translation]: "Translation",
-    [Services.transform]: "AI Transform",
-    [Services.twitch]: "Twitch",
-    [Services.kick]: "Kick",
-    [Services.discord]: "Discord",
-    [Services.vrc]: "VRChat",
-    [Services.obs]: "OBS Studio",
-    [Services.voice_changer]: "Voice Changer",
-    "scenes": "Canvas & Elements",
-    "project": "Project",
-    "elements": "Elements",
-    "files": "Files",
-    "settings": "Settings",
-    "text": "Text Element",
-    "image": "Image Element",
-};
 
 const WindowControls: FC = memo(() => {
     const handleMinimize = async () => {
@@ -105,9 +85,10 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
     const tab = useAppUIStore((s) => s.sidebar.tab);
     const { clientTheme } = useSnapshot(window.ApiServer.state);
     const [showShortcuts, setShowShortcuts] = useState(false);
+    const [showManual, setShowManual] = useState(false);
 
     // Get current page name
-    const currentPage = tab?.tab ? (TAB_NAMES[tab.tab] || tab.tab) : "Dashboard";
+    const currentPage = getInspectorHeaderTitle(tab?.tab);
 
     // Determine if current theme is dark
     const isDarkTheme = clientTheme === 'sigil-dark' || clientTheme === 'curses' || clientTheme === 'streamer';
@@ -145,6 +126,15 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
                 {/* Right Section - Quick Actions */}
                 <div className="flex items-center gap-1 px-2">
                     {/* Keyboard Shortcuts Help */}
+                    <Tooltip content="User manual" placement="bottom">
+                        <button
+                            onClick={() => setShowManual(true)}
+                            title="User manual"
+                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-base-content/5 transition-colors text-base-content/50 hover:text-base-content"
+                        >
+                            <RiBookReadLine />
+                        </button>
+                    </Tooltip>
                     <Tooltip content="Keyboard shortcuts" placement="bottom">
                         <button
                             onClick={() => setShowShortcuts(true)}
@@ -176,26 +166,28 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
                 </div>
             </header>
 
+            <HelpManualModal open={showManual} onClose={() => setShowManual(false)} />
+
             {/* Keyboard Shortcuts Modal */}
             {showShortcuts && (
                 <>
                     <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowShortcuts(false)} />
-                    <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-base-200 rounded-xl shadow-2xl p-6 z-50 w-96">
-                        <h2 className="text-lg font-bold mb-4">Keyboard Shortcuts</h2>
+                    <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-base-200 rounded-xl shadow-2xl p-6 z-50 w-[min(28rem,calc(100vw-2rem))] max-h-[min(32rem,80vh)] overflow-y-auto">
+                        <h2 className="text-lg font-bold mb-2">Keyboard shortcuts</h2>
+                        <p className="text-xs text-base-content/60 mb-3">Use Cmd on macOS where Ctrl is shown. Open inspectors from the sidebar.</p>
                         <div className="space-y-2 text-sm">
-                            <div className="flex justify-between"><span>Dashboard</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+0</kbd></div>
-                            <div className="flex justify-between"><span>Speech to Text</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+1</kbd></div>
-                            <div className="flex justify-between"><span>Text to Speech</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+2</kbd></div>
-                            <div className="flex justify-between"><span>Translation</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+3</kbd></div>
-                            <div className="flex justify-between"><span>AI Transform</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+4</kbd></div>
-                            <div className="flex justify-between"><span>Canvas & Elements</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+5</kbd></div>
-                            <div className="flex justify-between"><span>Files</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+6</kbd></div>
-                            <div className="flex justify-between"><span>Settings</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+7</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle STT start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+1</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle AI Transform start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+2</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle TTS start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+3</kbd></div>
                             <div className="border-t border-base-content/10 my-2" />
-                            <div className="flex justify-between"><span>Toggle Sidebar</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Ctrl+B</kbd></div>
-                            <div className="flex justify-between"><span>Go Back/Close</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs">Esc</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Open Settings</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+,</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle stats panel</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+I</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle sidebar nav collapse</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+B</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Undo / Redo (canvas)</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+Z / Y</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Presentation mode</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">F11</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Exit presentation</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Esc</kbd></div>
                         </div>
-                        <button onClick={() => setShowShortcuts(false)} className="mt-4 w-full py-2 bg-primary text-black rounded font-medium">Close</button>
+                        <button type="button" onClick={() => setShowShortcuts(false)} className="mt-4 w-full py-2 bg-primary text-black rounded font-medium">Close</button>
                     </div>
                 </>
             )}

@@ -1,8 +1,8 @@
-use crate::services::http_client::http_client;
+use crate::services::http_client::{describe_failed_response, http_download_get};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
@@ -30,6 +30,35 @@ fn validate_model_id(model_id: &str) -> Result<(), String> {
     if model_id.contains("..") || model_id.contains('/') || model_id.contains('\\') {
         return Err("Invalid model id.".to_string());
     }
+    Ok(())
+}
+
+const MIN_VOSK_ZIP_BYTES: usize = 10 * 1024;
+
+fn validate_vosk_zip_bytes(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < MIN_VOSK_ZIP_BYTES {
+        return Err("File too small to be a valid Vosk model zip.".to_string());
+    }
+    if bytes.first() == Some(&b'<') {
+        return Err("File looks like HTML, not a zip.".to_string());
+    }
+    Ok(())
+}
+
+fn copy_vosk_zip_to_cache(src: &Path, dest: &Path) -> Result<(), String> {
+    let bytes = fs::read(src).map_err(|e| e.to_string())?;
+    validate_vosk_zip_bytes(&bytes)?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let partial_path = dest.with_extension("zip.partial_import");
+    let _ = fs::remove_file(&partial_path);
+    fs::write(&partial_path, &bytes).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(dest);
+    fs::rename(&partial_path, dest).map_err(|e| {
+        let _ = fs::remove_file(&partial_path);
+        e.to_string()
+    })?;
     Ok(())
 }
 
@@ -185,6 +214,7 @@ async fn download_vosk_model<R: Runtime>(
     app: AppHandle<R>,
     model_id: String,
     url_override: Option<String>,
+    local_zip_path: Option<String>,
 ) -> Result<String, String> {
     validate_model_id(&model_id)?;
 
@@ -197,6 +227,14 @@ async fn download_vosk_model<R: Runtime>(
 
     if zip_path.is_file() {
         return Ok(rel);
+    }
+
+    if let Some(ref lp) = local_zip_path {
+        let t = lp.trim();
+        if !t.is_empty() {
+            copy_vosk_zip_to_cache(Path::new(t), &zip_path)?;
+            return Ok(rel);
+        }
     }
 
     let url = if let Some(u) = url_override {
@@ -218,15 +256,14 @@ async fn download_vosk_model<R: Runtime>(
             })?
     };
 
-    let response = http_client()
-        .get(&url)
-        .timeout(Duration::from_secs(7200))
+    let response = http_download_get(&url)
         .send()
         .await
         .map_err(|e| format!("Failed to download model: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Download failed: HTTP {}", response.status()));
+        let detail = describe_failed_response(response).await;
+        return Err(format!("Download failed: {detail}"));
     }
 
     let bytes = response
@@ -284,6 +321,22 @@ async fn list_downloaded_vosk_models<R: Runtime>(app: AppHandle<R>) -> Result<Ve
     Ok(models)
 }
 
+/// Copy a user-selected `.zip` into app data for the selected catalog model id.
+#[command]
+async fn import_vosk_model_zip<R: Runtime>(
+    app: AppHandle<R>,
+    model_id: String,
+    source_path: String,
+) -> Result<(), String> {
+    validate_model_id(&model_id)?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let models_dir = app_dir.join("vosk-models");
+    fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+    let zip_path = models_dir.join(format!("{}.zip", model_id));
+    copy_vosk_zip_to_cache(Path::new(source_path.trim()), &zip_path)?;
+    Ok(())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("vosk-stt")
         .setup(|app, _api| {
@@ -297,6 +350,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_vosk_model_path,
             vosk_native_transcribe,
             download_vosk_model,
+            import_vosk_model_zip,
             vosk_model_zip_relative_path,
             list_downloaded_vosk_models
         ])

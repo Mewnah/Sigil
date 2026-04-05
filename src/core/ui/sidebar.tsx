@@ -3,33 +3,23 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ButtonHTMLAttributes, FC, memo, PropsWithChildren, ReactNode, useEffect } from "react";
 import {
   RiAddFill,
-  RiChatVoiceFill,
   RiFolderMusicFill,
-  RiMessage2Fill,
   RiSettings2Fill,
   RiStackFill,
-  RiTranslate2,
-  RiUserVoiceFill,
-  RiSparklingFill,
-  RiMagicFill
 } from "react-icons/ri";
-import { MdExtension } from "react-icons/md";
-import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
 import { TbArrowBarToLeft, TbArrowBarToRight } from "react-icons/tb";
 import { useSnapshot, proxy } from "valtio";
 import { useShallow } from "zustand/react/shallow";
 import { useAppUIStore } from "./store";
-import { Services } from "../index";
+import { Services } from "@/services-registry";
+import {
+  HOST_SERVICE_PANELS_SIDEBAR_INTEGRATIONS,
+  HOST_SERVICE_PANELS_SIDEBAR_PRIMARY,
+} from "./servicePanels";
 import { useGetState } from "@/client";
 import { ElementType } from "@/client/elements/schema";
 import { InspectorTabPath, ServiceNetworkState } from "@/types";
 
-// Kick logo as inline SVG component
-const KickIcon: FC<{ size?: number }> = ({ size = 20 }) => (
-  <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor">
-    <path d="M115.2 0h76.8v204.8L345.6 0H448L268.8 230.4 460.8 512H345.6L192 281.6V512h-76.8V0z" />
-  </svg>
-);
 import Dropdown from "./dropdown/Dropdown";
 import Tooltip from "./dropdown/Tooltip";
 import Inspector from "./inspector";
@@ -128,7 +118,30 @@ const ElementList: FC = memo(() => {
   return <>
     {ids?.map(id => <SidebarElementButton key={id} id={id} />)}
   </>
-})
+});
+
+function sidebarNetworkStatus(
+  tab: Services,
+  snap: {
+    stt: ServiceNetworkState;
+    tts: ServiceNetworkState;
+    translation: ServiceNetworkState;
+    transform: ServiceNetworkState;
+  }
+): ServiceNetworkState | undefined {
+  switch (tab) {
+    case Services.stt:
+      return snap.stt;
+    case Services.tts:
+      return snap.tts;
+    case Services.translation:
+      return snap.translation;
+    case Services.transform:
+      return snap.transform;
+    default:
+      return undefined;
+  }
+}
 
 const Sidebar: FC = memo(() => {
   const { t } = useTranslation();
@@ -153,6 +166,12 @@ const Sidebar: FC = memo(() => {
   const ttsState = useSnapshot(window.ApiServer.tts.serviceState);
   const translationState = useSnapshot(window.ApiServer.translation.serviceState);
   const transformState = useSnapshot(window.ApiServer.transform.serviceState);
+  const sidebarStatusSnap = {
+    stt: sttState.status,
+    tts: ttsState.status,
+    translation: translationState.status,
+    transform: transformState.status,
+  };
 
   return <div className="flex h-full z-20">
     <div className="bg-base-200 flex-none overflow-x-hidden">
@@ -166,19 +185,35 @@ const Sidebar: FC = memo(() => {
             <div className="font-medium text-xs text-base-content/50 leading-none">{t('main.btn_collapse_menu')}</div>
           </button>
           <SIdebarDivider expand={expand}>{t('main.section_services', "Services")}</SIdebarDivider>
-          <SideBarButton status={sttState.status} tab={{ tab: Services.stt }} tooltip={t("stt.title")}><RiUserVoiceFill /></SideBarButton>
-          <SideBarButton status={transformState.status} tab={{ tab: Services.transform }} tooltip="AI Transform"><RiSparklingFill /></SideBarButton>
-          <SideBarButton status={ttsState.status} tab={{ tab: Services.tts }} tooltip={t("tts.title")}><RiChatVoiceFill /></SideBarButton>
-          <SideBarButton status={translationState.status} tab={{ tab: Services.translation }} tooltip={t("transl.title")}><RiTranslate2 /></SideBarButton>
+          {HOST_SERVICE_PANELS_SIDEBAR_PRIMARY.map((p) => {
+            const Icon = p.SidebarIcon;
+            return (
+              <SideBarButton
+                key={p.tab}
+                status={sidebarNetworkStatus(p.tab, sidebarStatusSnap)}
+                tab={{ tab: p.tab }}
+                tooltip={p.sidebarTooltipI18nKey ? t(p.sidebarTooltipI18nKey) : p.sidebarTooltipFallback}
+              >
+                <Icon className="text-xl" />
+              </SideBarButton>
+            );
+          })}
 
           <SIdebarDivider expand={expand}>{t('main.section_integrations')}</SIdebarDivider>
           <div className="flex flex-col transition-spacing space-y-1">
-            <SideBarButton tab={{ tab: Services.obs }} tooltip={t("obs.title")}><SiObsstudio /></SideBarButton>
-            <SideBarButton tab={{ tab: Services.twitch }} tooltip={t("twitch.title")}><SiTwitch /></SideBarButton>
-            <SideBarButton tab={{ tab: Services.kick }} tooltip="Kick"><KickIcon /></SideBarButton>
-            <SideBarButton tab={{ tab: Services.discord }} tooltip={t("discord.title")}><SiDiscord /></SideBarButton>
-            <SideBarButton tab={{ tab: Services.vrc }} tooltip={t("vrc.title")}><RiMessage2Fill /></SideBarButton>
-            <SideBarButton tab={{ tab: Services.voice_changer }} tooltip="Voice Changer"><RiMagicFill /></SideBarButton>
+            {HOST_SERVICE_PANELS_SIDEBAR_INTEGRATIONS.map((p) => {
+              const Icon = p.SidebarIcon;
+              return (
+                <SideBarButton
+                  key={p.tab}
+                  status={sidebarNetworkStatus(p.tab, sidebarStatusSnap)}
+                  tab={{ tab: p.tab }}
+                  tooltip={p.sidebarTooltipI18nKey ? t(p.sidebarTooltipI18nKey) : p.sidebarTooltipFallback}
+                >
+                  <Icon className="text-xl" />
+                </SideBarButton>
+              );
+            })}
           </div>
           <SIdebarDivider expand={expand}>{t('main.section_elements')}</SIdebarDivider>
           <div className="flex flex-col space-y-1 transition-spacing">

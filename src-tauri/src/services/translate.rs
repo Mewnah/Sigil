@@ -12,12 +12,26 @@ const DEFAULT_ENDPOINT: &str = "http://localhost:5000";
 #[derive(Clone)]
 pub struct TranslateState {
     endpoint: Arc<Mutex<String>>,
+    /// Optional LibreTranslate API key (sent in JSON body as `api_key` and as `api_key` query on GET).
+    api_key: Arc<Mutex<String>>,
 }
 
 impl TranslateState {
     fn new() -> Self {
         Self {
             endpoint: Arc::new(Mutex::new(DEFAULT_ENDPOINT.to_string())),
+            api_key: Arc::new(Mutex::new(String::new())),
+        }
+    }
+
+    /// Value for optional LibreTranslate `api_key` JSON / query field.
+    fn api_key_for_request(&self) -> Result<Option<String>, String> {
+        let k = self.api_key.lock().map_err(|_| "Lock failed")?.clone();
+        let t = k.trim();
+        if t.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(t.to_string()))
         }
     }
 }
@@ -33,6 +47,8 @@ struct TranslateRequest {
     q: String,
     source: String,
     target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -44,6 +60,8 @@ struct TranslateResponse {
 #[derive(Serialize, Deserialize, Debug)]
 struct DetectRequest {
     q: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -59,14 +77,26 @@ async fn set_endpoint<R: Runtime>(_app: AppHandle<R>, state: State<'_, Translate
     Ok(())
 }
 
+/// Set optional LibreTranslate API key (empty string clears).
+#[command]
+async fn set_api_key<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>, api_key: String) -> Result<(), String> {
+    *state.api_key.lock().map_err(|_| "Lock failed")? = api_key;
+    Ok(())
+}
+
 /// Get available languages from LibreTranslate
 #[command]
 async fn get_languages<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>) -> Result<Vec<Language>, String> {
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/languages", endpoint);
+    let url = format!("{}/languages", endpoint.trim_end_matches('/'));
+    let api_key = state.api_key_for_request()?;
 
-    let response = http_client()
-        .get(&url)
+    let mut req = http_client().get(&url);
+    if let Some(ref k) = api_key {
+        req = req.query(&[("api_key", k.as_str())]);
+    }
+
+    let response = req
         .send()
         .await
         .map_err(|e| format!("Failed to connect to LibreTranslate: {}. Is the service running?", e))?;
@@ -93,9 +123,15 @@ async fn translate<R: Runtime>(
     }
 
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/translate", endpoint);
+    let url = format!("{}/translate", endpoint.trim_end_matches('/'));
+    let api_key = state.api_key_for_request()?;
 
-    let request_body = TranslateRequest { q: text, source, target };
+    let request_body = TranslateRequest {
+        q: text,
+        source,
+        target,
+        api_key,
+    };
 
     let response = http_client()
         .post(&url)
@@ -124,9 +160,13 @@ async fn detect_language<R: Runtime>(_app: AppHandle<R>, state: State<'_, Transl
     }
 
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/detect", endpoint);
+    let url = format!("{}/detect", endpoint.trim_end_matches('/'));
+    let api_key = state.api_key_for_request()?;
 
-    let request_body = DetectRequest { q: text };
+    let request_body = DetectRequest {
+        q: text,
+        api_key,
+    };
 
     let response = http_client()
         .post(&url)
@@ -154,9 +194,15 @@ async fn detect_language<R: Runtime>(_app: AppHandle<R>, state: State<'_, Transl
 #[command]
 async fn check_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>) -> Result<bool, String> {
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/languages", endpoint);
+    let url = format!("{}/languages", endpoint.trim_end_matches('/'));
+    let api_key = state.api_key_for_request()?;
 
-    match http_client().get(&url).send().await {
+    let mut req = http_client().get(&url);
+    if let Some(ref k) = api_key {
+        req = req.query(&[("api_key", k.as_str())]);
+    }
+
+    match req.send().await {
         Ok(response) => Ok(response.status().is_success()),
         Err(_) => Ok(false),
     }
@@ -170,6 +216,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         })
         .invoke_handler(tauri::generate_handler![
             set_endpoint,
+            set_api_key,
             get_languages,
             translate,
             detect_language,

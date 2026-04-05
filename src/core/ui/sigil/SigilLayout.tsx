@@ -1,4 +1,4 @@
-import { FC, memo, useState } from "react";
+import { FC, memo, useEffect, useState } from "react";
 import { RiCloseLine } from "react-icons/ri";
 import { useSnapshot } from "valtio";
 import { useShallow } from "zustand/react/shallow";
@@ -51,6 +51,12 @@ export const SigilLayout: FC = memo(() => {
     );
     const toolbarState = useSnapshot(canvasToolbarState);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+    useEffect(() => {
+        const onToggleNav = () => setSidebarCollapsed((c) => !c);
+        window.addEventListener("sigil:toggle-sidebar-nav", onToggleNav);
+        return () => window.removeEventListener("sigil:toggle-sidebar-nav", onToggleNav);
+    }, []);
 
     const handleDuplicateSelection = () => {
         if (!selections || selections.length === 0) return;

@@ -1,45 +1,107 @@
-//! Real-time voice changer: capture → **phase vocoder** pitch (constant-time) → device rate match
-//! ([`rubato`]) → optional formant tilt → playback.
-//!
-//! The output queue is **capped** (~[`MAX_QUEUE_MS`]) as a safety valve; with balanced
-//! sample rates through the chain, underruns should be rare. Hold/crossfade still softens gaps.
+//! Real-time voice changer: capture → **classic** phase vocoder (DSP), optional **WebSocket** converter,
+//! or optional **ONNX** chunk model → shared post chain (phase-vocoder pitch, [`rubato`] device match, formant tilt) → playback.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use pitch_shift::PitchShifter;
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+use crate::services::neural_audio::{
+    clamp_chunk_frames, ClassicPhaseVocoderProcessor, OnnxVoiceBridge, SidecarVoiceBridge,
+    VoiceChunkPipeline, DEFAULT_CHUNK_FRAMES,
 };
+use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
+use std::path::Path;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use hound::WavReader;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::io::Cursor;
+use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use rtrb::RingBuffer;
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
     AppHandle, Emitter, Manager, Runtime, State,
 };
 
+/// IPC body for [`voice_changer_push_aux_wav`].
+/// Prefer `wavBytesB64` from the webview (compact over IPC vs. JSON number arrays).
+#[derive(Deserialize)]
+struct PushAuxWavRequest {
+    #[serde(default, rename = "wavBytes", alias = "wav_bytes")]
+    wav_bytes: Option<Vec<u8>>,
+    #[serde(default, rename = "wavBytesB64", alias = "wav_bytes_b64")]
+    wav_bytes_b64: Option<String>,
+}
+
+fn decode_push_aux_wav_payload(req: PushAuxWavRequest) -> Result<Vec<u8>, String> {
+    if let Some(s) = req.wav_bytes_b64.as_ref().map(|x| x.trim()).filter(|x| !x.is_empty()) {
+        return B64_ENGINE
+            .decode(s.as_bytes())
+            .map_err(|e| format!("Invalid base64 WAV: {}", e));
+    }
+    req.wav_bytes
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| "Missing WAV payload (wavBytes or wavBytesB64).".into())
+}
+
+/// Decode WAV PCM and mix into the running voice changer (used by ONNX/sidecar TTS in-process).
+pub fn push_aux_wav_bytes(state: &VoiceChangerState, raw: Vec<u8>) -> Result<(), String> {
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let cursor = Cursor::new(raw);
+    let mut reader = WavReader::new(cursor).map_err(|e| format!("WAV: {}", e))?;
+    let spec = reader.spec();
+    let sr = spec.sample_rate;
+    let ch = spec.channels.max(1);
+    let samples: Result<Vec<f32>, String> = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .map(|s| s.map_err(|e| e.to_string()))
+            .collect(),
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample;
+            reader
+                .samples::<i32>()
+                .map(|s| {
+                    s.map_err(|e| e.to_string()).map(|v| match bits {
+                        16 => v as f32 / 32768.0,
+                        24 => v as f32 / 8388608.0,
+                        _ => v as f32 / (1i32 << (bits.min(31) - 1)) as f32,
+                    })
+                })
+                .collect()
+        }
+    };
+    let samples = samples?;
+    voice_changer_push_aux_pcm_impl(state, samples, sr, ch)
+}
+
 const DEFAULT_PITCH_SEMITONES: f32 = 0.0;
 const DEFAULT_FORMANT_SHIFT: f32 = 0.0;
 const DEFAULT_VOCODER_WINDOW_MS: u32 = 45;
 const DEFAULT_VOCODER_OVERSAMPLE: u32 = 8;
 
-/// Input frames per processing block (per channel).
-const CHUNK_FRAMES: usize = 512;
-
-/// Output prefill before starting playback (latency cushion).
-const PREFILL_MS: f64 = 55.0;
+/// Output prefill before starting playback (latency cushion) — overridden by latency preset.
+const PREFILL_MS_LOW: f64 = 35.0;
+const MAX_QUEUE_MS_LOW: f64 = 70.0;
+#[allow(dead_code)]
+const PREFILL_MS_STABLE: f64 = 80.0;
+#[allow(dead_code)]
+const MAX_QUEUE_MS_STABLE: f64 = 150.0;
 
 /// After an underrun, blend this many **frames** (per channel) from hold → new audio (stereo = 2×).
 const RECOVER_FRAMES: usize = 16;
 
-/// Cap queue depth so deeper pitch (ratio > 1) cannot build multi-second latency.
-/// Drops oldest samples when exceeded (keeps playback near real-time).
-const MAX_QUEUE_MS: f64 = 100.0;
-
-/// Treat pitch as zero below this (avoid ratio drift).
-const PITCH_EPSILON: f32 = 0.01;
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceChangerMode {
+    #[default]
+    Classic,
+    Onnx,
+    Sidecar,
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct VoiceChangerPreset {
@@ -49,78 +111,57 @@ pub struct VoiceChangerPreset {
     pub formant: f32,
 }
 
-fn get_presets() -> Vec<VoiceChangerPreset> {
-    vec![
-        VoiceChangerPreset {
-            id: "default".to_string(),
-            name: "Default".to_string(),
-            pitch: 0.0,
-            formant: 0.0,
-        },
-        VoiceChangerPreset {
-            id: "deeper".to_string(),
-            name: "Deeper".to_string(),
-            pitch: -4.0,
-            formant: -0.2,
-        },
-        VoiceChangerPreset {
-            id: "higher".to_string(),
-            name: "Higher".to_string(),
-            pitch: 5.0,
-            formant: 0.2,
-        },
-        VoiceChangerPreset {
-            id: "chipmunk".to_string(),
-            name: "Chipmunk".to_string(),
-            pitch: 10.0,
-            formant: 0.4,
-        },
-        VoiceChangerPreset {
-            id: "deep_voice".to_string(),
-            name: "Deep Voice".to_string(),
-            pitch: -8.0,
-            formant: -0.3,
-        },
-        VoiceChangerPreset {
-            id: "subtle_lower".to_string(),
-            name: "Subtle Lower".to_string(),
-            pitch: -2.0,
-            formant: 0.0,
-        },
-        VoiceChangerPreset {
-            id: "subtle_higher".to_string(),
-            name: "Subtle Higher".to_string(),
-            pitch: 2.0,
-            formant: 0.0,
-        },
-    ]
-}
+static VOICE_CHANGER_PRESETS: OnceLock<Vec<VoiceChangerPreset>> = OnceLock::new();
 
-#[derive(Clone)]
-pub struct VoiceChangerState {
-    enabled: Arc<Mutex<bool>>,
-    pitch_semitones: Arc<Mutex<f32>>,
-    formant_shift: Arc<Mutex<f32>>,
-    vocoder_window_ms: Arc<Mutex<u32>>,
-    vocoder_oversample: Arc<Mutex<u32>>,
-    output_device: Arc<Mutex<String>>,
-    stop_sender: Arc<Mutex<Option<Sender<()>>>>,
-    is_running: Arc<Mutex<bool>>,
-}
-
-impl VoiceChangerState {
-    fn new() -> Self {
-        Self {
-            enabled: Arc::new(Mutex::new(false)),
-            pitch_semitones: Arc::new(Mutex::new(DEFAULT_PITCH_SEMITONES)),
-            formant_shift: Arc::new(Mutex::new(DEFAULT_FORMANT_SHIFT)),
-            vocoder_window_ms: Arc::new(Mutex::new(DEFAULT_VOCODER_WINDOW_MS)),
-            vocoder_oversample: Arc::new(Mutex::new(DEFAULT_VOCODER_OVERSAMPLE)),
-            output_device: Arc::new(Mutex::new("default".to_string())),
-            stop_sender: Arc::new(Mutex::new(None)),
-            is_running: Arc::new(Mutex::new(false)),
-        }
-    }
+fn voice_changer_presets() -> &'static [VoiceChangerPreset] {
+    VOICE_CHANGER_PRESETS
+        .get_or_init(|| {
+            vec![
+                VoiceChangerPreset {
+                    id: "default".to_string(),
+                    name: "Default".to_string(),
+                    pitch: 0.0,
+                    formant: 0.0,
+                },
+                VoiceChangerPreset {
+                    id: "deeper".to_string(),
+                    name: "Deeper".to_string(),
+                    pitch: -4.0,
+                    formant: -0.2,
+                },
+                VoiceChangerPreset {
+                    id: "higher".to_string(),
+                    name: "Higher".to_string(),
+                    pitch: 5.0,
+                    formant: 0.2,
+                },
+                VoiceChangerPreset {
+                    id: "chipmunk".to_string(),
+                    name: "Chipmunk".to_string(),
+                    pitch: 10.0,
+                    formant: 0.4,
+                },
+                VoiceChangerPreset {
+                    id: "deep_voice".to_string(),
+                    name: "Deep Voice".to_string(),
+                    pitch: -8.0,
+                    formant: -0.3,
+                },
+                VoiceChangerPreset {
+                    id: "subtle_lower".to_string(),
+                    name: "Subtle Lower".to_string(),
+                    pitch: -2.0,
+                    formant: 0.0,
+                },
+                VoiceChangerPreset {
+                    id: "subtle_higher".to_string(),
+                    name: "Subtle Higher".to_string(),
+                    pitch: 2.0,
+                    formant: 0.0,
+                },
+            ]
+        })
+        .as_slice()
 }
 
 fn default_param_vocoder_window_ms() -> u32 {
@@ -129,6 +170,66 @@ fn default_param_vocoder_window_ms() -> u32 {
 
 fn default_param_vocoder_oversample() -> u32 {
     DEFAULT_VOCODER_OVERSAMPLE
+}
+
+fn default_mode() -> VoiceChangerMode {
+    VoiceChangerMode::Classic
+}
+
+fn default_sidecar_ws_url() -> String {
+    String::new()
+}
+
+fn default_onnx_model_path() -> String {
+    String::new()
+}
+
+fn default_onnx_execution_provider() -> String {
+    "cpu".to_string()
+}
+
+fn default_latency_preset() -> String {
+    "low_latency".to_string()
+}
+
+fn default_chunk_frames() -> u32 {
+    DEFAULT_CHUNK_FRAMES as u32
+}
+
+fn default_input_gain() -> f32 {
+    1.0
+}
+
+fn default_output_gain() -> f32 {
+    1.0
+}
+
+fn default_output_prefill_ms() -> f64 {
+    PREFILL_MS_LOW
+}
+
+fn default_output_max_queue_ms() -> f64 {
+    MAX_QUEUE_MS_LOW
+}
+
+fn default_buffer_truncate_enabled() -> bool {
+    false
+}
+
+fn default_buffer_truncate_rms() -> f32 {
+    0.0005
+}
+
+fn default_buffer_truncate_chunks() -> u32 {
+    32
+}
+
+fn default_monitor_output_device() -> String {
+    String::new()
+}
+
+fn default_monitor_gain() -> f32 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -140,18 +241,82 @@ pub struct VoiceChangerParams {
     pub vocoder_window_ms: u32,
     #[serde(default = "default_param_vocoder_oversample")]
     pub vocoder_oversample: u32,
+    #[serde(default = "default_chunk_frames")]
+    pub chunk_frames: u32,
+    #[serde(default = "default_input_gain")]
+    pub input_gain: f32,
+    #[serde(default = "default_output_gain")]
+    pub output_gain: f32,
+    #[serde(default = "default_output_prefill_ms")]
+    pub output_prefill_ms: f64,
+    #[serde(default = "default_output_max_queue_ms")]
+    pub output_max_queue_ms: f64,
+    #[serde(default = "default_buffer_truncate_enabled")]
+    pub buffer_truncate_enabled: bool,
+    #[serde(default = "default_buffer_truncate_rms")]
+    pub buffer_truncate_rms: f32,
+    #[serde(default = "default_buffer_truncate_chunks")]
+    pub buffer_truncate_chunks: u32,
     pub output_device: String,
+    #[serde(default = "default_mode")]
+    pub mode: VoiceChangerMode,
+    #[serde(default = "default_sidecar_ws_url")]
+    pub sidecar_ws_url: String,
+    #[serde(default = "default_onnx_model_path")]
+    pub onnx_model_path: String,
+    #[serde(default = "default_onnx_execution_provider")]
+    pub onnx_execution_provider: String,
+    #[serde(default = "default_latency_preset")]
+    pub latency_preset: String,
+    /// Empty = monitor off. Otherwise device name (or `"default"` for system default output).
+    #[serde(default = "default_monitor_output_device")]
+    pub monitor_output_device: String,
+    #[serde(default = "default_monitor_gain")]
+    pub monitor_gain: f32,
 }
 
-fn clamp_vocoder_window_ms(v: u32) -> usize {
-    v.clamp(30, 60) as usize
+/// Live parameters read every processing chunk (single lock vs. many mutexes).
+#[derive(Clone, Copy, Debug)]
+struct VoiceChangerHotParams {
+    pitch_semitones: f32,
+    formant_shift: f32,
+    vocoder_window_ms: u32,
+    vocoder_oversample: u32,
+    chunk_frames: u32,
+    input_gain: f32,
+    output_gain: f32,
+    output_prefill_ms: f64,
+    output_max_queue_ms: f64,
+    buffer_truncate_enabled: bool,
+    buffer_truncate_rms: f32,
+    buffer_truncate_chunks: u32,
+    monitor_gain: f32,
 }
 
-fn clamp_vocoder_oversample(v: u32) -> usize {
-    match v {
-        4 | 8 | 16 | 32 => v as usize,
-        _ => DEFAULT_VOCODER_OVERSAMPLE as usize,
+impl Default for VoiceChangerHotParams {
+    fn default() -> Self {
+        Self {
+            pitch_semitones: DEFAULT_PITCH_SEMITONES,
+            formant_shift: DEFAULT_FORMANT_SHIFT,
+            vocoder_window_ms: DEFAULT_VOCODER_WINDOW_MS,
+            vocoder_oversample: DEFAULT_VOCODER_OVERSAMPLE,
+            chunk_frames: DEFAULT_CHUNK_FRAMES as u32,
+            input_gain: 1.0,
+            output_gain: 1.0,
+            output_prefill_ms: PREFILL_MS_LOW,
+            output_max_queue_ms: MAX_QUEUE_MS_LOW,
+            buffer_truncate_enabled: false,
+            buffer_truncate_rms: 0.0005,
+            buffer_truncate_chunks: 32,
+            monitor_gain: 1.0,
+        }
     }
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct VoiceChangerMetrics {
+    pub buffer_ms: f64,
+    pub process_ms: f64,
 }
 
 struct OutputPlayback {
@@ -160,12 +325,18 @@ struct OutputPlayback {
     max_queue_samples: usize,
     ch_out: usize,
     prefilled: bool,
-    /// Last output per channel (for underrun hold).
     hold: Vec<f32>,
-    /// True if the previous sample in this callback was filled from hold (deque empty).
     starving: bool,
-    /// Interleaved samples left to crossfade after leaving starvation.
     recover_left: usize,
+    truncate_silent_streak: u32,
+}
+
+fn rms_interleaved(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = samples.iter().map(|x| x * x).sum();
+    (sum / samples.len() as f32).sqrt()
 }
 
 impl OutputPlayback {
@@ -179,13 +350,43 @@ impl OutputPlayback {
             hold: vec![0.0f32; ch_out.max(1)],
             starving: false,
             recover_left: 0,
+            truncate_silent_streak: 0,
         }
     }
 
-    fn push_interleaved(&mut self, samples: &[f32]) {
+    fn queue_len(&self) -> usize {
+        self.deque.len()
+    }
+
+    fn push_interleaved(
+        &mut self,
+        samples: &[f32],
+        truncate_enabled: bool,
+        truncate_rms: f32,
+        truncate_chunks: u32,
+    ) {
         self.deque.extend(samples.iter().copied());
-        while self.deque.len() > self.max_queue_samples {
-            self.deque.pop_front();
+        let excess = self.deque.len().saturating_sub(self.max_queue_samples);
+        if excess > 0 {
+            self.deque.drain(0..excess);
+        }
+
+        if truncate_enabled && truncate_chunks > 0 && !samples.is_empty() {
+            let rms = rms_interleaved(samples);
+            if rms < truncate_rms {
+                self.truncate_silent_streak = self.truncate_silent_streak.saturating_add(1);
+            } else {
+                self.truncate_silent_streak = 0;
+            }
+            if self.truncate_silent_streak >= truncate_chunks {
+                let drop_n = self.deque.len().saturating_sub(self.prefill_target);
+                if drop_n > 0 {
+                    self.deque.drain(0..drop_n);
+                }
+                self.truncate_silent_streak = 0;
+            }
+        } else {
+            self.truncate_silent_streak = 0;
         }
     }
 
@@ -231,191 +432,377 @@ impl OutputPlayback {
     }
 }
 
-/// One-pole lowpass state per channel (simple formant / brightness tilt).
-#[derive(Clone, Default)]
-struct FormantLpState {
-    lp: f32,
+#[derive(Clone)]
+pub struct VoiceChangerState {
+    enabled: Arc<Mutex<bool>>,
+    hot_params: Arc<Mutex<VoiceChangerHotParams>>,
+    output_device: Arc<Mutex<String>>,
+    mode: Arc<Mutex<VoiceChangerMode>>,
+    sidecar_ws_url: Arc<Mutex<String>>,
+    onnx_model_path: Arc<Mutex<String>>,
+    onnx_execution_provider: Arc<Mutex<String>>,
+    latency_preset: Arc<Mutex<String>>,
+    monitor_output_device: Arc<Mutex<String>>,
+    stop_sender: Arc<Mutex<Option<Sender<()>>>>,
+    is_running: Arc<AtomicBool>,
+    /// Mono/stereo float32 interleaved at capture rate, mixed before processing.
+    aux_feed: Arc<Mutex<Vec<f32>>>,
+    /// Capture sample rate while the loop runs (0 = not running).
+    capture_sample_rate: Arc<AtomicU32>,
+    capture_channels: Arc<AtomicU32>,
+    output_sample_rate: Arc<AtomicU32>,
+    output_channels: Arc<AtomicU32>,
+    metrics_process_us: Arc<AtomicU32>,
+    /// Exponential moving average of per-chunk processing time (µs) for stable UI.
+    metrics_process_ema_us: Arc<AtomicU32>,
+    metrics_buffer_samples: Arc<AtomicU32>,
 }
 
-/// Device rate only: map timeline of input device to output device (no pitch).
-fn device_resample_ratio(r_in: u32, r_out: u32) -> f64 {
-    r_out as f64 / r_in as f64
-}
-
-fn apply_phase_vocoder_channels(
-    shifters: &mut [PitchShifter],
-    oversample: usize,
-    pitch_semitones: f32,
-    planes_in: &[Vec<f32>],
-    planes_out: &mut [Vec<f32>],
-) {
-    let frames = planes_in[0].len();
-    // Always call `shift_pitch` so per-channel FIFO / phase state tracks the stream (0 semitones => unity shift).
-    let shift = if pitch_semitones.abs() < PITCH_EPSILON {
-        0.0f32
-    } else {
-        pitch_semitones
-    };
-    for c in 0..planes_in.len() {
-        shifters[c].shift_pitch(
-            oversample,
-            shift,
-            &planes_in[c][..frames],
-            &mut planes_out[c][..frames],
-        );
+impl VoiceChangerState {
+    fn new() -> Self {
+        Self {
+            enabled: Arc::new(Mutex::new(false)),
+            hot_params: Arc::new(Mutex::new(VoiceChangerHotParams::default())),
+            output_device: Arc::new(Mutex::new("default".to_string())),
+            mode: Arc::new(Mutex::new(VoiceChangerMode::Classic)),
+            sidecar_ws_url: Arc::new(Mutex::new(String::new())),
+            onnx_model_path: Arc::new(Mutex::new(String::new())),
+            onnx_execution_provider: Arc::new(Mutex::new("cpu".to_string())),
+            latency_preset: Arc::new(Mutex::new("low_latency".to_string())),
+            monitor_output_device: Arc::new(Mutex::new(String::new())),
+            stop_sender: Arc::new(Mutex::new(None)),
+            is_running: Arc::new(AtomicBool::new(false)),
+            aux_feed: Arc::new(Mutex::new(Vec::new())),
+            capture_sample_rate: Arc::new(AtomicU32::new(0)),
+            capture_channels: Arc::new(AtomicU32::new(0)),
+            output_sample_rate: Arc::new(AtomicU32::new(0)),
+            output_channels: Arc::new(AtomicU32::new(0)),
+            metrics_process_us: Arc::new(AtomicU32::new(0)),
+            metrics_process_ema_us: Arc::new(AtomicU32::new(0)),
+            metrics_buffer_samples: Arc::new(AtomicU32::new(0)),
+        }
     }
 }
 
-fn sinc_params() -> SincInterpolationParameters {
-    SincInterpolationParameters {
-        sinc_len: 256,
-        f_cutoff: 0.95,
-        oversampling_factor: 256,
-        interpolation: SincInterpolationType::Cubic,
-        window: WindowFunction::BlackmanHarris2,
-    }
-}
-
-fn make_device_resampler(
-    ratio: f64,
+fn linear_resample_interleaved_into(
+    input: &[f32],
     channels: usize,
-) -> Result<SincFixedIn<f32>, rubato::ResamplerConstructionError> {
-    const MAX_REL_RATIO: f64 = 4.0;
-    SincFixedIn::new(
-        ratio,
-        MAX_REL_RATIO,
-        sinc_params(),
-        CHUNK_FRAMES,
-        channels,
-    )
-}
-
-fn interleaved_to_planar(interleaved: &[f32], ch_in: usize, ch_work: usize) -> Vec<Vec<f32>> {
-    let frames = interleaved.len() / ch_in;
-    let mut planes: Vec<Vec<f32>> = (0..ch_work).map(|_| Vec::with_capacity(frames)).collect();
-    for f in 0..frames {
-        for c in 0..ch_work {
-            let v = if c < ch_in {
-                interleaved[f * ch_in + c]
-            } else {
-                interleaved[f * ch_in + ch_in - 1]
-            };
-            planes[c].push(v);
+    from_sr: u32,
+    to_sr: u32,
+    out: &mut Vec<f32>,
+) {
+    if from_sr == to_sr || channels == 0 {
+        out.clear();
+        out.extend_from_slice(input);
+        return;
+    }
+    let frames_in = input.len() / channels;
+    let frames_out = ((frames_in as f64) * (to_sr as f64) / (from_sr as f64)).ceil() as usize;
+    if frames_out == 0 {
+        out.clear();
+        return;
+    }
+    let len = frames_out * channels;
+    out.clear();
+    out.resize(len, 0.0f32);
+    for fo in 0..frames_out {
+        let src_pos = fo as f64 * from_sr as f64 / to_sr as f64;
+        let base = src_pos.floor() as usize;
+        let frac = (src_pos - base as f64) as f32;
+        for c in 0..channels {
+            let idx = base.saturating_mul(channels).saturating_add(c);
+            let a = input.get(idx).copied().unwrap_or(0.0);
+            let b = input
+                .get(idx.saturating_add(channels))
+                .copied()
+                .unwrap_or(a);
+            out[fo * channels + c] = a + (b - a) * frac;
         }
     }
-    planes
 }
 
-fn planar_to_interleaved(planes: &[Vec<f32>], ch_work: usize, ch_out: usize) -> Vec<f32> {
-    let frames = planes.first().map(|p| p.len()).unwrap_or(0);
-    let mut out = Vec::with_capacity(frames * ch_out);
-    for f in 0..frames {
-        for c in 0..ch_out {
-            let v = if c < ch_work {
-                planes[c].get(f).copied().unwrap_or(0.0)
-            } else {
-                planes[ch_work - 1].get(f).copied().unwrap_or(0.0)
-            };
-            out.push(v);
-        }
-    }
+fn linear_resample_interleaved(input: &[f32], channels: usize, from_sr: u32, to_sr: u32) -> Vec<f32> {
+    let mut out = Vec::new();
+    linear_resample_interleaved_into(input, channels, from_sr, to_sr, &mut out);
     out
 }
 
-/// Spectral tilt: negative blends toward lowpassed (darker); positive emphasizes highs.
-fn apply_formant_interleaved(
-    samples: &mut [f32],
-    ch: usize,
-    formant: f32,
-    states: &mut [FormantLpState],
-    sample_rate: f64,
-) {
-    if formant.abs() < 1e-4 || ch == 0 {
+fn mix_aux_into_chunk(chunk: &mut [f32], aux: &mut Vec<f32>) {
+    let take = chunk.len().min(aux.len());
+    for i in 0..take {
+        chunk[i] = (chunk[i] + aux[i]).clamp(-1.0, 1.0);
+    }
+    if take > 0 {
+        aux.drain(..take);
+    }
+}
+
+fn adapt_channels_interleaved_into(data: &[f32], from_ch: usize, to_ch: usize, out: &mut Vec<f32>) {
+    out.clear();
+    if from_ch == 0 || to_ch == 0 || data.is_empty() || data.len() % from_ch != 0 {
         return;
     }
-    let fc = 2000.0;
-    let alpha = (1.0 - (-2.0 * std::f64::consts::PI * fc / sample_rate).exp()) as f32;
-    let frames = samples.len() / ch;
+    let frames = data.len() / from_ch;
+    out.reserve(frames * to_ch);
     for f in 0..frames {
-        for c in 0..ch {
-            let i = f * ch + c;
-            let x = samples[i];
-            let st = &mut states[c];
-            st.lp += alpha * (x - st.lp);
-            samples[i] = if formant >= 0.0 {
-                x + formant * (x - st.lp)
-            } else {
-                let w = -formant;
-                (1.0 - w) * x + w * st.lp
-            };
+        let base = f * from_ch;
+        let frame = &data[base..base + from_ch];
+        match (from_ch, to_ch) {
+            (a, b) if a == b => out.extend_from_slice(frame),
+            (_, 1) => {
+                let s: f32 = frame.iter().sum::<f32>() / from_ch as f32;
+                out.push(s);
+            }
+            (1, _) => {
+                for _ in 0..to_ch {
+                    out.push(frame[0]);
+                }
+            }
+            _ => {
+                for c in 0..to_ch {
+                    out.push(frame[c % from_ch]);
+                }
+            }
         }
     }
 }
 
-/// Get available presets
 #[command]
 fn get_voice_changer_presets() -> Vec<VoiceChangerPreset> {
-    get_presets()
+    voice_changer_presets().to_vec()
 }
 
-/// Get current voice changer parameters
 #[command]
 fn get_voice_changer_params(state: State<'_, VoiceChangerState>) -> Result<VoiceChangerParams, String> {
+    let h = *state.hot_params.lock().map_err(|_| "Lock failed")?;
     Ok(VoiceChangerParams {
         enabled: *state.enabled.lock().map_err(|_| "Lock failed")?,
-        pitch_semitones: *state.pitch_semitones.lock().map_err(|_| "Lock failed")?,
-        formant_shift: *state.formant_shift.lock().map_err(|_| "Lock failed")?,
-        vocoder_window_ms: *state.vocoder_window_ms.lock().map_err(|_| "Lock failed")?,
-        vocoder_oversample: *state.vocoder_oversample.lock().map_err(|_| "Lock failed")?,
+        pitch_semitones: h.pitch_semitones,
+        formant_shift: h.formant_shift,
+        vocoder_window_ms: h.vocoder_window_ms,
+        vocoder_oversample: h.vocoder_oversample,
+        chunk_frames: h.chunk_frames,
+        input_gain: h.input_gain,
+        output_gain: h.output_gain,
+        output_prefill_ms: h.output_prefill_ms,
+        output_max_queue_ms: h.output_max_queue_ms,
+        buffer_truncate_enabled: h.buffer_truncate_enabled,
+        buffer_truncate_rms: h.buffer_truncate_rms,
+        buffer_truncate_chunks: h.buffer_truncate_chunks,
         output_device: state
             .output_device
             .lock()
             .map_err(|_| "Lock failed")?
             .clone(),
+        mode: state.mode.lock().map_err(|_| "Lock failed")?.clone(),
+        sidecar_ws_url: state
+            .sidecar_ws_url
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone(),
+        onnx_model_path: state
+            .onnx_model_path
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone(),
+        onnx_execution_provider: state
+            .onnx_execution_provider
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone(),
+        latency_preset: state
+            .latency_preset
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone(),
+        monitor_output_device: state
+            .monitor_output_device
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone(),
+        monitor_gain: h.monitor_gain,
     })
 }
 
-/// Set voice changer parameters
+fn clamp_output_buffer_ms(prefill: f64, max_q: f64) -> (f64, f64) {
+    let prefill = prefill.clamp(5.0, 300.0);
+    let max_q = max_q.clamp(prefill + 5.0, 600.0);
+    (prefill, max_q)
+}
+
 #[command]
 fn set_voice_changer_params(state: State<'_, VoiceChangerState>, params: VoiceChangerParams) -> Result<(), String> {
     *state.enabled.lock().map_err(|_| "Lock failed")? = params.enabled;
-    *state.pitch_semitones.lock().map_err(|_| "Lock failed")? = params.pitch_semitones.clamp(-12.0, 12.0);
-    *state.formant_shift.lock().map_err(|_| "Lock failed")? = params.formant_shift.clamp(-1.0, 1.0);
-    *state.vocoder_window_ms.lock().map_err(|_| "Lock failed")? = params.vocoder_window_ms.clamp(30, 60);
-    *state.vocoder_oversample.lock().map_err(|_| "Lock failed")? = match params.vocoder_oversample {
-        4 | 8 | 16 | 32 => params.vocoder_oversample,
-        _ => DEFAULT_VOCODER_OVERSAMPLE,
-    };
+    let (pf, mq) = clamp_output_buffer_ms(params.output_prefill_ms, params.output_max_queue_ms);
+    {
+        let mut h = state.hot_params.lock().map_err(|_| "Lock failed")?;
+        h.pitch_semitones = params.pitch_semitones.clamp(-24.0, 24.0);
+        h.formant_shift = params.formant_shift.clamp(-1.0, 1.0);
+        h.vocoder_window_ms = params.vocoder_window_ms.clamp(30, 60);
+        h.vocoder_oversample = match params.vocoder_oversample {
+            1 | 2 | 4 | 8 | 16 | 32 => params.vocoder_oversample,
+            _ => DEFAULT_VOCODER_OVERSAMPLE,
+        };
+        h.chunk_frames = clamp_chunk_frames(params.chunk_frames) as u32;
+        h.input_gain = params.input_gain.clamp(0.0, 4.0);
+        h.output_gain = params.output_gain.clamp(0.0, 4.0);
+        h.output_prefill_ms = pf;
+        h.output_max_queue_ms = mq;
+        h.buffer_truncate_enabled = params.buffer_truncate_enabled;
+        h.buffer_truncate_rms = params.buffer_truncate_rms.clamp(1e-8, 1.0);
+        h.buffer_truncate_chunks = params.buffer_truncate_chunks.clamp(1, 500);
+        h.monitor_gain = params.monitor_gain.clamp(0.0, 4.0);
+    }
     *state.output_device.lock().map_err(|_| "Lock failed")? = params.output_device;
+    *state.mode.lock().map_err(|_| "Lock failed")? = params.mode;
+    *state.sidecar_ws_url.lock().map_err(|_| "Lock failed")? = params.sidecar_ws_url;
+    *state.onnx_model_path.lock().map_err(|_| "Lock failed")? = params.onnx_model_path;
+    *state.onnx_execution_provider.lock().map_err(|_| "Lock failed")? = params
+        .onnx_execution_provider
+        .to_lowercase();
+    *state.monitor_output_device.lock().map_err(|_| "Lock failed")? =
+        params.monitor_output_device;
+    let lp = params.latency_preset.to_lowercase();
+    *state.latency_preset.lock().map_err(|_| "Lock failed")? = if lp == "stable" {
+        "stable".into()
+    } else if lp == "custom" {
+        "custom".into()
+    } else {
+        "low_latency".into()
+    };
     Ok(())
 }
 
-/// Set enabled state
+#[command]
+fn get_voice_changer_metrics(state: State<'_, VoiceChangerState>) -> Result<VoiceChangerMetrics, String> {
+    let r = state.output_sample_rate.load(Ordering::Relaxed);
+    let ch = state.output_channels.load(Ordering::Relaxed).max(1) as f64;
+    let buf_n = state.metrics_buffer_samples.load(Ordering::Relaxed) as f64;
+    let buffer_ms = if r > 0 {
+        buf_n / ch / r as f64 * 1000.0
+    } else {
+        0.0
+    };
+    let ema = state.metrics_process_ema_us.load(Ordering::Relaxed);
+    let raw = state.metrics_process_us.load(Ordering::Relaxed);
+    let proc_us = if ema > 0 { ema } else { raw } as f64;
+    Ok(VoiceChangerMetrics {
+        buffer_ms,
+        process_ms: proc_us / 1000.0,
+    })
+}
+
 #[command]
 fn set_voice_changer_enabled(state: State<'_, VoiceChangerState>, enabled: bool) -> Result<(), String> {
     *state.enabled.lock().map_err(|_| "Lock failed")? = enabled;
     Ok(())
 }
 
-/// Apply a preset
 #[command]
 fn apply_voice_changer_preset(state: State<'_, VoiceChangerState>, preset_id: String) -> Result<(), String> {
-    let presets = get_presets();
-    let preset = presets
+    let preset = voice_changer_presets()
         .iter()
         .find(|p| p.id == preset_id)
         .ok_or_else(|| format!("Preset '{}' not found", preset_id))?;
 
-    *state.pitch_semitones.lock().map_err(|_| "Lock failed")? = preset.pitch;
-    *state.formant_shift.lock().map_err(|_| "Lock failed")? = preset.formant;
+    {
+        let mut h = state.hot_params.lock().map_err(|_| "Lock failed")?;
+        h.pitch_semitones = preset.pitch;
+        h.formant_shift = preset.formant;
+    }
     Ok(())
 }
 
-/// Start the voice changer (capture -> process -> playback loop)
+fn voice_changer_push_aux_pcm_impl(
+    state: &VoiceChangerState,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<(), String> {
+    let r_target = state.capture_sample_rate.load(Ordering::Relaxed);
+    if r_target == 0 {
+        return Err("Voice changer is not running".into());
+    }
+    let ch = channels.max(1) as usize;
+    let ch_cap = state.capture_channels.load(Ordering::Relaxed).max(1) as usize;
+    let resampled = if sample_rate != r_target || ch != ch_cap {
+        let frames = samples.len() / ch;
+        let mut planar = Vec::with_capacity(frames * ch_cap);
+        for f in 0..frames {
+            for c in 0..ch_cap {
+                let v = if c < ch {
+                    samples[f * ch + c]
+                } else {
+                    samples[f * ch + ch - 1]
+                };
+                planar.push(v);
+            }
+        }
+        linear_resample_interleaved(&planar, ch_cap, sample_rate, r_target)
+    } else {
+        samples
+    };
+    let mut aux = state.aux_feed.lock().map_err(|_| "Lock failed")?;
+    aux.extend_from_slice(&resampled);
+    const MAX_AUX_SAMPLES: usize = 48000 * 2 * 2;
+    if aux.len() > MAX_AUX_SAMPLES {
+        let drop = aux.len() - MAX_AUX_SAMPLES;
+        aux.drain(..drop);
+    }
+    Ok(())
+}
+
+/// Push decoded f32 PCM (interleaved) to be mixed into the live capture stream at `sample_rate` Hz.
 #[command]
-async fn start_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, VoiceChangerState>, input_device: Option<String>) -> Result<(), String> {
-    if *state.is_running.lock().map_err(|_| "Lock failed")? {
+fn voice_changer_push_aux_pcm(
+    state: State<'_, VoiceChangerState>,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<(), String> {
+    voice_changer_push_aux_pcm_impl(&state, samples, sample_rate, channels)
+}
+
+/// WAV (PCM) from TTS etc., mixed into the voice changer input while running.
+#[command]
+fn voice_changer_push_aux_wav(
+    state: State<'_, VoiceChangerState>,
+    req: PushAuxWavRequest,
+) -> Result<(), String> {
+    let raw = decode_push_aux_wav_payload(req)?;
+    push_aux_wav_bytes(&state, raw)
+}
+
+#[command]
+async fn start_voice_changer<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, VoiceChangerState>,
+    input_device: Option<String>,
+) -> Result<(), String> {
+    if state.is_running.load(Ordering::Acquire) {
         return Err("Voice changer already running".to_string());
+    }
+
+    let mode = state.mode.lock().map_err(|_| "Lock failed")?.clone();
+    if mode == VoiceChangerMode::Onnx {
+        let path = state
+            .onnx_model_path
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone();
+        let p = path.trim();
+        if p.is_empty() {
+            return Err("Choose an ONNX model file for ONNX voice mode.".into());
+        }
+        if !Path::new(p).is_file() {
+            return Err(format!("ONNX model file not found: {}", p));
+        }
+    }
+    if mode == VoiceChangerMode::Sidecar {
+        let url = state.sidecar_ws_url.lock().map_err(|_| "Lock failed")?.clone();
+        if url.trim().is_empty() {
+            return Err("Enter a WebSocket URL for external voice conversion (ws:// or wss://).".into());
+        }
     }
 
     if let Some(sender) = state.stop_sender.lock().unwrap().take() {
@@ -424,16 +811,30 @@ async fn start_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, Voi
 
     let (tx, rx) = channel();
     *state.stop_sender.lock().unwrap() = Some(tx);
-    *state.is_running.lock().unwrap() = true;
+    state.is_running.store(true, Ordering::Release);
     *state.enabled.lock().unwrap() = true;
 
-    let pitch_semitones = state.pitch_semitones.clone();
-    let formant_shift = state.formant_shift.clone();
-    let vocoder_window_ms = state.vocoder_window_ms.clone();
-    let vocoder_oversample = state.vocoder_oversample.clone();
+    let hot_params = state.hot_params.clone();
     let is_running = state.is_running.clone();
+    let mode_arc = state.mode.clone();
+    let sidecar_url = state.sidecar_ws_url.clone();
+    let onnx_model_path = state.onnx_model_path.clone();
+    let onnx_execution_provider = state.onnx_execution_provider.clone();
+    let aux_feed = state.aux_feed.clone();
+    let capture_sr = state.capture_sample_rate.clone();
+    let capture_ch = state.capture_channels.clone();
+    let output_sr = state.output_sample_rate.clone();
+    let output_ch = state.output_channels.clone();
+    let metrics_process_us = state.metrics_process_us.clone();
+    let metrics_process_ema_us = state.metrics_process_ema_us.clone();
+    let metrics_buffer_samples = state.metrics_buffer_samples.clone();
     let output_device_name = state
         .output_device
+        .lock()
+        .map_err(|_| "Lock failed")?
+        .clone();
+    let monitor_output_device = state
+        .monitor_output_device
         .lock()
         .map_err(|_| "Lock failed")?
         .clone();
@@ -443,20 +844,30 @@ async fn start_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, Voi
     thread::spawn(move || {
         let result = run_voice_changer_loop(
             rx,
-            pitch_semitones,
-            formant_shift,
-            vocoder_window_ms,
-            vocoder_oversample,
+            hot_params,
             is_running.clone(),
+            mode_arc,
+            sidecar_url,
+            onnx_model_path,
+            onnx_execution_provider,
+            aux_feed,
+            capture_sr,
+            capture_ch,
+            output_sr,
+            output_ch,
+            metrics_process_us,
+            metrics_process_ema_us,
+            metrics_buffer_samples,
             input_device_name,
             output_device_name,
+            monitor_output_device,
         );
 
         if let Err(e) = result {
             eprintln!("[VoiceChanger] Error: {}", e);
         }
 
-        *is_running.lock().unwrap() = false;
+        is_running.store(false, Ordering::Release);
         let _ = app_clone.emit("voice_changer:stopped", ());
     });
 
@@ -466,13 +877,23 @@ async fn start_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, Voi
 
 fn run_voice_changer_loop(
     rx: std::sync::mpsc::Receiver<()>,
-    pitch_semitones: Arc<Mutex<f32>>,
-    formant_shift: Arc<Mutex<f32>>,
-    vocoder_window_ms: Arc<Mutex<u32>>,
-    vocoder_oversample: Arc<Mutex<u32>>,
-    is_running: Arc<Mutex<bool>>,
+    hot_params: Arc<Mutex<VoiceChangerHotParams>>,
+    is_running: Arc<AtomicBool>,
+    mode_arc: Arc<Mutex<VoiceChangerMode>>,
+    sidecar_url: Arc<Mutex<String>>,
+    onnx_model_path: Arc<Mutex<String>>,
+    onnx_execution_provider: Arc<Mutex<String>>,
+    aux_feed: Arc<Mutex<Vec<f32>>>,
+    capture_sr: Arc<AtomicU32>,
+    capture_ch: Arc<AtomicU32>,
+    output_sr: Arc<AtomicU32>,
+    output_ch: Arc<AtomicU32>,
+    metrics_process_us: Arc<AtomicU32>,
+    metrics_process_ema_us: Arc<AtomicU32>,
+    metrics_buffer_samples: Arc<AtomicU32>,
     input_device_name: Option<String>,
     output_device_name: String,
+    monitor_output_device: String,
 ) -> Result<(), String> {
     let host = cpal::default_host();
 
@@ -505,12 +926,14 @@ fn run_voice_changer_loop(
     let r_out = output_config.sample_rate().0;
     let ch_in = input_config.channels() as usize;
     let ch_out = output_config.channels() as usize;
-    let ch_work = ch_in.max(ch_out).max(1);
+
+    capture_sr.store(r_in, Ordering::Relaxed);
+    capture_ch.store(ch_in.max(1) as u32, Ordering::Relaxed);
 
     #[cfg(debug_assertions)]
     println!(
-        "[VoiceChanger] Input:  {} Hz, {} ch | Output: {} Hz, {} ch | work {} ch",
-        r_in, ch_in, r_out, ch_out, ch_work
+        "[VoiceChanger] Input:  {} Hz, {} ch | Output: {} Hz, {} ch",
+        r_in, ch_in, r_out, ch_out
     );
 
     if !matches!(output_config.sample_format(), cpal::SampleFormat::F32) {
@@ -520,12 +943,28 @@ fn run_voice_changer_loop(
         ));
     }
 
-    let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-    let buffer_clone = buffer.clone();
+    output_sr.store(r_out, Ordering::Relaxed);
+    output_ch.store(ch_out as u32, Ordering::Relaxed);
+
+    let h_init = *hot_params.lock().map_err(|_| "Lock failed")?;
+    let (prefill_ms, max_queue_ms) =
+        clamp_output_buffer_ms(h_init.output_prefill_ms, h_init.output_max_queue_ms);
+    let prefill_samples = ((r_out as f64) * prefill_ms / 1000.0).ceil() as usize * ch_out;
+    let max_queue_samples = ((r_out as f64) * max_queue_ms / 1000.0).ceil() as usize * ch_out;
+
+    let chunk_frames_usize = clamp_chunk_frames(h_init.chunk_frames);
+    let need = chunk_frames_usize * ch_in;
+    if need == 0 {
+        return Err("Invalid chunk size or channel count.".into());
+    }
+
+    let ring_cap = need
+        .saturating_mul(64)
+        .max(16_384)
+        .min(262_144);
+    let (mut audio_producer, mut audio_consumer) = RingBuffer::<f32>::new(ring_cap);
     let is_running_input = is_running.clone();
 
-    let prefill_samples = ((r_out as f64) * PREFILL_MS / 1000.0).ceil() as usize * ch_out;
-    let max_queue_samples = ((r_out as f64) * MAX_QUEUE_MS / 1000.0).ceil() as usize * ch_out;
     let playback: Arc<Mutex<OutputPlayback>> = Arc::new(Mutex::new(OutputPlayback::new(
         prefill_samples,
         max_queue_samples,
@@ -533,39 +972,46 @@ fn run_voice_changer_loop(
     )));
     let playback_clone = playback.clone();
 
-    let input_stream = match input_config.sample_format() {
-        cpal::SampleFormat::F32 => input.build_input_stream(
-            &input_config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                if !*is_running_input.lock().unwrap() {
-                    return;
-                }
-                let mut buf = buffer_clone.lock().unwrap();
-                buf.extend_from_slice(data);
-            },
-            |e| eprintln!("[VoiceChanger] Input error: {}", e),
-            None,
-        ),
-        cpal::SampleFormat::I16 => {
-            let is_running_i16 = is_running.clone();
-            let buffer_i16 = buffer.clone();
-            input.build_input_stream(
+    let input_stream = if matches!(input_config.sample_format(), cpal::SampleFormat::F32) {
+        input
+            .build_input_stream(
                 &input_config.into(),
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    if !*is_running_i16.lock().unwrap() {
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    if !is_running_input.load(Ordering::Acquire) {
                         return;
                     }
-                    let samples: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
-                    let mut buf = buffer_i16.lock().unwrap();
-                    buf.extend_from_slice(&samples);
+                    let (_, rest) = audio_producer.push_partial_slice(data);
+                    if !rest.is_empty() {
+                        // Ring full: remainder dropped (real-time safe).
+                    }
                 },
                 |e| eprintln!("[VoiceChanger] Input error: {}", e),
                 None,
             )
-        }
-        _ => return Err("Unsupported input sample format".to_string()),
-    }
-    .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+    } else if matches!(input_config.sample_format(), cpal::SampleFormat::I16) {
+        let is_running_i16 = is_running.clone();
+        input
+            .build_input_stream(
+                &input_config.into(),
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    if !is_running_i16.load(Ordering::Acquire) {
+                        return;
+                    }
+                    for &s in data {
+                        let f = s as f32 / 32768.0;
+                        if audio_producer.push(f).is_err() {
+                            break;
+                        }
+                    }
+                },
+                |e| eprintln!("[VoiceChanger] Input error: {}", e),
+                None,
+            )
+            .map_err(|e| e.to_string())?
+    } else {
+        return Err("Unsupported input sample format".to_string());
+    };
 
     let output_stream = output
         .build_output_stream(
@@ -582,87 +1028,246 @@ fn run_voice_changer_loop(
     input_stream.play().map_err(|e| e.to_string())?;
     output_stream.play().map_err(|e| e.to_string())?;
 
-    #[cfg(debug_assertions)]
-    println!(
-        "[VoiceChanger] Phase vocoder pitch + device resample {:.4} (prefill ~{} samples, max queue ~{})",
-        device_resample_ratio(r_in, r_out),
-        prefill_samples,
-        max_queue_samples
-    );
+    let (_monitor_stream, monitor_playback, r_mon_out, ch_mon_out) =
+        if monitor_output_device.trim().is_empty() {
+            (None::<cpal::Stream>, None, 0u32, 0usize)
+        } else {
+            let mon_dev = if monitor_output_device == "default" {
+                host.default_output_device()
+                    .ok_or_else(|| "No default output device for monitor".to_string())?
+            } else {
+                host.output_devices()
+                    .map_err(|e| e.to_string())?
+                    .find(|d| d.name().unwrap_or_default() == monitor_output_device)
+                    .ok_or_else(|| {
+                        format!("Monitor output device '{}' not found", monitor_output_device)
+                    })?
+            };
+            let mc = mon_dev.default_output_config().map_err(|e| e.to_string())?;
+            if !matches!(mc.sample_format(), cpal::SampleFormat::F32) {
+                return Err(format!(
+                    "Monitor output needs F32 (got {:?})",
+                    mc.sample_format()
+                ));
+            }
+            let r_mon = mc.sample_rate().0;
+            let ch_mon = mc.channels().max(1) as usize;
+            let prefill_m = ((r_mon as f64) * prefill_ms / 1000.0).ceil() as usize * ch_mon;
+            let max_q_m = ((r_mon as f64) * max_queue_ms / 1000.0).ceil() as usize * ch_mon;
+            let mon_pb = Arc::new(Mutex::new(OutputPlayback::new(prefill_m, max_q_m, ch_mon)));
+            let mon_cb = mon_pb.clone();
+            let m_stream = mon_dev
+                .build_output_stream(
+                    &mc.into(),
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        mon_cb.lock().unwrap().fill_callback(data);
+                    },
+                    |e| eprintln!("[VoiceChanger] Monitor output error: {}", e),
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+            m_stream.play().map_err(|e| e.to_string())?;
+            (Some(m_stream), Some(mon_pb), r_mon, ch_mon)
+        };
 
-    let initial_window = clamp_vocoder_window_ms(*vocoder_window_ms.lock().unwrap());
-    let mut last_window_ms = initial_window;
-    let mut phase_shifters: Vec<PitchShifter> = (0..ch_work)
-        .map(|_| PitchShifter::new(initial_window, r_in as usize))
-        .collect();
+    let mode = mode_arc.lock().map_err(|_| "Lock failed")?.clone();
+    let mut classic = ClassicPhaseVocoderProcessor::new(
+        r_in,
+        r_out,
+        ch_in,
+        ch_out,
+        h_init.vocoder_window_ms,
+        chunk_frames_usize,
+    )?;
 
-    let ratio_device = device_resample_ratio(r_in, r_out);
-    let mut resampler =
-        make_device_resampler(ratio_device, ch_work).map_err(|e| format!("Voice changer resampler: {}", e))?;
+    let mut sidecar = if mode == VoiceChangerMode::Sidecar {
+        let url = sidecar_url.lock().map_err(|_| "Lock failed")?.clone();
+        Some(SidecarVoiceBridge::connect(
+            &url,
+            r_in,
+            ch_in,
+            chunk_frames_usize,
+        )?)
+    } else {
+        None
+    };
 
-    let mut pitched_planes: Vec<Vec<f32>> = (0..ch_work)
-        .map(|_| vec![0.0f32; CHUNK_FRAMES])
-        .collect();
+    let mut onnx_vc = if mode == VoiceChangerMode::Onnx {
+        let path = onnx_model_path.lock().map_err(|_| "Lock failed")?.clone();
+        let ep = onnx_execution_provider
+            .lock()
+            .map_err(|_| "Lock failed")?
+            .clone();
+        Some(OnnxVoiceBridge::new(path.trim(), need, ch_in, ep.trim())?)
+    } else {
+        None
+    };
 
-    let mut formant_states: Vec<FormantLpState> = vec![FormantLpState::default(); ch_work];
+    let mut work_chunk = Vec::with_capacity(need);
+    let mut scratch_mon = Vec::with_capacity(need);
+    let mut scratch_adapt = Vec::with_capacity(need * 2);
+    let mut scratch_resample = Vec::with_capacity(need * 2);
 
-    loop {
-        if rx.try_recv().is_ok() || !*is_running.lock().unwrap() {
+    'vc_main: loop {
+        if rx.try_recv().is_ok() || !is_running.load(Ordering::Acquire) {
             break;
         }
 
-        let pitch = *pitch_semitones.lock().unwrap();
-        let formant = *formant_shift.lock().unwrap();
-        let window_ms = clamp_vocoder_window_ms(*vocoder_window_ms.lock().unwrap());
-        let oversample = clamp_vocoder_oversample(*vocoder_oversample.lock().unwrap());
+        let h = *hot_params.lock().unwrap();
+        let pitch = h.pitch_semitones;
+        let formant = h.formant_shift;
+        let window_ms = h.vocoder_window_ms;
+        let oversample = h.vocoder_oversample;
+        let g_in = h.input_gain;
+        let g_out = h.output_gain;
+        let g_mon = h.monitor_gain;
+        let te = h.buffer_truncate_enabled;
+        let thr = h.buffer_truncate_rms;
+        let n_trunc = h.buffer_truncate_chunks;
 
-        if window_ms != last_window_ms {
-            last_window_ms = window_ms;
-            phase_shifters = (0..ch_work)
-                .map(|_| PitchShifter::new(window_ms, r_in as usize))
-                .collect();
+        work_chunk.clear();
+        while work_chunk.len() < need {
+            match audio_consumer.pop() {
+                Ok(s) => work_chunk.push(s),
+                Err(_) => {
+                    thread::sleep(std::time::Duration::from_millis(2));
+                    if rx.try_recv().is_ok() || !is_running.load(Ordering::Acquire) {
+                        break 'vc_main;
+                    }
+                }
+            }
         }
 
-        let need = CHUNK_FRAMES * ch_in;
-        let chunk: Vec<f32> = {
-            let mut buf = buffer.lock().unwrap();
-            if buf.len() < need {
-                drop(buf);
-                thread::sleep(std::time::Duration::from_millis(2));
-                continue;
+        if (g_in - 1.0).abs() > 1e-6 {
+            for s in work_chunk.iter_mut() {
+                *s = (*s * g_in).clamp(-1.0, 1.0);
             }
-            buf.drain(..need).collect()
+        }
+        {
+            let mut aux = aux_feed.lock().unwrap();
+            mix_aux_into_chunk(&mut work_chunk, &mut aux);
+        }
+
+        let t0 = Instant::now();
+        let processed = if let Some(ref mut ob) = onnx_vc {
+            let converted = match ob.infer(&work_chunk) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[VoiceChanger] ONNX: {}", e);
+                    work_chunk.clone()
+                }
+            };
+            VoiceChunkPipeline::process_chunk(
+                &mut classic,
+                &converted,
+                pitch,
+                formant,
+                window_ms,
+                oversample as u32,
+            )?
+        } else if let Some(ref mut bridge) = sidecar {
+            let neural = match bridge.exchange(&work_chunk) {
+                Ok(v) if v.len() == need => v,
+                Ok(v) => {
+                    eprintln!(
+                        "[VoiceChanger] Sidecar: expected {} samples, got {}",
+                        need,
+                        v.len()
+                    );
+                    work_chunk.clone()
+                }
+                Err(e) => {
+                    eprintln!("[VoiceChanger] Sidecar: {}", e);
+                    work_chunk.clone()
+                }
+            };
+            VoiceChunkPipeline::process_chunk(
+                &mut classic,
+                &neural,
+                pitch,
+                formant,
+                window_ms,
+                oversample as u32,
+            )?
+        } else {
+            VoiceChunkPipeline::process_chunk(
+                &mut classic,
+                &work_chunk,
+                pitch,
+                formant,
+                window_ms,
+                oversample as u32,
+            )?
         };
 
-        let planes = interleaved_to_planar(&chunk, ch_in, ch_work);
-        apply_phase_vocoder_channels(
-            &mut phase_shifters,
-            oversample,
-            pitch,
-            &planes,
-            &mut pitched_planes,
-        );
-
-        let mut processed = match resampler.process(&pitched_planes, None) {
-            Ok(out_planes) => planar_to_interleaved(&out_planes, ch_work, ch_out),
-            Err(e) => {
-                eprintln!("[VoiceChanger] Resample error: {}", e);
-                planar_to_interleaved(&pitched_planes, ch_work, ch_out)
+        if let Some(ref mon_pb) = monitor_playback {
+            if g_mon > 1e-6 && ch_mon_out > 0 {
+                let mon_src: &[f32] = if (g_mon - 1.0).abs() > 1e-6 {
+                    scratch_mon.clear();
+                    scratch_mon.reserve(processed.len());
+                    for &s in &processed {
+                        scratch_mon.push((s * g_mon).clamp(-1.0, 1.0));
+                    }
+                    scratch_mon.as_slice()
+                } else {
+                    processed.as_slice()
+                };
+                adapt_channels_interleaved_into(mon_src, ch_out, ch_mon_out, &mut scratch_adapt);
+                let final_mon: &[f32] = if r_mon_out != r_out && !scratch_adapt.is_empty() {
+                    linear_resample_interleaved_into(
+                        &scratch_adapt,
+                        ch_mon_out,
+                        r_out,
+                        r_mon_out,
+                        &mut scratch_resample,
+                    );
+                    scratch_resample.as_slice()
+                } else {
+                    scratch_adapt.as_slice()
+                };
+                if !final_mon.is_empty() {
+                    mon_pb
+                        .lock()
+                        .unwrap()
+                        .push_interleaved(final_mon, false, 0.0, 0);
+                }
             }
-        };
+        }
 
-        apply_formant_interleaved(
-            &mut processed,
-            ch_out,
-            formant,
-            &mut formant_states,
-            r_out as f64,
-        );
+        let mut processed = processed;
+        if (g_out - 1.0).abs() > 1e-6 {
+            for s in processed.iter_mut() {
+                *s = (*s * g_out).clamp(-1.0, 1.0);
+            }
+        }
+
+        let elapsed_us = t0.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+        metrics_process_us.store(elapsed_us, Ordering::Relaxed);
+        let prev_ema = metrics_process_ema_us.load(Ordering::Relaxed);
+        let next_ema = if prev_ema == 0 {
+            elapsed_us
+        } else {
+            ((prev_ema as u64 * 3 + elapsed_us as u64) / 4) as u32
+        };
+        metrics_process_ema_us.store(next_ema, Ordering::Relaxed);
 
         {
             let mut pb = playback.lock().unwrap();
-            pb.push_interleaved(&processed);
+            pb.push_interleaved(&processed, te, thr, n_trunc);
+            let ql = pb.queue_len().min(u32::MAX as usize) as u32;
+            metrics_buffer_samples.store(ql, Ordering::Relaxed);
         }
+    }
+
+    capture_sr.store(0, Ordering::Relaxed);
+    capture_ch.store(0, Ordering::Relaxed);
+    output_sr.store(0, Ordering::Relaxed);
+    output_ch.store(0, Ordering::Relaxed);
+    metrics_process_us.store(0, Ordering::Relaxed);
+    metrics_process_ema_us.store(0, Ordering::Relaxed);
+    metrics_buffer_samples.store(0, Ordering::Relaxed);
+    if let Ok(mut aux) = aux_feed.lock() {
+        aux.clear();
     }
 
     #[cfg(debug_assertions)]
@@ -670,22 +1275,30 @@ fn run_voice_changer_loop(
     Ok(())
 }
 
-/// Stop the voice changer
 #[command]
 fn stop_voice_changer<R: Runtime>(app: AppHandle<R>, state: State<'_, VoiceChangerState>) -> Result<(), String> {
     *state.enabled.lock().unwrap() = false;
-    *state.is_running.lock().unwrap() = false;
+    state.is_running.store(false, Ordering::Release);
     if let Some(sender) = state.stop_sender.lock().unwrap().take() {
         let _ = sender.send(());
+    }
+    state.capture_sample_rate.store(0, Ordering::Relaxed);
+    state.capture_channels.store(0, Ordering::Relaxed);
+    state.output_sample_rate.store(0, Ordering::Relaxed);
+    state.output_channels.store(0, Ordering::Relaxed);
+    state.metrics_process_us.store(0, Ordering::Relaxed);
+    state.metrics_process_ema_us.store(0, Ordering::Relaxed);
+    state.metrics_buffer_samples.store(0, Ordering::Relaxed);
+    if let Ok(mut aux) = state.aux_feed.lock() {
+        aux.clear();
     }
     let _ = app.emit("voice_changer:stopped", ());
     Ok(())
 }
 
-/// Check if voice changer is running
 #[command]
 fn is_voice_changer_running(state: State<'_, VoiceChangerState>) -> bool {
-    *state.is_running.lock().unwrap()
+    state.is_running.load(Ordering::Acquire)
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -702,47 +1315,37 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             apply_voice_changer_preset,
             start_voice_changer,
             stop_voice_changer,
-            is_voice_changer_running
+            is_voice_changer_running,
+            get_voice_changer_metrics,
+            voice_changer_push_aux_pcm,
+            voice_changer_push_aux_wav,
         ])
         .build()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::adapt_channels_interleaved_into;
 
     #[test]
     fn device_resample_ratio_standard() {
-        let r = device_resample_ratio(44100, 48000);
-        assert!((r - 48000.0 / 44100.0).abs() < 1e-6);
+        let r_in = 44100u32;
+        let r_out = 48000u32;
+        let ratio = r_out as f64 / r_in as f64;
+        assert!((ratio - 48000.0 / 44100.0).abs() < 1e-6);
     }
 
     #[test]
-    fn phase_vocoder_preserves_buffer_length() {
-        let mut shifter = PitchShifter::new(DEFAULT_VOCODER_WINDOW_MS as usize, 48000);
-        let len = CHUNK_FRAMES;
-        let in_b: Vec<f32> = (0..len)
-            .map(|i| (i as f32 * 0.01).sin() * 0.1)
-            .collect();
-        let mut out_b = vec![0.0f32; len];
-        shifter.shift_pitch(DEFAULT_VOCODER_OVERSAMPLE as usize, 5.0f32, &in_b, &mut out_b);
-        assert_eq!(in_b.len(), out_b.len());
+    fn adapt_channels_mono_to_stereo() {
+        let mut o = Vec::new();
+        adapt_channels_interleaved_into(&[0.5f32], 1, 2, &mut o);
+        assert_eq!(o, vec![0.5, 0.5]);
     }
 
     #[test]
-    fn apply_phase_vocoder_stereo_smoke() {
-        let mut shifters: Vec<PitchShifter> =
-            (0..2).map(|_| PitchShifter::new(DEFAULT_VOCODER_WINDOW_MS as usize, 48000)).collect();
-        let planes_in = vec![vec![0.5f32; 64], vec![-0.25f32; 64]];
-        let mut planes_out = vec![vec![0.0f32; 64], vec![0.0f32; 64]];
-        apply_phase_vocoder_channels(
-            &mut shifters,
-            DEFAULT_VOCODER_OVERSAMPLE as usize,
-            0.0,
-            &planes_in,
-            &mut planes_out,
-        );
-        assert_eq!(planes_out[0].len(), planes_in[0].len());
-        assert_eq!(planes_out[1].len(), planes_in[1].len());
+    fn adapt_channels_stereo_to_mono() {
+        let mut o = Vec::new();
+        adapt_channels_interleaved_into(&[0.2f32, 0.4f32], 2, 1, &mut o);
+        assert!((o[0] - 0.3).abs() < 1e-6);
     }
 }

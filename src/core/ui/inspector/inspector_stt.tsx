@@ -1,6 +1,7 @@
 import { STT_Backends, STT_State } from "@/core/services/stt/schema";
 import { ServiceNetworkState } from "@/types";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { FC, useState, useEffect } from "react";
 import { RiCharacterRecognitionFill, RiUserVoiceFill } from "react-icons/ri";
@@ -13,6 +14,7 @@ import Inspector from "./components";
 import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
 import { useTranslation } from 'react-i18next';
+import { toast } from "react-toastify";
 
 // Rust-based input device selector
 interface AudioDevice {
@@ -68,11 +70,15 @@ const micPageUrl = () => {
 const Chrome: FC = () => {
   const { t } = useTranslation();
   const handleOpenChrome = () => {
-    invoke("plugin:web|open_browser", {
+    void invoke("plugin:web|open_browser", {
       data: {
         browser: "chrome",
         url: micPageUrl()
       }
+    }).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("open_browser:", e);
+      toast.error(`${t("integrations.oauth_open_browser_failed")} ${msg}`);
     });
   };
 
@@ -85,11 +91,15 @@ const Chrome: FC = () => {
 const Edge: FC = () => {
   const { t } = useTranslation();
   const handleOpenEdge = () => {
-    invoke("plugin:web|open_browser", {
+    void invoke("plugin:web|open_browser", {
       data: {
         browser: "edge",
         url: micPageUrl()
       }
+    }).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("open_browser:", e);
+      toast.error(`${t("integrations.oauth_open_browser_failed")} ${msg}`);
     });
   };
 
@@ -284,6 +294,66 @@ const Whisper: FC = () => {
       For ".en" models, language is always English. For multilingual models, you can select the language.
     </Inspector.Description>
 
+    <InputCheckbox
+      label={t("stt.whisper_use_local")}
+      onChange={(e) => up("useLocalModel", e)}
+      value={pr.useLocalModel}
+    />
+    {pr.useLocalModel && (
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            className="input input-bordered input-sm flex-1 min-w-0 font-mono text-xs"
+            value={pr.localModelPath}
+            onChange={(e) => up("localModelPath", e.target.value)}
+            placeholder={t("stt.whisper_local_path")}
+          />
+          {isTauri() && (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline shrink-0"
+              onClick={async () => {
+                const path = await open({
+                  filters: [{ name: "Whisper GGML", extensions: ["bin"] }],
+                  multiple: false,
+                });
+                if (path === null || Array.isArray(path)) return;
+                up("localModelPath", path);
+              }}
+            >
+              {t("stt.whisper_browse_bin")}
+            </button>
+          )}
+        </div>
+        {isTauri() && (
+          <button
+            type="button"
+            className="btn btn-sm btn-neutral w-fit"
+            onClick={async () => {
+              const path = await open({
+                filters: [{ name: "Whisper GGML", extensions: ["bin"] }],
+                multiple: false,
+              });
+              if (path === null || Array.isArray(path)) return;
+              try {
+                await invoke("plugin:whisper|import_whisper_model", {
+                  model: window.ApiServer.state.services.stt.data.whisper.model,
+                  sourcePath: path as string,
+                });
+                toast.success(t("stt.whisper_import_ok"));
+              } catch (e) {
+                toast.error(String(e));
+              }
+            }}
+          >
+            {t("stt.whisper_import_cached")}
+          </button>
+        )}
+        <Inspector.Description>{t("stt.whisper_local_hint")}</Inspector.Description>
+      </div>
+    )}
+
     {downloadProgress && (
       <div className="flex flex-col gap-1 mb-2">
         {downloadProgress.phase === "complete" ? (
@@ -431,6 +501,7 @@ const OpenAIAudio: FC = () => {
 };
 
 const Vosk: FC = () => {
+  const { t } = useTranslation();
   const pr = useSnapshot(window.ApiServer.state.services.stt.data.vosk);
   const up = <K extends keyof STT_State["vosk"]>(key: K, v: STT_State["vosk"][K]) => window.ApiServer.state.services.stt.data.vosk[key] = v;
 
@@ -478,6 +549,66 @@ const Vosk: FC = () => {
     <Inspector.Description>
       Full URL to a .zip Vosk model. When set, it overrides the catalog URL for download; the file is still saved under app data as the selected model id.
     </Inspector.Description>
+
+    <InputCheckbox
+      label={t("stt.vosk_use_local")}
+      onChange={(e) => up("useLocalZip", e)}
+      value={pr.useLocalZip}
+    />
+    {pr.useLocalZip && (
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            className="input input-bordered input-sm flex-1 min-w-0 font-mono text-xs"
+            value={pr.localZipPath}
+            onChange={(e) => up("localZipPath", e.target.value)}
+            placeholder={t("stt.vosk_local_path")}
+          />
+          {isTauri() && (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline shrink-0"
+              onClick={async () => {
+                const path = await open({
+                  filters: [{ name: "Vosk model", extensions: ["zip"] }],
+                  multiple: false,
+                });
+                if (path === null || Array.isArray(path)) return;
+                up("localZipPath", path);
+              }}
+            >
+              {t("stt.vosk_browse_zip")}
+            </button>
+          )}
+        </div>
+        {isTauri() && (
+          <button
+            type="button"
+            className="btn btn-sm btn-neutral w-fit"
+            onClick={async () => {
+              const path = await open({
+                filters: [{ name: "Vosk model", extensions: ["zip"] }],
+                multiple: false,
+              });
+              if (path === null || Array.isArray(path)) return;
+              try {
+                await invoke("plugin:vosk-stt|import_vosk_model_zip", {
+                  modelId: window.ApiServer.state.services.stt.data.vosk.model,
+                  sourcePath: path as string,
+                });
+                toast.success(t("stt.vosk_import_ok"));
+              } catch (e) {
+                toast.error(String(e));
+              }
+            }}
+          >
+            {t("stt.vosk_import_cached")}
+          </button>
+        )}
+        <Inspector.Description>{t("stt.vosk_local_hint")}</Inspector.Description>
+      </div>
+    )}
   </>
 }
 

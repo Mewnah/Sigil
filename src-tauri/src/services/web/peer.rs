@@ -42,6 +42,7 @@ pub async fn peer_handler(ws: WebSocket, peers: Peers, query: PeerQueryData) {
     if peers.read().await.contains_key(&query.id) {
         #[cfg(debug_assertions)]
         eprintln!("[peer] already registered: {}", query.id);
+        let _ = tx.send(Ok(PeerMessageType::IDTAKEN.into()));
         return;
     }
 

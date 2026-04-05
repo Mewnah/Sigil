@@ -1,11 +1,16 @@
 import { TTS_Backends, TTS_State } from "@/core/services/tts/schema";
 import { ServiceNetworkState } from "@/types";
+import { devLog } from "@/utils/devLog";
 import NiceModal from "@ebay/nice-modal-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { FC, useEffect, useState } from "react";
-import { RiCharacterRecognitionFill, RiChatVoiceFill } from "react-icons/ri";
+import { RiCharacterRecognitionFill, RiChatVoiceFill, RiInformationLine } from "react-icons/ri";
 import { proxy, useSnapshot } from "valtio";
 import { azureVoices } from "../../services/tts/tts_data";
+import { TTS_FishSpeechService } from "../../services/tts/services/fishspeech";
+import { TTS_KokoroService } from "../../services/tts/services/kokoro";
+import { TTS_MeloService } from "../../services/tts/services/melo";
 import { fetchVoicevoxSpeakers } from "../../services/tts/services/voicevox";
 import Modal from "../Modal";
 import ServiceButton from "../service-button";
@@ -13,6 +18,8 @@ import Inspector from "./components";
 import { InputCheckbox, InputMapObject, InputMappedGroupSelect, InputNativeAudioOutput, InputRange, InputSelect, InputSelectOption, InputText, InputTextSource } from "./components/input";
 import classNames from "classnames";
 import { useTranslation } from "react-i18next";
+import { toast } from "react-toastify";
+import Tooltip from "../dropdown/Tooltip";
 
 type WindowsToken = {
   id: string;
@@ -351,6 +358,168 @@ const UberDuck: FC = () => {
   </>
 }
 
+const Kokoro: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.kokoro);
+  const handleUpdate = <K extends keyof TTS_State["kokoro"]>(key: K, v: TTS_State["kokoro"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.kokoro[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  const [voiceOpts, setVoiceOpts] = useState<InputSelectOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refreshVoices = async () => {
+    setLoading(true);
+    try {
+      const list = await TTS_KokoroService.getVoices(data.endpoint);
+      setVoiceOpts(list.map((x) => ({ label: x.name, value: x.name })));
+    } catch {
+      toast.error(t("tts.http_list_fetch_failed"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <>
+    <Inspector.SubHeader>{t("tts.kokoro_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.kokoro_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText label="tts.kokoro_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <div className="flex flex-wrap gap-2 items-end mb-1">
+        <div className="flex-1 min-w-[12rem]">
+          <InputSelect
+            label="tts.field_voice"
+            value={data.voice}
+            onValueChange={e => handleUpdate("voice", e)}
+            options={voiceOpts.length ? voiceOpts : [{ label: data.voice || "—", value: data.voice }]}
+          />
+        </div>
+        <button type="button" className={classNames("btn btn-sm btn-primary mb-1", { loading })} onClick={() => void refreshVoices()} disabled={loading}>
+          {t("tts.http_refresh_list")}
+        </button>
+      </div>
+      <InputRange value={data.speed} onChange={e => handleUpdate("speed", e.target.value)} label="tts.kokoro_speed" step="0.05" min="0.5" max="2" />
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
+const Melo: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.melo);
+  const handleUpdate = <K extends keyof TTS_State["melo"]>(key: K, v: TTS_State["melo"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.melo[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  const [speakerOpts, setSpeakerOpts] = useState<InputSelectOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refreshSpeakers = async () => {
+    setLoading(true);
+    try {
+      const list = await TTS_MeloService.getSpeakers(data.endpoint);
+      setSpeakerOpts(
+        list.map((s) => ({
+          label: `${s.name} (${s.language})`,
+          value: s.id,
+        })),
+      );
+    } catch {
+      toast.error(t("tts.http_list_fetch_failed"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <>
+    <Inspector.SubHeader>{t("tts.melo_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.melo_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText label="tts.melo_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <div className="flex flex-wrap gap-2 items-end mb-1">
+        <div className="flex-1 min-w-[12rem]">
+          <InputSelect
+            label="tts.melo_speaker"
+            value={data.speaker}
+            onValueChange={e => handleUpdate("speaker", e)}
+            options={speakerOpts.length ? speakerOpts : [{ label: data.speaker || "—", value: data.speaker }]}
+          />
+        </div>
+        <button type="button" className={classNames("btn btn-sm btn-primary mb-1", { loading })} onClick={() => void refreshSpeakers()} disabled={loading}>
+          {t("tts.http_refresh_list")}
+        </button>
+      </div>
+      <InputRange value={data.speed} onChange={e => handleUpdate("speed", e.target.value)} label="tts.melo_speed" step="0.05" min="0.5" max="2" />
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
+const Chatterbox: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.chatterbox);
+  const handleUpdate = <K extends keyof TTS_State["chatterbox"]>(key: K, v: TTS_State["chatterbox"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.chatterbox[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  return <>
+    <Inspector.SubHeader>{t("tts.chatterbox_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.chatterbox_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText label="tts.chatterbox_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <InputText label="tts.field_voice" value={data.voice} onChange={e => handleUpdate("voice", e.target.value)} />
+      <InputRange value={data.speed} onChange={e => handleUpdate("speed", e.target.value)} label="tts.chatterbox_speed" step="0.05" min="0.5" max="2" />
+      <InputRange value={data.exaggeration} onChange={e => handleUpdate("exaggeration", e.target.value)} label="tts.chatterbox_exaggeration" step="0.05" min="0" max="1" />
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
+const FishSpeech: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.fishSpeech);
+  const handleUpdate = <K extends keyof TTS_State["fishSpeech"]>(key: K, v: TTS_State["fishSpeech"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.fishSpeech[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  const [voiceOpts, setVoiceOpts] = useState<InputSelectOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refreshVoices = async () => {
+    setLoading(true);
+    try {
+      const list = await TTS_FishSpeechService.getVoices(data.endpoint);
+      setVoiceOpts(list.map((x) => ({ label: x.name || x.id, value: x.id })));
+    } catch {
+      toast.error(t("tts.http_list_fetch_failed"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <>
+    <Inspector.SubHeader>{t("tts.fish_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.fish_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText label="tts.fish_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <div className="flex flex-wrap gap-2 items-end mb-1">
+        <div className="flex-1 min-w-[12rem]">
+          <InputSelect
+            label="tts.fish_reference_id"
+            value={data.referenceId}
+            onValueChange={e => handleUpdate("referenceId", e)}
+            options={voiceOpts.length ? voiceOpts : [{ label: data.referenceId || "—", value: data.referenceId }]}
+          />
+        </div>
+        <button type="button" className={classNames("btn btn-sm btn-primary mb-1", { loading })} onClick={() => void refreshVoices()} disabled={loading}>
+          {t("tts.http_refresh_list")}
+        </button>
+      </div>
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
 const WordsReplacementModal: FC = () => {
   const { t } = useTranslation();
   const data = useSnapshot(window.ApiServer.state.services.tts);
@@ -368,6 +537,182 @@ const WordsReplacementModal: FC = () => {
 }
 NiceModal.register('tts-replacements', (props) => <Modal.Base {...props}><WordsReplacementModal /></Modal.Base>);
 
+const NeuralOnnx: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.neuralOnnx);
+  const handleUpdate = <K extends keyof TTS_State["neuralOnnx"]>(key: K, v: TTS_State["neuralOnnx"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.neuralOnnx[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+
+  const syncRustModelSource = async (source: "hub" | "local", localDir: string) => {
+    try {
+      await invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_model_source", {
+        source,
+        localDir: source === "local" && localDir.trim() ? localDir.trim() : null,
+      });
+    } catch (err) {
+      devLog("[ONNX TTS] set_model_source failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    const ep = window.ApiServer.state.services.tts.data.neuralOnnx.executionProvider;
+    void invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_execution_hint", { hint: ep }).catch((err) => {
+      devLog("[Local ONNX speech] execution hint on mount failed:", err);
+    });
+  }, []);
+
+  useEffect(() => {
+    const nx = window.ApiServer.state.services.tts.data.neuralOnnx;
+    void syncRustModelSource(nx.modelSource, nx.localModelDir);
+  }, [data.modelSource, data.localModelDir]);
+
+  useEffect(() => {
+    void invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_local_package_format", {
+      format: data.localPackageFormat,
+    }).catch((err) => devLog("[ONNX TTS] set_local_package_format failed:", err));
+  }, [data.localPackageFormat]);
+
+  return <>
+    <Inspector.SubHeader>{t("tts.neural_onnx_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.neural_onnx_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputSelect
+        label="tts.neural_onnx_model_source"
+        value={data.modelSource}
+        onValueChange={async (v) => {
+          const source = v as "hub" | "local";
+          handleUpdate("modelSource", source);
+          const dir = window.ApiServer.state.services.tts.data.neuralOnnx.localModelDir;
+          await syncRustModelSource(source, dir);
+        }}
+        options={[
+          { label: t("tts.neural_onnx_source_hub"), value: "hub" },
+          { label: t("tts.neural_onnx_source_local"), value: "local" },
+        ]}
+      />
+      {data.modelSource === "hub" && (
+        <InputText label="tts.neural_onnx_hub" value={data.hubId} onChange={e => handleUpdate("hubId", e.target.value)} />
+      )}
+      {data.modelSource === "local" && (
+        <>
+          <InputSelect
+            label="tts.neural_onnx_local_format"
+            value={data.localPackageFormat}
+            onValueChange={async (v) => {
+              handleUpdate("localPackageFormat", v as TTS_State["neuralOnnx"]["localPackageFormat"]);
+              try {
+                await invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_local_package_format", { format: v });
+              } catch (err) {
+                devLog("[ONNX TTS] set_local_package_format failed:", err);
+              }
+            }}
+            options={[
+              { label: t("tts.neural_onnx_local_format_speech_package_v1"), value: "speech_package_v1" },
+            ]}
+          />
+          <p className="text-xs text-base-content/50 mb-1">{t("tts.neural_onnx_local_package_doc")}</p>
+          <div className="flex flex-col gap-1">
+            <label className="label py-0">
+              <span className="label-text">{t("tts.neural_onnx_local_dir")}</span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                className="input input-bordered input-sm flex-1 min-w-0 font-mono text-xs"
+                value={data.localModelDir}
+                onChange={(e) => handleUpdate("localModelDir", e.target.value)}
+                onBlur={() => {
+                  void syncRustModelSource("local", data.localModelDir);
+                }}
+              />
+              {isTauri() ? (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline shrink-0"
+                  onClick={async () => {
+                    const path = await open({ directory: true, multiple: false });
+                    if (path === null || Array.isArray(path)) return;
+                    handleUpdate("localModelDir", path);
+                    try {
+                      await invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_model_source", {
+                        source: "local",
+                        localDir: path,
+                      });
+                    } catch (err) {
+                      devLog("[ONNX TTS] set_model_source after browse failed:", err);
+                      toast.error(String(err));
+                    }
+                  }}
+                >
+                  {t("tts.neural_onnx_browse_folder")}
+                </button>
+              ) : (
+                <span className="text-xs text-base-content/50 shrink-0 max-w-[10rem]">
+                  {t("tts.neural_onnx_browse_unavailable")}
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="text-xs text-base-content/60 mb-1">{t("tts.neural_onnx_local_hint")}</p>
+        </>
+      )}
+      <InputText label="tts.neural_onnx_voice" value={data.voice} onChange={e => handleUpdate("voice", e.target.value)} />
+      <InputRange value={data.speed} onChange={e => handleUpdate("speed", e.target.value)} label="tts.neural_onnx_speed" step="0.05" min="0.5" max="2" />
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+        <InputSelect
+          label="tts.neural_onnx_ep"
+          value={data.executionProvider}
+          onValueChange={async (e) => {
+            handleUpdate("executionProvider", e as TTS_State["neuralOnnx"]["executionProvider"]);
+            try {
+              await invoke("plugin:neural-onnx-tts|neural_onnx_tts_set_execution_hint", { hint: e });
+            } catch (err) {
+              devLog("[Local ONNX speech] execution hint failed:", err);
+            }
+          }}
+          options={[
+            { label: t("tts.ep_cpu_plain"), value: "cpu" },
+            { label: t("tts.ep_cuda_plain"), value: "cuda" },
+            { label: t("tts.ep_dml_plain"), value: "dml" },
+          ]}
+        />
+        <Tooltip content={t("tts.neural_onnx_ep_help")}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs btn-circle mb-0.5 shrink-0"
+            aria-label={t("voice_changer.info_learn_more")}
+          >
+            <RiInformationLine className="text-lg opacity-70" />
+          </button>
+        </Tooltip>
+      </div>
+      <div className="text-xs text-base-content/60 -mt-1 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+      <InputCheckbox label="tts.neural_route_through_vc" value={data.routeThroughVoiceChanger} onChange={v => handleUpdate("routeThroughVoiceChanger", v)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
+const NeuralSidecar: FC = () => {
+  const { t } = useTranslation();
+  const data = useSnapshot(window.ApiServer.state.services.tts.data.neuralSidecar);
+  const handleUpdate = <K extends keyof TTS_State["neuralSidecar"]>(key: K, v: TTS_State["neuralSidecar"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.neuralSidecar[key] = v);
+  const state = useSnapshot(window.ApiServer.tts.serviceState);
+  return <>
+    <Inspector.SubHeader>{t("tts.neural_sidecar_title")}</Inspector.SubHeader>
+    <div className="text-xs text-base-content/70 mb-2">{t("tts.neural_sidecar_desc")}</div>
+    <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+      <InputText label="tts.neural_sidecar_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <InputText label="tts.field_voice" value={data.voice} onChange={e => handleUpdate("voice", e.target.value)} />
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.neural_web_audio_output_note")}</div>
+      <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
+      <InputCheckbox label="tts.neural_route_through_vc" value={data.routeThroughVoiceChanger} onChange={v => handleUpdate("routeThroughVoiceChanger", v)} />
+    </Inspector.Deactivatable>
+  </>;
+};
+
 const Inspector_TTS: FC = () => {
   const { t } = useTranslation();
   const data = useSnapshot(window.ApiServer.state.services.tts);
@@ -381,23 +726,35 @@ const Inspector_TTS: FC = () => {
   return <Inspector.Body>
     <Inspector.Header><RiChatVoiceFill /> {t('tts.title')}</Inspector.Header>
     <Inspector.Content>
-      <Inspector.SubHeader>Voice Provider</Inspector.SubHeader>
+      <Inspector.SubHeader>{t("tts.provider_subheader")}</Inspector.SubHeader>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+        <InputSelect label="common.field_service" value={data.data.backend} options={[
+          { label: t("tts.backend_native"), value: TTS_Backends.native },
+          { label: t("tts.backend_windows"), value: TTS_Backends.windows },
+          { label: t("tts.backend_azure"), value: TTS_Backends.azure },
+          { label: t("tts.backend_uberduck"), value: TTS_Backends.uberduck },
+          { label: t("tts.backend_voicevox"), value: TTS_Backends.voicevox },
+          { label: t("tts.backend_kokoro"), value: TTS_Backends.kokoro },
+          { label: t("tts.backend_melo"), value: TTS_Backends.melo },
+          { label: t("tts.backend_chatterbox"), value: TTS_Backends.chatterbox },
+          { label: t("tts.backend_fish_speech"), value: TTS_Backends.fishSpeech },
+          { label: t("tts.backend_local_onnx_speech"), value: TTS_Backends.neuralOnnx },
+          { label: t("tts.backend_http_speech_server"), value: TTS_Backends.neuralSidecar },
+        ]} onValueChange={e => up("backend", e as TTS_Backends)} />
         <InputTextSource label="common.field_text_source" value={data.data.source} onChange={e => up("source", e)} />
         <InputCheckbox label="common.field_use_keyboard_input" value={data.data.inputField} onChange={e => up("inputField", e)} />
-        <InputSelect label="common.field_service" value={data.data.backend} options={[
-          { label: "Native", value: TTS_Backends.native },
-          { label: "Windows", value: TTS_Backends.windows },
-          { label: "Azure", value: TTS_Backends.azure },
-          { label: "Uberduck", value: TTS_Backends.uberduck },
-          { label: "VoiceVox", value: TTS_Backends.voicevox },
-        ]} onValueChange={e => up("backend", e as TTS_Backends)} />
       </Inspector.Deactivatable>
       {data.data.backend === TTS_Backends.windows && <Windows />}
       {data.data.backend === TTS_Backends.azure && <Azure />}
       {data.data.backend === TTS_Backends.native && <Native />}
       {data.data.backend === TTS_Backends.uberduck && <UberDuck />}
       {data.data.backend === TTS_Backends.voicevox && <VoiceVox />}
+      {data.data.backend === TTS_Backends.kokoro && <Kokoro />}
+      {data.data.backend === TTS_Backends.melo && <Melo />}
+      {data.data.backend === TTS_Backends.chatterbox && <Chatterbox />}
+      {data.data.backend === TTS_Backends.fishSpeech && <FishSpeech />}
+      {data.data.backend === TTS_Backends.neuralOnnx && <NeuralOnnx />}
+      {data.data.backend === TTS_Backends.neuralSidecar && <NeuralSidecar />}
 
       <ServiceButton status={state.status} onStart={() => window.ApiServer.tts.start()} onStop={() => window.ApiServer.tts.stop()} />
 

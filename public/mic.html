@@ -267,11 +267,28 @@
 
       let recognition = null;
       let isStreaming = false;
+      let connectPending = false;
+
+      const TOPIC_STT_CMD = "stt.external.command";
+      const TOPIC_STT_STATE = "stt.external.state";
+
+      function sendExternalState(active) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+          topic: TOPIC_STT_STATE,
+          data: { active }
+        }));
+      }
 
       const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=${Math.random()}-${Date.now()}`);
       ws.onopen = () => console.log("Connected to WebSocket");
       ws.onmessage = (msg) => {
-        // Handle incoming messages if any
+        try {
+          const raw = JSON.parse(msg.data);
+          if (raw.topic !== TOPIC_STT_CMD || !raw.data) return;
+          if (raw.data.cmd === "start") startStreaming();
+          else if (raw.data.cmd === "stop") stopStreaming();
+        } catch (_) { /* ignore */ }
       };
 
       buttonStart.onclick = toggleStreaming;
@@ -285,25 +302,30 @@
       }
 
       function startStreaming() {
+        if (isStreaming || connectPending) return;
         if (!('webkitSpeechRecognition' in window)) {
           addLog("Web Speech API not supported in this browser.");
           return;
         }
 
+        connectPending = true;
         recognition = new webkitSpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = selectDial.value || selectLang.value || 'en-US';
 
         recognition.onstart = () => {
+          connectPending = false;
           isStreaming = true;
           buttonStart.textContent = "Stop Streaming";
           buttonStart.style.backgroundColor = "firebrick";
           addLog("Recognition started");
+          sendExternalState(true);
         };
 
         recognition.onerror = (event) => {
           addLog(`Error: ${event.error}`);
+          if (connectPending) connectPending = false;
         };
 
         recognition.onend = () => {
@@ -313,6 +335,7 @@
             buttonStart.textContent = "Start Streaming";
             buttonStart.style.backgroundColor = "seagreen";
             addLog("Recognition stopped");
+            sendExternalState(false);
           }
         };
 
@@ -351,6 +374,7 @@
       }
 
       function stopStreaming() {
+        connectPending = false;
         isStreaming = false;
         if (recognition) {
           recognition.stop();

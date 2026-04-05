@@ -80,41 +80,21 @@ class ApiServer {
     await this._state.init();
     await window.ApiShared.peer.startServer();
 
-    // Initialize services in parallel
-    const results = await Promise.allSettled([
-      this.twitch.init(),
-      this.kick.init(),
-      this.discord.init(),
-      this.stt.init(),
-      this.tts.init(),
-      this.translation.init(),
-      this.transform.init(),
-      this.vrc.init(),
-      this.obs.init(),
-      this.keyboard.init(),
-      this.voiceChanger.init(),
-      this.sound.init(),
-    ]);
+    window.ApiShared.pubsub.setExternalSttHandler((event) => {
+      window.ApiServer.stt.processExternalMessage(event);
+    });
+    window.ApiShared.pubsub.setExternalMicLifecycleHandler((active) => {
+      window.ApiServer.stt.syncExternalMicLifecycle(active);
+    });
 
-    const serviceInitLabels = [
-      "Twitch",
-      "Kick",
-      "Discord",
-      "Speech-to-Text",
-      "Text-to-Speech",
-      "Translation",
-      "AI Transform",
-      "VRChat",
-      "OBS",
-      "Keyboard",
-      "Voice changer",
-      "Sound effects",
-    ] as const;
+    const initTasks = this.getHostServiceInitTasks();
+    const results = await Promise.allSettled(initTasks.map((t) => t.run()));
+
     const failedLabels: string[] = [];
     results.forEach((result, index) => {
-      const label = serviceInitLabels[index] ?? `Service ${index}`;
+      const label = initTasks[index]?.label ?? `Service ${index}`;
       if (result.status === "rejected") {
-        console.error(`[ApiServer] Service initialization failed (index ${index}):`, result.reason);
+        console.error(`[ApiServer] Service initialization failed (${label}):`, result.reason);
         failedLabels.push(label);
         const msg =
           result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -135,14 +115,34 @@ class ApiServer {
 
     window.ApiShared.pubsub.setTextEmoteEnricher((data) => {
       if (!data.emotes) {
+        if (!window.ApiServer.twitch.emotes.shouldScanEmotesForPubsub(data.value)) {
+          return { ...data, emotes: {} };
+        }
         return { ...data, emotes: window.ApiServer.twitch.emotes.scanForEmotes(data.value) };
       }
       return data;
     });
+  }
 
-    window.ApiShared.pubsub.setExternalSttHandler((event) => {
-      window.ApiServer.stt.processExternalMessage(event);
-    });
+  /** Single source for parallel host init: label and runner stay aligned. */
+  private getHostServiceInitTasks(): { label: string; run: () => Promise<void> }[] {
+    const run = (fn: () => void | PromiseLike<unknown>) => async () => {
+      await fn();
+    };
+    return [
+      { label: "Twitch", run: run(() => this.twitch.init()) },
+      { label: "Kick", run: run(() => this.kick.init()) },
+      { label: "Discord", run: run(() => this.discord.init()) },
+      { label: "Speech-to-Text", run: run(() => this.stt.init()) },
+      { label: "Text-to-Speech", run: run(() => this.tts.init()) },
+      { label: "Translation", run: run(() => this.translation.init()) },
+      { label: "AI Transform", run: run(() => this.transform.init()) },
+      { label: "VRChat", run: run(() => this.vrc.init()) },
+      { label: "OBS", run: run(() => this.obs.init()) },
+      { label: "Keyboard", run: run(() => this.keyboard.init()) },
+      { label: "Voice changer", run: run(() => this.voiceChanger.init()) },
+      { label: "Sound effects", run: run(() => this.sound.init()) },
+    ];
   }
 }
 

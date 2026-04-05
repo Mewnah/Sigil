@@ -13,6 +13,8 @@ import { TTS_KokoroService } from "./services/kokoro";
 import { TTS_MeloService } from "./services/melo";
 import { TTS_ChatterboxService } from "./services/chatterbox";
 import { TTS_FishSpeechService } from "./services/fishspeech";
+import { TTS_NeuralOnnxService } from "./services/neuralOnnx";
+import { TTS_NeuralSidecarService } from "./services/neuralSidecar";
 import {
   ITTSReceiver,
   ITTSService,
@@ -31,6 +33,8 @@ const backends: {
   [TTS_Backends.melo]: TTS_MeloService,
   [TTS_Backends.chatterbox]: TTS_ChatterboxService,
   [TTS_Backends.fishSpeech]: TTS_FishSpeechService,
+  [TTS_Backends.neuralOnnx]: TTS_NeuralOnnxService,
+  [TTS_Backends.neuralSidecar]: TTS_NeuralSidecarService,
 };
 
 class Service_TTS implements IServiceInterface, ITTSReceiver {

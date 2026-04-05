@@ -1,14 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { IServiceInterface, TextEventType } from "@/types";
+import { pushSystemLog } from "@/core/services/systemLog";
 import { serviceSubscibeToInput, serviceSubscibeToSource } from "../../../utils";
 import { VRC_Backends } from "./schema";
 import VRC_KillFrenzyTarget from "./targets/killfrenzy";
 import VRC_TextboxTarget from "./targets/textbox";
+import { sendOsc as sendOscPacket, type OscArg } from "./targets/utils";
 import { IVRCTarget } from "./types";
-
-async function sleep(time: number) {
-  return new Promise((res) => setTimeout(res, time));
-}
 
 class Service_VRC implements IServiceInterface {
   get #state() {
@@ -45,18 +43,20 @@ class Service_VRC implements IServiceInterface {
         this.#activeTarget?.pushInterim(data.value);
       }
     }));
+
+    void invoke<{ ok: boolean; error?: string }>("plugin:osc|bind_status")
+      .then((s) => {
+        if (!s.ok && s.error)
+          pushSystemLog("VRChat OSC", s.error, "error");
+      })
+      .catch(() => {});
   }
   sendTest(value: string): void {
-    this.targets.textbox?.pushFinal(value);
+    this.#activeTarget?.pushFinal(value);
   }
 
-  sendOsc(path: string, args: any[]) {
-    invoke("plugin:osc|send", {
-      rpc: {
-        path,
-        args,
-      },
-    });
+  sendOsc(path: string, args: OscArg[]) {
+    sendOscPacket(path, args);
   }
 
   dispose() {

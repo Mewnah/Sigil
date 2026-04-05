@@ -23,6 +23,11 @@ class Service_Peer implements IServiceInterface {
     this.#provider?.broadcastPubSub(msg);
   }
 
+  /** When `data` is already JSON-serialized (same string `JSON.stringify` would produce). */
+  broadcastPubSubParts(topic: string, dataJson: string) {
+    this.#provider?.broadcastPubSubParts(topic, dataJson);
+  }
+
   /** Full URL for browser / OBS (Curses-style: `http://localhost:PORT/client`, no query required). */
   getClientLink(pathname = "/client"): string {
     const n = getConfig().serverNetwork;

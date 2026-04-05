@@ -10,11 +10,15 @@ const zodVRC_Backends = z.nativeEnum(VRC_Backends);
 
 export const Service_VRC_Schema = z.object({
   enable: zSafe(z.coerce.boolean(), false),
+  oscHost: zSafe(z.coerce.string(), "127.0.0.1"),
+  oscPort: zSafe(zStringNumber(), "9000"),
   source: zSafe(TextEventSourceSchema, TextEventSource.stt),
   target: zSafe(zodVRC_Backends, VRC_Backends.textbox),
   inputField: zSafe(z.coerce.boolean(), true),
   textbox: z.object({
     indicator: zSafe(z.coerce.boolean(), true),
+    /** When false, OSC `/chatbox/input` third arg suppresses VRChat notification SFX. */
+    playNotificationSound: zSafe(z.coerce.boolean(), true),
   }).default({}),
   killfrenzy: z.object({
     syncDelay: zSafe(zStringNumber(), "250"),

@@ -40,41 +40,50 @@ class VRC_KillFrenzyTarget implements IVRCTarget {
     this.isRunning = true;
 
     const value = this.queue.shift();
-
-    const syncPointsCount = parseInt(this.state.syncPoints) ?? 0;
-    if (!syncPointsCount)
+    if (value === undefined) {
+      this.isRunning = false;
       return;
-
-    clearTimeout(this.hideTimer);
-
-    // prevent insta hide -> show
-    await sleep(this.delayTimer);
-
-    if (!this.hideTimer)  // make visible
-      this.setVisibility(true);
-      else // if visible, just clear
-      this.setPointer(255);
-
-      await sleep(this.delayTimer);
-
-    const chunks = chunk(value, syncPointsCount);
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-      const chunk = chunks[chunkIndex];
-
-      if (chunkIndex === chunks.length -1) // fill undersized chunk
-        chunk.push(...new Array(syncPointsCount - chunks[chunkIndex].length).fill(" ").join(""));
-
-      this.setPointer(chunkIndex + 1);
-
-      for (let i = 0; i < chunk.length; i++) {
-        this.setSyncChar(i, (KillsKeys[chunk[i]] ?? 255) / 127);
-      }
-      await sleep(this.delayTimer);
     }
 
-    this.isRunning = false;
-    this.triggerTimer();
-    this.tryDequeueAndSend();
+    try {
+      const syncPointsCount = Math.min(4, Math.max(1, parseInt(this.state.syncPoints, 10) || 4));
+
+      if (this.hideTimer !== undefined) {
+        clearTimeout(this.hideTimer);
+        this.hideTimer = undefined;
+      }
+
+      await sleep(this.delayTimer);
+
+      if (!this.hideTimer)
+        this.setVisibility(true);
+      else
+        this.setPointer(255);
+
+      await sleep(this.delayTimer);
+
+      const chunks = chunk(value, syncPointsCount);
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        const chunk = chunks[chunkIndex];
+
+        if (chunkIndex === chunks.length - 1)
+          chunk.push(...new Array(syncPointsCount - chunks[chunkIndex].length).fill(" ").join(""));
+
+        this.setPointer(chunkIndex + 1);
+
+        for (let i = 0; i < chunk.length; i++) {
+          this.setSyncChar(i, (KillsKeys[chunk[i]] ?? 255) / 127);
+        }
+        await sleep(this.delayTimer);
+      }
+
+      this.triggerTimer();
+    } catch {
+      this.queue.unshift(value);
+    } finally {
+      this.isRunning = false;
+    }
+    void this.tryDequeueAndSend();
   }
 
   // enqueue sentence

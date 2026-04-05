@@ -6417,16 +6417,208 @@
           "markdownDescription": "Denies the set_moonshine_endpoint command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-neural-onnx-tts-set-execution-hint`\n- `allow-neural-onnx-tts-set-hub-id`\n- `allow-neural-onnx-tts-set-model-source`\n- `allow-neural-onnx-tts-set-local-package-format`\n- `allow-neural-onnx-tts-set-voice-speed`\n- `allow-neural-onnx-tts-load-model`\n- `allow-neural-onnx-tts-list-voices`\n- `allow-neural-onnx-tts-speak`\n- `allow-neural-onnx-tts-speak-into-voice-changer`\n- `allow-neural-onnx-tts-is-loaded`",
+          "type": "string",
+          "const": "neural-onnx-tts:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-neural-onnx-tts-set-execution-hint`\n- `allow-neural-onnx-tts-set-hub-id`\n- `allow-neural-onnx-tts-set-model-source`\n- `allow-neural-onnx-tts-set-local-package-format`\n- `allow-neural-onnx-tts-set-voice-speed`\n- `allow-neural-onnx-tts-load-model`\n- `allow-neural-onnx-tts-list-voices`\n- `allow-neural-onnx-tts-speak`\n- `allow-neural-onnx-tts-speak-into-voice-changer`\n- `allow-neural-onnx-tts-is-loaded`"
+        },
+        {
+          "description": "Enables the neural_onnx_tts_is_loaded command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-is-loaded",
+          "markdownDescription": "Enables the neural_onnx_tts_is_loaded command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_list_voices command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-list-voices",
+          "markdownDescription": "Enables the neural_onnx_tts_list_voices command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_load_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-load-model",
+          "markdownDescription": "Enables the neural_onnx_tts_load_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_set_execution_hint command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-set-execution-hint",
+          "markdownDescription": "Enables the neural_onnx_tts_set_execution_hint command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_set_hub_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-set-hub-id",
+          "markdownDescription": "Enables the neural_onnx_tts_set_hub_id command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_set_local_package_format command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-set-local-package-format",
+          "markdownDescription": "Enables the neural_onnx_tts_set_local_package_format command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_set_model_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-set-model-source",
+          "markdownDescription": "Enables the neural_onnx_tts_set_model_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_set_voice_speed command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-set-voice-speed",
+          "markdownDescription": "Enables the neural_onnx_tts_set_voice_speed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-speak",
+          "markdownDescription": "Enables the neural_onnx_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_onnx_tts_speak_into_voice_changer command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:allow-neural-onnx-tts-speak-into-voice-changer",
+          "markdownDescription": "Enables the neural_onnx_tts_speak_into_voice_changer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_is_loaded command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-is-loaded",
+          "markdownDescription": "Denies the neural_onnx_tts_is_loaded command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_list_voices command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-list-voices",
+          "markdownDescription": "Denies the neural_onnx_tts_list_voices command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_load_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-load-model",
+          "markdownDescription": "Denies the neural_onnx_tts_load_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_set_execution_hint command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-set-execution-hint",
+          "markdownDescription": "Denies the neural_onnx_tts_set_execution_hint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_set_hub_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-set-hub-id",
+          "markdownDescription": "Denies the neural_onnx_tts_set_hub_id command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_set_local_package_format command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-set-local-package-format",
+          "markdownDescription": "Denies the neural_onnx_tts_set_local_package_format command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_set_model_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-set-model-source",
+          "markdownDescription": "Denies the neural_onnx_tts_set_model_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_set_voice_speed command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-set-voice-speed",
+          "markdownDescription": "Denies the neural_onnx_tts_set_voice_speed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-speak",
+          "markdownDescription": "Denies the neural_onnx_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_onnx_tts_speak_into_voice_changer command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-onnx-tts:deny-neural-onnx-tts-speak-into-voice-changer",
+          "markdownDescription": "Denies the neural_onnx_tts_speak_into_voice_changer command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-neural-sidecar-tts-endpoint`\n- `allow-neural-sidecar-tts-speak`\n- `allow-neural-sidecar-tts-speak-into-voice-changer`\n- `allow-check-neural-sidecar-tts`",
+          "type": "string",
+          "const": "neural-sidecar-tts:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-neural-sidecar-tts-endpoint`\n- `allow-neural-sidecar-tts-speak`\n- `allow-neural-sidecar-tts-speak-into-voice-changer`\n- `allow-check-neural-sidecar-tts`"
+        },
+        {
+          "description": "Enables the check_neural_sidecar_tts command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:allow-check-neural-sidecar-tts",
+          "markdownDescription": "Enables the check_neural_sidecar_tts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_sidecar_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:allow-neural-sidecar-tts-speak",
+          "markdownDescription": "Enables the neural_sidecar_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the neural_sidecar_tts_speak_into_voice_changer command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:allow-neural-sidecar-tts-speak-into-voice-changer",
+          "markdownDescription": "Enables the neural_sidecar_tts_speak_into_voice_changer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_neural_sidecar_tts_endpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:allow-set-neural-sidecar-tts-endpoint",
+          "markdownDescription": "Enables the set_neural_sidecar_tts_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_neural_sidecar_tts command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:deny-check-neural-sidecar-tts",
+          "markdownDescription": "Denies the check_neural_sidecar_tts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_sidecar_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:deny-neural-sidecar-tts-speak",
+          "markdownDescription": "Denies the neural_sidecar_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the neural_sidecar_tts_speak_into_voice_changer command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:deny-neural-sidecar-tts-speak-into-voice-changer",
+          "markdownDescription": "Denies the neural_sidecar_tts_speak_into_voice_changer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_neural_sidecar_tts_endpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "neural-sidecar-tts:deny-set-neural-sidecar-tts-endpoint",
+          "markdownDescription": "Denies the set_neural_sidecar_tts_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`",
           "type": "string",
           "const": "osc:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`"
+        },
+        {
+          "description": "Enables the bind_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:allow-bind-status",
+          "markdownDescription": "Enables the bind_status command without any pre-configured scope."
         },
         {
           "description": "Enables the send command without any pre-configured scope.",
           "type": "string",
           "const": "osc:allow-send",
           "markdownDescription": "Enables the send command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bind_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:deny-bind-status",
+          "markdownDescription": "Denies the bind_status command without any pre-configured scope."
         },
         {
           "description": "Denies the send command without any pre-configured scope.",
@@ -6531,10 +6723,10 @@
           "markdownDescription": "Denies the stdin_write command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`",
           "type": "string",
           "const": "translate:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`"
         },
         {
           "description": "Enables the check_availability command without any pre-configured scope.",
@@ -6553,6 +6745,12 @@
           "type": "string",
           "const": "translate:allow-get-languages",
           "markdownDescription": "Enables the get_languages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_api_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:allow-set-api-key",
+          "markdownDescription": "Enables the set_api_key command without any pre-configured scope."
         },
         {
           "description": "Enables the set_endpoint command without any pre-configured scope.",
@@ -6583,6 +6781,12 @@
           "type": "string",
           "const": "translate:deny-get-languages",
           "markdownDescription": "Denies the get_languages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_api_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:deny-set-api-key",
+          "markdownDescription": "Denies the set_api_key command without any pre-configured scope."
         },
         {
           "description": "Denies the set_endpoint command without any pre-configured scope.",
@@ -6645,16 +6849,22 @@
           "markdownDescription": "Denies the translate command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`",
           "type": "string",
           "const": "voice-changer:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`"
         },
         {
           "description": "Enables the apply_voice_changer_preset command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:allow-apply-voice-changer-preset",
           "markdownDescription": "Enables the apply_voice_changer_preset command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_voice_changer_metrics command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-get-voice-changer-metrics",
+          "markdownDescription": "Enables the get_voice_changer_metrics command without any pre-configured scope."
         },
         {
           "description": "Enables the get_voice_changer_params command without any pre-configured scope.",
@@ -6699,10 +6909,28 @@
           "markdownDescription": "Enables the stop_voice_changer command without any pre-configured scope."
         },
         {
+          "description": "Enables the voice_changer_push_aux_pcm command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-push-aux-pcm",
+          "markdownDescription": "Enables the voice_changer_push_aux_pcm command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_push_aux_wav command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-push-aux-wav",
+          "markdownDescription": "Enables the voice_changer_push_aux_wav command without any pre-configured scope."
+        },
+        {
           "description": "Denies the apply_voice_changer_preset command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:deny-apply-voice-changer-preset",
           "markdownDescription": "Denies the apply_voice_changer_preset command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_voice_changer_metrics command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-get-voice-changer-metrics",
+          "markdownDescription": "Denies the get_voice_changer_metrics command without any pre-configured scope."
         },
         {
           "description": "Denies the get_voice_changer_params command without any pre-configured scope.",
@@ -6747,10 +6975,22 @@
           "markdownDescription": "Denies the stop_voice_changer command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-list-downloaded-vosk-models`",
+          "description": "Denies the voice_changer_push_aux_pcm command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-push-aux-pcm",
+          "markdownDescription": "Denies the voice_changer_push_aux_pcm command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_push_aux_wav command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-push-aux-wav",
+          "markdownDescription": "Denies the voice_changer_push_aux_wav command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`",
           "type": "string",
           "const": "vosk-stt:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-list-downloaded-vosk-models`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`"
         },
         {
           "description": "Enables the check_vosk_native_availability command without any pre-configured scope.",
@@ -6777,6 +7017,12 @@
           "markdownDescription": "Enables the get_vosk_models command without any pre-configured scope."
         },
         {
+          "description": "Enables the import_vosk_model_zip command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:allow-import-vosk-model-zip",
+          "markdownDescription": "Enables the import_vosk_model_zip command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_downloaded_vosk_models command without any pre-configured scope.",
           "type": "string",
           "const": "vosk-stt:allow-list-downloaded-vosk-models",
@@ -6787,6 +7033,12 @@
           "type": "string",
           "const": "vosk-stt:allow-set-vosk-model-path",
           "markdownDescription": "Enables the set_vosk_model_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vosk_model_zip_relative_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:allow-vosk-model-zip-relative-path",
+          "markdownDescription": "Enables the vosk_model_zip_relative_path command without any pre-configured scope."
         },
         {
           "description": "Enables the vosk_native_transcribe command without any pre-configured scope.",
@@ -6819,6 +7071,12 @@
           "markdownDescription": "Denies the get_vosk_models command without any pre-configured scope."
         },
         {
+          "description": "Denies the import_vosk_model_zip command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:deny-import-vosk-model-zip",
+          "markdownDescription": "Denies the import_vosk_model_zip command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_downloaded_vosk_models command without any pre-configured scope.",
           "type": "string",
           "const": "vosk-stt:deny-list-downloaded-vosk-models",
@@ -6829,6 +7087,12 @@
           "type": "string",
           "const": "vosk-stt:deny-set-vosk-model-path",
           "markdownDescription": "Denies the set_vosk_model_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vosk_model_zip_relative_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:deny-vosk-model-zip-relative-path",
+          "markdownDescription": "Denies the vosk_model_zip_relative_path command without any pre-configured scope."
         },
         {
           "description": "Denies the vosk_native_transcribe command without any pre-configured scope.",
@@ -6879,10 +7143,10 @@
           "markdownDescription": "Denies the pubsub_broadcast command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",
           "type": "string",
           "const": "whisper:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`"
         },
         {
           "description": "Enables the ensure_dependencies command without any pre-configured scope.",
@@ -6895,6 +7159,12 @@
           "type": "string",
           "const": "whisper:allow-feed-audio-chunk",
           "markdownDescription": "Enables the feed_audio_chunk command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import_whisper_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "whisper:allow-import-whisper-model",
+          "markdownDescription": "Enables the import_whisper_model command without any pre-configured scope."
         },
         {
           "description": "Enables the start_recording command without any pre-configured scope.",
@@ -6919,6 +7189,12 @@
           "type": "string",
           "const": "whisper:deny-feed-audio-chunk",
           "markdownDescription": "Denies the feed_audio_chunk command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import_whisper_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "whisper:deny-import-whisper-model",
+          "markdownDescription": "Denies the import_whisper_model command without any pre-configured scope."
         },
         {
           "description": "Denies the start_recording command without any pre-configured scope.",

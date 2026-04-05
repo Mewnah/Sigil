@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { TextEvent } from "@/types";
+import { TextEvent, TextEventType } from "@/types";
 import {
     ITranslationReceiver,
     ITranslationService,
@@ -17,6 +17,7 @@ export class Translation_LibreTranslateService implements ITranslationService {
     #sourceLanguage: string = "en";
     #targetLanguage: string = "es";
     #autoDetect: boolean = false;
+    #interim: boolean = true;
     #isRunning: boolean = false;
 
     constructor(receiver: ITranslationReceiver) {
@@ -29,11 +30,15 @@ export class Translation_LibreTranslateService implements ITranslationService {
         this.#sourceLanguage = config.languageFrom;
         this.#targetLanguage = config.language;
         this.#autoDetect = config.autoDetect;
+        this.#interim = config.interim;
 
         try {
             // Set the endpoint in the backend
             await invoke("plugin:translate|set_endpoint", {
                 endpoint: this.#endpoint,
+            });
+            await invoke("plugin:translate|set_api_key", {
+                apiKey: config.apiKey?.trim() ?? "",
             });
 
             // Check if LibreTranslate is available
@@ -63,6 +68,7 @@ export class Translation_LibreTranslateService implements ITranslationService {
 
     async translate(id: number, event: TextEvent): Promise<void> {
         if (!this.#isRunning || !event.value) return;
+        if (event.type === TextEventType.interim && !this.#interim) return;
 
         try {
             let sourceLanguage = this.#sourceLanguage;
@@ -93,9 +99,13 @@ export class Translation_LibreTranslateService implements ITranslationService {
     }
 
     // Static helper to fetch available languages
-    static async getLanguages(endpoint: string = "http://localhost:5000"): Promise<LibreTranslateLanguage[]> {
+    static async getLanguages(
+        endpoint: string = "http://localhost:5000",
+        apiKey: string = ""
+    ): Promise<LibreTranslateLanguage[]> {
         try {
             await invoke("plugin:translate|set_endpoint", { endpoint });
+            await invoke("plugin:translate|set_api_key", { apiKey: apiKey.trim() });
             return await invoke<LibreTranslateLanguage[]>("plugin:translate|get_languages");
         } catch {
             return [];

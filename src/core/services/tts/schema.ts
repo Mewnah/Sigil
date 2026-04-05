@@ -12,6 +12,10 @@ export enum TTS_Backends {
   melo = "melo",
   chatterbox = "chatterbox",
   fishSpeech = "fishSpeech",
+  /** Local ONNX speech (`neural_onnx_tts` plugin; Hub or local speech package — see docs/LOCAL_SPEECH_PACKAGE.md). */
+  neuralOnnx = "neuralOnnx",
+  /** User-run HTTP server (`/speech`, `/health`). */
+  neuralSidecar = "neuralSidecar",
 }
 
 const zodTTS_Backends = z.nativeEnum(TTS_Backends);
@@ -91,7 +95,29 @@ export const Service_TTS_Schema = z.object({
     endpoint: zSafe(z.coerce.string(), "http://localhost:8080"),
     referenceId: zSafe(z.coerce.string(), ""),
     device: zSafe(z.coerce.string(), ""),
-  }).default({})
+  }).default({}),
+  neuralOnnx: z.object({
+    /** `hub` = download from Hugging Face; `local` = folder matching supported package (see docs/LOCAL_SPEECH_PACKAGE.md). */
+    modelSource: zSafe(z.enum(["hub", "local"]), "hub"),
+    /** On-disk layout when `modelSource` is `local`. Only `speech_package_v1` is implemented today. */
+    localPackageFormat: zSafe(z.enum(["speech_package_v1"]), "speech_package_v1"),
+    localModelDir: zSafe(z.coerce.string(), ""),
+    /** Default Hugging Face repo id for Hub mode (example model). */
+    hubId: zSafe(z.coerce.string(), "KittenML/kitten-tts-mini-0.8"),
+    voice: zSafe(z.coerce.string(), "Jasper"),
+    speed: zSafe(zStringNumber(), "1.0"),
+    /** Hint for ORT / GPU (`cpu`, `cuda`, `dml`). Actual EPs depend on the bundled ONNX Runtime. */
+    executionProvider: zSafe(z.enum(["cpu", "cuda", "dml"]), "cpu"),
+    device: zSafe(z.coerce.string(), ""),
+    /** Mix TTS output into the live voice changer input (start VC first). */
+    routeThroughVoiceChanger: zSafe(z.coerce.boolean(), false),
+  }).default({}),
+  neuralSidecar: z.object({
+    endpoint: zSafe(z.coerce.string(), "http://127.0.0.1:8766"),
+    voice: zSafe(z.coerce.string(), "default"),
+    device: zSafe(z.coerce.string(), ""),
+    routeThroughVoiceChanger: zSafe(z.coerce.boolean(), false),
+  }).default({}),
 }).default({});
 
 export type TTS_State = z.infer<typeof Service_TTS_Schema>

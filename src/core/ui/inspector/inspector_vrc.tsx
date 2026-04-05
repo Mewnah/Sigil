@@ -18,6 +18,7 @@ const TextboxInspector: FC = () => {
   return <>
     <Inspector.SubHeader>{t('vrc.textbox_title')}</Inspector.SubHeader>
     <InputCheckbox label="vrc.textbox_show_indicator" value={state.indicator} onChange={e => up("indicator", e)} />
+    <InputCheckbox label="vrc.textbox_play_notification_sound" value={state.playNotificationSound} onChange={e => up("playNotificationSound", e)} />
     <button className="btn btn-sm" onClick={() => window.ApiServer.vrc.sendTest("Test test test!")}>{t('vrc.btn_send_test')}</button>
   </>
 }
@@ -30,8 +31,8 @@ const KillFrenzyInspector: FC = () => {
     <Inspector.SubHeader>{t('vrc.kfi_title')}</Inspector.SubHeader>
     {/* <InputCheckbox label="Show indicator" value={state.indicator} onChange={e => up("indicator", e)} /> */}
     <InputCheckbox label="vrc.kfi_split_large" value={state.splitSentences} onChange={e => up("splitSentences", e)} />
-    <InputText type="number" label="vrc.kfi_hide_after" min={0} max={4} value={state.visibleTimer} onChange={e => up("visibleTimer", e.target.value)} />
-    <InputText type="number" label="vrc.kfi_sync_points" min={0} max={4} value={state.syncPoints} onChange={e => up("syncPoints", e.target.value)} />
+    <InputText type="number" label="vrc.kfi_hide_after" min={0} max={120000} value={state.visibleTimer} onChange={e => up("visibleTimer", e.target.value)} />
+    <InputText type="number" label="vrc.kfi_sync_points" min={1} max={4} value={state.syncPoints} onChange={e => up("syncPoints", e.target.value)} />
     <InputText type="number" label="vrc.kfi_sync_delay" min={0} max={1000} value={state.syncDelay} onChange={e => up("syncDelay", e.target.value)} />
 
     <Inspector.SubHeader>OSC Keys</Inspector.SubHeader>
@@ -59,6 +60,9 @@ const Inspector_VRC: FC = () => {
         </div>
       </div>
       <InputCheckbox label="common.field_enable" value={state.enable} onChange={e => up("enable", e)} />
+      <Inspector.SubHeader>{t("vrc.osc_connection")}</Inspector.SubHeader>
+      <InputText label="vrc.field_osc_host" value={state.oscHost} onChange={e => up("oscHost", e.target.value)} />
+      <InputText type="number" label="vrc.field_osc_port" min={1} max={65535} value={state.oscPort} onChange={e => up("oscPort", e.target.value)} />
       <InputTextSource label="common.field_text_source" value={state.source} onChange={e => up("source", e)} />
       <InputCheckbox label="common.field_use_keyboard_input" value={state.inputField} onChange={e => up("inputField", e)} />
 

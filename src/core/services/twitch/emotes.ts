@@ -19,6 +19,7 @@ class TwitchEmotesApi {
         this.updateReplacementsCache();
       }
     );
+    this.updateReplacementsCache();
   }
   dictionary: Record<string, string> = {};
   dictionaryLowerCase: Record<string, string> = {};
@@ -36,6 +37,13 @@ class TwitchEmotesApi {
         v,
       ])
     );
+  }
+
+  /** Pubsub hot path: skip work when replacements are off or no emotes are loaded to match. */
+  shouldScanEmotesForPubsub(text: string): boolean {
+    if (!text?.trim()) return false;
+    if (!window.ApiServer.state.services.twitch.data.emotesEnableReplacements) return false;
+    return Object.keys(this.dictionary).length > 0;
   }
 
   scanForEmotes(sentence: string): Record<number, string> {
@@ -57,7 +65,7 @@ class TwitchEmotesApi {
       // look for replacements
       let replacementKey = isSensitive
         ? this.#emoteReplacements[clearedWord]
-        : this.dictionaryReplacementsLowerCase[clearedWord]?.toLowerCase();
+        : this.dictionaryReplacementsLowerCase[clearedWord];
 
       const targetDictionary = isSensitive
         ? this.dictionary
@@ -76,6 +84,41 @@ class TwitchEmotesApi {
       cursor += word.length + 1;
     }
     return emotes;
+  }
+
+  /**
+   * For outgoing Twitch IRC: replace words using emotesRemap when enabled and the target emote exists in the loaded set.
+   */
+  remapOutgoingChatText(message: string): string {
+    const data = window.ApiServer.state.services.twitch.data;
+    if (!data.emotesApplyRemapToChat || !message)
+      return message;
+    if (!Object.keys(data.emotesReplacements).length)
+      return message;
+
+    const isSensitive = data.emotesCaseSensitive;
+
+    return message.replace(/\b[\w']+\b/g, (fullWord) => {
+      const clearedWord = fullWord.replace(/[^\w ]/g, "");
+      if (!clearedWord)
+        return fullWord;
+
+      const replacementKey = isSensitive
+        ? this.#emoteReplacements[clearedWord]
+        : this.dictionaryReplacementsLowerCase[clearedWord.toLowerCase()];
+
+      if (!replacementKey)
+        return fullWord;
+
+      if (isSensitive) {
+        if (replacementKey in this.dictionary)
+          return replacementKey;
+      }
+      else if (replacementKey.toLowerCase() in this.dictionaryLowerCase) {
+        return replacementKey;
+      }
+      return fullWord;
+    });
   }
 
   addTwitchEmotes(data: HelixEmote[]) {

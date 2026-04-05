@@ -96,20 +96,36 @@ export type WordReplacementsCache = {
   isEmpty: boolean
 }
 
+function escapeRegExpAlternationPart(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function buildWordReplacementsCache(map: Record<string, string>, caseInsensitive: boolean): WordReplacementsCache {
-  let trimKeys = Object.fromEntries(Object.entries(map).map(([k, v]) => [k.trim(), v]));
-  devLog(trimKeys);
-  let _map = {}
+  const trimmedEntries = Object.entries(map)
+    .map(([k, v]) => [k.trim(), v] as [string, string])
+    .filter(([k]) => k.length > 0);
+  devLog(Object.fromEntries(trimmedEntries));
+  let _map: Record<string, string> = {};
   if (caseInsensitive) {
-    _map = Object.fromEntries(Object.entries(map).map(([k, v]) => [k.toLowerCase(), v]));
+    _map = Object.fromEntries(trimmedEntries.map(([k, v]) => [k.toLowerCase(), v]));
   }
-  else
-    _map = { ...map };
-  let regexp = new RegExp(`\\b(${Object.keys(_map).join("|")})\\b`, caseInsensitive ? "ig" : "g");
+  else {
+    _map = Object.fromEntries(trimmedEntries);
+  }
+  const keys = Object.keys(_map);
+  if (!keys.length) {
+    return {
+      regexp: /(?!)/g,
+      map: _map,
+      isEmpty: true,
+    };
+  }
+  const alternation = keys.map(escapeRegExpAlternationPart).join("|");
+  const regexp = new RegExp(`\\b(${alternation})\\b`, caseInsensitive ? "gi" : "g");
   return {
     regexp,
     map: _map,
-    isEmpty: !Object.keys(_map).length
+    isEmpty: false,
   };
 }
 
@@ -154,6 +170,22 @@ export const decodeB64toArrayBuffer = (base64: string): ArrayBuffer => {
 
   return arraybuffer;
 };
+
+/** Decode standard base64 to bytes (neural TTS WAV over Tauri IPC). */
+export function base64ToUint8Array(b64: string): Uint8Array {
+  const U8 = Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array };
+  if (typeof U8.fromBase64 === "function") {
+    try {
+      return U8.fromBase64(b64);
+    } catch {
+      /* fall through */
+    }
+  }
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 export const zStringNumber = () => z.coerce.number().pipe(z.coerce.string());
 export const zSafe = <zObj extends z.ZodTypeAny, Val extends z.infer<zObj>>(

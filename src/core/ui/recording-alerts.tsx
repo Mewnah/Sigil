@@ -22,13 +22,14 @@ const StatusButton: FC<PropsWithChildren<{animKey: string, tooltip: string, onCl
 }
 
 const RecordingAlerts: FC = () => {
-  const { postEnable: discordPostEnable, postWithTwitchLive: discordPostWithTwitchLive } = useSnapshot(
+  const { postEnable: discordPostEnable, postOnlyWhenLive: discordPostOnlyWhenLive } = useSnapshot(
     window.ApiServer.state.services.discord.data
   );
   const { chatPostEnable, chatEnable, chatPostLive } = useSnapshot(
     window.ApiServer.state.services.twitch.data
   );
   const { liveStatus: twitchLiveStatus } = useSnapshot(window.ApiServer.twitch.state);
+  const { liveStatus: kickLiveStatus } = useSnapshot(window.ApiServer.kick.state);
   const { connection: twitchChatStatus } = useSnapshot(window.ApiServer.twitch.chat.state);
 
   const handleStopTwitch = () => {
@@ -43,9 +44,12 @@ const RecordingAlerts: FC = () => {
     twitchChatStatus === ServiceNetworkState.connected &&
     (chatPostLive ? twitchLiveStatus === ServiceNetworkState.connected : true);
 
-
-    
-    const showDiscord = discordPostEnable && (discordPostWithTwitchLive ? twitchLiveStatus === ServiceNetworkState.connected : true)
+  const showDiscord =
+    discordPostEnable &&
+    (discordPostOnlyWhenLive
+      ? twitchLiveStatus === ServiceNetworkState.connected ||
+        kickLiveStatus === ServiceNetworkState.connected
+      : true);
   return (
     <div className="flex space-x-2">
       <AnimatePresence>

@@ -2,35 +2,27 @@ import { FC, memo } from "react";
 import classNames from "classnames";
 import {
     RiDashboardFill,
-    RiMicFill,
-    RiVolumeUpFill,
-    RiTranslate2,
-    RiSparklingFill,
     RiFolderMusicFill,
     RiSettings3Fill,
     RiLayoutMasonryFill,
-    RiTwitchFill,
-    RiDiscordFill,
-    RiGamepadFill,
-    RiRecordCircleFill,
     RiStackFill,
-    RiMagicFill
 } from "react-icons/ri";
-import { KickIcon } from "../icons/KickIcon";
-import { Services } from "@/services-registry";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
+import {
+    HOST_SERVICE_PANELS_INTEGRATIONS,
+    HOST_SERVICE_PANELS_LIVE,
+} from "../servicePanels";
 
 interface NavItemProps {
     label: string;
     icon: React.ReactNode;
     active?: boolean;
     collapsed?: boolean;
-    shortcut?: string;
     onClick: () => void;
 }
 
-const NavItem: FC<NavItemProps> = ({ label, icon, active, collapsed, shortcut, onClick }) => {
+const NavItem: FC<NavItemProps> = ({ label, icon, active, collapsed, onClick }) => {
     const button = (
         <button
             onClick={onClick}
@@ -44,12 +36,7 @@ const NavItem: FC<NavItemProps> = ({ label, icon, active, collapsed, shortcut, o
             )}
         >
             <span className="text-lg flex-shrink-0">{icon}</span>
-            {!collapsed && (
-                <>
-                    <span className="flex-1 truncate text-left">{label}</span>
-                    {shortcut && <span className="text-[10px] text-base-content/30 font-mono">{shortcut}</span>}
-                </>
-            )}
+            {!collapsed && <span className="flex-1 truncate text-left">{label}</span>}
         </button>
     );
 
@@ -100,7 +87,6 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     icon={<RiDashboardFill />}
                     active={!tab || tab.tab === undefined}
                     collapsed={collapsed}
-                    shortcut="Ctrl+0"
                     onClick={() => navigate(undefined as any)}
                 />
                 <NavItem
@@ -114,45 +100,19 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
 
             {/* Live Services */}
             <NavGroup title="Live Services" collapsed={collapsed}>
-                <NavItem
-                    label="Speech to Text"
-                    icon={<RiMicFill />}
-                    active={isActive(Services.stt)}
-                    collapsed={collapsed}
-                    shortcut="Ctrl+1"
-                    onClick={() => navigate(Services.stt)}
-                />
-                <NavItem
-                    label="Text to Speech"
-                    icon={<RiVolumeUpFill />}
-                    active={isActive(Services.tts)}
-                    collapsed={collapsed}
-                    shortcut="Ctrl+2"
-                    onClick={() => navigate(Services.tts)}
-                />
-                <NavItem
-                    label="Translation"
-                    icon={<RiTranslate2 />}
-                    active={isActive(Services.translation)}
-                    collapsed={collapsed}
-                    shortcut="Ctrl+3"
-                    onClick={() => navigate(Services.translation)}
-                />
-                <NavItem
-                    label="AI Transform"
-                    icon={<RiSparklingFill />}
-                    active={isActive(Services.transform)}
-                    collapsed={collapsed}
-                    shortcut="Ctrl+4"
-                    onClick={() => navigate(Services.transform)}
-                />
-                <NavItem
-                    label="Voice Changer"
-                    icon={<RiMagicFill />}
-                    active={isActive(Services.voice_changer)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.voice_changer)}
-                />
+                {HOST_SERVICE_PANELS_LIVE.map((p) => {
+                    const Icon = p.NavIcon;
+                    return (
+                        <NavItem
+                            key={p.tab}
+                            label={p.title}
+                            icon={<Icon />}
+                            active={isActive(p.tab)}
+                            collapsed={collapsed}
+                            onClick={() => navigate(p.tab)}
+                        />
+                    );
+                })}
             </NavGroup>
 
             {/* Studio */}
@@ -162,7 +122,6 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     icon={<RiLayoutMasonryFill />}
                     active={isActive('scenes') || isActive('elements')}
                     collapsed={collapsed}
-                    shortcut="Ctrl+5"
                     onClick={() => navigate('scenes')}
                 />
                 <NavItem
@@ -170,48 +129,25 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     icon={<RiFolderMusicFill />}
                     active={isActive('files')}
                     collapsed={collapsed}
-                    shortcut="Ctrl+6"
                     onClick={() => navigate('files')}
                 />
             </NavGroup>
 
             {/* Integrations */}
             <NavGroup title="Integrations" collapsed={collapsed}>
-                <NavItem
-                    label="Twitch"
-                    icon={<RiTwitchFill />}
-                    active={isActive(Services.twitch)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.twitch)}
-                />
-                <NavItem
-                    label="Kick"
-                    icon={<KickIcon />}
-                    active={isActive(Services.kick)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.kick)}
-                />
-                <NavItem
-                    label="Discord"
-                    icon={<RiDiscordFill />}
-                    active={isActive(Services.discord)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.discord)}
-                />
-                <NavItem
-                    label="OBS Studio"
-                    icon={<RiRecordCircleFill />}
-                    active={isActive(Services.obs)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.obs)}
-                />
-                <NavItem
-                    label="VRChat"
-                    icon={<RiGamepadFill />}
-                    active={isActive(Services.vrc)}
-                    collapsed={collapsed}
-                    onClick={() => navigate(Services.vrc)}
-                />
+                {HOST_SERVICE_PANELS_INTEGRATIONS.map((p) => {
+                    const Icon = p.NavIcon;
+                    return (
+                        <NavItem
+                            key={p.tab}
+                            label={p.title}
+                            icon={<Icon />}
+                            active={isActive(p.tab)}
+                            collapsed={collapsed}
+                            onClick={() => navigate(p.tab)}
+                        />
+                    );
+                })}
             </NavGroup>
 
             {/* Spacer */}
@@ -224,7 +160,6 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                     icon={<RiSettings3Fill />}
                     active={isActive('settings')}
                     collapsed={collapsed}
-                    shortcut="Ctrl+7"
                     onClick={() => navigate('settings')}
                 />
             </div>

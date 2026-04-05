@@ -88,6 +88,8 @@
     "melo-tts:default",
     "chatterbox-tts:default",
     "fish-speech:default",
+    "neural-onnx-tts:default",
+    "neural-sidecar-tts:default",
     "voice-changer:default",
     "vosk-stt:default"
   ]
