@@ -8,6 +8,21 @@ Entries before **2026** may name documentation files that were later merged or r
 
 - **Documentation** — Consolidated detailed guides into [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md), [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md), and manual chapters under [docs/manual/README.md](docs/manual/README.md). Older bullets in this file may still reference previous filenames.
 
+### Speech stack overhaul (in progress)
+
+Implementing [docs/SPEECH_STACK_RESEARCH_2026-09.md](docs/SPEECH_STACK_RESEARCH_2026-09.md) per [docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md](docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md) (phases P0–P7). Work lands on the local `speech-stack` branch, one commit per phase.
+
+#### P0 — stabilize (bug fixes, hardening, tooling)
+
+- **Speech-to-text** — A Silero VAD v6.2 segmenter with sinc resampling replaces the RMS silence gate, so Whisper is never fed silence (fewer "thanks for watching" captions). Whisper also gets hallucination filters, token caps and an ordered worker. HTTP engines (Moonshine, OpenAI-compatible) send one request per spoken utterance instead of one every 500 ms. New Groq preset with a request limiter. Status messages no longer leak into captions. Desktop users on the broken browser-native default move to Whisper once.
+- **Cloud STT** — Deepgram requests the Nova-3 model (Nova-2 selectable), and the existing profanity-filter toggle now works. Azure finalizes phrases faster (segmentation silence 500 ms).
+- **Voice changer** — Latency budget (default 300 ms) drops stale audio instead of building a backlog. TTS routed into the voice changer is no longer cut after 2 s. Real-time threads use MMCSS and event wake-ups instead of a 2 ms sleep loop. Settings and devices persist across restarts. The inspector shows the execution provider actually in use plus p99 latency, backlog and dropped-audio metrics.
+- **GPU** — GPU execution providers report failures and fall back explicitly (no more silent CPU). A startup probe covers providers, drivers and adapters, and provider DLLs are staged for release builds.
+- **TTS** — AivisSpeech preset for the VOICEVOX backend. Fish Speech uses its real health and voice-list endpoints. Uberduck moves to its v1 API and plays on the selected device. Azure SSML is escaped. VOICEVOX zero values are kept, and the pitch slider can return to 0.
+- **Translation / AI transform** — Final translations are never dropped when a newer interim arrives. On-device (Chrome/Edge) translation is detected correctly. Transform output is no longer truncated at 100 tokens.
+- **Security** — The LAN WebSocket server gets an Origin allow-list and a topic allow-list, refuses binary frames, and has XSS fixes in the caption renderer and pages.
+- **Tooling** — Data-driven `build.rs` (`src-tauri/plugin-commands/*.txt`), i18n staging merger, vitest (`pnpm test:unit`), `--headless` CLI, rotating diagnostics log.
+
 ---
 
 ## [0.4.0-1](https://github.com/Mewnah/Sigil/releases/tag/v0.4.0-1) - 2026-04-06
