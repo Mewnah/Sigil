@@ -14,13 +14,15 @@ import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
 import { STT_OpenAI_AudioService } from "./services/openaiAudio";
 import { STT_ExternalMicService } from "./services/externalMic";
+import { pushSystemLog } from "@/core/services/systemLog";
 import { invoke } from "@tauri-apps/api/core";
+import { migrateLegacyNativeInputDevice } from "@/utils/rustAudioInput";
 import {
   ISTTReceiver,
   ISTTServiceConstructor,
-  ISpeechRecognitionService,
   SttMuteState
 } from "./types";
+import { isAbortError, untilAborted } from "./abort";
 
 const backends: {
   [k in STT_Backends]?: ISTTServiceConstructor;
@@ -38,9 +40,27 @@ const backends: {
 };
 
 const EXTERNAL_MIC_CONNECT_TIMEOUT_MS = 6000;
+/**
+ * Inactivity window while connecting: fires when onStart never arrives (Web Speech quirks) or an async engine
+ * hangs before ready. Re-armed whenever the engine reports progress (onInterim), so long first-time model
+ * downloads are not cut off while they are still moving.
+ */
+const STT_CONNECTING_FALLBACK_MS = 45_000;
+/** Local model engines: model download/load + WASM init + Rust audio can go quiet for longer between progress events. */
+const STT_CONNECTING_FALLBACK_HEAVY_MS = 300_000;
 
-class Service_STT implements IServiceInterface, ISTTReceiver {
-  #serviceInstance?: ISpeechRecognitionService;
+function connectingFallbackMs(backend: STT_Backends): number {
+  return backend === STT_Backends.whisper || backend === STT_Backends.vosk || backend === STT_Backends.moonshine
+    ? STT_CONNECTING_FALLBACK_HEAVY_MS
+    : STT_CONNECTING_FALLBACK_MS;
+}
+
+type SttEngineInstance = InstanceType<NonNullable<(typeof backends)[STT_Backends]>>;
+
+class Service_STT implements IServiceInterface {
+  #serviceInstance?: SttEngineInstance;
+  /** Bumped on each user stop and on each successful start handoff so stale backend callbacks are ignored. */
+  #sessionEpoch = 0;
   #lastMessageState = {
     value: "",
     isInterim: false
@@ -49,6 +69,13 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   #_wordReplacementsCache!: WordReplacementsCache;
   private eventDisposers: (() => void)[] = [];
   #externalMicConnectingTimer: ReturnType<typeof setTimeout> | null = null;
+  #connectingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Serialize start() so overlapping async teardown/start cannot double-stop one engine. */
+  #startChain: Promise<void> = Promise.resolve();
+  /** Aborted synchronously on each `start()` / `stop()` so the chain is not blocked on a long in-flight `invoke`. */
+  #startAbortController: AbortController | null = null;
+  /** Every stop() chains backend teardown here so the next start awaits Rust/plugin cleanup (Whisper cpal, etc.). */
+  #engineTeardown: Promise<void> = Promise.resolve();
 
   updateLastMessage(value: string, isInterim: boolean) {
     this.#lastMessageState = { value, isInterim };
@@ -79,6 +106,13 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     }
   }
 
+  #clearConnectingFallbackTimeout(): void {
+    if (this.#connectingFallbackTimer != null) {
+      clearTimeout(this.#connectingFallbackTimer);
+      this.#connectingFallbackTimer = null;
+    }
+  }
+
   #scheduleExternalMicConnectingTimeout(): void {
     this.#clearExternalMicConnectingTimeout();
     this.#externalMicConnectingTimer = setTimeout(() => {
@@ -90,6 +124,87 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
       toast.warning(i18n.t("toasts.stt_external_mic_timeout"));
       this.#setStatus(ServiceNetworkState.disconnected);
     }, EXTERNAL_MIC_CONNECT_TIMEOUT_MS);
+  }
+
+  /** (Re)arms the connecting inactivity timer for session `epoch`; on expiry the session is stopped. */
+  #scheduleConnectingFallback(epoch: number, ms: number): void {
+    this.#clearConnectingFallbackTimeout();
+    this.#connectingFallbackTimer = setTimeout(() => {
+      this.#connectingFallbackTimer = null;
+      if (epoch !== this.#sessionEpoch)
+        return;
+      if (this.serviceState.status !== ServiceNetworkState.connecting)
+        return;
+      toast.warning(i18n.t("toasts.stt_connecting_timeout"));
+      this.stop();
+    }, ms);
+  }
+
+  /** `fallbackMs` null = no connecting fallback (Chrome/Edge use the external-mic timeout). */
+  #wrapReceiver(epoch: number, fallbackMs: number | null): ISTTReceiver {
+    return {
+      onStart: () => this.#onStartScoped(epoch),
+      onStop: (err) => this.#onStopScoped(epoch, err),
+      onInterim: (v) => {
+        if (epoch !== this.#sessionEpoch)
+          return;
+        // Progress while connecting (download %, load status) proves the engine is alive: restart the window.
+        if (
+          fallbackMs !== null &&
+          this.#connectingFallbackTimer != null &&
+          this.serviceState.status === ServiceNetworkState.connecting
+        )
+          this.#scheduleConnectingFallback(epoch, fallbackMs);
+        void this.#sendInterim(v);
+      },
+      onFinal: (v) => {
+        if (epoch !== this.#sessionEpoch)
+          return;
+        void this.#sendFinal(v);
+      },
+    };
+  }
+
+  #onStartScoped(epoch: number): void {
+    if (epoch !== this.#sessionEpoch)
+      return;
+    this.#clearConnectingFallbackTimeout();
+    this.#setStatus(ServiceNetworkState.connected);
+  }
+
+  #onStopScoped(epoch: number, error?: string): void {
+    if (epoch !== this.#sessionEpoch)
+      return;
+    this.#clearConnectingFallbackTimeout();
+    if (error) {
+      toast(error, { type: "error", autoClose: false });
+      this.serviceState.error = error;
+    }
+    this.#setStatus(ServiceNetworkState.disconnected);
+  }
+
+  async #finalizeStop(inst: SttEngineInstance): Promise<void> {
+    try {
+      await inst.stop();
+    }
+    catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Await previous engine teardown (e.g. Whisper async stop) before starting another. Leaves the timers alone:
+   * the caller arms the connecting fallback before awaiting this, so a teardown that never settles still ends
+   * the "connecting" status.
+   */
+  async #tearDownForNewStart(): Promise<void> {
+    await this.#engineTeardown.catch(() => {});
+    const inst = this.#serviceInstance;
+    if (!inst)
+      return;
+    await this.#finalizeStop(inst);
+    if (this.#serviceInstance === inst)
+      this.#serviceInstance = undefined;
   }
 
   /** mic.html → host: Web Speech actually started or stopped. */
@@ -109,19 +224,31 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   }
 
   stop(): void {
+    this.#startAbortController?.abort();
+    this.#startAbortController = null;
+    this.#sessionEpoch++;
     this.#clearExternalMicConnectingTimeout();
+    this.#clearConnectingFallbackTimeout();
+
     const ext = this.#isChromeOrEdgeBackend();
     const live =
       this.serviceState.status === ServiceNetworkState.connected ||
       this.serviceState.status === ServiceNetworkState.connecting;
-    if (this.#serviceInstance)
-      this.#serviceInstance.stop();
+
+    this.#setStatus(ServiceNetworkState.disconnected);
+
+    const inst = this.#serviceInstance;
+    this.#serviceInstance = undefined;
+    if (inst) {
+      this.#engineTeardown = this.#engineTeardown
+        .then(() => this.#finalizeStop(inst))
+        .catch(() => {});
+    }
     else if (ext && live) {
       window.ApiShared.pubsub.broadcastLocalWebSocketOnly({
         topic: PUBSUB_STT_EXTERNAL_COMMAND,
         data: { cmd: "stop" },
       });
-      this.onStop();
     }
     this.tryCancelSentence();
   }
@@ -192,6 +319,11 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     });
     this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(unsubStream));
 
+    // Starts queue behind the one-time legacy Settings input device migration (native cpal field).
+    this.#startChain = migrateLegacyNativeInputDevice().catch((e: unknown) => {
+      console.error("[STT] input device migration failed:", e);
+    });
+
     // native is bugged
     if (this.data.autoStart && this.data.backend !== STT_Backends.native)
       this.start();
@@ -216,7 +348,12 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   async #sendFinal(sentence: string) {
     let value = sentence;
     if (this.data.uwu) {
-      value = await invoke<string>("plugin:uwu|translate", { value: sentence });
+      try {
+        value = await invoke<string>("plugin:uwu|translate", { value: sentence });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        pushSystemLog("STT", `UwU filter failed (final): ${msg}`, "warning");
+      }
     }
 
     value = this.runReplacements(value);
@@ -239,7 +376,12 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     }
     let value = sentence;
     if (this.data.uwu) {
-      value = await invoke<string>("plugin:uwu|translate", { value: sentence });
+      try {
+        value = await invoke<string>("plugin:uwu|translate", { value: sentence });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        pushSystemLog("STT", `UwU filter failed (interim): ${msg}`, "warning");
+      }
     }
     value = this.runReplacements(value);
     !this.isMuted() &&
@@ -254,44 +396,67 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     this.serviceState.status = value;
   }
 
-  onStart(): void {
-    this.#setStatus(ServiceNetworkState.connected);
-  }
-  onStop(error?: string | undefined): void {
-    if (error) {
-      toast(error, { type: "error", autoClose: false });
-      this.serviceState.error = error;
-    }
-    this.#setStatus(ServiceNetworkState.disconnected);
-  }
-  onInterim(value: string): void {
-    this.#sendInterim(value);
-  }
-  onFinal(value: string): void {
-    this.#sendFinal(value);
+  start() {
+    this.#startAbortController?.abort();
+    // Captured per call: by the time a queued start runs, stop() may have replaced/cleared the field.
+    const controller = new AbortController();
+    this.#startAbortController = controller;
+    this.#startChain = this.#startChain
+      .then(() => this.#runStartAsync(controller.signal))
+      .catch((e: unknown) => {
+        console.error("[STT] start chain failed:", e);
+        toast.error(i18n.t("toasts.stt_start_failed"));
+      });
   }
 
-  start() {
-    this.stop();
+  async #runStartAsync(startSignal: AbortSignal) {
+    // Superseded by stop() or a newer start() while queued behind the previous one.
+    if (startSignal.aborted)
+      return;
+    this.#sessionEpoch++;
+    const epoch = this.#sessionEpoch;
+    this.#clearExternalMicConnectingTimeout();
+    this.#setStatus(ServiceNetworkState.connecting);
+    // (Re)armed before awaiting the previous engine's teardown: if its stop() never settles, the fallback still
+    // fires (toast + stop()) instead of leaving the status on "connecting" indefinitely.
+    this.#scheduleConnectingFallback(epoch, STT_CONNECTING_FALLBACK_MS);
+
+    await this.#tearDownForNewStart();
+    // stop() (or a newer start()) during teardown owns the status now; do not start a dead engine.
+    if (startSignal.aborted || epoch !== this.#sessionEpoch)
+      return;
+
     this.serviceState.error = "";
 
-    let backend = this.data.backend;
-    // Legacy persisted value: treat as Web Speech API (same as native).
-    if (backend === STT_Backends.browser) {
-      backend = STT_Backends.native;
-    }
-    if (!(backend in backends) || !backends[backend]) {
+    const backend = this.data.backend === STT_Backends.browser ? STT_Backends.native : this.data.backend;
+    const serviceConstructor = backends[backend];
+    if (!serviceConstructor) {
+      this.#clearConnectingFallbackTimeout();
+      this.#setStatus(ServiceNetworkState.disconnected);
       return;
     }
 
-    const serviceConstructor = backends[backend];
-    if (!serviceConstructor)
-      return;
-    this.#serviceInstance = new serviceConstructor(this);
-    this.#setStatus(ServiceNetworkState.connecting);
-    this.#serviceInstance.start(this.data);
-    if (this.#isChromeOrEdgeBackend())
+    const external = backend === STT_Backends.chrome || backend === STT_Backends.edge;
+    const fallbackMs = external ? null : connectingFallbackMs(backend);
+    const inst = new serviceConstructor(this.#wrapReceiver(epoch, fallbackMs)) as SttEngineInstance;
+    inst.startAbortSignal = startSignal;
+    this.#serviceInstance = inst;
+
+    if (fallbackMs === null) {
+      // Chrome/Edge: the external-mic timeout replaces the teardown-phase fallback.
+      this.#clearConnectingFallbackTimeout();
       this.#scheduleExternalMicConnectingTimeout();
+    }
+    else
+      this.#scheduleConnectingFallback(epoch, fallbackMs);
+
+    try {
+      await Promise.race([Promise.resolve(inst.start(this.data)), untilAborted(startSignal)]);
+    }
+    catch (e: unknown) {
+      if (!isAbortError(e))
+        this.#onStopScoped(epoch, e instanceof Error ? e.message : String(e));
+    }
   }
 
   dispose() {

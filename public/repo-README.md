@@ -28,7 +28,7 @@ STT is configured on the **desktop host**. The lightweight **`/client`** page do
 - **Uberduck** — API-backed voices (Rust plugin)
 - **VOICEVOX** — HTTP to a local VOICEVOX engine
 - **Native / Web Speech** — browser synthesis where available
-- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/LOCAL_SPEECH_PACKAGE.md](docs/LOCAL_SPEECH_PACKAGE.md)); **execution provider** in the inspector selects CPU vs GPU backends (CUDA / DirectML) when the build supports them
+- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#local-speech-package-onnx)); **execution provider** in the inspector selects CPU vs GPU backends (CUDA / DirectML) when the build supports them
 - **HTTP server** — your own service with `GET /health` and `POST /speech` (example: [scripts/neural-sidecar/](scripts/neural-sidecar/))
 - **Kokoro** — HTTP to a Kokoro FastAPI–compatible server (e.g. `ghcr.io/remsky/kokoro-fastapi-cpu` on port 8880)
 - **MeloTTS** — HTTP to a MeloTTS instance (e.g. Docker on port 8888)
@@ -57,7 +57,7 @@ Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** 
 ### VRChat and audio
 
 - **OSC** — captions and related control from the **Tauri** build (not from the in-browser preview alone); configurable host/port, chatbox limits, optional KillFrenzy-style targets
-- **Voice changer** — real-time **built-in** phase vocoder, optional **WebSocket** neural sidecar (binary PCM), or **local ONNX** model; **processing chunk** sizes use a shared allowlist from small blocks up to **~1 s @ 48 kHz** for very slow hosts, **pitch** (and formant) through the post-DSP chain in **all** modes, **buffer / latency** presets (**low latency** / **stable** / **custom**), silence-based queue trim, optional **second output** for monitoring, and **ONNX execution provider** selection (CPU / CUDA / DirectML when the build supports it); see [docs/VOICE_CHANGER.md](docs/VOICE_CHANGER.md) and [scripts/neural-sidecar/README.md](scripts/neural-sidecar/README.md)
+- **Voice changer** — real-time **built-in** phase vocoder, optional **WebSocket** neural sidecar (binary PCM), or **local ONNX** model; **processing chunk** sizes use a shared allowlist from small blocks up to **~1 s @ 48 kHz** for very slow hosts, **pitch** (and formant) through the post-DSP chain in **all** modes, **buffer / latency** presets (**low latency** / **stable** / **custom**), silence-based queue trim, optional **second output** for monitoring, and **ONNX execution provider** selection (CPU / CUDA / DirectML when the build supports it); see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#voice-changer) and [scripts/neural-sidecar/README.md](scripts/neural-sidecar/README.md)
 - **Sound effects** — host-side playback for SFX tied to the canvas
 
 ### Editor and collaboration
@@ -102,13 +102,14 @@ SIGIL_KICK_CLIENT_SECRET=your_client_secret
 
 ### Documentation
 
-- [docs/manual/README.md](docs/manual/README.md) — **user manual** (wiki-style how-to, host vs client); **`pnpm dev`** / **`pnpm build`** run **`scripts/sync-manual.mjs`** so **`public/manual/`** stays in sync for the in-app **Help** reader (**book** icon in the header)
-- [ARCHITECTURE.md](ARCHITECTURE.md) — stack, host vs client, IPC, pubsub
-- [docs/BACKENDS.md](docs/BACKENDS.md) — STT/TTS backends and minimum configuration
-- [docs/LOCAL_SPEECH_PACKAGE.md](docs/LOCAL_SPEECH_PACKAGE.md) — local ONNX speech folder layout
-- [docs/VOICE_CHANGER.md](docs/VOICE_CHANGER.md) — voice changer modes and VCClient-oriented controls
-- [docs/SERVICE_CONNECTIVITY_AUDIT.md](docs/SERVICE_CONNECTIVITY_AUDIT.md) — service ports and connectivity notes
-- [docs/MANUAL-TAURI-CHECKLIST.md](docs/MANUAL-TAURI-CHECKLIST.md) — manual QA checklist for Tauri builds
+Consolidated guides (fewer files, same depth):
+
+- [docs/manual/README.md](docs/manual/README.md) — **user manual** (chapters under `docs/manual/`); **`pnpm dev`** / **`pnpm build`** run **`scripts/sync-manual.mjs`** so **`public/manual/`** and **`public/docs/`** stay in sync for the in-app **Help** reader (**book** icon in the header)
+- [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md) — STT/TTS backends, STT reliability, voice changer, local speech package
+- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) — architecture, host services, connectivity audit, `src/client` rules
+- [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md) — release smoke tests, threat model, dependency audits, performance, upgrade backlog
+- [ARCHITECTURE.md](ARCHITECTURE.md) — short pointer to the developer guide
+- [docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md](docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md) — resolved follow-ups and future backlog; manual screenshots use `scripts/write-manual-placeholder-pngs.mjs` until real captures replace them
 - **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; `node scripts/merge-http-tts-i18n.mjs` (and `node scripts/merge-neural-i18n.mjs` when neural TTS strings change) merge new UI keys into non-English locale files
 
 ## Development

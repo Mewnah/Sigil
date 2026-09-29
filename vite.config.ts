@@ -40,12 +40,15 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     // produce sourcemaps for debug builds
     sourcemap: !!process.env.TAURI_DEBUG,
+    // vosk-browser ships ~6MB WASM; it is lazy-loaded (dynamic import) but still one Rollup chunk.
+    chunkSizeWarningLimit: 7000,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
           if (id.includes("@twurple")) return "twurple";
           if (id.includes("microsoft-cognitiveservices-speech")) return "speech-sdk";
+          if (id.includes("vosk-browser")) return "vosk-browser";
           if (id.includes("openai")) return "openai";
           if (id.includes("framer-motion")) return "framer-motion";
           if (id.includes("peerjs") || id.includes("/yjs/") || id.includes("y-protocols"))

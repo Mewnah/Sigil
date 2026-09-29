@@ -87,8 +87,7 @@ fn interleaved_to_planar_into(
     frames: usize,
 ) {
     debug_assert_eq!(interleaved.len(), frames * ch_in);
-    for c in 0..ch_work {
-        let row = &mut planes[c];
+    for row in planes.iter_mut().take(ch_work) {
         if row.len() != frames {
             row.resize(frames, 0.0);
         }
@@ -160,14 +159,12 @@ pub fn apply_formant_interleaved(
     }
     let fc = 2000.0;
     let alpha = (1.0 - (-2.0 * std::f64::consts::PI * fc / sample_rate).exp()) as f32;
-    let frames = samples.len() / ch;
-    for f in 0..frames {
-        for c in 0..ch {
-            let i = f * ch + c;
-            let x = samples[i];
-            let st = &mut states[c];
+    debug_assert!(states.len() >= ch);
+    for frame in samples.chunks_exact_mut(ch) {
+        for (sample, st) in frame.iter_mut().zip(states.iter_mut()) {
+            let x = *sample;
             st.lp += alpha * (x - st.lp);
-            samples[i] = if formant >= 0.0 {
+            *sample = if formant >= 0.0 {
                 x + formant * (x - st.lp)
             } else {
                 let w = -formant;
@@ -177,7 +174,7 @@ pub fn apply_formant_interleaved(
     }
 }
 
-/// Pluggable per-chunk pipeline for mic (or TTS) → output device rate (DSP today; ONNX VC later).
+/// Pluggable per-chunk pipeline for mic (or TTS) → output device rate (classic DSP here; ONNX/sidecar conversion runs upstream in the voice-changer plugin, then feeds this processor).
 pub trait VoiceChunkPipeline: Send {
     fn process_chunk(
         &mut self,

@@ -70,7 +70,9 @@ const AudioStep: FC<StepProps> = ({ onNext, onBack }) => {
     });
 
     const saveAndContinue = () => {
-        window.ApiServer.state.audioInputDevice = selectedInput;
+        // cpal device name from `plugin:audio|list_input_devices` (native STT default), not a Web Audio deviceId.
+        window.ApiServer.state.audioInputDeviceNative = selectedInput;
+        window.ApiServer.state.audioInputDeviceNativeMigrated = true;
         window.ApiServer.state.audioOutputDevice = selectedOutput;
         onNext();
     };

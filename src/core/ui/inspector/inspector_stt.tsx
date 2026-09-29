@@ -11,38 +11,11 @@ import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/s
 import { VOSK_MODELS_FALLBACK, type VoskCatalogModel } from "../../services/stt/services/vosk";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputCheckbox, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
+import { InputCheckbox, InputMappedGroupSelect, InputRustAudioInput, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
 import { useTranslation } from 'react-i18next';
 import { toast } from "react-toastify";
-
-// Rust-based input device selector
-interface AudioDevice {
-  id: string;
-  name: string;
-}
-
-const RustInputDeviceSelect: FC<{ label: string; value: string; onChange: (value: string) => void }> = ({ label, value, onChange }) => {
-  const [devices, setDevices] = useState<AudioDevice[]>([]);
-
-  useEffect(() => {
-    invoke<AudioDevice[]>("plugin:audio|list_input_devices")
-      .then(setDevices)
-      .catch(e => console.error("Failed to load input devices:", e));
-  }, []);
-
-  return (
-    <InputSelect
-      label={label}
-      value={value}
-      onValueChange={onChange}
-      options={[
-        { label: "System Default", value: "" },
-        ...devices.map(d => ({ label: d.name, value: d.id }))
-      ]}
-    />
-  );
-};
+import "../stt-replacements-modal";
 
 const Native: FC = () => {
   const { t } = useTranslation();
@@ -178,7 +151,7 @@ const Deepgram: FC = () => {
     <Inspector.SubHeader>{t('stt.deepgram_title')}</Inspector.SubHeader>
     <InputText label="stt.deepgram_key" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
 
-    <RustInputDeviceSelect value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
+    <InputWebAudioInput value={pr.device} onChange={e => up("device", e)} label="common.field_input_device" />
     <InputMappedGroupSelect
       labelGroup="common.field_language"
       labelOption="common.field_dialect"
@@ -247,10 +220,11 @@ const Whisper: FC = () => {
       Runs locally using whisper.cpp. First run will download the selected model.
     </div>
 
-    <RustInputDeviceSelect
-      label="Input Device"
+    <InputRustAudioInput
+      label="common.field_input_device"
       value={pr.device}
       onChange={e => up("device", e)}
+      hint="stt.rust_input_device_hint"
     />
 
     <InputSelect
@@ -443,10 +417,11 @@ const Moonshine: FC = () => {
       value={pr.endpoint}
       onChange={e => up("endpoint", e.target.value)}
     />
-    <RustInputDeviceSelect
+    <InputRustAudioInput
       label="common.field_input_device"
       value={pr.device}
       onChange={e => up("device", e)}
+      hint="stt.rust_input_device_hint"
     />
     <InputText
       label="stt.moonshine_language"
@@ -486,10 +461,11 @@ const OpenAIAudio: FC = () => {
       value={pr.apiKey}
       onChange={e => up("apiKey", e.target.value)}
     />
-    <RustInputDeviceSelect
+    <InputRustAudioInput
       label="common.field_input_device"
       value={pr.device}
       onChange={e => up("device", e)}
+      hint="stt.rust_input_device_hint"
     />
     <InputText
       label="stt.openai_audio_language"
@@ -524,10 +500,11 @@ const Vosk: FC = () => {
       Models download once into app data as a zip, then load locally (WASM). Rust captures audio; no repeat CDN fetch for the same model.
     </div>
 
-    <RustInputDeviceSelect
-      label="Input Device"
+    <InputRustAudioInput
+      label="common.field_input_device"
       value={pr.device}
       onChange={e => up("device", e)}
+      hint="stt.rust_input_device_hint"
     />
 
     <InputSelect

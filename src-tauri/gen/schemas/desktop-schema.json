@@ -6849,16 +6849,22 @@
           "markdownDescription": "Denies the translate command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`",
           "type": "string",
           "const": "voice-changer:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-presets`\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-apply-voice-changer-preset`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`"
         },
         {
           "description": "Enables the apply_voice_changer_preset command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:allow-apply-voice-changer-preset",
           "markdownDescription": "Enables the apply_voice_changer_preset command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the capture_voice_changer_debug command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-capture-voice-changer-debug",
+          "markdownDescription": "Enables the capture_voice_changer_debug command without any pre-configured scope."
         },
         {
           "description": "Enables the get_voice_changer_metrics command without any pre-configured scope.",
@@ -6883,6 +6889,12 @@
           "type": "string",
           "const": "voice-changer:allow-is-voice-changer-running",
           "markdownDescription": "Enables the is_voice_changer_running command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_voice_changer_model_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-list-voice-changer-model-slots",
+          "markdownDescription": "Enables the list_voice_changer_model_slots command without any pre-configured scope."
         },
         {
           "description": "Enables the set_voice_changer_enabled command without any pre-configured scope.",
@@ -6927,6 +6939,12 @@
           "markdownDescription": "Denies the apply_voice_changer_preset command without any pre-configured scope."
         },
         {
+          "description": "Denies the capture_voice_changer_debug command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-capture-voice-changer-debug",
+          "markdownDescription": "Denies the capture_voice_changer_debug command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_voice_changer_metrics command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:deny-get-voice-changer-metrics",
@@ -6949,6 +6967,12 @@
           "type": "string",
           "const": "voice-changer:deny-is-voice-changer-running",
           "markdownDescription": "Denies the is_voice_changer_running command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_voice_changer_model_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-list-voice-changer-model-slots",
+          "markdownDescription": "Denies the list_voice_changer_model_slots command without any pre-configured scope."
         },
         {
           "description": "Denies the set_voice_changer_enabled command without any pre-configured scope.",
@@ -6987,10 +7011,16 @@
           "markdownDescription": "Denies the voice_changer_push_aux_wav command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-cancel-vosk-model-download`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`",
           "type": "string",
           "const": "vosk-stt:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-check-vosk-native-availability`\n- `allow-set-vosk-model-path`\n- `allow-get-vosk-model-path`\n- `allow-vosk-native-transcribe`\n- `allow-download-vosk-model`\n- `allow-cancel-vosk-model-download`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`"
+        },
+        {
+          "description": "Enables the cancel_vosk_model_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:allow-cancel-vosk-model-download",
+          "markdownDescription": "Enables the cancel_vosk_model_download command without any pre-configured scope."
         },
         {
           "description": "Enables the check_vosk_native_availability command without any pre-configured scope.",
@@ -7045,6 +7075,12 @@
           "type": "string",
           "const": "vosk-stt:allow-vosk-native-transcribe",
           "markdownDescription": "Enables the vosk_native_transcribe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_vosk_model_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "vosk-stt:deny-cancel-vosk-model-download",
+          "markdownDescription": "Denies the cancel_vosk_model_download command without any pre-configured scope."
         },
         {
           "description": "Denies the check_vosk_native_availability command without any pre-configured scope.",
@@ -7143,10 +7179,16 @@
           "markdownDescription": "Denies the pubsub_broadcast command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",
           "type": "string",
           "const": "whisper:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`"
+        },
+        {
+          "description": "Enables the cancel_whisper_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "whisper:allow-cancel-whisper-download",
+          "markdownDescription": "Enables the cancel_whisper_download command without any pre-configured scope."
         },
         {
           "description": "Enables the ensure_dependencies command without any pre-configured scope.",
@@ -7177,6 +7219,12 @@
           "type": "string",
           "const": "whisper:allow-stop-recording",
           "markdownDescription": "Enables the stop_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_whisper_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "whisper:deny-cancel-whisper-download",
+          "markdownDescription": "Denies the cancel_whisper_download command without any pre-configured scope."
         },
         {
           "description": "Denies the ensure_dependencies command without any pre-configured scope.",

@@ -36,3 +36,29 @@ export function chunkFramesToMsAt48k(frames: number): string {
   if (ms >= 1) return ms.toFixed(1);
   return ms.toFixed(2);
 }
+
+/** Persisted crossfade range (schema / Rust `crossfade_ms.clamp(0.0, 200.0)`). */
+export const CROSSFADE_MS_MAX = 200;
+
+/**
+ * Duration (ms) of one processing chunk. While the engine runs, pass its `chunk_ms` metric (chunk frames at the
+ * real capture rate, e.g. 44.1 kHz); otherwise the capture rate is unknown and 48 kHz is assumed.
+ */
+export function chunkDurationMs(frames: number, runningChunkMs?: number | null): number {
+  if (runningChunkMs != null && Number.isFinite(runningChunkMs) && runningChunkMs > 0) return runningChunkMs;
+  return (frames / 48000) * 1000;
+}
+
+/**
+ * Crossfade (ms) the RVC harness actually uses for `crossfadeMs`: it clamps the SOLA overlap to one
+ * processing chunk (`stream.rs`: `overlap.min(block_expected)`), so anything longer behaves like one chunk.
+ * `runningChunkMs` is the running engine's `chunk_ms` metric (see `chunkDurationMs`).
+ */
+export function effectiveCrossfadeMs(crossfadeMs: number, frames: number, runningChunkMs?: number | null): number {
+  return Math.min(crossfadeMs, chunkDurationMs(frames, runningChunkMs));
+}
+
+/** Largest whole-ms crossfade worth offering for this chunk size (one chunk, at least 1 ms). */
+export function crossfadeMaxMs(frames: number, runningChunkMs?: number | null): number {
+  return Math.max(1, Math.min(CROSSFADE_MS_MAX, Math.floor(chunkDurationMs(frames, runningChunkMs))));
+}

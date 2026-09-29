@@ -20,3 +20,29 @@ jobs:
       - run: pnpm install
       - run: pnpm i18n:check
       - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright smoke
+        env:
+          PW_PREVIEW_ONLY: "1"
+        run: pnpm exec playwright test
+
+  rust:
+    # Windows is the primary target and the crate imports the `windows` crate ungated
+    # (main.rs, keyboard, windows_tts), so clippy has to run on a Windows runner.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Provide an empty frontendDist for generate_context! (custom-protocol is a default feature)
+        shell: bash
+        run: mkdir -p dist
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test

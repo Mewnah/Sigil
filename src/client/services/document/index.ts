@@ -74,13 +74,24 @@ class Service_Document implements IServiceInterface {
   /** Replaces the Yjs `files` array (embedded fonts/images) used with `filesMeta`. */
   #replaceYFileBinaries(chunks: Uint8Array[]) {
     const dest = this.#file.getArray<Uint8Array>("files");
+    if (dest.length > 0) {
+      dest.delete(0, dest.length);
+    }
+    for (const u of chunks) {
+      dest.push([new Uint8Array(u)]);
+    }
+  }
+
+  /**
+   * Atomically apply imported document state + embedded assets. Replacing `filesMeta` fires the
+   * files service's template observer, which rebinds blob URLs and fonts (no explicit call needed).
+   */
+  #applyImportedTemplate(doc: DocumentState, fileBinaries: Uint8Array[]) {
     this.#file.transact(() => {
-      if (dest.length > 0) {
-        dest.delete(0, dest.length);
-      }
-      for (const u of chunks) {
-        dest.push([new Uint8Array(u)]);
-      }
+      this.#replaceYFileBinaries(fileBinaries);
+      this.fileBinder.update((state) => {
+        this.patchState(state, doc);
+      });
     });
   }
 
@@ -189,9 +200,7 @@ class Service_Document implements IServiceInterface {
         toast.error(migrated.error);
         return;
       }
-      this.patch((state) => {
-        Object.assign(state, migrated.doc);
-      });
+      this.#applyImportedTemplate(migrated.doc, []);
       this.#undoManager.clear(true, true);
       this.#syncDocumentUndoState();
       await this.#saveDocumentNative(this.#file);
@@ -222,10 +231,7 @@ class Service_Document implements IServiceInterface {
 
     const parsed = DocumentSchema.safeParse(snapshot);
     if (parsed.success) {
-      this.#replaceYFileBinaries(fileBinaries);
-      this.patch((state) => {
-        this.patchState(state, parsed.data);
-      });
+      this.#applyImportedTemplate(parsed.data, fileBinaries);
       this.#undoManager.clear(true, true);
       this.#syncDocumentUndoState();
       await this.#saveDocumentNative(this.#file);
@@ -238,10 +244,7 @@ class Service_Document implements IServiceInterface {
       toast.error(migrated.error);
       return;
     }
-    this.#replaceYFileBinaries(migrated.alignedFileBinaries ?? []);
-    this.patch((state) => {
-      this.patchState(state, migrated.doc);
-    });
+    this.#applyImportedTemplate(migrated.doc, migrated.alignedFileBinaries ?? []);
     this.#undoManager.clear(true, true);
     this.#syncDocumentUndoState();
     await this.#saveDocumentNative(this.#file);

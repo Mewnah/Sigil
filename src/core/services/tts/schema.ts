@@ -12,7 +12,7 @@ export enum TTS_Backends {
   melo = "melo",
   chatterbox = "chatterbox",
   fishSpeech = "fishSpeech",
-  /** Local ONNX speech (`neural_onnx_tts` plugin; Hub or local speech package — see docs/LOCAL_SPEECH_PACKAGE.md). */
+  /** Local ONNX speech (`neural_onnx_tts` plugin; Hub or local speech package — see docs/OPERATOR_REFERENCE.md). */
   neuralOnnx = "neuralOnnx",
   /** User-run HTTP server (`/speech`, `/health`). */
   neuralSidecar = "neuralSidecar",
@@ -97,7 +97,7 @@ export const Service_TTS_Schema = z.object({
     device: zSafe(z.coerce.string(), ""),
   }).default({}),
   neuralOnnx: z.object({
-    /** `hub` = download from Hugging Face; `local` = folder matching supported package (see docs/LOCAL_SPEECH_PACKAGE.md). */
+    /** `hub` = download from Hugging Face; `local` = folder matching supported package (see docs/OPERATOR_REFERENCE.md#local-speech-package-onnx). */
     modelSource: zSafe(z.enum(["hub", "local"]), "hub"),
     /** On-disk layout when `modelSource` is `local`. Only `speech_package_v1` is implemented today. */
     localPackageFormat: zSafe(z.enum(["speech_package_v1"]), "speech_package_v1"),

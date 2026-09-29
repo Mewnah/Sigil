@@ -2,12 +2,14 @@ import { FC, memo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { exit } from "@tauri-apps/plugin-process";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
-import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine, RiBookReadLine } from "react-icons/ri";
+import { RiSideBarLine, RiMoonFill, RiSunFill, RiKeyboardBoxLine, RiBookReadLine, RiVolumeMuteFill, RiVolumeUpFill } from "react-icons/ri";
 import { HelpManualModal } from "../HelpManualModal";
 import { useSnapshot } from "valtio";
 import { useAppUIStore } from "../store";
 import Tooltip from "../dropdown/Tooltip";
 import { getInspectorHeaderTitle } from "../servicePanels";
+import { useTranslation } from "react-i18next";
+import classNames from "classnames";
 
 /** Lazy singleton – only call Tauri API when actually rendered inside the desktop window. */
 let _appWindow: ReturnType<typeof getCurrentWebviewWindow> | null = null;
@@ -82,10 +84,15 @@ interface SigilHeaderProps {
 }
 
 export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sidebarCollapsed }) => {
+    const { t } = useTranslation();
     const tab = useAppUIStore((s) => s.sidebar.tab);
-    const { clientTheme } = useSnapshot(window.ApiServer.state);
+    const { clientTheme, muteSoundEffects } = useSnapshot(window.ApiServer.state);
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [showManual, setShowManual] = useState(false);
+
+    const handleToggleMuteSoundEffects = () => {
+        window.ApiServer.state.muteSoundEffects = !window.ApiServer.state.muteSoundEffects;
+    };
 
     // Get current page name
     const currentPage = getInspectorHeaderTitle(tab?.tab);
@@ -125,11 +132,28 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
 
                 {/* Right Section - Quick Actions */}
                 <div className="flex items-center gap-1 px-2">
-                    {/* Keyboard Shortcuts Help */}
-                    <Tooltip content="User manual" placement="bottom">
+                    <Tooltip
+                        content={t('main.btn_mute_effects')}
+                        body={t('main.btn_mute_effects_desc')}
+                        placement="bottom"
+                    >
+                        <button
+                            onClick={handleToggleMuteSoundEffects}
+                            title={t('main.btn_mute_effects')}
+                            className={classNames(
+                                "h-8 w-8 flex items-center justify-center rounded transition-colors",
+                                muteSoundEffects
+                                    ? "bg-error/20 text-error hover:bg-error/30"
+                                    : "hover:bg-base-content/5 text-base-content/50 hover:text-base-content"
+                            )}
+                        >
+                            {muteSoundEffects ? <RiVolumeMuteFill /> : <RiVolumeUpFill />}
+                        </button>
+                    </Tooltip>
+                    <Tooltip content={t('manual.title')} placement="bottom">
                         <button
                             onClick={() => setShowManual(true)}
-                            title="User manual"
+                            title={t('manual.title')}
                             className="h-8 w-8 flex items-center justify-center rounded hover:bg-base-content/5 transition-colors text-base-content/50 hover:text-base-content"
                         >
                             <RiBookReadLine />

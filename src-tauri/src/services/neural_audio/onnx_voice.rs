@@ -3,20 +3,16 @@
 //! when `N` differs from the live mic chunk (`chunk_frames * input_channels`), samples are
 //! adapted (mono/stereo and linear resampling).
 
+use crate::services::neural_audio::ort_session::session_builder_with_ep;
+
 use ndarray::{Array1, Array2};
 use ort::session::Session;
 use ort::tensor::TensorElementType;
 use ort::value::{Outlet, TensorRef, ValueType};
 
 const MAX_MODEL_CHANNELS: usize = 8;
-
-/// Apply optional execution-provider hints (same idea as neural ONNX TTS).
-fn apply_vc_ep_hint(provider: &str) {
-    let p = provider.to_lowercase();
-    if matches!(p.as_str(), "cuda" | "gpu") {
-        std::env::set_var("ORT_CUDA_DEVICE_ID", "0");
-    }
-}
+// Stereo models must stay supported (compile-time check).
+const _: () = assert!(MAX_MODEL_CHANNELS >= 2);
 
 /// Element count for VC I/O from ONNX dimensions; dynamic axes fall back to `runtime_need`.
 fn element_count_for_io(dims: &[i64], runtime_need: usize) -> usize {
@@ -24,16 +20,8 @@ fn element_count_for_io(dims: &[i64], runtime_need: usize) -> usize {
         return dims.iter().map(|&d| d as usize).product();
     }
     match dims {
-        [a, b] => {
-            if *b >= 0 {
-                *b as usize
-            } else if *a >= 0 {
-                runtime_need
-            } else {
-                runtime_need
-            }
-        }
-        [a] if *a < 0 => runtime_need,
+        // Dynamic batch, static length.
+        [_, b] if *b >= 0 => *b as usize,
         _ => runtime_need,
     }
 }
@@ -143,12 +131,12 @@ fn linear_resample_1d(src: &[f32], dst_len: usize) -> Vec<f32> {
         out[0] = src[src.len() / 2];
         return out;
     }
-    for i in 0..dst_len {
+    for (i, o) in out.iter_mut().enumerate() {
         let t = i as f32 * (src.len() - 1) as f32 / (dst_len - 1) as f32;
         let j0 = t.floor() as usize;
         let j1 = (j0 + 1).min(src.len() - 1);
         let f = t - j0 as f32;
-        out[i] = src[j0] * (1.0 - f) + src[j1] * f;
+        *o = src[j0] * (1.0 - f) + src[j1] * f;
     }
     out
 }
@@ -273,10 +261,8 @@ impl OnnxVoiceBridge {
                 runtime_need, ch_in
             ));
         }
-        apply_vc_ep_hint(execution_provider_hint);
 
-        let session = Session::builder()
-            .map_err(|e| format!("ONNX session builder: {}", e))?
+        let session = session_builder_with_ep(execution_provider_hint)?
             .commit_from_file(path)
             .map_err(|e| format!("Failed to load ONNX model {:?}: {}", path, e))?;
 
@@ -398,7 +384,7 @@ impl OnnxVoiceBridge {
             .map_err(|e| format!("ONNX output tensor: {}", e))?;
         let n_out = data.len();
         Ok(adapt_model_to_runtime(
-            data.as_ref(),
+            data,
             n_out,
             self.ch_in,
             self.runtime_need,
@@ -411,7 +397,7 @@ impl OnnxVoiceBridge {
 mod tests {
     use super::{
         adapt_model_to_runtime, adapt_runtime_to_model, convert_channels, deinterleave, interleave,
-        linear_resample_1d, OnnxVoiceBridge, MAX_MODEL_CHANNELS,
+        linear_resample_1d, OnnxVoiceBridge,
     };
 
     const T_FRAMES: usize = 512;
@@ -456,10 +442,7 @@ mod tests {
     #[test]
     fn mono_to_stereo_adapt_back() {
         let frames = T_FRAMES;
-        let mut mono = vec![0.0; frames];
-        for f in 0..frames {
-            mono[f] = f as f32 * 0.1;
-        }
+        let mono: Vec<f32> = (0..frames).map(|f| f as f32 * 0.1).collect();
         let need = frames * 2;
         let back = adapt_model_to_runtime(&mono, mono.len(), 2, need, frames);
         assert_eq!(back.len(), need);
@@ -480,10 +463,5 @@ mod tests {
     #[test]
     fn convert_channels_rejects_bad_len() {
         assert!(convert_channels(vec![vec![0.0]], 2, 1).is_none());
-    }
-
-    #[test]
-    fn max_channels_constant_sane() {
-        assert!(MAX_MODEL_CHANNELS >= 2);
     }
 }

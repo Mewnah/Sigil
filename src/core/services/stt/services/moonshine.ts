@@ -1,165 +1,58 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { floatSamplesToWavBase64 } from "../encodeWav";
-import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
 import { devLog } from "@/utils/devLog";
+import { raceWithAbort } from "../abort";
+import { RUST_CAPTURE_SAMPLE_RATE, RustCapturePollingService } from "../rustCapturePolling";
 
-interface AudioChunkPayload {
-  samples: number[];
-  sample_rate: number;
-  channels: number;
-}
+export class STT_MoonshineService extends RustCapturePollingService {
+  protected readonly logTag = "[Moonshine]";
+  protected readonly errorLabel = "Moonshine";
 
-const MOONSHINE_F32_POOL: Float32Array[] = [];
-const MOONSHINE_F32_POOL_MAX = 8;
-
-function takeMoonshineF32(minLen: number): Float32Array {
-  while (MOONSHINE_F32_POOL.length > 0) {
-    const b = MOONSHINE_F32_POOL.pop()!;
-    if (b.length >= minLen) return b;
-  }
-  return new Float32Array(minLen);
-}
-
-function recycleMoonshineF32(buf: Float32Array) {
-  if (MOONSHINE_F32_POOL.length < MOONSHINE_F32_POOL_MAX) MOONSHINE_F32_POOL.push(buf);
-}
-
-export class STT_MoonshineService implements ISpeechRecognitionService {
-  private isRunning = false;
-  private unlistenAudio?: UnlistenFn;
-  private audioBuffer: Float32Array[] = [];
-  private processingInterval?: ReturnType<typeof setInterval>;
-
-  constructor(private readonly receiver: ISTTReceiver) {}
-
-  private async teardownPipeline(): Promise<void> {
-    this.isRunning = false;
-    if (this.processingInterval) {
-      clearInterval(this.processingInterval);
-      this.processingInterval = undefined;
-    }
-    try {
-      await invoke("plugin:audio|stop_audio_capture");
-    } catch {
-      /* ignore */
-    }
-    if (this.unlistenAudio) {
-      this.unlistenAudio();
-      this.unlistenAudio = undefined;
-    }
-    this.audioBuffer = [];
+  protected inputDevice(params: STT_State): string {
+    return params.moonshine.device;
   }
 
-  async start(params: STT_State) {
-    try {
-      devLog("[Moonshine] Starting service...");
-      this.receiver.onInterim("Connecting to Moonshine...");
+  protected async prepare(params: STT_State): Promise<string | null> {
+    devLog("[Moonshine] Starting service...");
+    this.receiver.onInterim("Connecting to Moonshine...");
 
-      const config = params.moonshine;
+    const { endpoint } = params.moonshine;
+    await raceWithAbort(
+      invoke("plugin:moonshine-stt|set_moonshine_endpoint", { endpoint }),
+      this.startAbortSignal,
+    );
+    if (this.lifecycle.aborted) return null;
 
-      await invoke("plugin:moonshine-stt|set_moonshine_endpoint", {
-        endpoint: config.endpoint,
-      });
-
-      const isAvailable = await invoke<boolean>("plugin:moonshine-stt|check_moonshine_availability");
-      if (!isAvailable) {
-        const setupInstructions = [
-          `Moonshine server not found at ${config.endpoint}`,
-          "",
-          "To start Moonshine, run:",
-          "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server",
-          "",
-          "Or use the tiny model for faster startup:",
-          "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server:tiny",
-        ].join("\n");
-
-        this.receiver.onStop(setupInstructions);
-        return;
-      }
-
-      devLog("[Moonshine] Server connected");
-
-      this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
-        if (!this.isRunning) return;
-        const { samples } = event.payload;
-        const buf = takeMoonshineF32(samples.length);
-        buf.set(samples);
-        this.audioBuffer.push(buf);
-      });
-
-      this.isRunning = true;
-
-      const deviceName = config.device || window.ApiServer.state.audioInputDevice || "";
-      await invoke("plugin:audio|start_audio_capture", {
-        deviceName: deviceName || null,
-        sampleRate: 16000,
-      });
-
-      this.processingInterval = setInterval(() => {
-        void this.processAudioBuffer();
-      }, 500);
-
-      this.receiver.onStart();
-      devLog("[Moonshine] Recording started");
-    } catch (error) {
-      console.error("[Moonshine] Error starting:", error);
-      await this.teardownPipeline();
-      this.receiver.onStop(String(error));
+    const isAvailable = await raceWithAbort(
+      invoke<boolean>("plugin:moonshine-stt|check_moonshine_availability"),
+      this.startAbortSignal,
+    );
+    if (!isAvailable) {
+      return [
+        `Moonshine server not found at ${endpoint}`,
+        "",
+        "To start Moonshine, run:",
+        "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server",
+        "",
+        "Or use the tiny model for faster startup:",
+        "docker run -p 8090:8090 useful-sensors/moonshine-onnx-server:tiny",
+      ].join("\n");
     }
+
+    devLog("[Moonshine] Server connected");
+    return null;
   }
 
-  private async processAudioBuffer() {
-    if (!this.isRunning || this.audioBuffer.length === 0) return;
-
+  protected async transcribe(samples: Float32Array, signal: AbortSignal): Promise<string> {
     const language = window.ApiServer.state.services.stt.data.moonshine.language;
-
-    const totalLength = this.audioBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-    if (totalLength < 4000) return;
-
-    const combined = new Float32Array(totalLength);
-    let offset = 0;
-    for (const chunk of this.audioBuffer) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-      recycleMoonshineF32(chunk);
-    }
-    this.audioBuffer = [];
-
-    this.receiver.onInterim("...");
-
-    const audioBase64 = floatSamplesToWavBase64(combined, 16000);
-
-    try {
-      const text = await invoke<string>("plugin:moonshine-stt|moonshine_transcribe", {
-        audioBase64,
+    // The IPC call cannot be cancelled; racing it lets teardown discard a late result immediately.
+    return raceWithAbort(
+      invoke<string>("plugin:moonshine-stt|moonshine_transcribe", {
+        audioBase64: floatSamplesToWavBase64(samples, RUST_CAPTURE_SAMPLE_RATE),
         language: language || null,
-      });
-
-      if (text.trim()) {
-        devLog("[Moonshine] Result:", text);
-        this.receiver.onFinal(text);
-      }
-    } catch (error) {
-      console.error("[Moonshine] Transcription error:", error);
-      const msg = String(error);
-      this.receiver.onInterim(
-        msg.length > 180 ? `Moonshine: ${msg.slice(0, 180)}…` : `Moonshine: ${msg}`
-      );
-    }
-  }
-
-  async stop() {
-    if (!this.isRunning && !this.unlistenAudio && !this.processingInterval) return;
-
-    devLog("[Moonshine] Stopping...");
-    await this.teardownPipeline();
-    this.receiver.onStop();
-    devLog("[Moonshine] Stopped");
-  }
-
-  dispose() {
-    void this.stop();
+      }),
+      signal,
+    );
   }
 }

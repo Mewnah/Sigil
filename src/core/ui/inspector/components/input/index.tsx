@@ -535,13 +535,21 @@ export const InputNativeAudioOutput: FC<AudioOutputProps> = memo(({ label, value
 });
 
 
+/**
+ * Web Audio inputs for a picker. The getUserMedia call only unlocks device labels/ids (permission probe);
+ * its tracks are stopped as soon as the list is read so the picker never keeps the microphone open.
+ */
 const getMedia = async () => {
     try {
-        await navigator.mediaDevices.getUserMedia({ audio: true, });
-        const list = await navigator.mediaDevices.enumerateDevices();
-        return list.filter(d => d.kind === "audioinput").map(d => ({ ...d, label: d.label, value: d.deviceId }))
-    } catch (error) {
-        return []
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        try {
+            const list = await navigator.mediaDevices.enumerateDevices();
+            return list.filter(d => d.kind === "audioinput").map(d => ({ ...d, label: d.label, value: d.deviceId }));
+        } finally {
+            stream.getTracks().forEach(t => t.stop());
+        }
+    } catch {
+        return [];
     }
 }
 
@@ -557,6 +565,40 @@ export const InputWebAudioInput: FC<AudioOutputProps> = memo(({ label, value, on
         onValueChange={onChange}
         options={devices || []}
         label={label} />
+});
+
+type RustAudioDevice = { id: string; name: string };
+interface RustAudioInputProps extends AudioOutputProps {
+    /** Optional i18n key rendered under the select. */
+    hint?: string
+}
+/** cpal input devices (`plugin:audio|list_input_devices`) for Rust-captured audio; "" = system default. */
+export const InputRustAudioInput: FC<RustAudioInputProps> = memo(({ label, value, onChange, hint }) => {
+    const { t } = useTranslation();
+    const [devices, setDevices] = useState<RustAudioDevice[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        invoke<RustAudioDevice[]>("plugin:audio|list_input_devices")
+            .then((list) => { if (!cancelled) setDevices(list); })
+            .catch((e) => console.error("Failed to load input devices:", e));
+        return () => { cancelled = true; };
+    }, []);
+
+    const select = <InputSelect
+        label={label}
+        value={value}
+        onValueChange={onChange}
+        options={[
+            { label: t("common.device_system_default"), value: "" },
+            ...devices.map((d) => ({ label: d.name, value: d.id })),
+        ]} />;
+    if (!hint)
+        return select;
+    return <div className="flex flex-col gap-1">
+        {select}
+        <p className="text-xs opacity-70 leading-snug">{t(hint)}</p>
+    </div>;
 });
 
 interface MappedGroupSelectProps extends Omit<InputBaseProps, "label"> {

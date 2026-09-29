@@ -1,5 +1,6 @@
 import { useGetState } from "@/client";
 import { ServiceNetworkState } from "@/types";
+import { isTauri } from "@tauri-apps/api/core";
 import { getVersion } from '@tauri-apps/api/app';
 import { FC, memo, useEffect, useMemo, useState } from "react";
 import { RiFileCopyLine, RiSettings2Fill } from "react-icons/ri";
@@ -10,7 +11,7 @@ import Tooltip from "../dropdown/Tooltip";
 import Logo from "../logo";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputChips, InputNativeAudioOutput, InputNetworkStatus, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
+import { InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import { useTranslation } from "react-i18next";
 import { i18nLanguages, loadLanguageFile } from "@/i18n";
 // 1. Core & Tech
@@ -93,7 +94,7 @@ const Inspector_Settings: FC = memo(() => {
     ],
     [t],
   );
-  const { clientTheme, uiScale, uiLanguage, backgroundInputTimer, audioInputDevice, audioOutputDevice } = useSnapshot(window.ApiServer.state);
+  const { clientTheme, uiScale, uiLanguage, backgroundInputTimer, audioInputDevice, audioInputDeviceNative, audioOutputDevice } = useSnapshot(window.ApiServer.state);
   const { state: linkStatus } = useSnapshot(window.ApiShared.pubsub.serviceState);
   const author = useGetState(state => state.author);
 
@@ -161,11 +162,24 @@ const Inspector_Settings: FC = memo(() => {
       <Inspector.Description><span className="text-primary font-semibold mt-2" onClick={loadLanguageFile}>{t('settings.btn_import_translation')}</span></Inspector.Description>
 
       <Inspector.SubHeader>{t("settings.section_audio")}</Inspector.SubHeader>
-      <InputWebAudioInput
-        label="settings.field_default_input_device"
-        value={audioInputDevice}
-        onChange={e => window.ApiServer.state.audioInputDevice = e}
-      />
+      {isTauri() ? (
+        <InputRustAudioInput
+          label="settings.field_default_input_device"
+          value={audioInputDeviceNative}
+          onChange={(v) => {
+            const s = window.ApiServer.state;
+            s.audioInputDeviceNative = v;
+            // A deliberate pick (including "system default") ends the one-time legacy device migration.
+            s.audioInputDeviceNativeMigrated = true;
+          }}
+        />
+      ) : (
+        <InputWebAudioInput
+          label="settings.field_default_input_device"
+          value={audioInputDevice}
+          onChange={e => window.ApiServer.state.audioInputDevice = e}
+        />
+      )}
       <InputNativeAudioOutput
         label="settings.field_default_output_device"
         value={audioOutputDevice}

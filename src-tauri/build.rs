@@ -64,6 +64,7 @@ fn main() {
                         .commands(&[
                             "ensure_dependencies",
                             "import_whisper_model",
+                            "cancel_whisper_download",
                             "start_recording",
                             "stop_recording",
                             "feed_audio_chunk",
@@ -169,17 +170,17 @@ fn main() {
                     "voice-changer",
                     tauri_build::InlinedPlugin::new()
                         .commands(&[
-                            "get_voice_changer_presets",
                             "get_voice_changer_params",
                             "set_voice_changer_params",
                             "set_voice_changer_enabled",
-                            "apply_voice_changer_preset",
                             "start_voice_changer",
                             "stop_voice_changer",
                             "is_voice_changer_running",
                             "get_voice_changer_metrics",
                             "voice_changer_push_aux_pcm",
                             "voice_changer_push_aux_wav",
+                            "capture_voice_changer_debug",
+                            "list_voice_changer_model_slots",
                         ])
                         .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
                 ),
@@ -193,6 +194,7 @@ fn main() {
                             "get_vosk_model_path",
                             "vosk_native_transcribe",
                             "download_vosk_model",
+                            "cancel_vosk_model_download",
                             "import_vosk_model_zip",
                             "vosk_model_zip_relative_path",
                             "list_downloaded_vosk_models",

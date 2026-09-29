@@ -11,6 +11,7 @@ pub mod neural_onnx_tts;
 pub mod neural_sidecar_tts;
 pub mod oauth_loopback;
 pub mod osc;
+pub mod pcm_convert;
 pub mod translate;
 pub mod uberduck_tts;
 pub mod uwu;

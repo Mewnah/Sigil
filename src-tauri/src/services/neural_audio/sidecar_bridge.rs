@@ -3,8 +3,14 @@
 //! **Note:** [`SidecarVoiceBridge::exchange`] blocks the calling thread until the server responds.
 //! It runs on the voice-changer audio thread, so a slow sidecar increases end-to-end latency.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
+
+#[derive(Deserialize)]
+struct HandshakeAck {
+    #[serde(default)]
+    ok: bool,
+}
 
 #[derive(Serialize)]
 struct Handshake {
@@ -75,7 +81,22 @@ impl SidecarVoiceBridge {
         socket
             .send(Message::Text(text))
             .map_err(|e| format!("sidecar handshake: {}", e))?;
-        let _ = socket.read();
+        match socket.read().map_err(|e| format!("sidecar handshake read: {}", e))? {
+            Message::Text(s) => {
+                let ack: HandshakeAck =
+                    serde_json::from_str(&s).map_err(|e| format!("sidecar handshake JSON: {}", e))?;
+                if !ack.ok {
+                    return Err("sidecar handshake rejected (ok: false)".into());
+                }
+            }
+            Message::Close(_) => return Err("sidecar closed during handshake".into()),
+            other => {
+                return Err(format!(
+                    "sidecar handshake: expected text ack, got {:?}",
+                    other
+                ));
+            }
+        }
         Ok(Self { socket })
     }
 

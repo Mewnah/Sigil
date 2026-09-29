@@ -1,16 +1,20 @@
 use crate::services::http_client::{describe_failed_response, http_download_get};
+use crate::services::whisper::{progress_percent, sweep_stale_partials, ProgressThrottle};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 
 // Note: vosk-rs requires pre-built Vosk libraries to be available.
-// STT uses vosk-browser (WASM); models are stored as zip under app data and loaded via Blob URL.
+// STT uses vosk-browser (WASM); models are stored as zip under app data and loaded via convertFileSrc.
 
 const MODEL_CDN_BASE: &str = "https://alphacephei.com/vosk/models";
 
@@ -35,6 +39,11 @@ fn validate_model_id(model_id: &str) -> Result<(), String> {
 
 const MIN_VOSK_ZIP_BYTES: usize = 10 * 1024;
 
+const DOWNLOAD_CANCELLED: &str = "Vosk model download cancelled.";
+
+/// Per-call suffix for import temp files so overlapping imports never share (or delete) each other's file.
+static IMPORT_SEQ: AtomicU64 = AtomicU64::new(0);
+
 fn validate_vosk_zip_bytes(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < MIN_VOSK_ZIP_BYTES {
         return Err("File too small to be a valid Vosk model zip.".to_string());
@@ -51,10 +60,14 @@ fn copy_vosk_zip_to_cache(src: &Path, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let partial_path = dest.with_extension("zip.partial_import");
+    let seq = IMPORT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let partial_path = dest.with_extension(format!("zip.{}.{seq}.partial_import", std::process::id()));
     let _ = fs::remove_file(&partial_path);
-    fs::write(&partial_path, &bytes).map_err(|e| e.to_string())?;
-    let _ = fs::remove_file(dest);
+    fs::write(&partial_path, &bytes).map_err(|e| {
+        let _ = fs::remove_file(&partial_path);
+        e.to_string()
+    })?;
+    // `rename` replaces an existing destination in one step (Windows and Unix), so `dest` is never missing.
     fs::rename(&partial_path, dest).map_err(|e| {
         let _ = fs::remove_file(&partial_path);
         e.to_string()
@@ -149,6 +162,9 @@ fn get_available_models() -> Vec<VoskModel> {
 pub struct VoskSttState {
     model_path: Arc<Mutex<Option<String>>>,
     is_available: Arc<Mutex<bool>>,
+    /// Bumped on each download start and on cancel (cancel = bump). Stale runs stop streaming and discard their
+    /// own partial file; they never touch another run's partial or delete a committed zip.
+    download_epoch: Arc<AtomicU64>,
 }
 
 impl VoskSttState {
@@ -156,6 +172,7 @@ impl VoskSttState {
         Self {
             model_path: Arc::new(Mutex::new(None)),
             is_available: Arc::new(Mutex::new(false)),
+            download_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -207,16 +224,97 @@ fn vosk_model_zip_relative_path<R: Runtime>(
     }
 }
 
+fn download_stale(state: &VoskSttState, my_epoch: u64) -> bool {
+    state.download_epoch.load(Ordering::SeqCst) != my_epoch
+}
+
+/// `vosk:download_progress` payload, same shape as `whisper:download_progress`.
+#[derive(Clone, Serialize)]
+struct ProgressPayload {
+    file: String,
+    /// Percent 0-100, or -1 while the total length is unknown.
+    progress: f64,
+}
+
+fn emit_progress<R: Runtime>(app: &AppHandle<R>, file: &str, progress: f64) {
+    let _ = app.emit(
+        "vosk:download_progress",
+        ProgressPayload {
+            file: file.to_string(),
+            progress,
+        },
+    );
+}
+
+/// Stream `url` into this run's own `partial_path` and validate it, emitting `vosk:download_progress` for
+/// `file_label` at most ~5 times per second (nothing once the run is stale). The caller removes the partial on `Err`.
+async fn fetch_zip_to_partial<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &VoskSttState,
+    my_epoch: u64,
+    url: &str,
+    file_label: &str,
+    partial_path: &Path,
+) -> Result<(), String> {
+    let response = http_download_get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download model: {}", e))?;
+
+    if !response.status().is_success() {
+        let detail = describe_failed_response(response).await;
+        return Err(format!("Download failed: {detail}"));
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut first_byte: Option<u8> = None;
+    let mut throttle = ProgressThrottle::new();
+
+    {
+        let mut file = File::create(partial_path).map_err(|e| e.to_string())?;
+        while let Some(chunk) = stream.next().await {
+            if download_stale(state, my_epoch) {
+                return Err(DOWNLOAD_CANCELLED.to_string());
+            }
+            let chunk = chunk.map_err(|e| format!("Failed to read response: {}", e))?;
+            if first_byte.is_none() && !chunk.is_empty() {
+                first_byte = Some(chunk[0]);
+            }
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            if throttle.ready() {
+                emit_progress(app, file_label, progress_percent(downloaded, total).unwrap_or(-1.0));
+            }
+        }
+    }
+    if !download_stale(state, my_epoch) {
+        emit_progress(app, file_label, 100.0);
+    }
+
+    if downloaded < MIN_VOSK_ZIP_BYTES as u64 {
+        return Err("Downloaded file too small to be a valid model zip.".to_string());
+    }
+    if first_byte == Some(b'<') {
+        return Err("Download returned HTML instead of a zip.".to_string());
+    }
+    Ok(())
+}
+
 /// Download `model_id` to `{app_data}/vosk-models/{model_id}.zip` when missing.
 /// `url_override`: full zip URL when using "Custom model URL" in the UI.
 #[command]
 async fn download_vosk_model<R: Runtime>(
     app: AppHandle<R>,
+    state: State<'_, VoskSttState>,
     model_id: String,
     url_override: Option<String>,
     local_zip_path: Option<String>,
 ) -> Result<String, String> {
     validate_model_id(&model_id)?;
+    // A newer run or `cancel_vosk_model_download` bumps the epoch; from then on this run is stale.
+    let my_epoch = state.download_epoch.fetch_add(1, Ordering::SeqCst) + 1;
 
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let models_dir = app_dir.join("vosk-models");
@@ -256,41 +354,43 @@ async fn download_vosk_model<R: Runtime>(
             })?
     };
 
-    let response = http_download_get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download model: {}", e))?;
-
-    if !response.status().is_success() {
-        let detail = describe_failed_response(response).await;
-        return Err(format!("Download failed: {detail}"));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    const MIN_ZIP: usize = 10 * 1024;
-    if bytes.len() < MIN_ZIP {
-        return Err("Downloaded file too small to be a valid model zip.".to_string());
-    }
-    if bytes.first() == Some(&b'<') {
-        return Err("Download returned HTML instead of a zip.".to_string());
-    }
-
-    let partial_path = models_dir.join(format!("{}.zip.partial", model_id));
+    // Per-run name (process id + epoch): overlapping runs, and a second Sigil instance whose epoch counter
+    // also restarted at launch, never share, rename or delete each other's partial file.
+    // (`list_downloaded_vosk_models` only lists names ending in `.zip`, so partials never show up.)
+    let partial_path = models_dir.join(format!("{}.zip.{}.{}.partial", model_id, std::process::id(), my_epoch));
     let _ = fs::remove_file(&partial_path);
 
-    fs::write(&partial_path, &bytes).map_err(|e| e.to_string())?;
-
+    let file_label = format!("{}.zip", model_id);
+    if let Err(e) = fetch_zip_to_partial(&app, &state, my_epoch, &url, &file_label, &partial_path).await {
+        let _ = fs::remove_file(&partial_path);
+        return Err(e);
+    }
+    if download_stale(&state, my_epoch) {
+        let _ = fs::remove_file(&partial_path);
+        return Err(DOWNLOAD_CANCELLED.to_string());
+    }
+    if zip_path.is_file() {
+        // An overlapping run committed this model first; keep its zip and drop ours.
+        let _ = fs::remove_file(&partial_path);
+        return Ok(rel);
+    }
     if let Err(e) = fs::rename(&partial_path, &zip_path) {
         let _ = fs::remove_file(&partial_path);
-        let _ = fs::remove_file(&zip_path);
         return Err(e.to_string());
     }
 
+    // The committed zip is valid: a cancel that lands after the rename must never delete it.
+    if download_stale(&state, my_epoch) {
+        return Err(DOWNLOAD_CANCELLED.to_string());
+    }
     Ok(rel)
+}
+
+#[command]
+fn cancel_vosk_model_download(state: State<'_, VoskSttState>) -> Result<(), String> {
+    // Makes every in-flight download stale; each run then removes only its own partial file.
+    state.download_epoch.fetch_add(1, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Model ids that have a `vosk-models/{id}.zip` on disk.
@@ -341,6 +441,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("vosk-stt")
         .setup(|app, _api| {
             app.manage(VoskSttState::new());
+            if let Ok(dir) = app.path().app_data_dir() {
+                sweep_stale_partials(&dir.join("vosk-models"));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -350,6 +453,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_vosk_model_path,
             vosk_native_transcribe,
             download_vosk_model,
+            cancel_vosk_model_download,
             import_vosk_model_zip,
             vosk_model_zip_relative_path,
             list_downloaded_vosk_models

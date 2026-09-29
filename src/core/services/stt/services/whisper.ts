@@ -1,56 +1,95 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
+import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
 import { devLog } from "@/utils/devLog";
+import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
+import { isAbortError, listenWithAbort, raceWithAbort } from "../abort";
+import { formatDownloadProgress, SttDownloadProgressPayload } from "../downloadProgress";
+import { SttStartLifecycle } from "../localEngineLifecycle";
 
-/** Strip Whisper non-speech markers like `[CHIRPING]` / `(water splashing)` from partials. */
+/** Strip Whisper non-speech markers like `[CHIRPING]` / `(water splashing)` from segment text. */
 const WHISPER_NOISE_TOKEN_RE = /(\[[^\]]+\]|\([^\)]+\))/g;
+
+type ClearWhisperListenersOpts = {
+    progress?: boolean;
+    loadStatus?: boolean;
+    partial?: boolean;
+    dismissDownload?: boolean;
+};
 
 export class STT_WhisperService implements ISpeechRecognitionService {
     private unlistenProgress?: UnlistenFn;
+    private unlistenLoadStatus?: UnlistenFn;
     private unlistenPartial?: UnlistenFn;
     private isRecording = false;
-    private accumulatedText = "";
-    private starting = false;
-    private startAborted = false;
-    private stopNotified = false;
+    private readonly lifecycle: SttStartLifecycle;
+    startAbortSignal: AbortSignal | null = null;
 
-    constructor(private readonly receiver: ISTTReceiver) { }
-
-    #resetStopNotified() {
-        this.stopNotified = false;
+    constructor(private readonly receiver: ISTTReceiver) {
+        this.lifecycle = new SttStartLifecycle((error) => this.receiver.onStop(error));
     }
 
-    #notifyStopOnce(error?: string) {
-        if (this.stopNotified) return;
-        this.stopNotified = true;
-        this.receiver.onStop(error);
+    #clearWhisperListeners(opts: ClearWhisperListenersOpts = {}): void {
+        const {
+            progress = true,
+            loadStatus = true,
+            partial = true,
+            dismissDownload = false,
+        } = opts;
+
+        if (progress && this.unlistenProgress) {
+            this.unlistenProgress();
+            this.unlistenProgress = undefined;
+        }
+        if (loadStatus && this.unlistenLoadStatus) {
+            this.unlistenLoadStatus();
+            this.unlistenLoadStatus = undefined;
+        }
+        if (partial && this.unlistenPartial) {
+            this.unlistenPartial();
+            this.unlistenPartial = undefined;
+        }
+        if (dismissDownload) {
+            void emit("whisper:download_dismiss", {});
+        }
+    }
+
+    /** Tear down listeners and optionally notify stop; returns true when aborted. */
+    #abortStart(notify = true): boolean {
+        if (!this.lifecycle.checkAborted(notify)) return false;
+        this.#clearWhisperListeners({ dismissDownload: true });
+        return true;
     }
 
     async start(params: STT_State) {
-        this.startAborted = false;
-        this.starting = true;
-        this.#resetStopNotified();
+        this.lifecycle.beginStart();
         try {
             devLog("[Whisper] Starting service...");
-            this.accumulatedText = "";
 
-            this.unlistenProgress = await listen("whisper:download_progress", (event) => {
-                const payload = event.payload as { file: string; progress: number };
-                devLog(`[Whisper] Downloading ${payload.file}: ${payload.progress.toFixed(1)}%`);
-                this.receiver.onInterim(`Downloading ${payload.file}: ${payload.progress.toFixed(0)}%...`);
-            });
+            // Download / local-model copy progress (percent, or < 0 when the size is unknown).
+            this.unlistenProgress = await listenWithAbort<SttDownloadProgressPayload>(
+                "whisper:download_progress",
+                (event) => {
+                    const line = formatDownloadProgress(event.payload);
+                    devLog(`[Whisper] ${line}`);
+                    this.receiver.onInterim(line);
+                },
+                this.startAbortSignal,
+            );
 
-            if (this.startAborted) {
-                if (this.unlistenProgress) {
-                    this.unlistenProgress();
-                    this.unlistenProgress = undefined;
-                }
-                void emit("whisper:download_dismiss", {});
-                this.#notifyStopOnce();
-                return;
-            }
+            this.unlistenLoadStatus = await listenWithAbort<string>(
+                "whisper:load_status",
+                (event) => {
+                    const status = event.payload?.trim() ?? "";
+                    if (status) {
+                        this.receiver.onInterim(status);
+                    }
+                },
+                this.startAbortSignal,
+            );
+
+            if (this.#abortStart()) return;
 
             const localPath =
                 params.whisper.useLocalModel && params.whisper.localModelPath?.trim()
@@ -58,72 +97,60 @@ export class STT_WhisperService implements ISpeechRecognitionService {
                     : null;
 
             devLog("[Whisper] Ensuring dependencies...", { model: params.whisper.model, language: params.whisper.language });
-            await invoke("plugin:whisper|ensure_dependencies", {
-                model: params.whisper.model,
-                language: params.whisper.language,
-                localModelPath: localPath,
-            });
+            await raceWithAbort(
+                invoke("plugin:whisper|ensure_dependencies", {
+                    model: params.whisper.model,
+                    language: params.whisper.language,
+                    localModelPath: localPath,
+                }),
+                this.startAbortSignal,
+            );
 
-            if (this.startAborted) {
-                if (this.unlistenProgress) {
-                    this.unlistenProgress();
-                    this.unlistenProgress = undefined;
-                }
-                void emit("whisper:download_dismiss", {});
-                this.#notifyStopOnce();
-                return;
-            }
+            if (this.#abortStart()) return;
 
-            if (this.unlistenProgress) {
-                this.unlistenProgress();
-                this.unlistenProgress = undefined;
-            }
+            // Download phase complete — segment listener replaces progress/load listeners. Do not dismiss the
+            // download row here: Rust already emitted `whisper:download_complete`, which the inspector shows briefly.
+            this.#clearWhisperListeners();
             this.receiver.onInterim("");
 
-            devLog("[Whisper] Setting up partial result listener...");
-            this.unlistenPartial = await listen("whisper:partial_result", (event) => {
-                let text = event.payload as string;
-                text = text.replace(WHISPER_NOISE_TOKEN_RE, "").trim();
+            devLog("[Whisper] Setting up segment transcript listener...");
+            this.unlistenPartial = await listenWithAbort<string>(
+                "whisper:segment_transcript",
+                (event) => {
+                    const text = String(event.payload ?? "").replace(WHISPER_NOISE_TOKEN_RE, "").trim();
 
-                if (text) {
-                    this.receiver.onFinal(text);
-                }
-            });
+                    if (text) {
+                        this.receiver.onFinal(text);
+                    }
+                },
+                this.startAbortSignal,
+            );
 
-            if (this.startAborted) {
-                if (this.unlistenPartial) {
-                    this.unlistenPartial();
-                    this.unlistenPartial = undefined;
-                }
-                void emit("whisper:download_dismiss", {});
-                this.#notifyStopOnce();
-                return;
-            }
+            if (this.#abortStart()) return;
 
             devLog("[Whisper] Starting recording...");
-            const deviceName = params.whisper.device || window.ApiServer.state.audioInputDevice || "";
-            await invoke("plugin:whisper|start_recording", {
-                deviceName: deviceName || null,
-                vadEnabled: params.whisper.vadEnabled,
-                silenceThresholdDb: parseFloat(params.whisper.silenceThresholdDb),
-                silenceDurationMs: parseInt(params.whisper.silenceDurationMs),
-                minChunkDurationMs: parseInt(params.whisper.minChunkDurationMs),
-                captureLocal: true,
-            });
+            const deviceName = resolveRustInputDeviceForInvoke(params.whisper.device);
+            await raceWithAbort(
+                invoke("plugin:whisper|start_recording", {
+                    deviceName,
+                    vadEnabled: params.whisper.vadEnabled,
+                    silenceThresholdDb: parseFloat(params.whisper.silenceThresholdDb),
+                    silenceDurationMs: parseInt(params.whisper.silenceDurationMs),
+                    minChunkDurationMs: parseInt(params.whisper.minChunkDurationMs),
+                    captureLocal: true,
+                }),
+                this.startAbortSignal,
+            );
 
-            if (this.startAborted) {
+            if (this.lifecycle.aborted) {
                 this.isRecording = false;
                 try {
                     await invoke<string>("plugin:whisper|stop_recording");
                 } catch {
                     /* ignore */
                 }
-                if (this.unlistenPartial) {
-                    this.unlistenPartial();
-                    this.unlistenPartial = undefined;
-                }
-                void emit("whisper:download_dismiss", {});
-                this.#notifyStopOnce();
+                this.#clearWhisperListeners({ dismissDownload: true });
+                this.lifecycle.notifyStopOnce();
                 return;
             }
 
@@ -131,39 +158,31 @@ export class STT_WhisperService implements ISpeechRecognitionService {
             this.receiver.onStart();
             devLog("[Whisper] Recording started - real-time transcription active");
         } catch (error) {
+            if (isAbortError(error) || this.lifecycle.aborted) {
+                this.isRecording = false;
+                this.#clearWhisperListeners({ dismissDownload: true });
+                return;
+            }
             console.error("[Whisper] Error starting:", error);
             this.isRecording = false;
-            if (this.unlistenProgress) {
-                this.unlistenProgress();
-                this.unlistenProgress = undefined;
-            }
-            void emit("whisper:download_dismiss", {});
-            if (this.unlistenPartial) {
-                this.unlistenPartial();
-                this.unlistenPartial = undefined;
-            }
-            if (!this.startAborted) {
-                this.#notifyStopOnce(String(error));
-            }
+            this.#clearWhisperListeners({ dismissDownload: true });
+            this.lifecycle.notifyStopOnce(String(error));
         } finally {
-            this.starting = false;
+            this.lifecycle.finishStart();
         }
     }
 
     async stop() {
-        this.startAborted = true;
-        const hadWork = this.starting || this.isRecording;
+        this.lifecycle.abort();
+        const hadWork = this.lifecycle.starting || this.isRecording;
         this.isRecording = false;
 
-        if (this.unlistenProgress) {
-            this.unlistenProgress();
-            this.unlistenProgress = undefined;
-        }
-        void emit("whisper:download_dismiss", {});
+        this.#clearWhisperListeners({ dismissDownload: true });
 
-        if (this.unlistenPartial) {
-            this.unlistenPartial();
-            this.unlistenPartial = undefined;
+        try {
+            await invoke("plugin:whisper|cancel_whisper_download");
+        } catch {
+            /* ignore */
         }
 
         try {
@@ -173,26 +192,13 @@ export class STT_WhisperService implements ISpeechRecognitionService {
         }
 
         if (hadWork) {
-            this.#notifyStopOnce();
+            this.lifecycle.notifyStopOnce();
         }
         devLog("[Whisper] Stopped");
     }
 
     dispose() {
         devLog("[Whisper] Disposing service");
-        this.startAborted = true;
-        this.isRecording = false;
-        this.accumulatedText = "";
-
-        if (this.unlistenProgress) {
-            this.unlistenProgress();
-            this.unlistenProgress = undefined;
-            void emit("whisper:download_dismiss", {});
-        }
-
-        if (this.unlistenPartial) {
-            this.unlistenPartial();
-            this.unlistenPartial = undefined;
-        }
+        void this.stop();
     }
 }

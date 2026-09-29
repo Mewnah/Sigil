@@ -31,14 +31,50 @@ type SaveFile = Omit<FileState, "id" | "size">;
 
 class Service_Files implements IServiceInterface {
   private fontsList: GoogleFont[] = [];
+  #filesMetaUnobserve: (() => void) | null = null;
+  /** FontFace objects registered from embedded files, so a reconcile can unregister them. */
+  #loadedFonts: FontFace[] = [];
+  /** Bumped by every reconcile so FontFace loads started for a previous template are dropped. */
+  #reconcileGeneration = 0;
   public readonly fileUrls = proxy<{ [id: string]: string }>({});
   public readonly ui = proxy<{ fontFamilies: string[] }>({
     fontFamilies: [],
   });
 
   async init() {
-    this.#yFilesMeta.observe(() => this.#updateTrackedBlobs());
+    this.#bindFilesMetaObserver();
+    window.ApiClient.document.template?.observe((event) => {
+      if (event.changes.keys.has("filesMeta")) {
+        this.reconcileEmbeddedAssets();
+      }
+    });
     this.#updateTrackedBlobs();
+  }
+
+  /** Rebind blob URLs and @font-face entries after template import replaces `filesMeta`. */
+  reconcileEmbeddedAssets() {
+    this.#reconcileGeneration++;
+    this.#bindFilesMetaObserver();
+    for (const id of Object.keys(this.fileUrls)) {
+      URL.revokeObjectURL(this.fileUrls[id]);
+      delete this.fileUrls[id];
+    }
+    for (const font of this.#loadedFonts) {
+      document.fonts.delete(font);
+    }
+    this.#loadedFonts = [];
+    this.ui.fontFamilies = [];
+    this.#updateTrackedBlobs();
+  }
+
+  #bindFilesMetaObserver() {
+    this.#filesMetaUnobserve?.();
+    this.#filesMetaUnobserve = null;
+    const yArr = this.#yFilesMeta;
+    if (!yArr?.observe) return;
+    const onChange = () => this.#updateTrackedBlobs();
+    yArr.observe(onChange);
+    this.#filesMetaUnobserve = () => yArr.unobserve(onChange);
   }
 
   private fontsLoaded = false;
@@ -99,11 +135,19 @@ class Service_Files implements IServiceInterface {
   get #yFilesBinary() {
     return window.ApiClient.document.fileArray;
   }
-  get #yFilesMeta(): any {
-    return window.ApiClient.document.template?.get("filesMeta") as Y.Array<any>;
+  get #yFilesMeta(): Y.Array<Y.Map<unknown>> | undefined {
+    return window.ApiClient.document.template?.get("filesMeta") as Y.Array<Y.Map<unknown>> | undefined;
   }
   get #filesMeta(): FileState[] {
-    return this.#yFilesMeta.toJSON();
+    return this.#yFilesMeta?.toJSON() as FileState[] ?? [];
+  }
+
+  #requireYFilesMeta(): Y.Array<Y.Map<unknown>> {
+    const yArr = this.#yFilesMeta;
+    if (!yArr) {
+      throw new Error("Document filesMeta is not initialized");
+    }
+    return yArr;
   }
   getFileBuffer(fileId: string) {
     const i = this.#filesMeta.findIndex(file => file.id === fileId);
@@ -135,8 +179,12 @@ class Service_Files implements IServiceInterface {
         if (!this.ui.fontFamilies.includes(fontMeta.family))
           this.ui.fontFamilies.push(fontMeta.family);
 
+        const generation = this.#reconcileGeneration;
         new FontFace(fontMeta.family, rawFile as any, fontMeta).load().then(font => {
+          // A reconcile (template import) since this load started makes the font stale.
+          if (generation !== this.#reconcileGeneration) return;
           document.fonts.add(font);
+          this.#loadedFonts.push(font);
         });
       }
     }
@@ -205,7 +253,7 @@ class Service_Files implements IServiceInterface {
   #saveFiles(filesMeta: SaveFile[], files: Uint8Array[]) {
     const ids: string[] = filesMeta.map((_) => nanoid());
     window.ApiClient.document.file.transact(() => {
-      const metaList = this.#yFilesMeta;
+      const metaList = this.#requireYFilesMeta();
 
       const meta = filesMeta.map((fileMeta, i) =>
         createDocumentFile({
@@ -225,8 +273,9 @@ class Service_Files implements IServiceInterface {
 
     window.ApiClient.document.patch((state) => {
       const fileIndex = state.filesMeta.findIndex((f) => f.id === fileId);
+      const yFilesMeta = this.#requireYFilesMeta();
       for (let j = fileIndex + 1; j < state.filesMeta.length; j++)
-        this.#yFilesMeta.get(j).set("index", j - 1);
+        yFilesMeta.get(j).set("index", j - 1);
       state.filesMeta.splice(fileIndex, 1);
       window.ApiClient.document.fileArray.delete(fileIndex);
     });
@@ -242,7 +291,8 @@ class Service_Files implements IServiceInterface {
     this.ui.fontFamilies = this.ui.fontFamilies.filter(f => f !== family);
 
     ixs.length && window.ApiClient.document.file.transact(() => {
-      this.#yFilesMeta.delete(ixs[0], ixs.length);
+      const yFilesMeta = this.#requireYFilesMeta();
+      yFilesMeta.delete(ixs[0], ixs.length);
       this.#yFilesBinary.delete(ixs[0], ixs.length);
     });
 

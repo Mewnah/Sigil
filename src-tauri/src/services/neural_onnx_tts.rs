@@ -1,5 +1,8 @@
-//! In-process ONNX speech TTS: Hub download or local **speech package** folder (see `docs/LOCAL_SPEECH_PACKAGE.md`).
+//! In-process ONNX speech TTS: Hub download or local **speech package** folder (see
+//! `docs/OPERATOR_REFERENCE.md#local-speech-package-onnx`).
 //! Implementation uses the `kittentts` crate for the supported package format.
+
+use crate::services::neural_audio::ort_session::ensure_ort_environment;
 
 use crate::services::voice_changer::{push_aux_wav_bytes, VoiceChangerState};
 use hound::{SampleFormat, WavSpec, WavWriter};
@@ -21,7 +24,8 @@ pub struct NeuralOnnxTtsState {
     voice: std::sync::Arc<Mutex<String>>,
     speed: std::sync::Arc<Mutex<f32>>,
     model: std::sync::Arc<Mutex<Option<kittentts::KittenTTS>>>,
-    /// Last EP hint from `load_model` (re-applied before each `speak`, including lazy load).
+    /// Last EP hint from the UI (`cpu` / `cuda` / `dml`). Recorded only: `kittentts` builds its own
+    /// ORT session with the default (CPU) provider, so the hint does not select a device yet.
     execution_provider_hint: std::sync::Arc<Mutex<String>>,
     /// When true, load from `local_model_dir` instead of Hugging Face.
     use_local: std::sync::Arc<Mutex<bool>>,
@@ -48,14 +52,6 @@ impl NeuralOnnxTtsState {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NeuralOnnxVoice {
     pub name: String,
-}
-
-fn apply_execution_provider_hint(provider: &str) {
-    let p = provider.to_lowercase();
-    if matches!(p.as_str(), "cuda" | "gpu") {
-        std::env::set_var("ORT_CUDA_DEVICE_ID", "0");
-    }
-    // "dml": EP choice is baked into the ORT build.
 }
 
 fn load_from_local_dir(dir: &Path) -> Result<kittentts::KittenTTS, String> {
@@ -87,6 +83,8 @@ fn load_from_local_dir(dir: &Path) -> Result<kittentts::KittenTTS, String> {
 }
 
 fn load_model_for_state(state: &NeuralOnnxTtsState) -> Result<kittentts::KittenTTS, String> {
+    // Commit the app-owned ORT environment before kittentts creates its first session.
+    ensure_ort_environment();
     let use_local = *state.use_local.lock().map_err(|_| "Lock failed")?;
     if use_local {
         let fmt = state
@@ -97,7 +95,7 @@ fn load_model_for_state(state: &NeuralOnnxTtsState) -> Result<kittentts::KittenT
             .to_lowercase();
         if fmt != "speech_package_v1" {
             return Err(format!(
-                "Unsupported local speech folder format '{}'. Only speech_package_v1 is available (see docs/LOCAL_SPEECH_PACKAGE.md).",
+                "Unsupported local speech folder format '{}'. Only speech_package_v1 is available (see docs/OPERATOR_REFERENCE.md#local-speech-package-onnx).",
                 fmt
             ));
         }
@@ -130,8 +128,7 @@ fn neural_onnx_tts_set_execution_hint<R: Runtime>(
     *state
         .execution_provider_hint
         .lock()
-        .map_err(|_| "Lock failed")? = h.clone();
-    apply_execution_provider_hint(&h);
+        .map_err(|_| "Lock failed")? = h;
     Ok(())
 }
 
@@ -218,19 +215,10 @@ fn neural_onnx_tts_load_model<R: Runtime>(
     execution_provider: Option<String>,
 ) -> Result<(), String> {
     if let Some(ref ep) = execution_provider {
-        let e = ep.to_lowercase();
         *state
             .execution_provider_hint
             .lock()
-            .map_err(|_| "Lock failed")? = e.clone();
-        apply_execution_provider_hint(&e);
-    } else {
-        let h = state
-            .execution_provider_hint
-            .lock()
-            .map_err(|_| "Lock failed")?
-            .clone();
-        apply_execution_provider_hint(&h);
+            .map_err(|_| "Lock failed")? = ep.to_lowercase();
     }
     let tts = load_model_for_state(&state)?;
     *state.model.lock().map_err(|_| "Lock failed")? = Some(tts);
@@ -259,13 +247,6 @@ fn synthesize_wav_bytes(state: &NeuralOnnxTtsState, text: &str) -> Result<Vec<u8
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let ep_hint = state
-        .execution_provider_hint
-        .lock()
-        .map_err(|_| "Lock failed")?
-        .clone();
-    apply_execution_provider_hint(&ep_hint);
-
     let voice = state.voice.lock().map_err(|_| "Lock failed")?.clone();
     let speed = *state.speed.lock().map_err(|_| "Lock failed")?;
     let mut model_guard = state.model.lock().map_err(|_| "Lock failed")?;
@@ -275,7 +256,7 @@ fn synthesize_wav_bytes(state: &NeuralOnnxTtsState, text: &str) -> Result<Vec<u8
     }
     let tts = model_guard.as_ref().ok_or("Model not loaded")?;
     let audio = tts
-        .generate(&text, &voice, speed, true)
+        .generate(text, &voice, speed, true)
         .map_err(|e| format!("Synthesis failed: {}", e))?;
 
     let spec = WavSpec {

@@ -27,9 +27,12 @@ export class STT_AzureService implements ISTTService {
   }
 
   start(state: STT_State): void {
-    // ignore device for now
-    const { device, ...rest } = this.state;
-    if (Object.values(rest).some(isEmptyValue))
+    const az = this.state;
+    if (
+      isEmptyValue(az.key) ||
+      isEmptyValue(az.location) ||
+      isEmptyValue(az.language)
+    )
       return this.bindings.onStop("Options missing");
 
     const speechConfig = SpeechConfig.fromSubscription(
@@ -54,7 +57,10 @@ export class STT_AzureService implements ISTTService {
     const langConfig = AutoDetectSourceLanguageConfig.fromLanguages(state.azure.secondary_language && state.azure.use_secondary_language ? 
       [state.azure.language, state.azure.secondary_language] : [state.azure.language]);
     langConfig.mode = LanguageIdMode.Continuous;
-    const audioConfig = AudioConfig.fromMicrophoneInput(state.azure.device);
+    const deviceId = state.azure.device?.trim();
+    const audioConfig = deviceId
+      ? AudioConfig.fromMicrophoneInput(deviceId)
+      : AudioConfig.fromDefaultMicrophoneInput();
     this.#instance = SpeechRecognizer.FromConfig(
       speechConfig,
       langConfig,

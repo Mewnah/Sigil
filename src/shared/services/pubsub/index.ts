@@ -10,7 +10,7 @@ import { proxyMap } from "valtio/utils";
 
 import { z } from "zod";
 
-/** Application WS ping interval for linked pubsub (see docs/PERFORMANCE_AUDIT.md). */
+/** Application WS ping interval for linked pubsub (see docs/RELEASE_AND_ENGINEERING.md#performance-and-connection-timeout-audit). */
 export const LINK_PUBSUB_KEEPALIVE_MS = 25_000;
 
 const LINK_PUBSUB_CONNECT_TIMEOUT_MS = 12_000;

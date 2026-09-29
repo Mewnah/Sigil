@@ -1,7 +1,5 @@
-# Everything that needs to work on remote clients goes here
-## <span style="color:red">This folder should never reference server</span>
-- public state (elements, scenes, files)
-- client sound (text animation for now)
-- particles
-- scenes
-- files
+# `src/client`
+
+Remote-safe document and canvas code. **Must not** call Tauri `invoke` or import host-only modules.
+
+Full conventions and layering are in **[docs/DEVELOPER_GUIDE.md](../../docs/DEVELOPER_GUIDE.md#client-folder-srcclient)**.

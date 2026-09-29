@@ -1,122 +1,56 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { floatSamplesToWavBlob } from "../encodeWav";
-import { ISTTReceiver, ISpeechRecognitionService } from "../types";
 import { STT_State } from "../schema";
+import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import { isAbortError, raceWithTimeoutAndAbort } from "../abort";
+import { RUST_CAPTURE_SAMPLE_RATE, RustCapturePollingService, truncateForUi } from "../rustCapturePolling";
 
-interface AudioChunkPayload {
-  samples: number[];
-  sample_rate: number;
-  channels: number;
+/** Avoid hung `fetch` when the local server stops responding. */
+const LOCAL_STT_FETCH_TIMEOUT_MS = 120_000;
+
+/** Reads the whole body as UTF-8 through `reader`, so the caller keeps the handle it needs to cancel the read. */
+async function readBodyText(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
 }
-
-const POLL_MS = 500;
-const MIN_SAMPLES = 4000;
 
 function transcriptionsUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
   return `${trimmed}/audio/transcriptions`;
 }
 
-function truncate(s: string, max: number): string {
-  const t = s.replace(/\s+/g, " ").trim();
-  return t.length <= max ? t : `${t.slice(0, max)}…`;
-}
+export class STT_OpenAI_AudioService extends RustCapturePollingService {
+  protected readonly logTag = "[Local HTTP STT]";
+  protected readonly errorLabel = "Local STT";
 
-export class STT_OpenAI_AudioService implements ISpeechRecognitionService {
-  private isRunning = false;
-  private unlistenAudio?: UnlistenFn;
-  private audioBuffer: Float32Array[] = [];
-  private processingInterval?: ReturnType<typeof setInterval>;
-
-  constructor(private readonly receiver: ISTTReceiver) {}
-
-  private async teardownPipeline(): Promise<void> {
-    this.isRunning = false;
-    if (this.processingInterval) {
-      clearInterval(this.processingInterval);
-      this.processingInterval = undefined;
-    }
-    try {
-      await invoke("plugin:audio|stop_audio_capture");
-    } catch {
-      /* ignore */
-    }
-    if (this.unlistenAudio) {
-      this.unlistenAudio();
-      this.unlistenAudio = undefined;
-    }
-    this.audioBuffer = [];
+  protected inputDevice(params: STT_State): string {
+    return params.openai_audio.device;
   }
 
-  async start(params: STT_State) {
+  protected async prepare(params: STT_State): Promise<string | null> {
     const config = params.openai_audio;
-    const base = config.baseUrl.trim();
-    const model = config.model.trim();
-
-    if (!base) {
-      this.receiver.onStop("Local transcription API: set a base URL (e.g. http://127.0.0.1:8000/v1).");
-      return;
-    }
-    if (!model) {
-      this.receiver.onStop("Local transcription API: set the model id your local server expects (see server docs).");
-      return;
-    }
-
-    try {
-      this.receiver.onInterim("Connecting to local transcription server...");
-
-      this.unlistenAudio = await listen<AudioChunkPayload>("audio:chunk", (event) => {
-        if (!this.isRunning) return;
-        const { samples } = event.payload;
-        this.audioBuffer.push(new Float32Array(samples));
-      });
-
-      this.isRunning = true;
-
-      const deviceName = config.device || window.ApiServer.state.audioInputDevice || "";
-      await invoke("plugin:audio|start_audio_capture", {
-        deviceName: deviceName || null,
-        sampleRate: 16000,
-      });
-
-      this.processingInterval = setInterval(() => {
-        void this.processAudioBuffer();
-      }, POLL_MS);
-
-      this.receiver.onStart();
-    } catch (error) {
-      console.error("[Local HTTP STT] Error starting:", error);
-      await this.teardownPipeline();
-      this.receiver.onStop(String(error));
-    }
+    if (!config.baseUrl.trim())
+      return "Local transcription API: set a base URL (e.g. http://127.0.0.1:8000/v1).";
+    if (!config.model.trim())
+      return "Local transcription API: set the model id your local server expects (see server docs).";
+    this.receiver.onInterim("Connecting to local transcription server...");
+    return null;
   }
 
-  private async processAudioBuffer() {
-    if (!this.isRunning || this.audioBuffer.length === 0) return;
-
+  protected async transcribe(samples: Float32Array, signal: AbortSignal): Promise<string> {
     const config = window.ApiServer.state.services.stt.data.openai_audio;
     const base = config.baseUrl.trim();
     const model = config.model.trim();
-    if (!base || !model) return;
+    if (!base || !model)
+      throw new Error("base URL and model are required.");
 
-    const totalLength = this.audioBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-    if (totalLength < MIN_SAMPLES) return;
-
-    const combined = new Float32Array(totalLength);
-    let offset = 0;
-    for (const chunk of this.audioBuffer) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    this.audioBuffer = [];
-
-    this.receiver.onInterim("...");
-
-    const url = transcriptionsUrl(base);
-    const blob = floatSamplesToWavBlob(combined, 16000);
     const form = new FormData();
-    form.append("file", blob, "audio.wav");
+    form.append("file", floatSamplesToWavBlob(samples, RUST_CAPTURE_SAMPLE_RATE), "audio.wav");
     form.append("model", model);
     const lang = config.language?.trim();
     if (lang) {
@@ -128,46 +62,50 @@ export class STT_OpenAI_AudioService implements ISpeechRecognitionService {
       headers.Authorization = `Bearer ${config.apiKey.trim()}`;
     }
 
+    let res: Response;
     try {
-      const res = await fetch(url, { method: "POST", body: form, headers });
-      const raw = await res.text();
-      if (!res.ok) {
-        const hint = truncate(raw, 120);
-        this.receiver.onInterim(
-          hint ? `Local STT HTTP ${res.status}: ${hint}` : `Local STT HTTP ${res.status}`
-        );
-        return;
-      }
-      let text = "";
-      try {
-        const json = JSON.parse(raw) as { text?: string; error?: { message?: string } };
-        if (json.error?.message) {
-          this.receiver.onInterim(`Local STT: ${truncate(json.error.message, 200)}`);
-          return;
-        }
-        text = (json.text ?? "").trim();
-      } catch {
-        this.receiver.onInterim("Local STT: server returned non-JSON response.");
-        return;
-      }
-      if (text) {
-        this.receiver.onFinal(text);
-      }
+      res = await fetchWithTimeout(transcriptionsUrl(base), {
+        method: "POST",
+        body: form,
+        headers,
+        signal,
+        timeoutMs: LOCAL_STT_FETCH_TIMEOUT_MS,
+      });
     } catch (error) {
-      console.error("[Local HTTP STT] Request failed:", error);
-      this.receiver.onInterim(`Local STT: ${truncate(String(error), 150)}`);
+      // `signal` aborts only on teardown; any other abort is the timeout.
+      if (isAbortError(error) && !signal.aborted)
+        throw new Error(`request timed out after ${LOCAL_STT_FETCH_TIMEOUT_MS / 1000}s`);
+      throw error;
     }
-  }
 
-  async stop() {
-    if (!this.isRunning && !this.unlistenAudio && !this.processingInterval) {
-      return;
+    // fetchWithTimeout stops watching `signal` and its timer once headers arrive, so bound the body read here:
+    // a server that stalls mid-body must not pin the pipeline past stop() or forever. On abort or timeout the
+    // body is cancelled too, so the connection and the pending read are released instead of left running.
+    const reader = res.body?.getReader();
+    let raw: string;
+    try {
+      raw = await raceWithTimeoutAndAbort(
+        reader ? readBodyText(reader) : res.text(),
+        LOCAL_STT_FETCH_TIMEOUT_MS,
+        "response body timed out",
+        signal,
+      );
+    } catch (error) {
+      void reader?.cancel().catch(() => {});
+      throw error;
     }
-    await this.teardownPipeline();
-    this.receiver.onStop();
-  }
-
-  dispose() {
-    void this.stop();
+    if (!res.ok) {
+      const hint = truncateForUi(raw, 120);
+      throw new Error(hint ? `HTTP ${res.status}: ${hint}` : `HTTP ${res.status}`);
+    }
+    let json: { text?: string; error?: { message?: string } };
+    try {
+      json = (JSON.parse(raw) ?? {}) as typeof json;
+    } catch {
+      throw new Error("server returned non-JSON response.");
+    }
+    if (json.error?.message)
+      throw new Error(json.error.message);
+    return json.text ?? "";
   }
 }

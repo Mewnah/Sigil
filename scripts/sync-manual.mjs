@@ -1,6 +1,7 @@
 /**
  * Copies docs/manual → public/manual so the in-app Help viewer and static server
  * can fetch markdown and assets at /manual/...
+ * Also copies consolidated reference docs to public/docs/ and root stubs to public/.
  */
 import fs from "fs";
 import path from "path";
@@ -28,14 +29,10 @@ function copyRecursive(from, to) {
   }
 }
 
-copyRecursive(src, dest);
-
-const backendsSrc = path.join(root, "docs", "BACKENDS.md");
-const backendsPublic = path.join(root, "public", "BACKENDS.md");
-if (fs.existsSync(backendsSrc)) {
-  fs.copyFileSync(backendsSrc, backendsPublic);
-  console.log("[sync-manual] Copied BACKENDS.md → public/BACKENDS.md");
+if (fs.existsSync(dest)) {
+  fs.rmSync(dest, { recursive: true });
 }
+copyRecursive(src, dest);
 
 const archSrc = path.join(root, "ARCHITECTURE.md");
 if (fs.existsSync(archSrc)) {
@@ -47,6 +44,37 @@ const readmeSrc = path.join(root, "README.md");
 if (fs.existsSync(readmeSrc)) {
   fs.copyFileSync(readmeSrc, path.join(root, "public", "repo-README.md"));
   console.log("[sync-manual] Copied README.md → public/repo-README.md");
+}
+
+const publicDocsDir = path.join(root, "public", "docs");
+fs.mkdirSync(publicDocsDir, { recursive: true });
+
+const consolidatedDocs = [
+  "OPERATOR_REFERENCE.md",
+  "DEVELOPER_GUIDE.md",
+  "RELEASE_AND_ENGINEERING.md",
+  "DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md",
+  "README.md",
+];
+
+for (const name of consolidatedDocs) {
+  const from = path.join(root, "docs", name);
+  if (fs.existsSync(from)) {
+    fs.copyFileSync(from, path.join(publicDocsDir, name));
+    console.log("[sync-manual] Copied docs/" + name + " → public/docs/" + name);
+  }
+}
+
+const obsoletePublic = [
+  path.join(root, "public", "BACKENDS.md"),
+  path.join(root, "public", "STT_RELIABILITY.md"),
+  path.join(root, "public", "docs", "NETWORK_THREAT_MODEL.md"),
+];
+for (const fp of obsoletePublic) {
+  if (fs.existsSync(fp)) {
+    fs.unlinkSync(fp);
+    console.log("[sync-manual] Removed obsolete", path.relative(root, fp));
+  }
 }
 
 console.log("[sync-manual] Synced", src, "→", dest);

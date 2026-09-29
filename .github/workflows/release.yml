@@ -19,15 +19,14 @@ jobs:
 
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: setup node
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 7.28.0
+          cache: "pnpm"
       - uses: SebRollen/toml-action@v1.0.1
         id: version
         with:
@@ -37,7 +36,7 @@ jobs:
       - name: setup rust
         uses: dtolnay/rust-toolchain@stable
       - name: setup pnpm deps
-        run: pnpm i
+        run: pnpm install
       - name: i18n key parity
         run: pnpm i18n:check
       - name: compile

@@ -42,7 +42,12 @@ export const BackendSchema = z.object({
   showOverlay: zSafe(z.coerce.boolean(), false),
   showLogs: zSafe(z.coerce.boolean(), false),
   muteSoundEffects: zSafe(z.coerce.boolean(), false),
+  /** Web Audio `deviceId` (getUserMedia: Deepgram fallback, browser builds). Never passed to cpal. */
   audioInputDevice: zSafe(z.string(), ""),
+  /** cpal input device name for Rust-captured STT (Whisper, Vosk, Moonshine, local HTTP STT); "" = system default. */
+  audioInputDeviceNative: zSafe(z.string(), ""),
+  /** Set once the legacy `audioInputDevice` → `audioInputDeviceNative` migration has run (or the user picked a device). */
+  audioInputDeviceNativeMigrated: zSafe(z.coerce.boolean(), false),
   audioOutputDevice: zSafe(z.string(), ""),
   onboardingComplete: zSafe(z.coerce.boolean(), false),
   showOverlayLogs: zSafe(z.coerce.boolean(), false),

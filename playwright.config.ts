@@ -1,6 +1,9 @@
 import type { PlaywrightTestConfig } from '@playwright/test';
 import { devices } from '@playwright/test';
 
+/** When `1`, CI runs `pnpm build` separately and only starts preview here (avoids double build). */
+const previewOnly = process.env.PW_PREVIEW_ONLY === '1';
+
 const config: PlaywrightTestConfig = {
   testDir: './tests',
   /* Maximum time one test can run for. */
@@ -39,7 +42,9 @@ const config: PlaywrightTestConfig = {
   ],
 
   webServer: {
-    command: 'pnpm run build && pnpm exec vite preview --port 4173 --strictPort',
+    command: previewOnly
+      ? 'pnpm exec vite preview --port 4173 --strictPort'
+      : 'pnpm run build && pnpm exec vite preview --port 4173 --strictPort',
     url: 'http://localhost:4173',
     timeout: 180 * 1000,
     reuseExistingServer: !process.env.CI,
