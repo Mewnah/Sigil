@@ -23,7 +23,7 @@ export const Service_Transform_Schema = z.object({
     // OpenRouter Config
     openRouterKey: zSafe(z.string(), ""),
     openRouterUrl: zSafe(z.string(), "https://openrouter.ai/api/v1"),
-    openRouterModel: zSafe(z.string(), "google/gemini-1.5-flash"),
+    openRouterModel: zSafe(z.string(), "google/gemini-2.5-flash-lite"),
 
     // Custom Config
     customKey: zSafe(z.string(), ""),

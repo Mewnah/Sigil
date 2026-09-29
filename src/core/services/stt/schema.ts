@@ -40,6 +40,8 @@ export const Service_STT_Schema = z.object({
     location: zSafe(z.coerce.string(), ""),
     profanity: zSafe(z.coerce.string(), "masked"),
     silenceTimeout: zSafe(zStringNumber(), "20"),
+    /** Silence (ms) that ends a phrase; lower = faster finals. Valid 100-5000; 0 = service default. */
+    segmentationSilenceMs: zSafe(zStringNumber(), "500"),
     interim: zSafe(z.coerce.boolean(), true),
   }).default({}),
   whisper: z.object({
@@ -58,7 +60,10 @@ export const Service_STT_Schema = z.object({
     device: zSafe(z.coerce.string(), "default"),
     language_group: zSafe(z.coerce.string(), "English"),
     language: zSafe(z.coerce.string(), "en-US"),
+    /** Legacy (pre-Nova) quality tier; unused once `model` is set. */
     tier: zSafe(z.coerce.string(), ""),
+    /** Deepgram model id sent as `model=` (e.g. nova-3, nova-2). */
+    model: zSafe(z.coerce.string(), "nova-3"),
     key: zSafe(z.coerce.string(), ""),
     punctuate: zSafe(z.coerce.boolean(), true),
     profanity: zSafe(z.coerce.boolean(), true),

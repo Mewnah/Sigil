@@ -52,6 +52,14 @@ export class STT_AzureService implements ISTTService {
       PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
       ((parseInt(state.azure.silenceTimeout) || 20) * 1000).toString()
     );
+    const segmentationMs = parseInt(state.azure.segmentationSilenceMs);
+    if (Number.isFinite(segmentationMs) && segmentationMs >= 100 && segmentationMs <= 5000) {
+      // Main knob for how fast a phrase is finalized (EndSilenceTimeoutMs is deprecated).
+      speechConfig.setProperty(
+        PropertyId.Speech_SegmentationSilenceTimeoutMs,
+        segmentationMs.toString()
+      );
+    }
     speechConfig.enableDictation();
 
     const langConfig = AutoDetectSourceLanguageConfig.fromLanguages(state.azure.secondary_language && state.azure.use_secondary_language ? 

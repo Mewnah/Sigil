@@ -13,7 +13,8 @@ export class TTS_UberduckService implements ITTSService {
   }
 
   start(state: TTS_State): void {
-    if (Object.values(this.state).some(isEmptyValue))
+    // The v1 API only needs the API key and a voice; secret_key and device are optional.
+    if (isEmptyValue(this.state.api_key) || isEmptyValue(this.state.voice))
       return this.bindings.onStop("Options missing");
     this.bindings.onStart();
   }
@@ -25,7 +26,7 @@ export class TTS_UberduckService implements ITTSService {
           secret_key: this.state.secret_key,
         },
         text: value,
-        device_name: "Headphones (Realtek(R) Audio)",
+        device_name: this.state.device,
         volume: parseFloat(this.state.volume) || 1,
         voicemodel_uuid: this.state.voice,
       },

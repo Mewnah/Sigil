@@ -160,9 +160,9 @@ const Deepgram: FC = () => {
       library={deepGramLangs} />
 
     <InputSelect options={[
-      { label: 'Base', value: 'base' },
-      { label: 'Enhanced', value: 'enhanced' },
-    ]} label="stt.deepgram_quality" value={pr.tier} onValueChange={e => up("tier", e)} />
+      { label: 'Nova-3', value: 'nova-3' },
+      { label: 'Nova-2', value: 'nova-2' },
+    ]} label="stt.deepgram_quality" value={pr.model || "nova-3"} onValueChange={e => up("model", e)} />
 
     <span className="text-base-content/60 text-xs">
       {t('stt.deepgram_quality_notice')}

@@ -8,6 +8,7 @@ import {
 
 type TranslatorInstance = {
   translate: (text: string) => Promise<string>;
+  destroy?: () => void;
 };
 
 type TranslatorCtor = {
@@ -17,11 +18,15 @@ type TranslatorCtor = {
   }) => Promise<TranslatorInstance>;
 };
 
+/** Built-in AI globals are interface objects (`typeof === "function"`), not plain objects. */
+function isCtorLike(v: unknown): v is object {
+  return (typeof v === "function" || typeof v === "object") && v !== null;
+}
+
 function getTranslatorCtor(): TranslatorCtor | undefined {
   const t = (globalThis as Record<string, unknown>)["Translator"];
   if (
-    typeof t === "object" &&
-    t !== null &&
+    isCtorLike(t) &&
     "create" in t &&
     typeof (t as TranslatorCtor).create === "function"
   ) {
@@ -41,8 +46,7 @@ type LanguageDetectorCtor = {
 function getLanguageDetectorCtor(): LanguageDetectorCtor | undefined {
   const d = (globalThis as Record<string, unknown>)["LanguageDetector"];
   if (
-    typeof d === "object" &&
-    d !== null &&
+    isCtorLike(d) &&
     "create" in d &&
     typeof (d as LanguageDetectorCtor).create === "function"
   ) {
@@ -55,6 +59,8 @@ function normalizeTag(code: string): string {
   return code.trim().toLowerCase().replace(/_/g, "-");
 }
 
+let sharedDetector: Promise<LanguageDetectorInstance> | null = null;
+
 async function firstDetectedLanguage(
   text: string,
   fallback: string
@@ -62,7 +68,9 @@ async function firstDetectedLanguage(
   const ctor = getLanguageDetectorCtor();
   if (!ctor) return fallback;
   try {
-    const det = await ctor.create();
+    // One detector per session: creating it can trigger a model download.
+    sharedDetector ??= ctor.create();
+    const det = await sharedDetector;
     if (typeof det.detect !== "function") return fallback;
     const raw = await det.detect(text);
 
@@ -84,9 +92,17 @@ async function firstDetectedLanguage(
       }
     }
   } catch {
-    // fall through
+    sharedDetector = null;
   }
   return fallback;
+}
+
+function destroyTranslator(t: TranslatorInstance | null): void {
+  try {
+    t?.destroy?.();
+  } catch {
+    // ignore
+  }
 }
 
 export class Translation_OnDeviceService implements ITranslationService {
@@ -154,6 +170,8 @@ export class Translation_OnDeviceService implements ITranslationService {
   stop(): void {
     this.#running = false;
     this.#cfg = null;
+    destroyTranslator(this.#fixedTranslator);
+    destroyTranslator(this.#dynamicTranslator);
     this.#fixedTranslator = null;
     this.#dynamicTranslator = null;
     this.#lastPair = "";
@@ -182,6 +200,8 @@ export class Translation_OnDeviceService implements ITranslationService {
         tr = fixed;
       } else {
         if (pair !== this.#lastPair || !this.#dynamicTranslator) {
+          destroyTranslator(this.#dynamicTranslator);
+          this.#dynamicTranslator = null;
           this.#dynamicTranslator = await ctor.create({
             sourceLanguage: source,
             targetLanguage: target,

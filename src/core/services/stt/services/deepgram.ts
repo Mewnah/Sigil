@@ -105,7 +105,7 @@ export class STT_DeepgramService implements ISTTService {
   #openSession(state: STT_State, stream: MediaStream): void {
       this.recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       this.socket = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?punctuate=${!!state.deepgram.punctuate}&interim_results=${!!state.deepgram.interim}&language=${state.deepgram.language}&tier=${state.deepgram.tier}`,
+        deepgramListenUrl(state),
         ["token", state.deepgram.key]
       );
 
@@ -181,4 +181,17 @@ export class STT_DeepgramService implements ISTTService {
     this.stopSocket();
     this.stopRecorder();
   }
+}
+
+/** Builds the streaming URL. Without `model=` Deepgram falls back to its legacy default model. */
+function deepgramListenUrl(state: STT_State): string {
+  const dg = state.deepgram;
+  const params = new URLSearchParams({
+    model: dg.model?.trim() || "nova-3",
+    language: dg.language,
+    punctuate: String(!!dg.punctuate),
+    interim_results: String(!!dg.interim),
+    profanity_filter: String(!!dg.profanity),
+  });
+  return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 }

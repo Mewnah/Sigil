@@ -50,11 +50,18 @@ async fn set_fish_endpoint<R: Runtime>(_app: AppHandle<R>, state: State<'_, Fish
     Ok(())
 }
 
-/// Get available models/voices from Fish Speech
+/// Reference voices saved on the fish-speech server (`GET /v1/references/list`).
+#[derive(Deserialize, Debug, Default)]
+struct ListReferencesResponse {
+    #[serde(default)]
+    reference_ids: Vec<String>,
+}
+
+/// Get available voices from Fish Speech: the built-in default plus saved reference voices.
 #[command]
 async fn get_fish_voices<R: Runtime>(_app: AppHandle<R>, state: State<'_, FishSpeechState>) -> Result<Vec<FishSpeechVoice>, String> {
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/v1/models", endpoint);
+    let url = format!("{}/v1/references/list", endpoint.trim_end_matches('/'));
 
     let response = http_client()
         .get(&url)
@@ -62,17 +69,19 @@ async fn get_fish_voices<R: Runtime>(_app: AppHandle<R>, state: State<'_, FishSp
         .await
         .map_err(|e| format!("Failed to connect to Fish Speech: {}", e))?;
 
-    if !response.status().is_success() {
-        // Return default voice if models endpoint not available
-        return Ok(vec![FishSpeechVoice {
-            id: "default".to_string(),
-            name: "Default".to_string(),
-            language: "en".to_string(),
-        }]);
+    let mut voices = vec![FishSpeechVoice {
+        id: "default".to_string(),
+        name: "Default".to_string(),
+        language: "auto".to_string(),
+    }];
+    if response.status().is_success() {
+        let list: ListReferencesResponse = response.json().await.unwrap_or_default();
+        voices.extend(list.reference_ids.into_iter().map(|id| FishSpeechVoice {
+            name: id.clone(),
+            id,
+            language: "auto".to_string(),
+        }));
     }
-
-    let voices: Vec<FishSpeechVoice> = response.json().await.unwrap_or_else(|_| vec![]);
-
     Ok(voices)
 }
 
@@ -89,11 +98,12 @@ async fn fish_speak<R: Runtime>(
     }
 
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/v1/tts", endpoint);
+    let url = format!("{}/v1/tts", endpoint.trim_end_matches('/'));
 
     let request_body = SynthesizeRequest {
         text,
-        reference_id,
+        // "default" is the synthetic entry from get_fish_voices, not a saved reference.
+        reference_id: reference_id.filter(|id| !id.is_empty() && id != "default"),
         reference_audio: None,
         reference_text: None,
         normalize: Some(true),
@@ -123,7 +133,7 @@ async fn fish_speak<R: Runtime>(
 #[command]
 async fn check_fish_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_, FishSpeechState>) -> Result<bool, String> {
     let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/v1/models", endpoint);
+    let url = format!("{}/v1/health", endpoint.trim_end_matches('/'));
 
     match http_client().get(&url).send().await {
         Ok(response) => Ok(response.status().is_success()),

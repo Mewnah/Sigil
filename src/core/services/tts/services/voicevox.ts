@@ -88,10 +88,15 @@ export class TTS_VoicevoxService implements ITTSService {
       const audioQuery: AudioQuery = await queryResponse.json();
 
       // Apply user settings to the query
-      audioQuery.speedScale = parseFloat(speedScale) || 1.0;
-      audioQuery.pitchScale = parseFloat(pitchScale) || 0.0;
-      audioQuery.intonationScale = parseFloat(intonationScale) || 1.0;
-      audioQuery.volumeScale = parseFloat(volumeScale) || 1.0;
+      // 0 is a valid intonation/volume/pitch value, so only fall back on non-numbers.
+      const num = (v: string, fallback: number) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : fallback;
+      };
+      audioQuery.speedScale = num(speedScale, 1.0) || 1.0;
+      audioQuery.pitchScale = num(pitchScale, 0.0);
+      audioQuery.intonationScale = num(intonationScale, 1.0);
+      audioQuery.volumeScale = num(volumeScale, 1.0);
 
       // Step 2: Synthesize audio
       const synthesisResponse = await fetchWithTimeout(

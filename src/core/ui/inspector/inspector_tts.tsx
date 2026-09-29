@@ -281,7 +281,7 @@ const VoiceVox: FC = () => {
       value={data.pitchScale}
       onChange={e => handleUpdate("pitchScale", e.target.value)}
       label="Pitch"
-      step="0.1"
+      step="0.01"
       min="-0.15"
       max="0.15"
     />
@@ -317,7 +317,7 @@ const UberDuck: FC = () => {
   const [loadingVoices, setLoadingVoices] = useState(false);
 
   const loadVoices = () => {
-    if (!data.api_key || !data.secret_key)
+    if (!data.api_key)
       return;
     setLoadingVoices(true);
     invoke("plugin:uberduck-tts|get_voices", {
@@ -339,8 +339,7 @@ const UberDuck: FC = () => {
     <Inspector.SubHeader>{t('tts.uberduck_title')}</Inspector.SubHeader>
     <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
       <InputNativeAudioOutput label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
-      <InputText label="tts.uberduck_api_key" value={data.api_key} onChange={e => handleUpdate("api_key", e.target.value)} />
-      <InputText label="tts.uberduck_secret" type="password" value={data.secret_key} onChange={e => handleUpdate("secret_key", e.target.value)} />
+      <InputText label="tts.uberduck_api_key" type="password" value={data.api_key} onChange={e => handleUpdate("api_key", e.target.value)} />
       <Inspector.Description>
         <span className="text-base-content/60 text-xs mt-2">
           {t('tts.uberduck_voice_desc')}<br />
@@ -352,7 +351,7 @@ const UberDuck: FC = () => {
         onValueChange={e => handleUpdate("voice", e)}
         options={voices as InputSelectOption[]}
         label="tts.field_voice" />
-      <button onClick={loadVoices} className={classNames("btn btn-xs disabled", { loading: loadingVoices, "btn-disabled": !data.api_key || !data.secret_key })}>{loadingVoices ? t('tts.uberduck_voice_status_updating') : t('tts.uberduck_voice_status_reload')}</button>
+      <button onClick={loadVoices} className={classNames("btn btn-xs disabled", { loading: loadingVoices, "btn-disabled": !data.api_key })}>{loadingVoices ? t('tts.uberduck_voice_status_updating') : t('tts.uberduck_voice_status_reload')}</button>
       <InputRange label="common.field_volume" value={data.volume} onChange={e => handleUpdate("volume", e.target.value)} step="0.05" min="0" max="1" />
     </Inspector.Deactivatable>
   </>
