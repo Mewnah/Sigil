@@ -1,0 +1,20 @@
+# Whisper whole-utterance hallucinations: Spanish. Format: see en.txt.
+subtítulos realizados por la comunidad de amara.org
+subtítulos por la comunidad de amara.org
+subtítulos realizados por*
+subtítulos por*
+subtitulado por*
+~gracias por ver
+~gracias por ver el video
+~gracias por ver el vídeo
+~muchas gracias por ver el video
+~muchas gracias por ver el vídeo
+~suscríbete
+~suscríbete al canal
+~suscríbete a mi canal
+~no olvides suscribirte
+~no olvides suscribirte al canal
+~nos vemos en el próximo video
+~nos vemos en el próximo vídeo
+~gracias
+~muchas gracias

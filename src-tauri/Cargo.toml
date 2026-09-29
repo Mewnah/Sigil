@@ -3,7 +3,7 @@ name = "sigil"
 version = "0.4.0-1"
 description = "Sigil desktop application"
 authors = ["Sigil contributors", "Mewnah"]
-license = ""
+license = "AGPL-3.0-only"
 repository = "https://github.com/Mewnah/Sigil"
 edition = "2021"
 rust-version = "1.88"
@@ -35,6 +35,13 @@ windows = { version = "0.61", features = [
   "Win32_System_Com",
   "Win32_System_Ole",
   "Win32_System_WindowsProgramming",
+  # P0-S0: helper-process Job Objects (P1 process host), DXGI adapter / VRAM probe (P0-H),
+  # parent-console attach for `--headless` (cli), lazy DLL loading + AddDllDirectory (P0-H, rt_thread).
+  "Win32_System_JobObjects",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_System_Console",
+  "Win32_System_LibraryLoader",
 ] }
 clap = { version = "4.4", features = ["derive"] }
 local-ip-address = "0.4.9"
@@ -61,6 +68,10 @@ tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-fs = "2"
 rtrb = "0.3"
+# Diagnostics file log (P0-H): `log` crate bridge; the 10 MB x 5 rotating sink is in-house
+# (diagnostics/logging.rs), because tracing-appender only rotates by time. No ANSI / env-filter deps.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "registry", "smallvec", "tracing-log"] }
 
 [profile.release]
 lto = true

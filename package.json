@@ -12,9 +12,11 @@
     "i18n:sync": "node scripts/sync-i18n-missing.mjs",
     "i18n:report": "node scripts/i18n-report-untranslated.mjs",
     "i18n:translate": "python scripts/build-translations.py",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:release": "tauri build --config scripts/release/tauri.release.conf.json"
   },
   "dependencies": {
     "@ebay/nice-modal-react": "^1.2.13",
@@ -94,6 +96,7 @@
     "rollup-plugin-visualizer": "^5.14.0",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vitest": "^3.2.7"
   }
 }

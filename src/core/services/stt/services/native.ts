@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import { isEmptyValue } from "@/utils";
 import { isTauri } from "@tauri-apps/api/core";
 import { STT_State } from "../schema";
@@ -51,7 +52,7 @@ export class STT_NativeService implements ISTTService {
     this.#shouldRestartAfterEnd = true;
 
     if (Object.values(state.native).some(isEmptyValue)) {
-      this.bindings.onStop("Options missing");
+      this.bindings.onStop(i18n.t("stt.error_native_options"));
       return;
     }
 
@@ -59,9 +60,7 @@ export class STT_NativeService implements ISTTService {
       window.webkitSpeechRecognition ||
       (window as unknown as { SpeechRecognition?: typeof window.webkitSpeechRecognition }).SpeechRecognition;
     if (!SpCtor) {
-      this.bindings.onStop(
-        "Web Speech API is not available in this app (try Whisper or Vosk in the desktop build).",
-      );
+      this.bindings.onStop(i18n.t("stt.error_native_unavailable"));
       return;
     }
 
@@ -85,9 +84,7 @@ export class STT_NativeService implements ISTTService {
         const err = error as { error?: string };
         if (err.error === "no-speech") return;
         if (err.error === "network" && isTauri()) {
-          this.stop(
-            "Web Speech is not supported in the desktop app. Use Whisper, Vosk, or the Chrome / Edge external mic instead.",
-          );
+          this.stop(i18n.t("stt.error_native_desktop"));
           return;
         }
         this.stop(err.error);

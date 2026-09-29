@@ -20,6 +20,8 @@ jobs:
       - run: pnpm install
       - run: pnpm i18n:check
       - run: pnpm typecheck
+      - name: Unit tests (vitest)
+        run: pnpm test:unit
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - name: Playwright smoke

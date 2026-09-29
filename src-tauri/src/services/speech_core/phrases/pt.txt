@@ -1,0 +1,17 @@
+# Whisper whole-utterance hallucinations: Portuguese. Format: see en.txt.
+legendas pela comunidade amara.org
+legendas pela comunidade de amara.org
+legendas pela*
+legenda adriana zanotto
+legenda adriana*
+legendado por*
+~obrigado por assistir
+~obrigada por assistir
+~obrigado por assistirem
+~muito obrigado por assistir
+~inscreva-se
+~inscreva-se no canal
+~até o próximo vídeo
+~obrigado
+~obrigada
+~tchau

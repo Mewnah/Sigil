@@ -12,8 +12,10 @@ import {
   SpeechConfig,
   SpeechRecognizer,
 } from "microsoft-cognitiveservices-speech-sdk";
+import i18n from "i18next";
 import { isEmptyValue } from "../../../../utils";
 import { STT_State } from "../schema";
+import { azureSegmentationSilenceMs } from "../sttOptions";
 
 export class STT_AzureService implements ISTTService {
   constructor(private bindings: ISTTReceiver) {}
@@ -33,7 +35,7 @@ export class STT_AzureService implements ISTTService {
       isEmptyValue(az.location) ||
       isEmptyValue(az.language)
     )
-      return this.bindings.onStop("Options missing");
+      return this.bindings.onStop(i18n.t("stt.error_azure_options"));
 
     const speechConfig = SpeechConfig.fromSubscription(
       state.azure.key,
@@ -52,8 +54,8 @@ export class STT_AzureService implements ISTTService {
       PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
       ((parseInt(state.azure.silenceTimeout) || 20) * 1000).toString()
     );
-    const segmentationMs = parseInt(state.azure.segmentationSilenceMs);
-    if (Number.isFinite(segmentationMs) && segmentationMs >= 100 && segmentationMs <= 5000) {
+    const segmentationMs = azureSegmentationSilenceMs(state.azure.segmentationSilenceMs);
+    if (segmentationMs !== null) {
       // Main knob for how fast a phrase is finalized (EndSilenceTimeoutMs is deprecated).
       speechConfig.setProperty(
         PropertyId.Speech_SegmentationSilenceTimeoutMs,

@@ -1,6 +1,10 @@
 import { ServiceNetworkState } from "@/types";
+import { isTauri } from "@tauri-apps/api/core";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
+import { diagnosticsApi } from "./diagnostics/api";
+import { startDiagnosticsBridge } from "./diagnostics/bridge";
+import { RateLimiter } from "./diagnostics/format";
 import { SttMuteState } from "./stt/types";
 
 export type SystemLogLevel = "info" | "success" | "warning" | "error";
@@ -20,12 +24,37 @@ export const systemLogState = proxy({
   nextId: 1,
 });
 
-export function pushSystemLog(tag: string, message: string, level: SystemLogLevel = "info") {
+/** At most 30 system-log lines per 10 s are copied into the Rust file log (a stuck error loop must not flood it). */
+const fileLogLimiter = new RateLimiter(30, 10_000);
+let fileLogAvailable: boolean | null = null;
+
+/** Copy a system-log line into Sigil's file log (desktop only, best effort, never throws). */
+function writeToFileLog(tag: string, message: string, level: SystemLogLevel) {
+  if (fileLogAvailable === null) fileLogAvailable = isTauri();
+  if (!fileLogAvailable || !fileLogLimiter.allow()) return;
+  const rustLevel = level === "error" ? "error" : level === "warning" ? "warning" : "info";
+  diagnosticsApi.logFromFrontend(rustLevel, tag, message).catch(() => {
+    // Older backend without the command, or the IPC is gone during shutdown.
+  });
+}
+
+/**
+ * Add a line to the in-app system log. Lines are also written to the file log
+ * (`%LOCALAPPDATA%\com.sigil.app\logs\sigil.log`) unless `options.fileLog` is false (used for
+ * lines that came from Rust and are already there).
+ */
+export function pushSystemLog(
+  tag: string,
+  message: string,
+  level: SystemLogLevel = "info",
+  options?: { fileLog?: boolean },
+) {
   const id = systemLogState.nextId++;
   systemLogState.entries.push({ id, at: Date.now(), tag, message, level });
   if (systemLogState.entries.length > MAX_ENTRIES) {
     systemLogState.entries.splice(0, systemLogState.entries.length - MAX_ENTRIES);
   }
+  if (options?.fileLog !== false) writeToFileLog(tag, message, level);
 }
 
 function humanStatus(s: ServiceNetworkState): string {
@@ -66,6 +95,14 @@ function wireNetworkService(tag: string, state: { status: ServiceNetworkState; e
 export function initSystemLogListeners() {
   const api = window.ApiServer;
   if (!api) return;
+
+  // Rust warnings/errors, execution-provider outcomes (CUDA / DirectML / CPU in use) and the GPU
+  // probe show up here too (desktop only).
+  if (isTauri()) {
+    startDiagnosticsBridge(pushSystemLog).catch((e) => {
+      pushSystemLog("Diagnostics", `Diagnostics bridge unavailable: ${e instanceof Error ? e.message : String(e)}`, "warning");
+    });
+  }
 
   pushSystemLog(
     "System",

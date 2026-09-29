@@ -1,103 +1,53 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ITTSReceiver, ITTSService } from "../types";
+import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
+import { ClipTtsBackend } from "../clipBackend";
+import { finiteOr, positiveOr } from "../num";
 
-export class TTS_ChatterboxService implements ITTSService {
-    #receiver: ITTSReceiver;
-    #endpoint: string = "http://localhost:5555";
-    #voice: string = "default";
-    #speed: number = 1.0;
-    #exaggeration: number = 0.5;
-    #audioContext: AudioContext | null = null;
-    #isRunning: boolean = false;
+/** Chatterbox TTS HTTP server through the `chatterbox-tts` plugin. */
+export class TTS_ChatterboxService extends ClipTtsBackend {
+    #endpoint = "http://localhost:5555";
+    #voice = "default";
+    #speed = 1.0;
+    #exaggeration = 0.5;
 
     constructor(receiver: ITTSReceiver) {
-        this.#receiver = receiver;
+        super(receiver, "Chatterbox");
     }
 
-    async start(data: TTS_State): Promise<void> {
+    protected async connect(data: TTS_State): Promise<string | null> {
         const config = data.chatterbox;
-        this.#endpoint = config.endpoint;
+        this.#endpoint = config.endpoint.trim();
         this.#voice = config.voice;
-        this.#speed = parseFloat(config.speed);
-        this.#exaggeration = parseFloat(config.exaggeration);
+        this.#speed = positiveOr(config.speed, 1);
+        this.#exaggeration = finiteOr(config.exaggeration, 0.5);
 
-        try {
-            await invoke("plugin:chatterbox-tts|set_chatterbox_endpoint", {
-                endpoint: this.#endpoint,
-            });
-
-            const isAvailable = await invoke<boolean>("plugin:chatterbox-tts|check_chatterbox_availability");
-            if (!isAvailable) {
-                this.#receiver.onStop(
-                    `Chatterbox not available at ${this.#endpoint}. Start with: docker compose up -d`
-                );
-                return;
-            }
-
-            this.#audioContext = new AudioContext();
-            this.#isRunning = true;
-            this.#receiver.onStart();
-            devLog("[Chatterbox] Service started");
-        } catch (error) {
-            console.error("[Chatterbox] Failed to start:", error);
-            this.#receiver.onStop(String(error));
+        await invoke("plugin:chatterbox-tts|set_chatterbox_endpoint", { endpoint: this.#endpoint });
+        const isAvailable = await invoke<boolean>("plugin:chatterbox-tts|check_chatterbox_availability", {
+            endpoint: this.#endpoint,
+        });
+        if (!isAvailable) {
+            return `Chatterbox not available at ${this.#endpoint}. Start with: docker compose up -d`;
         }
+        devLog("[Chatterbox] Service started");
+        return null;
     }
 
-    stop(): void {
-        this.#isRunning = false;
-        if (this.#audioContext) {
-            this.#audioContext.close();
-            this.#audioContext = null;
-        }
+    protected synthesize(text: string) {
+        return invoke<number[]>("plugin:chatterbox-tts|chatterbox_speak", {
+            text,
+            voice: this.#voice,
+            speed: this.#speed,
+            exaggeration: this.#exaggeration,
+            endpoint: this.#endpoint,
+        });
     }
 
-    async play(text: string): Promise<void> {
-        if (!this.#isRunning || !text.trim()) return;
-
-        try {
-            const audioBytes = await invoke<number[]>("plugin:chatterbox-tts|chatterbox_speak", {
-                text,
-                voice: this.#voice,
-                speed: this.#speed,
-                exaggeration: this.#exaggeration,
-            });
-
-            if (!audioBytes || audioBytes.length === 0) return;
-
-            const uint8Array = new Uint8Array(audioBytes);
-            await this.playAudio(uint8Array);
-        } catch (error) {
-            console.error("[Chatterbox] Speech error:", error);
-        }
-    }
-
-    private async playAudio(audioData: Uint8Array): Promise<void> {
-        if (!this.#audioContext) this.#audioContext = new AudioContext();
-
-        try {
-            const audioBuffer = await this.#audioContext.decodeAudioData(audioData.buffer.slice(0) as ArrayBuffer);
-            const source = this.#audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.#audioContext.destination);
-            source.start(0);
-        } catch (error) {
-            console.error("[Chatterbox] Playback error:", error);
-        }
-    }
-
-    dispose(): void {
-        this.stop();
-    }
-
+    /** Voices on the server at `endpoint`. Rejects when the server cannot be reached. */
     static async getVoices(endpoint: string = "http://localhost:5555"): Promise<{ id: string; name: string }[]> {
-        try {
-            await invoke("plugin:chatterbox-tts|set_chatterbox_endpoint", { endpoint });
-            return await invoke<{ id: string; name: string }[]>("plugin:chatterbox-tts|get_chatterbox_voices");
-        } catch {
-            return [];
-        }
+        return await invoke<{ id: string; name: string }[]>("plugin:chatterbox-tts|get_chatterbox_voices", {
+            endpoint: endpoint.trim(),
+        });
     }
 }

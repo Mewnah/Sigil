@@ -1,0 +1,14 @@
+# Tauri IPC commands of the `voice-changer` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+get_voice_changer_params
+set_voice_changer_params
+set_voice_changer_enabled
+start_voice_changer
+stop_voice_changer
+is_voice_changer_running
+get_voice_changer_metrics
+voice_changer_push_aux_pcm
+voice_changer_push_aux_wav
+capture_voice_changer_debug
+list_voice_changer_model_slots

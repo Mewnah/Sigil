@@ -9,6 +9,7 @@ import {
 } from "./provider";
 import AppConfiguration from "@/config";
 import { getApiClient, getApiShared, getConfig } from "@/runtime/host";
+import { sanitizeClientPubSubFrame } from "@/shared/services/pubsub/inbound";
 
 class Service_Peer implements IServiceInterface {
   #provider?: PeerProvider;
@@ -82,8 +83,13 @@ class Service_Peer implements IServiceInterface {
       if (e instanceof CustomEvent) try {
         if (e.detail.topic === "peers:init_data")
           this.onConfigReceived?.(e.detail.data);
-        else
-          getApiShared().pubsub.publishLocally(e.detail);
+        else {
+          // Frames from the host are still validated: text.* must match TextEventSchema, emotes keep
+          // only safe CDN URLs and markup in the text is neutralized; other topics pass through.
+          const frame = sanitizeClientPubSubFrame(e.detail);
+          if (frame)
+            getApiShared().pubsub.publishLocally(frame);
+        }
       } catch (error) {
         console.error(error)
       }

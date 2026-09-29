@@ -1,13 +1,11 @@
-import { TextEvent, TextEventType } from "@/types";
 import { devLog } from "@/utils/devLog";
+import i18n from "i18next";
+import { raceWithSignal } from "../abort";
 import { Translation_State } from "../schema";
-import {
-  ITranslationReceiver,
-  ITranslationService,
-} from "../types";
+import { ITranslationEngine, TranslationError, TranslationRequest } from "../types";
 
 type TranslatorInstance = {
-  translate: (text: string) => Promise<string>;
+  translate: (text: string, options?: { signal?: AbortSignal }) => Promise<string>;
   destroy?: () => void;
 };
 
@@ -15,6 +13,7 @@ type TranslatorCtor = {
   create: (opts: {
     sourceLanguage: string;
     targetLanguage: string;
+    signal?: AbortSignal;
   }) => Promise<TranslatorInstance>;
 };
 
@@ -97,7 +96,7 @@ async function firstDetectedLanguage(
   return fallback;
 }
 
-function destroyTranslator(t: TranslatorInstance | null): void {
+function destroyTranslator(t: TranslatorInstance | null | undefined): void {
   try {
     t?.destroy?.();
   } catch {
@@ -105,115 +104,116 @@ function destroyTranslator(t: TranslatorInstance | null): void {
   }
 }
 
-export class Translation_OnDeviceService implements ITranslationService {
-  #receiver: ITranslationReceiver;
-  #running = false;
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Translators kept alive with auto-detect (each holds a loaded model); the oldest is destroyed. */
+const MAX_CACHED_TRANSLATORS = 3;
+
+export class Translation_OnDeviceService implements ITranslationEngine {
   #cfg: Translation_State["onDevice"] | null = null;
-  /** Used when autoDetect is off */
-  #fixedTranslator: TranslatorInstance | null = null;
-  /** Recreated when source/target pair changes while autoDetect is on */
-  #dynamicTranslator: TranslatorInstance | null = null;
-  #lastPair = "";
+  /**
+   * One translator per `source|target` pair, created once and shared by concurrent calls (an interim
+   * and a final can overlap). Insertion order is least-recently-used first.
+   */
+  #translators = new Map<string, Promise<TranslatorInstance>>();
+  /** Aborted by stop(): cancels model downloads and translator creation. */
+  #lifetime = new AbortController();
 
-  constructor(receiver: ITranslationReceiver) {
-    this.#receiver = receiver;
-  }
-
-  dispose(): void {
-    this.stop();
-  }
-
-  start(state: Translation_State): void {
-    void this.#startAsync(state);
-  }
-
-  async #startAsync(state: Translation_State): Promise<void> {
+  async start(state: Translation_State, signal: AbortSignal): Promise<void> {
     const ctor = getTranslatorCtor();
-    if (!ctor) {
-      this.#receiver.onStop(
-        "On-device translation is not available in this WebView runtime. Try Microsoft Edge / Chrome with the Translator API enabled, or use LibreTranslate / Azure."
-      );
-      return;
-    }
+    if (!ctor) throw new Error(i18n.t("transl.ondevice_error_unavailable"));
 
     devLog("[Translation] Built-in Translator constructor present (experimental Web API)");
+    const cfg = { ...state.onDevice };
+    const source = normalizeTag(cfg.languageFrom);
+    const target = normalizeTag(cfg.language);
+    if (!target) throw new Error(i18n.t("transl.error_target_missing"));
 
-    this.#cfg = state.onDevice;
-    this.#fixedTranslator = null;
-    this.#dynamicTranslator = null;
-    this.#lastPair = "";
-
-    if (!state.onDevice.autoDetect) {
+    // Same source and target needs no translator: translate() passes such lines through.
+    if (!cfg.autoDetect && source !== target) {
+      // Created up front so a model download or an unsupported pair fails Start, not the first line.
       try {
-        const source = normalizeTag(state.onDevice.languageFrom);
-        const target = normalizeTag(state.onDevice.language);
-        this.#fixedTranslator = await ctor.create({
-          sourceLanguage: source,
-          targetLanguage: target,
-        });
-        this.#lastPair = `${source}|${target}`;
-        devLog("[Translation] On-device Translator ready:", this.#lastPair);
+        await raceWithSignal(this.#translatorFor(ctor, source, target), signal);
       } catch (e) {
-        this.#receiver.onStop(
-          `On-device translator failed to start (model download or unsupported language pair): ${e}`
-        );
-        return;
+        if (signal.aborted) throw e;
+        throw new Error(i18n.t("transl.ondevice_error_start", { error: errorText(e) }));
       }
-    } else if (!getLanguageDetectorCtor()) {
+      devLog("[Translation] On-device Translator ready:", `${source}|${target}`);
+    } else if (cfg.autoDetect && !getLanguageDetectorCtor()) {
       devLog("[Translation] LanguageDetector API missing; auto-detect will use configured source language");
     }
-
-    this.#running = true;
-    this.#receiver.onStart();
+    this.#cfg = cfg;
   }
 
   stop(): void {
-    this.#running = false;
     this.#cfg = null;
-    destroyTranslator(this.#fixedTranslator);
-    destroyTranslator(this.#dynamicTranslator);
-    this.#fixedTranslator = null;
-    this.#dynamicTranslator = null;
-    this.#lastPair = "";
-    this.#receiver.onStop("");
+    this.#lifetime.abort();
+    this.#lifetime = new AbortController();
+    const pending = [...this.#translators.values()];
+    this.#translators.clear();
+    for (const p of pending) void p.then(destroyTranslator, () => {});
   }
 
-  async translate(id: number, event: TextEvent): Promise<void> {
-    if (!this.#running || !this.#cfg || !event.value) return;
-    if (event.type === TextEventType.interim && !this.#cfg.interim) return;
-
+  async translate(request: TranslationRequest, signal: AbortSignal): Promise<string> {
+    const cfg = this.#cfg;
     const ctor = getTranslatorCtor();
-    if (!ctor) return;
+    if (!cfg || !ctor) throw new TranslationError(i18n.t("transl.error_not_running"), { retryable: false });
 
-    const target = normalizeTag(this.#cfg.language);
-    let source = normalizeTag(this.#cfg.languageFrom);
-    if (this.#cfg.autoDetect) {
-      source = await firstDetectedLanguage(event.value, source);
+    const target = normalizeTag(cfg.language);
+    let source = normalizeTag(cfg.languageFrom);
+    if (cfg.autoDetect) {
+      source = await raceWithSignal(firstDetectedLanguage(request.text, source), signal);
     }
+    // A line already in the target language (a bilingual speaker with auto-detect) is its own
+    // translation; the Translator API has no same-language translator and would reject the pair.
+    if (source === target) return request.text;
 
-    const pair = `${source}|${target}`;
+    let translator: TranslatorInstance;
     try {
-      let tr: TranslatorInstance;
-      if (!this.#cfg.autoDetect) {
-        const fixed = this.#fixedTranslator;
-        if (!fixed) return;
-        tr = fixed;
-      } else {
-        if (pair !== this.#lastPair || !this.#dynamicTranslator) {
-          destroyTranslator(this.#dynamicTranslator);
-          this.#dynamicTranslator = null;
-          this.#dynamicTranslator = await ctor.create({
-            sourceLanguage: source,
-            targetLanguage: target,
-          });
-          this.#lastPair = pair;
-        }
-        tr = this.#dynamicTranslator!;
-      }
-      const translated = await tr.translate(event.value);
-      this.#receiver.onTranslation(id, event, translated);
+      translator = await raceWithSignal(this.#translatorFor(ctor, source, target), signal);
     } catch (e) {
-      devLog("[Translation] On-device translate error:", e);
+      if (signal.aborted) throw e;
+      throw new TranslationError(i18n.t("transl.ondevice_error_pair", { pair: `${source} → ${target}`, error: errorText(e) }), {
+        retryable: false,
+      });
     }
+    try {
+      return await raceWithSignal(translator.translate(request.text, { signal }), signal);
+    } catch (e) {
+      if (signal.aborted) throw e;
+      throw new TranslationError(errorText(e));
+    }
+  }
+
+  #translatorFor(ctor: TranslatorCtor, source: string, target: string): Promise<TranslatorInstance> {
+    const pair = `${source}|${target}`;
+    const cached = this.#translators.get(pair);
+    if (cached) {
+      this.#translators.delete(pair);
+      this.#translators.set(pair, cached);
+      return cached;
+    }
+    const lifetime = this.#lifetime.signal;
+    const created = ctor.create({ sourceLanguage: source, targetLanguage: target, signal: lifetime }).then((t) => {
+      if (lifetime.aborted) {
+        // stop() ran while the model was loading.
+        destroyTranslator(t);
+        throw new DOMException("Aborted", "AbortError");
+      }
+      return t;
+    });
+    // A failed creation is forgotten so the next line retries it.
+    created.catch(() => {
+      if (this.#translators.get(pair) === created) this.#translators.delete(pair);
+    });
+    this.#translators.set(pair, created);
+    while (this.#translators.size > MAX_CACHED_TRANSLATORS) {
+      const [oldestPair, oldest] = this.#translators.entries().next().value as [string, Promise<TranslatorInstance>];
+      this.#translators.delete(oldestPair);
+      void oldest.then(destroyTranslator, () => {});
+    }
+    return created;
   }
 }

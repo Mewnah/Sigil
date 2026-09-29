@@ -259,11 +259,13 @@
       const selectLang = document.getElementById("select-lang");
       const selectDial = document.getElementById("select-dial");
 
+      // Always talk to the Sigil that served this page: its origin is what the server's Origin
+      // allow-list accepts, and a `?host=` override would let a crafted link send speech elsewhere.
       const q = new URLSearchParams(window.location.search.substring(1));
-      let host = location.hostname;
-      let port = location.port || (q.get("port") ?? "");
-      if (q.has("host")) host = q.get("host") || host;
-      if (q.has("port")) port = q.get("port") || port;
+      const portParam = q.get("port") || "";
+      const port = /^[0-9]{1,5}$/.test(portParam) ? portParam : location.port;
+      const pageHost = location.hostname || "127.0.0.1";
+      const host = pageHost.includes(":") && !pageHost.startsWith("[") ? `[${pageHost}]` : pageHost;
 
       let recognition = null;
       let isStreaming = false;
@@ -272,24 +274,55 @@
       const TOPIC_STT_CMD = "stt.external.command";
       const TOPIC_STT_STATE = "stt.external.state";
 
-      function sendExternalState(active) {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-          topic: TOPIC_STT_STATE,
-          data: { active }
-        }));
+      let ws = null;
+      let reconnectTimer = null;
+      let reconnectDelay = 1000;
+      let wasConnected = false;
+
+      function send(obj) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify(obj));
       }
 
-      const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=${Math.random()}-${Date.now()}`);
-      ws.onopen = () => console.log("Connected to WebSocket");
-      ws.onmessage = (msg) => {
-        try {
-          const raw = JSON.parse(msg.data);
-          if (raw.topic !== TOPIC_STT_CMD || !raw.data) return;
-          if (raw.data.cmd === "start") startStreaming();
-          else if (raw.data.cmd === "stop") stopStreaming();
-        } catch (_) { /* ignore */ }
-      };
+      function sendExternalState(active) {
+        send({
+          topic: TOPIC_STT_STATE,
+          data: { active }
+        });
+      }
+
+      // Reconnects with backoff, so the page recovers when Sigil restarts.
+      function connect() {
+        const socket = new WebSocket(`ws://${host}:${port}/pubsub?id=mic-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+        ws = socket;
+        socket.onopen = () => {
+          reconnectDelay = 1000;
+          wasConnected = true;
+          addLog("Connected to Sigil");
+          // After a reconnect, tell the host that recognition is still running.
+          if (isStreaming) sendExternalState(true);
+        };
+        socket.onmessage = (msg) => {
+          try {
+            const raw = JSON.parse(msg.data);
+            if (raw.topic !== TOPIC_STT_CMD || !raw.data) return;
+            if (raw.data.cmd === "start") startStreaming();
+            else if (raw.data.cmd === "stop") stopStreaming();
+          } catch (_) { /* ignore */ }
+        };
+        socket.onclose = () => {
+          if (ws !== socket) return;
+          ws = null;
+          if (wasConnected) {
+            wasConnected = false;
+            addLog("Disconnected from Sigil, reconnecting…");
+          }
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+        };
+      }
+      connect();
 
       buttonStart.onclick = toggleStreaming;
 
@@ -354,19 +387,17 @@
           // Sigil host expects the same shape as internal pubsub: topic + TextEvent data.
           const EVT_FINAL = 0;
           const EVT_INTERIM = 1;
-          if (ws.readyState === WebSocket.OPEN) {
-            if (interimTranscript) {
-              ws.send(JSON.stringify({
-                topic: "text.stt",
-                data: { type: EVT_INTERIM, value: interimTranscript, emotes: {} }
-              }));
-            }
-            if (finalTranscript) {
-              ws.send(JSON.stringify({
-                topic: "text.stt",
-                data: { type: EVT_FINAL, value: finalTranscript, emotes: {} }
-              }));
-            }
+          if (interimTranscript) {
+            send({
+              topic: "text.stt",
+              data: { type: EVT_INTERIM, value: interimTranscript, emotes: {} }
+            });
+          }
+          if (finalTranscript) {
+            send({
+              topic: "text.stt",
+              data: { type: EVT_FINAL, value: finalTranscript, emotes: {} }
+            });
           }
         };
 
@@ -385,7 +416,13 @@
         if (listElement.childElementCount >= 20)
           listElement.firstChild.remove();
         const newDiv = document.createElement("div");
-        newDiv.innerHTML = `<span class="event">System</span><span class="value">${message}</span>`;
+        const eventSpan = document.createElement("span");
+        eventSpan.className = "event";
+        eventSpan.textContent = "System";
+        const valueSpan = document.createElement("span");
+        valueSpan.className = "value";
+        valueSpan.textContent = String(message);
+        newDiv.append(eventSpan, valueSpan);
         listElement.append(newDiv);
       }
 

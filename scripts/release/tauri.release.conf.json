@@ -1,0 +1,16 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm build && node scripts/release/stage-native-dlls.mjs --prepare",
+    "beforeBundleCommand": "node scripts/release/stage-native-dlls.mjs --stage"
+  },
+  "bundle": {
+    "resources": {
+      "target/native-bundle": "."
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

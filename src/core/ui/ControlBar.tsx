@@ -25,6 +25,11 @@ interface ServiceCardProps {
     muted?: boolean;
     onToggle: () => void;
     onSettings?: () => void;
+    /** Engine status while connecting (e.g. a model download); shown as a compact chip. */
+    statusText?: string;
+    statusLevel?: "info" | "warning";
+    /** 0-100 while a download or copy reports progress, else null. */
+    progress?: number | null;
 }
 
 const ServiceCard: FC<ServiceCardProps> = memo(({
@@ -35,10 +40,17 @@ const ServiceCard: FC<ServiceCardProps> = memo(({
     muted,
     onToggle,
     onSettings,
+    statusText,
+    statusLevel,
+    progress,
 }) => {
     const isConnected = status === ServiceNetworkState.connected;
     const isConnecting = status === ServiceNetworkState.connecting;
     const isError = status === ServiceNetworkState.error;
+    const detail = isConnecting ? statusText?.trim() ?? "" : "";
+    const percent = isConnecting && progress !== null && progress !== undefined
+        ? Math.round(Math.max(0, Math.min(100, progress)))
+        : null;
 
     const statusColor = isError
         ? "border-error/50 bg-error/10"
@@ -67,6 +79,20 @@ const ServiceCard: FC<ServiceCardProps> = memo(({
 
             {/* Label */}
             <span className="text-sm font-medium min-w-[50px]">{label}</span>
+
+            {/* Connecting status (model download / load) */}
+            {(detail || percent !== null) && (
+                <span
+                    className={classNames(
+                        "text-xs max-w-[10rem] truncate",
+                        statusLevel === "warning" ? "text-warning" : "text-base-content/60"
+                    )}
+                    title={detail || undefined}
+                    role="status"
+                >
+                    {percent !== null ? `${percent}%` : detail}
+                </span>
+            )}
 
             {/* Toggle Button */}
             <Tooltip content={isConnected ? `Stop ${label}` : `Start ${label}`}>
@@ -149,6 +175,9 @@ const ControlBar: FC = memo(() => {
                     activeIcon={<RiMicOffFill />}
                     status={sttState.status}
                     muted={sttState.muted === SttMuteState.muted}
+                    statusText={sttState.statusText}
+                    statusLevel={sttState.statusLevel}
+                    progress={sttState.progress}
                     onToggle={handleToggleSTT}
                     onSettings={() => openSettings(Services.stt)}
                 />

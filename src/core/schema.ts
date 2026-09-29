@@ -36,6 +36,12 @@ const zodServiceSchemaFactory = <Data extends z.ZodTypeAny>(schema: Data) => {
 export const BackendSchema = z.object({
   id: zSafe(z.string(), () => customAlphabet(urlAlphabet, 42)()),
   linkAddress: zSafe(z.string(), ""),
+  /**
+   * LAN security stage 1 kill switch (P0-I). `true` (default): the local web server accepts /pubsub and
+   * /peer WebSocket upgrades only from Sigil's own origins (Tauri webview, dev server, pages it serves),
+   * which blocks cross-site WebSocket hijacking. `false` only to debug a client with an unexpected Origin.
+   */
+  lanOriginCheck: zSafe(z.boolean(), true),
   clientTheme: zSafe(z.string(), "sigil"),
   uiScale: zSafe(z.number(), 1),
   uiLanguage: zSafe(z.string(), "en"),

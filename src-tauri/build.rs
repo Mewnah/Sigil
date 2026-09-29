@@ -1,207 +1,109 @@
+//! Tauri build script: ACL manifests for the app commands and every inlined plugin.
+//!
+//! Plugin command lists are data-driven (P0-S0): each inlined plugin has one file
+//! `plugin-commands/<plugin-name>.txt` listing its IPC commands, one per line (`#` starts a
+//! comment). The file stem is the plugin name used in `Builder::new("<plugin-name>")` and in the
+//! capability id `"<plugin-name>:default"`. Every plugin gets `DefaultPermissionRule::AllowAllCommands`.
+//!
+//! To add a command: add the `#[command]`, list it in the plugin's `generate_handler!`, and add a
+//! line to `plugin-commands/<plugin-name>.txt`. A command missing here compiles fine but fails at
+//! runtime with a "not allowed" ACL error. A new plugin also needs its own
+//! `capabilities/<plugin-name>.json` granting `"<plugin-name>:default"` to the `main` window.
+//!
+//! The AppManifest list (commands registered directly in main.rs) stays inline below.
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
+
+const PLUGIN_COMMANDS_DIR: &str = "plugin-commands";
+
+/// Parse one `plugin-commands/<plugin>.txt` file: trimmed non-empty lines, `#` comments stripped.
+fn parse_command_list(plugin: &str, text: &str) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut commands = Vec::new();
+    for (line_no, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let valid = line
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && !line.starts_with(|c: char| c.is_ascii_digit());
+        if !valid {
+            panic!(
+                "{PLUGIN_COMMANDS_DIR}/{plugin}.txt:{}: invalid command name {line:?} (expected snake_case)",
+                line_no + 1
+            );
+        }
+        if !seen.insert(line.to_string()) {
+            panic!("{PLUGIN_COMMANDS_DIR}/{plugin}.txt:{}: duplicate command {line:?}", line_no + 1);
+        }
+        commands.push(line.to_string());
+    }
+    if commands.is_empty() {
+        // tauri-build emits no default permission for a plugin without commands, so its
+        // "<plugin>:default" capability entry would fail to resolve.
+        panic!("{PLUGIN_COMMANDS_DIR}/{plugin}.txt lists no commands");
+    }
+    commands
+}
+
+/// Read every `plugin-commands/*.txt` (sorted by plugin name) as `(plugin, commands)`.
+/// Strings are leaked because tauri-build takes `&'static` slices; this runs once per build.
+fn load_inlined_plugins() -> Vec<(&'static str, tauri_build::InlinedPlugin)> {
+    let dir = Path::new(PLUGIN_COMMANDS_DIR);
+    println!("cargo:rerun-if-changed={PLUGIN_COMMANDS_DIR}");
+    let mut files: Vec<_> = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {PLUGIN_COMMANDS_DIR}/: {e}"))
+        .map(|entry| entry.expect("plugin-commands entry").path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("txt"))
+        .collect();
+    files.sort();
+
+    let mut plugins = Vec::with_capacity(files.len());
+    for path in files {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let plugin = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| panic!("non-UTF-8 plugin command file name: {}", path.display()))
+            .to_string();
+        if plugin.is_empty()
+            || !plugin
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            panic!("{}: plugin names are lower-case kebab-case", path.display());
+        }
+        let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let commands: Vec<&'static str> = parse_command_list(&plugin, &text)
+            .into_iter()
+            .map(|c| -> &'static str { Box::leak(c.into_boxed_str()) })
+            .collect();
+        let commands: &'static [&'static str] = Vec::leak(commands);
+        let name: &'static str = Box::leak(plugin.into_boxed_str());
+        plugins.push((
+            name,
+            tauri_build::InlinedPlugin::new()
+                .commands(commands)
+                .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+        ));
+    }
+    plugins
+}
+
 fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new()
-            .app_manifest(
-                tauri_build::AppManifest::new()                .commands(&[
-                    "get_native_features",
-                    "get_port",
-                    "app_close",
-                    "oauth_loopback_start",
-                ]),
-            )
-            .plugins([
-                (
-                    "web",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["open_browser", "pubsub_broadcast", "config"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "osc",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["send", "bind_status"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "audio",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "play_async",
-                            "list_input_devices",
-                            "list_output_devices",
-                            "start_audio_capture",
-                            "stop_audio_capture",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "windows-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["speak", "get_voices"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "uberduck-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["speak", "get_voices"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "keyboard",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["start_tracking", "stop_tracking"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "uwu",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&["translate"])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "whisper",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "ensure_dependencies",
-                            "import_whisper_model",
-                            "cancel_whisper_download",
-                            "start_recording",
-                            "stop_recording",
-                            "feed_audio_chunk",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "translate",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_endpoint",
-                            "set_api_key",
-                            "get_languages",
-                            "translate",
-                            "detect_language",
-                            "check_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "kokoro-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_kokoro_endpoint",
-                            "get_kokoro_voices",
-                            "kokoro_speak",
-                            "check_kokoro_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "moonshine-stt",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_moonshine_endpoint",
-                            "moonshine_transcribe",
-                            "check_moonshine_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "melo-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_melo_endpoint",
-                            "get_melo_speakers",
-                            "melo_speak",
-                            "check_melo_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "chatterbox-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_chatterbox_endpoint",
-                            "get_chatterbox_voices",
-                            "chatterbox_speak",
-                            "check_chatterbox_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "fish-speech",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_fish_endpoint",
-                            "get_fish_voices",
-                            "fish_speak",
-                            "check_fish_availability",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "neural-onnx-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "neural_onnx_tts_set_execution_hint",
-                            "neural_onnx_tts_set_hub_id",
-                            "neural_onnx_tts_set_model_source",
-                            "neural_onnx_tts_set_local_package_format",
-                            "neural_onnx_tts_set_voice_speed",
-                            "neural_onnx_tts_load_model",
-                            "neural_onnx_tts_list_voices",
-                            "neural_onnx_tts_speak",
-                            "neural_onnx_tts_speak_into_voice_changer",
-                            "neural_onnx_tts_is_loaded",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "neural-sidecar-tts",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "set_neural_sidecar_tts_endpoint",
-                            "neural_sidecar_tts_speak",
-                            "neural_sidecar_tts_speak_into_voice_changer",
-                            "check_neural_sidecar_tts",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "voice-changer",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "get_voice_changer_params",
-                            "set_voice_changer_params",
-                            "set_voice_changer_enabled",
-                            "start_voice_changer",
-                            "stop_voice_changer",
-                            "is_voice_changer_running",
-                            "get_voice_changer_metrics",
-                            "voice_changer_push_aux_pcm",
-                            "voice_changer_push_aux_wav",
-                            "capture_voice_changer_debug",
-                            "list_voice_changer_model_slots",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-                (
-                    "vosk-stt",
-                    tauri_build::InlinedPlugin::new()
-                        .commands(&[
-                            "get_vosk_models",
-                            "check_vosk_native_availability",
-                            "set_vosk_model_path",
-                            "get_vosk_model_path",
-                            "vosk_native_transcribe",
-                            "download_vosk_model",
-                            "cancel_vosk_model_download",
-                            "import_vosk_model_zip",
-                            "vosk_model_zip_relative_path",
-                            "list_downloaded_vosk_models",
-                        ])
-                        .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-                ),
-            ]),
+            .app_manifest(tauri_build::AppManifest::new().commands(&[
+                "get_native_features",
+                "get_port",
+                "app_close",
+                "oauth_loopback_start",
+            ]))
+            .plugins(load_inlined_plugins()),
     )
     .expect("failed to run tauri-build");
 }

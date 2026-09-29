@@ -44,16 +44,23 @@ fn app_close(app_handle: tauri::AppHandle) {
     };
     app_handle.save_window_state(StateFlags::all()).ok(); // don't really care if it saves it
 
-    if let Err(_) = window.close() {
-        return app_handle.exit(0);
+    if window.close().is_err() {
+        app_handle.exit(0);
     }
 }
 
 fn main() {
+    // Headless entry points (`Sigil.exe --headless <cmd>`: EP probe, later bench / fetch / import
+    // worker) run before the port pre-check and never start Tauri, bind the port or show a dialog.
+    if let Some(headless) = services::cli::headless_args() {
+        std::process::exit(services::cli::run(headless));
+    }
+
     let args = InitArguments::parse();
 
-    // crash if port is not available
-    let port_availability = std::net::TcpListener::bind(format!("127.0.0.1:{}", args.port));
+    // crash if port is not available. Checks the same address the web plugin's server binds
+    // (0.0.0.0:<port>, all IPv4 interfaces), so the check matches what warp will do.
+    let port_availability = std::net::TcpListener::bind(format!("0.0.0.0:{}", args.port));
     match port_availability {
         Ok(l) => l.set_nonblocking(true).expect("Failed to set nonblocking"),
         Err(_err) => {
@@ -61,7 +68,7 @@ fn main() {
             unsafe {
                 MessageBoxA(
                     None,
-                    PCSTR(format!("Port {} is not available!", args.port).as_ptr()),
+                    PCSTR(format!("Port {} is not available!\0", args.port).as_ptr()),
                     s!("Sigil"),
                     MB_OK | MB_ICONWARNING,
                 );
@@ -71,6 +78,9 @@ fn main() {
     };
 
     tauri::Builder::default()
+        // Registered first: plugins initialize in registration order, so the diagnostics setup (file log,
+        // EcoQoS opt-out, EP probe) runs before every other plugin.
+        .plugin(services::diagnostics::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())

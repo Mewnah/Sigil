@@ -7,7 +7,9 @@ import { devLog } from "@/utils/devLog";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "../abort";
 import { toMonoFloat32 } from "../audioConvert";
-import { formatDownloadProgress, SttDownloadProgressPayload } from "../downloadProgress";
+import { SttDownloadProgressPayload } from "../downloadProgress";
+import { downloadStatus } from "../statusMessages";
+import i18n from "i18next";
 import { SttStartLifecycle } from "../localEngineLifecycle";
 import { loadVoskModel, VoskLoadedModel, VoskRecognizer } from "../loadVoskModel";
 
@@ -107,7 +109,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
         this.lifecycle.beginStart();
         try {
             devLog("[Vosk] Starting service...");
-            this.receiver.onInterim("Loading Vosk...");
+            this.receiver.onStatus(i18n.t("stt.status_vosk_loading"));
 
             const modelId = params.vosk.model || "vosk-model-small-en-us-0.15";
             const customUrl = params.vosk.modelUrl?.trim() || null;
@@ -116,15 +118,15 @@ export class STT_VoskService implements ISpeechRecognitionService {
                     ? params.vosk.localZipPath.trim()
                     : null;
 
-            this.receiver.onInterim(`Ensuring model on disk: ${modelId}...`);
+            this.receiver.onStatus(i18n.t("stt.status_vosk_model", { model: modelId }));
 
-            // Forward download progress as interim status: each update also re-arms the orchestrator's connecting
+            // Forward download progress as UI status: each update also re-arms the orchestrator's connecting
             // window, so a slow first download is not cut off while it is still advancing.
             this.unlistenProgress = await listenWithAbort<SttDownloadProgressPayload>(
                 "vosk:download_progress",
                 (event) => {
                     if (this.lifecycle.aborted) return;
-                    this.receiver.onInterim(formatDownloadProgress(event.payload));
+                    this.receiver.onStatus(...downloadStatus(event.payload));
                 },
                 this.startAbortSignal,
             );
@@ -147,7 +149,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
             const modelUrl = convertFileSrc(modelPath);
 
             devLog(`[Vosk] Loading model from ${modelPath}`);
-            this.receiver.onInterim(`Loading Vosk model (${modelId})...`);
+            this.receiver.onStatus(i18n.t("stt.status_vosk_loading_model", { model: modelId }));
 
             this.model = await loadVoskModel(modelUrl, this.startAbortSignal);
 
@@ -201,7 +203,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 return;
             }
 
-            this.receiver.onInterim("");
+            this.receiver.onStatus("");
             this.receiver.onStart();
             devLog("[Vosk] Recording started via Rust audio capture");
         } catch (error) {
@@ -212,6 +214,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
                 return;
             }
             console.error("[Vosk] Error starting:", error);
+            this.receiver.onStatus("");
             this.isRunning = false;
             this.#clearAudioListener();
             this.#teardownModelAndRecognizer();

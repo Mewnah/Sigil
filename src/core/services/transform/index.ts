@@ -1,179 +1,348 @@
+import { ErrorThrottle } from "@/core/services/tts/errorThrottle";
 import {
     IServiceInterface,
     ServiceNetworkState,
     TextEvent,
-    TextEventType,
     TextEventSource,
+    TextEventType,
 } from "@/types";
-import { serviceSubscibeToInput } from "@/utils";
+import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
-import { Transform_Backends } from "./schema";
-import { Transform_LLMService } from "./services/llm";
+import { i18nReady } from "../stt/statusMessages";
+import { pushSystemLog } from "../systemLog";
+import { raceWithSignal } from "../translation/abort";
+import { isCancelMarker } from "../translation/sequencer";
+import { OrderedQueue } from "./ordering";
+import { openRouterModelFor, Transform_Backends } from "./schema";
 import { Transform_DummyService } from "./services/dummy";
+import { Transform_LLMService } from "./services/llm";
 import {
-    ITransformReceiver,
-    ITransformService,
-    ITransformServiceConstructor,
+    ChatTurn,
+    ITransformEngine,
+    ITransformEngineConstructor,
+    TransformNotConfiguredError,
+    TransformRequestError,
 } from "./types";
 
-const backends: {
-    [k in Transform_Backends]: ITransformServiceConstructor;
-} = {
+export type TransformEngineMap = { [k in Transform_Backends]: ITransformEngineConstructor };
+
+export const TRANSFORM_ENGINES: TransformEngineMap = {
     [Transform_Backends.dummy]: Transform_DummyService,
     [Transform_Backends.openai]: Transform_LLMService,
 };
 
-class Service_Transform implements IServiceInterface, ITransformReceiver {
+/** Per line; the request is aborted (not just abandoned) when it expires. */
+export const TRANSFORM_TIMEOUT_MS = 15_000;
+/** Context sent with a line when context history is on (3 exchanges). */
+const HISTORY_TURNS = 6;
+const HISTORY_CAP = 20;
+
+export class TransformTimeoutError extends Error {
+    constructor(readonly timeoutMs: number) {
+        super(`timed out after ${timeoutMs / 1000} s`);
+        this.name = "TransformTimeoutError";
+    }
+}
+
+/** Abort reason for requests cut off by stop/restart: their lines are passed through quietly. */
+class TransformStopped extends Error {
+    constructor() {
+        super("stopped");
+        this.name = "AbortError";
+    }
+}
+
+/**
+ * How one STT final ends up, published in sentence order:
+ * - `ai`: the AI reply goes to text.transform and text.transform_source; the original to transform_raw.
+ * - `fallback`: the AI failed while running; the original text goes everywhere, so consumers keep
+ *   flowing (a notice explains why) instead of stalling on a "..." placeholder.
+ * - `passthrough`: AI is off, was stopped mid-line, or the line is STT's cancel marker; only the
+ *   synced topics (transform_source, transform_raw) get the original, to close their partials.
+ */
+type Outcome =
+    | { kind: "ai"; event: TextEvent; value: string }
+    | { kind: "fallback"; event: TextEvent }
+    | { kind: "passthrough"; event: TextEvent };
+
+function errorText(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+}
+
+/** Never empty, so a failed start that is not silent is always explained. */
+function startErrorText(e: unknown): string {
+    const detail = errorText(e).trim() || i18n.t("common.error_no_details") || "no details";
+    return i18n.t("transform.error_start_failed", { error: detail }) || `AI Transform could not start: ${detail}`;
+}
+
+class Service_Transform implements IServiceInterface {
     serviceState = proxy({
         status: ServiceNetworkState.disconnected,
         error: "",
     });
     private eventDisposers: (() => void)[] = [];
-    #id = 0; // Internal ID for AI requests (used by LLM service)
-    #currentSentenceId = 0; // Public ID for UI text tracking
 
-    #serviceInstance!: ITransformService;
+    #initialized = false;
+    #engine: ITransformEngine | null = null;
+    /** Bumped on every start and stop; async work of an older session must not touch state. */
+    #epoch = 0;
+    #startController: AbortController | null = null;
+    #inFlight = new Set<AbortController>();
+    /** Id of the sentence STT is currently speaking; attached to every transform_source/raw event. */
+    #sentenceId = 0;
+    /** Context for the AI: (source, reply) pairs in sentence order. */
+    #history: ChatTurn[] = [];
+    #errors = new ErrorThrottle();
+    #queue = new OrderedQueue<Outcome>((o) => this.#deliver(o));
+
+    constructor(private readonly engines: TransformEngineMap = TRANSFORM_ENGINES) {}
+
     get data() {
         return window.ApiServer.state.services.transform.data;
     }
 
-    #initialized = false;
-    // History buffer for Context Awareness (Last 5 exchanges)
-    #history: { role: "user" | "assistant", content: string }[] = [];
+    /** Lines waiting for an AI reply or for an earlier line (diagnostics and tests). */
+    get pendingLines(): number {
+        return this.#queue.pending;
+    }
 
     init(): void {
         if (this.#initialized) return;
         this.#initialized = true;
 
-        if (this.data.autoStart)
-            this.start();
-
         const subId = window.ApiShared.pubsub.subscribeText(
             TextEventSource.stt,
-            (e) => {
-                if (e) {
-                    if (e.type === TextEventType.final) {
-                        // Attach ID to final event
-                        const eventWithId = { ...e, id: this.#currentSentenceId };
-
-                        // ECHO AS INTERIM FIRST so UI sees original text immediately while AI processes
-                        // This fixes the "Blank screen while waiting for AI" issue
-                        window.ApiShared.pubsub.publishText(TextEventSource.transform_source, {
-                            ...eventWithId,
-                            type: TextEventType.interim // Masquerade as interim so UI accepts it (or final, but interim allows update later)
-                        });
-
-                        // Publish "THINKING" Indicator to Synced Raw
-                        window.ApiShared.pubsub.publishText(TextEventSource.transform_raw, {
-                            ...eventWithId,
-                            type: TextEventType.interim,
-                            value: eventWithId.value + " ..."
-                        });
-
-                        // Prepare Context History for LLM (if enabled)
-                        const history = this.data.contextHistory ? this.#history.slice(-6) : [];
-
-                        this.transform(eventWithId, history);
-
-                        // Increment ID for NEXT sentence
-                        this.#currentSentenceId++;
-                    } else {
-                        // Pass interim events directly to transform_source for instant feedback
-                        // Attach current ID
-                        window.ApiShared.pubsub.publishText(TextEventSource.transform_source, { ...e, id: this.#currentSentenceId });
-                    }
-                }
-            }
+            (e) => e && this.#onStt(e)
         );
         this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(subId));
-    }
 
-    #setStatus(value: ServiceNetworkState) {
-        this.serviceState.status = value;
-    }
-
-    // #region ITransformReceiver
-    onStart(): void {
-        this.#setStatus(ServiceNetworkState.connected);
-    }
-    onStop(error: string): void {
-        if (error) {
-            toast(error, { type: "error", autoClose: false });
-            this.serviceState.error = error;
-        }
-        this.#setStatus(ServiceNetworkState.disconnected);
-    }
-
-    onTransform(id: number, e: TextEvent, value: string): void {
-        window.ApiShared.pubsub.publishText(TextEventSource.transform, {
-            value,
-            type: e.type,
+        const streamSub = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
+            if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected)
+                this.stop();
         });
-        // Publish the AI RESULT to transform_source (replacing the original)
-        // Use the ID from the original event (e.id) which we attached in init()
-        window.ApiShared.pubsub.publishText(TextEventSource.transform_source, {
-            ...e,
-            value: value,
-            id: e.id // Ensure we target the same sentence
-        });
+        this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(streamSub));
 
-        // Publish ORIGINAL RAW text to transform_raw (Synced Timing)
-        // This allows a secondary element to show the raw text EXACTLY when the AI text updates
-        window.ApiShared.pubsub.publishText(TextEventSource.transform_raw, {
-            ...e,
-            type: TextEventType.final, // Force final as this is the committed raw text
-            value: e.value, // Original Raw Value
-            id: e.id
-        });
+        this.#migrateSettings();
 
-        // Update History Buffer
-        this.#history.push({ role: "user", content: e.value });
-        this.#history.push({ role: "assistant", content: value });
-        // Cap history at 20 items to prevent memory bloat
-        if (this.#history.length > 20) {
-            this.#history = this.#history.slice(-20);
+        if (this.data.autoStart) {
+            // Host services init before i18next, whose t() returns nothing until then; a start error
+            // worded that early would be empty. A start or stop by the user in the meantime wins.
+            const epoch = this.#epoch;
+            void i18nReady().then(() => {
+                if (epoch === this.#epoch && this.#initialized && this.data.autoStart) this.start({ auto: true });
+            });
         }
     }
-    // #endregion
+
+    /**
+     * One-time fixes of stored values. The whole state is saved with its defaults, so a changed
+     * default never reaches existing installs: the retired OpenRouter default is rewritten here (the
+     * request path maps it as well, see resolveProvider) so the inspector shows what is sent.
+     */
+    #migrateSettings() {
+        const stored = this.data.openRouterModel;
+        const current = openRouterModelFor(stored);
+        if (current !== stored.trim()) {
+            window.ApiServer.patchService("transform", (s) => {
+                s.data.openRouterModel = current;
+            });
+        }
+    }
+
+    /**
+     * @param options.auto true for the launch-time auto start, which stays silent when the provider is
+     *   simply not set up yet; a start the user asked for explains what is missing.
+     */
+    start(options: { auto?: boolean } = {}) {
+        this.#teardown();
+        const epoch = ++this.#epoch;
+        this.serviceState.error = "";
+        this.#errors.reset();
+        this.#history = [];
+
+        const Engine = this.engines[this.data.backend];
+        if (!Engine) {
+            this.#setStatus(ServiceNetworkState.disconnected);
+            return;
+        }
+        const engine = new Engine();
+        const controller = new AbortController();
+        this.#engine = engine;
+        this.#startController = controller;
+        this.#setStatus(ServiceNetworkState.connecting);
+
+        let starting: Promise<void>;
+        try {
+            starting = Promise.resolve(engine.start(() => this.data, controller.signal));
+        } catch (e) {
+            starting = Promise.reject(e);
+        }
+        void (async () => {
+            try {
+                await raceWithSignal(starting, controller.signal);
+            } catch (e) {
+                if (epoch !== this.#epoch) return;
+                const silent = options.auto === true && e instanceof TransformNotConfiguredError;
+                this.#failStart(silent ? "" : startErrorText(e));
+                return;
+            }
+            if (epoch !== this.#epoch) return;
+            this.#startController = null;
+            this.#setStatus(ServiceNetworkState.connected);
+        })();
+    }
 
     stop() {
-        if (!this.#serviceInstance) return;
-        this.#serviceInstance.stop();
-    }
-    start() {
-        this.stop();
-        this.serviceState.error = "";
-
-        let backend = this.data.backend;
-        if (!(backend in backends)) {
-            return;
-        }
-        this.#serviceInstance = new backends[backend](this);
-
-        if (!this.#serviceInstance) return;
-        this.#setStatus(ServiceNetworkState.connecting);
-        this.#serviceInstance.start(this.data);
-    }
-
-    transform(text: TextEvent, history: any[] = []) {
-        if (
-            !this.#serviceInstance ||
-            this.serviceState.status !== ServiceNetworkState.connected
-        ) {
-            // Passthrough for Sync Timing when service is off
-            // text already has ID from init()
-            window.ApiShared.pubsub.publishText(TextEventSource.transform_source, text);
-            return;
-        }
-        this.#serviceInstance.transform(this.#id, text, history);
-        this.#id++;
+        this.#epoch++;
+        this.#teardown();
+        this.#setStatus(ServiceNetworkState.disconnected);
     }
 
     dispose() {
         this.stop();
         this.eventDisposers.forEach(d => d());
         this.eventDisposers = [];
+        this.#initialized = false;
+    }
+
+    /** Aborts a pending start and every in-flight line (they are passed through), stops the engine. */
+    #teardown() {
+        this.#startController?.abort();
+        this.#startController = null;
+        const stopped = new TransformStopped();
+        for (const c of this.#inFlight) c.abort(stopped);
+        this.#inFlight.clear();
+        const engine = this.#engine;
+        this.#engine = null;
+        try {
+            engine?.stop();
+        } catch (e) {
+            console.error("[Transform] engine stop failed:", e);
+        }
+    }
+
+    #failStart(message: string) {
+        this.#teardown();
+        this.#setStatus(ServiceNetworkState.disconnected);
+        if (!message) return;
+        this.serviceState.error = message;
+        pushSystemLog("AI Transform", message, "error");
+        toast(message, { type: "error", autoClose: false });
+    }
+
+    #setStatus(value: ServiceNetworkState) {
+        this.serviceState.status = value;
+    }
+
+    #aiActive(): boolean {
+        return this.#engine !== null && this.serviceState.status === ServiceNetworkState.connected;
+    }
+
+    #onStt(e: TextEvent) {
+        if (e.type !== TextEventType.final) {
+            // Live partials of the sentence being spoken. With AI off, "Sync timing" captions
+            // (transform_raw) simply follow STT.
+            const interim = { ...e, id: this.#sentenceId };
+            window.ApiShared.pubsub.publishText(TextEventSource.transform_source, interim);
+            if (!this.#aiActive())
+                window.ApiShared.pubsub.publishText(TextEventSource.transform_raw, interim);
+            return;
+        }
+
+        const event: TextEvent = { ...e, id: this.#sentenceId++ };
+        const seq = this.#queue.reserve();
+        if (!this.#aiActive() || isCancelMarker(event.value) || !event.value.trim()) {
+            this.#queue.resolve(seq, { kind: "passthrough", event });
+            return;
+        }
+
+        // Show the original at once while the AI works; the reply replaces it (same id).
+        window.ApiShared.pubsub.publishText(TextEventSource.transform_source, { ...event, type: TextEventType.interim });
+        window.ApiShared.pubsub.publishText(TextEventSource.transform_raw, {
+            ...event,
+            type: TextEventType.interim,
+            value: event.value + " ...",
+        });
+        const history = this.data.contextHistory ? this.#history.slice(-HISTORY_TURNS) : [];
+        void this.#runLine(this.#engine!, seq, event, history);
+    }
+
+    async #runLine(engine: ITransformEngine, seq: number, event: TextEvent, history: ChatTurn[]) {
+        const controller = new AbortController();
+        this.#inFlight.add(controller);
+        const timer = setTimeout(() => controller.abort(new TransformTimeoutError(TRANSFORM_TIMEOUT_MS)), TRANSFORM_TIMEOUT_MS);
+        let outcome: Outcome;
+        try {
+            const value = await raceWithSignal(engine.transform({ text: event.value, history }, controller.signal), controller.signal);
+            outcome = { kind: "ai", event, value };
+        } catch (error) {
+            if (controller.signal.reason instanceof TransformStopped) {
+                outcome = { kind: "passthrough", event };
+            } else {
+                this.#reportError(controller.signal.reason instanceof TransformTimeoutError ? controller.signal.reason : error);
+                outcome = { kind: "fallback", event };
+            }
+        } finally {
+            clearTimeout(timer);
+            this.#inFlight.delete(controller);
+        }
+        this.#queue.resolve(seq, outcome);
+    }
+
+    #deliver(o: Outcome) {
+        const pubsub = window.ApiShared.pubsub;
+        const original = o.event;
+        if (o.kind !== "passthrough") {
+            pubsub.publishText(TextEventSource.transform, {
+                value: o.kind === "ai" ? o.value : original.value,
+                type: TextEventType.final,
+            });
+        }
+        pubsub.publishText(TextEventSource.transform_source, {
+            ...original,
+            value: o.kind === "ai" ? o.value : original.value,
+            type: TextEventType.final,
+        });
+        // Original text, finalized exactly when the AI line appears ("Sync timing" captions).
+        pubsub.publishText(TextEventSource.transform_raw, { ...original, type: TextEventType.final });
+
+        if (o.kind === "ai") {
+            this.#history.push({ role: "user", content: original.value }, { role: "assistant", content: o.value });
+            if (this.#history.length > HISTORY_CAP) this.#history = this.#history.slice(-HISTORY_CAP);
+        }
+    }
+
+    #reportError(error: unknown) {
+        let message: string;
+        if (error instanceof TransformTimeoutError) {
+            message = i18n.t("transform.error_timeout", { seconds: error.timeoutMs / 1000 });
+        } else if (error instanceof TransformRequestError) {
+            switch (error.kind) {
+                case "rate_limited":
+                    message = i18n.t("transform.error_rate_limited");
+                    break;
+                case "truncated":
+                    message = i18n.t("transform.error_truncated");
+                    break;
+                case "empty":
+                    message = i18n.t("transform.error_empty");
+                    break;
+                default:
+                    message = i18n.t("transform.error_request", {
+                        status: error.status ?? "-",
+                        error: error.message,
+                    });
+            }
+        } else {
+            // TransformNotConfiguredError (settings cleared while running) and anything unexpected.
+            message = i18n.t("transform.error_request", { status: "-", error: errorText(error) });
+        }
+        console.warn("[Transform] line failed, original text sent instead:", error);
+        if (this.#errors.shouldShow(message)) {
+            pushSystemLog("AI Transform", message, "warning");
+            toast(message, { type: "warning", autoClose: 8_000 });
+        }
     }
 }
 

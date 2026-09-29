@@ -1,0 +1,46 @@
+# Whisper whole-utterance hallucinations: English (also checked for every other language).
+#
+# Format (all phrase files):
+# - One phrase per line; '#' starts a comment. Matching ignores case, punctuation and spaces, and
+#   happens against WHOLE sentences only: an utterance is dropped when every sentence in it matches
+#   a phrase. A phrase inside longer real speech ("thanks for watching my back") is never removed.
+# - A trailing '*' matches any sentence that starts with the phrase ("subtitles by*").
+# - A leading '~' marks a soft phrase: something people really say (streamers do end with "thanks
+#   for watching"), so it is dropped only when Whisper itself doubted the audio held speech
+#   (no-speech probability >= 0.5; hallucinations on noise score about 0.9, real short words <= 0.47).
+# - Hard phrases (no '~') are dropped at any no-speech probability: keep them to credit lines
+#   nobody says out loud (subtitle/caption credits, broadcaster tags).
+# Curated from the Bag-of-Hallucinations study and field reports; deliberately NOT the raw list,
+# which contains real speech such as "let's go".
+subtitles by the amara.org community
+subtitles by*
+subtitled by*
+captions by*
+closed captioning by*
+closed captions by*
+transcription by*
+transcribed by*
+~thanks for watching
+~thank you for watching
+~thank you so much for watching
+~thank you very much for watching
+~thanks for watching and see you next time
+~thank you for watching and see you next time
+~thank you for watching and see you in the next video
+~see you in the next video
+~i'll see you in the next video
+~please subscribe
+~please subscribe to my channel
+~please subscribe to the channel
+~subscribe to my channel
+~please like and subscribe
+~like and subscribe
+~don't forget to like and subscribe
+~don't forget to subscribe
+~you
+~thank you
+~thank you very much
+~thank you so much
+~thanks
+~bye
+~bye bye

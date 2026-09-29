@@ -49,6 +49,7 @@ impl RmvpePitchExtractor {
             return Err("RMVPE model path is empty".into());
         }
         let session = session_builder_for_vc(execution_provider_hint, opts)?
+            .component("vc.pitch")
             .commit_from_file(path)
             .map_err(|e| format!("Failed to load RMVPE ONNX {}: {}", path, e))?;
         let inputs = PitchInputs::inspect(&session, "RMVPE", path, WAVEFORM_EXPORT_THRESHOLD)?;

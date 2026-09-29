@@ -159,6 +159,8 @@ type ActionBarCardDef = {
     show: boolean;
     status: ServiceNetworkState;
     canToggle: boolean;
+    /** The toggle stays clickable while connecting and cancels the start. */
+    cancelWhileConnecting?: boolean;
     onToggle?: () => void;
 };
 
@@ -169,6 +171,7 @@ interface StatusCardProps {
     serviceId: string;
     onToggle?: () => void;
     canToggle?: boolean;
+    cancelWhileConnecting?: boolean;
     reorderEnabled?: boolean;
     onGripPointerDown?: (serviceId: string, e: React.PointerEvent) => void;
     isReorderSource?: boolean;
@@ -181,6 +184,7 @@ const StatusCard: FC<StatusCardProps> = ({
     serviceId,
     onToggle,
     canToggle = true,
+    cancelWhileConnecting = false,
     reorderEnabled,
     onGripPointerDown,
     isReorderSource,
@@ -247,15 +251,15 @@ const StatusCard: FC<StatusCardProps> = ({
                 {canToggle && (
                     <button
                         onClick={handleToggle}
-                        disabled={isConnecting}
+                        disabled={isConnecting && !cancelWhileConnecting}
                         className={`p-2 rounded-md transition-all ${
                             isConnecting
-                                ? "bg-primary/20 text-primary animate-pulse cursor-wait"
+                                ? `bg-primary/20 text-primary animate-pulse ${cancelWhileConnecting ? "cursor-pointer" : "cursor-wait"}`
                                 : isConn
                                   ? "bg-error/10 text-error hover:bg-error/20"
                                   : "bg-success/10 text-success hover:bg-success/20"
                         }`}
-                        title={isConn ? "Stop service" : "Start service"}
+                        title={isConn || (isConnecting && cancelWhileConnecting) ? "Stop service" : "Start service"}
                     >
                         {isConnecting ? <RiPlayFill className="animate-spin" /> : isConn ? <RiStopFill /> : <RiPlayFill />}
                     </button>
@@ -294,11 +298,11 @@ export const StatusFooter: FC = memo(() => {
         if (!srv) return;
 
         if (service === "tts") {
-            if (srv.serviceState?.status === ServiceNetworkState.connected) {
+            // Stop also cancels a start that is still connecting (e.g. waiting on a local TTS server).
+            if (srv.serviceState?.status !== ServiceNetworkState.disconnected) {
                 srv.stop?.();
                 return;
             }
-            if (srv.serviceState?.status !== ServiceNetworkState.disconnected) return;
             const tts = window.ApiServer.state.services.tts.data;
             if (tts.backend === TTS_Backends.native && !tts.native.voice?.trim()) {
                 toast.info(t("toasts.tts_choose_voice"), { autoClose: 6000 });
@@ -339,6 +343,7 @@ export const StatusFooter: FC = memo(() => {
             status: ttsState.status,
             onToggle: () => toggleService("tts"),
             canToggle: true,
+            cancelWhileConnecting: true,
         },
         {
             id: Services.translation,
@@ -507,6 +512,7 @@ export const StatusFooter: FC = memo(() => {
                         serviceId={card.id}
                         onToggle={card.onToggle}
                         canToggle={card.canToggle}
+                        cancelWhileConnecting={card.cancelWhileConnecting}
                         reorderEnabled={reorderEnabled}
                         onGripPointerDown={onGripPointerDown}
                         isReorderSource={reorderDraggingId === card.id}

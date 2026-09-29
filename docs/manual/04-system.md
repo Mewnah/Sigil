@@ -53,8 +53,10 @@ Sidebar → **Settings** (or `Ctrl+,` / `Cmd+,`).
 - **UI language** — i18n; RTL locales include Arabic and Urdu (see [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) for RTL smoke checklist).  
 - **Appearance** — theme selection aligned with header toggle.  
 - **Audio** — default input and output devices. On the desktop app the **default input device** is a native device; Whisper, Vosk, Moonshine, and local HTTP STT use it unless their inspector picks a different mic (Azure and Deepgram have their own browser-device pickers).  
-- **Shortcuts** — global **background input** combo and other recorded shortcuts (Tauri global shortcut registration).  
+- **GPU & diagnostics** — which device (CUDA, DirectML, CPU) each model actually runs on, your graphics adapters, **Test GPU acceleration**, the optional **NVIDIA GPU runtime** download (about 1.4 GB, needed for CUDA; without it Sigil uses DirectML) and **Open log folder** (`%LOCALAPPDATA%\com.sigil.app\logs`).
+- **Shortcuts** — the global **mute sound effects** shortcut (the STT start/stop and mute shortcuts are in the STT inspector), plus the **background input** combo when that feature is built in. They use Tauri global shortcut registration and work while Sigil is in the background.
 - **Timers** — e.g. background input auto-submit duration.
+- **Local web server** — whether the server is listening (and on which port) and **Only allow Sigil pages to connect** (on by default): it blocks websites open in your browser from reading or sending captions through Sigil, while the app, `/client`, OBS, the mic page, the captions page and Link apps keep working. Turn it off only if a tool you trust is refused. The `SIGIL_LAN_ORIGIN_CHECK` environment variable overrides it.
 
 ### Background input
 
@@ -62,8 +64,9 @@ When enabled and a shortcut is set, Sigil can capture **typed text** from other 
 
 ### Tips
 
-- After changing **language**, some panels may need a reopen to pick up every string.  
-- **Global shortcuts** must not collide with OS or game bindings.
+- After changing **language**, some panels may need a reopen to pick up every string.
+- **Global shortcuts** must not collide with OS or game bindings. A shortcut another app already holds is kept with a warning.
+- If the settings file is ever damaged, Sigil keeps it as `settings.corrupt-<time>.bak`, restores the last good copy and says so in the System log.
 
 ### Related
 
@@ -105,9 +108,13 @@ Verified against the host UI code (`src/core/ui/shortcuts.ts` and related). On *
 
 The bottom **STT / AI / TTS** cards mirror the same start/stop behavior as the inspectors and the `Ctrl+1`–`Ctrl+3` shortcuts above.
 
-### Background input shortcut
+### Global shortcuts you record
 
-Configured in **Settings**; uses **Tauri global shortcuts** when native features allow. Invalid combinations show an error toast and clear the binding.
+- **STT start/stop** and **STT mute** — STT inspector → **Shortcuts**.
+- **Mute sound effects** — **Settings → Shortcuts**.
+- **Background input** — **Settings**, when the feature is built in.
+
+These use **Tauri global shortcuts** and work while Sigil is in the background. Recording finishes on the first full key combination; **Esc** cancels, a plain letter needs Ctrl, Alt or Shift, and a combination already used by another Sigil shortcut is refused. Stored combinations that can never register show an error toast and are cleared once.
 
 ### Tips
 

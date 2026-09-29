@@ -2235,10 +2235,10 @@
           "markdownDescription": "Denies the oauth_loopback_start command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`",
           "type": "string",
           "const": "audio:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`"
         },
         {
           "description": "Enables the list_input_devices command without any pre-configured scope.",
@@ -2265,10 +2265,28 @@
           "markdownDescription": "Enables the start_audio_capture command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_utterance_capture command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-start-utterance-capture",
+          "markdownDescription": "Enables the start_utterance_capture command without any pre-configured scope."
+        },
+        {
           "description": "Enables the stop_audio_capture command without any pre-configured scope.",
           "type": "string",
           "const": "audio:allow-stop-audio-capture",
           "markdownDescription": "Enables the stop_audio_capture command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_utterance_capture command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-stop-utterance-capture",
+          "markdownDescription": "Enables the stop_utterance_capture command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_utterance command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-take-utterance",
+          "markdownDescription": "Enables the take_utterance command without any pre-configured scope."
         },
         {
           "description": "Denies the list_input_devices command without any pre-configured scope.",
@@ -2295,10 +2313,28 @@
           "markdownDescription": "Denies the start_audio_capture command without any pre-configured scope."
         },
         {
+          "description": "Denies the start_utterance_capture command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-start-utterance-capture",
+          "markdownDescription": "Denies the start_utterance_capture command without any pre-configured scope."
+        },
+        {
           "description": "Denies the stop_audio_capture command without any pre-configured scope.",
           "type": "string",
           "const": "audio:deny-stop-audio-capture",
           "markdownDescription": "Denies the stop_audio_capture command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_utterance_capture command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-stop-utterance-capture",
+          "markdownDescription": "Denies the stop_utterance_capture command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_utterance command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-take-utterance",
+          "markdownDescription": "Denies the take_utterance command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-chatterbox-endpoint`\n- `allow-get-chatterbox-voices`\n- `allow-chatterbox-speak`\n- `allow-check-chatterbox-availability`",
@@ -4321,6 +4357,168 @@
           "type": "string",
           "const": "core:window:deny-unminimize",
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-ep-outcomes`\n- `allow-get-ep-probe`\n- `allow-run-deep-ep-probe`\n- `allow-get-last-deep-ep-probe`\n- `allow-get-gpu-adapters`\n- `allow-get-log-info`\n- `allow-get-recent-log-entries`\n- `allow-log-from-frontend`\n- `allow-open-log-dir`\n- `allow-get-nvidia-pack-status`\n- `allow-install-nvidia-pack`\n- `allow-cancel-nvidia-pack-install`\n- `allow-remove-nvidia-pack`",
+          "type": "string",
+          "const": "diagnostics:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-ep-outcomes`\n- `allow-get-ep-probe`\n- `allow-run-deep-ep-probe`\n- `allow-get-last-deep-ep-probe`\n- `allow-get-gpu-adapters`\n- `allow-get-log-info`\n- `allow-get-recent-log-entries`\n- `allow-log-from-frontend`\n- `allow-open-log-dir`\n- `allow-get-nvidia-pack-status`\n- `allow-install-nvidia-pack`\n- `allow-cancel-nvidia-pack-install`\n- `allow-remove-nvidia-pack`"
+        },
+        {
+          "description": "Enables the cancel_nvidia_pack_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-cancel-nvidia-pack-install",
+          "markdownDescription": "Enables the cancel_nvidia_pack_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_ep_outcomes command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-ep-outcomes",
+          "markdownDescription": "Enables the get_ep_outcomes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-ep-probe",
+          "markdownDescription": "Enables the get_ep_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_gpu_adapters command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-gpu-adapters",
+          "markdownDescription": "Enables the get_gpu_adapters command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_last_deep_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-last-deep-ep-probe",
+          "markdownDescription": "Enables the get_last_deep_ep_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_log_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-log-info",
+          "markdownDescription": "Enables the get_log_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_nvidia_pack_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-nvidia-pack-status",
+          "markdownDescription": "Enables the get_nvidia_pack_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_recent_log_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-get-recent-log-entries",
+          "markdownDescription": "Enables the get_recent_log_entries command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_nvidia_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-install-nvidia-pack",
+          "markdownDescription": "Enables the install_nvidia_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the log_from_frontend command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-log-from-frontend",
+          "markdownDescription": "Enables the log_from_frontend command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-open-log-dir",
+          "markdownDescription": "Enables the open_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_nvidia_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-remove-nvidia-pack",
+          "markdownDescription": "Enables the remove_nvidia_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_deep_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:allow-run-deep-ep-probe",
+          "markdownDescription": "Enables the run_deep_ep_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_nvidia_pack_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-cancel-nvidia-pack-install",
+          "markdownDescription": "Denies the cancel_nvidia_pack_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_ep_outcomes command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-ep-outcomes",
+          "markdownDescription": "Denies the get_ep_outcomes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-ep-probe",
+          "markdownDescription": "Denies the get_ep_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_gpu_adapters command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-gpu-adapters",
+          "markdownDescription": "Denies the get_gpu_adapters command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_last_deep_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-last-deep-ep-probe",
+          "markdownDescription": "Denies the get_last_deep_ep_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_log_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-log-info",
+          "markdownDescription": "Denies the get_log_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_nvidia_pack_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-nvidia-pack-status",
+          "markdownDescription": "Denies the get_nvidia_pack_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_recent_log_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-get-recent-log-entries",
+          "markdownDescription": "Denies the get_recent_log_entries command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_nvidia_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-install-nvidia-pack",
+          "markdownDescription": "Denies the install_nvidia_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the log_from_frontend command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-log-from-frontend",
+          "markdownDescription": "Denies the log_from_frontend command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-open-log-dir",
+          "markdownDescription": "Denies the open_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_nvidia_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-remove-nvidia-pack",
+          "markdownDescription": "Denies the remove_nvidia_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_deep_ep_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "diagnostics:deny-run-deep-ep-probe",
+          "markdownDescription": "Denies the run_deep_ep_probe command without any pre-configured scope."
         },
         {
           "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-ask`\n- `allow-confirm`\n- `allow-message`\n- `allow-save`\n- `allow-open`",
@@ -6855,12 +7053,6 @@
           "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`"
         },
         {
-          "description": "Enables the apply_voice_changer_preset command without any pre-configured scope.",
-          "type": "string",
-          "const": "voice-changer:allow-apply-voice-changer-preset",
-          "markdownDescription": "Enables the apply_voice_changer_preset command without any pre-configured scope."
-        },
-        {
           "description": "Enables the capture_voice_changer_debug command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:allow-capture-voice-changer-debug",
@@ -6877,12 +7069,6 @@
           "type": "string",
           "const": "voice-changer:allow-get-voice-changer-params",
           "markdownDescription": "Enables the get_voice_changer_params command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_voice_changer_presets command without any pre-configured scope.",
-          "type": "string",
-          "const": "voice-changer:allow-get-voice-changer-presets",
-          "markdownDescription": "Enables the get_voice_changer_presets command without any pre-configured scope."
         },
         {
           "description": "Enables the is_voice_changer_running command without any pre-configured scope.",
@@ -6933,12 +7119,6 @@
           "markdownDescription": "Enables the voice_changer_push_aux_wav command without any pre-configured scope."
         },
         {
-          "description": "Denies the apply_voice_changer_preset command without any pre-configured scope.",
-          "type": "string",
-          "const": "voice-changer:deny-apply-voice-changer-preset",
-          "markdownDescription": "Denies the apply_voice_changer_preset command without any pre-configured scope."
-        },
-        {
           "description": "Denies the capture_voice_changer_debug command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:deny-capture-voice-changer-debug",
@@ -6955,12 +7135,6 @@
           "type": "string",
           "const": "voice-changer:deny-get-voice-changer-params",
           "markdownDescription": "Denies the get_voice_changer_params command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_voice_changer_presets command without any pre-configured scope.",
-          "type": "string",
-          "const": "voice-changer:deny-get-voice-changer-presets",
-          "markdownDescription": "Denies the get_voice_changer_presets command without any pre-configured scope."
         },
         {
           "description": "Denies the is_voice_changer_running command without any pre-configured scope.",
@@ -7137,10 +7311,10 @@
           "markdownDescription": "Denies the vosk_native_transcribe command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`",
           "type": "string",
           "const": "web:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`"
         },
         {
           "description": "Enables the config command without any pre-configured scope.",
@@ -7161,6 +7335,18 @@
           "markdownDescription": "Enables the pubsub_broadcast command without any pre-configured scope."
         },
         {
+          "description": "Enables the server_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-server-status",
+          "markdownDescription": "Enables the server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_origin_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-set-origin-check",
+          "markdownDescription": "Enables the set_origin_check command without any pre-configured scope."
+        },
+        {
           "description": "Denies the config command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-config",
@@ -7177,6 +7363,18 @@
           "type": "string",
           "const": "web:deny-pubsub-broadcast",
           "markdownDescription": "Denies the pubsub_broadcast command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the server_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-server-status",
+          "markdownDescription": "Denies the server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_origin_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-set-origin-check",
+          "markdownDescription": "Denies the set_origin_check command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",

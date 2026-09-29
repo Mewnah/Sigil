@@ -1,0 +1,18 @@
+# Whisper whole-utterance hallucinations: French. Format: see en.txt.
+sous-titres réalisés par la communauté d'amara.org
+sous-titres réalisés para la communauté d'amara.org
+sous-titrage st' 501
+sous-titrage société radio-canada
+sous-titrage st*
+sous-titres réalisés*
+sous-titres par*
+~merci d'avoir regardé
+~merci d'avoir regardé cette vidéo
+~merci d'avoir regardé la vidéo
+~abonnez-vous
+~abonnez-vous à la chaîne
+~n'oubliez pas de vous abonner
+~à bientôt pour une nouvelle vidéo
+~merci
+~merci beaucoup
+~merci de votre attention

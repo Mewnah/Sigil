@@ -1,17 +1,50 @@
-import { TextEvent } from "@/types";
+import { Transform_State } from "./schema";
 
-export interface ITransformService {
-    start(data: any): void;
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+export interface TransformRequest {
+    /** Source sentence, non-empty. */
+    text: string;
+    /** Earlier (source, result) exchanges, oldest first; empty when context history is off. */
+    history: ChatTurn[];
+}
+
+/**
+ * One transform backend. Engines never publish: the service orders their results (see ordering.ts).
+ *
+ * - `start` validates settings; it rejects with a user-facing message (`TransformNotConfiguredError`
+ *   when a required field is simply empty, which an automatic start at launch reports silently).
+ * - `transform` resolves with the rewritten text or throws (`TransformRequestError` with a kind the
+ *   service turns into the right notice). It must honour `signal`, which is aborted on timeout and stop.
+ * - Settings are read through `getData()` on every request, so inspector edits apply to the next line.
+ */
+export interface ITransformEngine {
+    start(getData: () => Transform_State, signal: AbortSignal): Promise<void>;
+    transform(request: TransformRequest, signal: AbortSignal): Promise<string>;
     stop(): void;
-    transform(id: number, e: TextEvent, history: { role: "user" | "assistant", content: string }[]): void;
 }
 
-export interface ITransformReceiver {
-    onStart(): void;
-    onStop(error?: string): void;
-    onTransform(id: number, e: TextEvent, value: string): void;
+export interface ITransformEngineConstructor {
+    new(): ITransformEngine;
 }
 
-export interface ITransformServiceConstructor {
-    new(receiver: ITransformReceiver): ITransformService;
+/** A required setting (key, URL, model) is empty. */
+export class TransformNotConfiguredError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "TransformNotConfiguredError";
+    }
+}
+
+export type TransformErrorKind = "rate_limited" | "truncated" | "empty" | "request";
+
+export class TransformRequestError extends Error {
+    constructor(
+        readonly kind: TransformErrorKind,
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "TransformRequestError";
+    }
 }

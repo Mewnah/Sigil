@@ -23,6 +23,11 @@ interface ServiceCardProps {
     status: ServiceNetworkState;
     onToggle?: () => void;
     onSettings?: () => void;
+    /** Engine status while connecting (e.g. a model download), shown under the state. */
+    statusText?: string;
+    statusLevel?: "info" | "warning";
+    /** 0-100 while a download or copy reports progress, else null. */
+    progress?: number | null;
 }
 
 const StatusDot: FC<{ status: ServiceNetworkState }> = ({ status }) => {
@@ -35,9 +40,11 @@ const StatusDot: FC<{ status: ServiceNetworkState }> = ({ status }) => {
     return <div className={classNames("w-2 h-2 rounded-full", colors[status])} />;
 };
 
-const ServiceCard: FC<ServiceCardProps> = memo(({ title, icon, status, onToggle, onSettings }) => {
+const ServiceCard: FC<ServiceCardProps> = memo(({ title, icon, status, onToggle, onSettings, statusText, statusLevel, progress }) => {
     const isConnected = status === ServiceNetworkState.connected;
     const isConnecting = status === ServiceNetworkState.connecting;
+    const detail = isConnecting ? statusText?.trim() ?? "" : "";
+    const showProgress = isConnecting && progress !== null && progress !== undefined;
 
     return (
         <motion.div
@@ -56,6 +63,17 @@ const ServiceCard: FC<ServiceCardProps> = memo(({ title, icon, status, onToggle,
                             {isConnected ? "Active" : isConnecting ? "Connecting..." : "Inactive"}
                         </span>
                     </div>
+                    {detail && (
+                        <div
+                            className={classNames("text-xs truncate", statusLevel === "warning" ? "text-warning" : "text-base-content/60")}
+                            title={detail}
+                        >
+                            {detail}
+                        </div>
+                    )}
+                    {showProgress && (
+                        <progress className="progress progress-primary w-full h-1" value={Math.max(0, Math.min(100, progress))} max={100} />
+                    )}
                 </div>
             </div>
 
@@ -153,6 +171,9 @@ const Dashboard: FC = memo(() => {
                             title="Speech to Text"
                             icon={<RiUserVoiceFill />}
                             status={sttState.status}
+                            statusText={sttState.statusText}
+                            statusLevel={sttState.statusLevel}
+                            progress={sttState.progress}
                             onToggle={() => {
                                 if (sttState.status === ServiceNetworkState.connected) window.ApiServer.stt.stop();
                                 else if (sttState.status === ServiceNetworkState.disconnected) window.ApiServer.stt.start();

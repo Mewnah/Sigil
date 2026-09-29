@@ -1,10 +1,10 @@
 use std::io::Cursor;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, Thread};
+use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -14,10 +14,14 @@ use tauri::{
 };
 
 pub mod device_resolve;
+pub mod speech_capture;
+pub mod stream;
+pub mod utterance_capture;
 
 pub use device_resolve::{resolve_input_device, resolve_output_device};
 
-use crate::services::pcm_convert::build_input_stream_f32;
+use stream::{open_input_stream, InputStream};
+use utterance_capture::UtteranceCaptureState;
 
 #[derive(Serialize, Debug)]
 pub struct AudioDevice {
@@ -25,58 +29,53 @@ pub struct AudioDevice {
     pub name: String,
 }
 
-// Shared state for audio capture
+/// `audio:chunk` batching period (the callback only fills a ring; a worker emits every ~20 ms).
+const CHUNK_EMIT_PERIOD: Duration = Duration::from_millis(20);
+/// Ring capacity of the raw chunk capture, in seconds of interleaved device audio.
+const CHUNK_RING_SECONDS: usize = 1;
+
+/// The raw `audio:chunk` capture (Vosk and legacy polling engines).
 pub struct AudioCaptureState {
-    stop_sender: Arc<Mutex<Option<Sender<()>>>>,
-    is_capturing: Arc<Mutex<bool>>,
-    /// Bumped (under `stop_sender`'s lock) by every start and stop. A start re-checks it under the same lock
-    /// before publishing, so a stop that lands while the device is still opening cancels that start. Each capture
-    /// callback also compares it with its own start's epoch, so a superseded stream never emits.
+    /// The stop lock: the running capture. Chunks are emitted while holding it with the epoch current.
+    active: Arc<Mutex<Option<ChunkCapture>>>,
+    /// Bumped (under `active`'s lock) by every start and stop. A start re-checks it under the same lock
+    /// before publishing, so a stop that lands while the device is still opening cancels that start. The
+    /// emitter compares it with its own start's epoch, so a superseded capture never emits.
     capture_epoch: Arc<AtomicU64>,
+}
+
+struct ChunkCapture {
+    stream: InputStream,
+    stop: Arc<AtomicBool>,
+    emitter: Thread,
+}
+
+impl ChunkCapture {
+    fn signal_stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.emitter.unpark();
+        self.stream.signal_stop();
+    }
+
+    async fn stop(self) {
+        self.stop.store(true, Ordering::Release);
+        self.emitter.unpark();
+        let ChunkCapture { stream, .. } = self;
+        stream.stop().await;
+    }
 }
 
 impl AudioCaptureState {
     fn new() -> Self {
         Self {
-            stop_sender: Arc::new(Mutex::new(None)),
-            is_capturing: Arc::new(Mutex::new(false)),
+            active: Arc::new(Mutex::new(None)),
             capture_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
-/// Build an input stream for `device` in any cpal sample format on a dedicated thread (cpal streams are not
-/// `Send`), start it, and keep it alive until `stop` receives a message or its sender is dropped.
-/// Resolves once the stream is playing, or with the build/play error.
-pub async fn spawn_input_stream<F>(
-    device: cpal::Device,
-    config: cpal::SupportedStreamConfig,
-    stop: Receiver<()>,
-    on_data: F,
-    log_tag: &'static str,
-) -> Result<(), String>
-where
-    F: FnMut(Vec<f32>) + Send + 'static,
-{
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
-    thread::spawn(move || {
-        let started = build_input_stream_f32(&device, &config, on_data, move |e| eprintln!("[{log_tag}] Stream error: {e}"))
-            .and_then(|stream| stream.play().map(|()| stream).map_err(|e| e.to_string()));
-        match started {
-            Ok(stream) => {
-                if ready_tx.send(Ok(())).is_ok() {
-                    let _ = stop.recv(); // Block until stop signal (or the sender is dropped)
-                }
-                drop(stream);
-            }
-            Err(e) => {
-                let _ = ready_tx.send(Err(e));
-            }
-        }
-    });
-    ready_rx
-        .await
-        .map_err(|_| "Audio capture thread exited before the stream started".to_string())?
+fn lock_active(active: &Mutex<Option<ChunkCapture>>) -> MutexGuard<'_, Option<ChunkCapture>> {
+    active.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[command]
@@ -122,75 +121,117 @@ pub async fn start_audio_capture<R: Runtime>(
     _sample_rate: Option<u32>,
 ) -> Result<(), String> {
     // Stop any existing capture and claim an epoch before the (slow) device open.
-    let my_epoch = {
-        let mut sender = state.stop_sender.lock().unwrap();
-        *state.is_capturing.lock().unwrap() = false;
-        if let Some(old) = sender.take() {
-            let _ = old.send(());
-        }
-        state.capture_epoch.fetch_add(1, Ordering::SeqCst) + 1
+    let (my_epoch, previous) = {
+        let mut active = lock_active(&state.active);
+        let epoch = state.capture_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        (epoch, active.take())
     };
+    if let Some(previous) = previous {
+        previous.stop().await;
+    }
 
     let host = cpal::default_host();
-
-    // Select device
     let device = resolve_input_device(&host, device_name.as_deref())?;
-
     let config = device.default_input_config().map_err(|e| e.to_string())?;
-    let config_sample_rate = config.sample_rate().0;
-    let config_channels = config.channels();
+    let sample_rate = config.sample_rate().0;
+    let channels = config.channels();
+    let frame = usize::from(channels.max(1));
+    let capacity = (sample_rate as usize * frame * CHUNK_RING_SECONDS).max(8192);
+    let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(capacity);
+    let stop = Arc::new(AtomicBool::new(false));
 
-    let (tx, rx) = channel();
-    let is_capturing = state.is_capturing.clone();
-    let capture_epoch = state.capture_epoch.clone();
-    let app_clone = app.clone();
+    // Emitter: batches the ring into `audio:chunk` events. Emits only while holding the stop lock with
+    // this start's epoch current, so once `stop_audio_capture` returns nothing more is emitted, and a
+    // superseded capture's chunks (labelled with its device's rate/channels) never reach a newer one.
+    let emitter = {
+        let stop = Arc::clone(&stop);
+        let active = Arc::clone(&state.active);
+        let epoch = Arc::clone(&state.capture_epoch);
+        thread::Builder::new()
+            .name("sigil-audio-chunk".into())
+            .spawn(move || loop {
+                if stop.load(Ordering::Acquire) {
+                    return;
+                }
+                let available = consumer.slots() / frame * frame;
+                if available > 0 {
+                    let mut samples = vec![0.0f32; available];
+                    let _ = consumer.pop_entire_slice(&mut samples);
+                    let _guard = lock_active(&active);
+                    if epoch.load(Ordering::SeqCst) != my_epoch || stop.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let _ = app.emit(
+                        "audio:chunk",
+                        AudioChunkPayload {
+                            samples,
+                            sample_rate,
+                            channels,
+                        },
+                    );
+                } else if consumer.is_abandoned() {
+                    return;
+                }
+                thread::park_timeout(CHUNK_EMIT_PERIOD);
+            })
+            .map_err(|e| format!("Failed to start the audio chunk emitter: {e}"))?
+            .thread()
+            .clone()
+    };
 
-    spawn_input_stream(
+    let stream = open_input_stream(
         device,
         config,
-        rx,
-        move |samples| {
-            // Muted until this capture is published below, and for good once a stop or a newer start bumps the
-            // epoch: this stream can outlive that briefly while its thread drops it, and its chunks (labelled with
-            // this device's rate/channels) must not reach a newer capture's listeners. Checked and emitted while
-            // holding `is_capturing`, which a stop takes after bumping the epoch, so once `stop_audio_capture`
-            // returns, nothing more is emitted from this stream.
-            let Ok(capturing) = is_capturing.lock() else { return };
-            if !*capturing || capture_epoch.load(Ordering::SeqCst) != my_epoch {
-                return;
-            }
-            let payload = AudioChunkPayload {
-                samples,
-                sample_rate: config_sample_rate,
-                channels: config_channels,
+        move |data: &[f32]| {
+            // Whole frames only; when the emitter lags a full second the newest audio is dropped.
+            let fits = if data.len() <= producer.slots() {
+                data.len()
+            } else {
+                producer.slots() / frame * frame
             };
-            let _ = app_clone.emit("audio:chunk", payload);
+            if fits > 0 {
+                let _ = producer.push_entire_slice(&data[..fits]);
+            }
         },
+        |e| tracing::warn!(target: "sigil::audio", "[AudioCapture] stream error: {e}"),
         "AudioCapture",
     )
-    .await?;
+    .await;
+    let stream = match stream {
+        Ok(stream) => stream,
+        Err(e) => {
+            stop.store(true, Ordering::Release);
+            emitter.unpark();
+            return Err(e);
+        }
+    };
 
-    let mut sender = state.stop_sender.lock().unwrap();
-    if state.capture_epoch.load(Ordering::SeqCst) != my_epoch {
-        // A stop (or a newer start) landed while the device was opening. Dropping `tx` on return ends the
-        // capture thread, which drops the stream and releases the microphone.
+    let mut capture = ChunkCapture { stream, stop, emitter };
+    let cancelled = {
+        let mut active = lock_active(&state.active);
+        if state.capture_epoch.load(Ordering::SeqCst) == my_epoch {
+            *active = Some(capture);
+            None
+        } else {
+            capture.signal_stop();
+            Some(capture)
+        }
+    };
+    if let Some(capture) = cancelled {
+        // A stop (or a newer start) landed while the device was opening.
+        capture.stop().await;
         return Err("cancelled".to_string());
     }
-    if let Some(old) = sender.replace(tx) {
-        let _ = old.send(());
-    }
-    *state.is_capturing.lock().unwrap() = true;
     Ok(())
 }
 
 #[command]
 pub fn stop_audio_capture(state: State<'_, AudioCaptureState>) -> Result<(), String> {
-    let mut sender = state.stop_sender.lock().unwrap();
+    let mut active = lock_active(&state.active);
     // Cancels a start that is still opening its device (it re-checks the epoch under this lock).
     state.capture_epoch.fetch_add(1, Ordering::SeqCst);
-    *state.is_capturing.lock().unwrap() = false;
-    if let Some(sender) = sender.take() {
-        let _ = sender.send(());
+    if let Some(mut capture) = active.take() {
+        capture.signal_stop();
     }
     Ok(())
 }
@@ -232,6 +273,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("audio")
         .setup(|app, _api| {
             app.manage(AudioCaptureState::new());
+            app.manage(UtteranceCaptureState::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -239,7 +281,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             list_input_devices,
             list_output_devices,
             start_audio_capture,
-            stop_audio_capture
+            stop_audio_capture,
+            utterance_capture::start_utterance_capture,
+            utterance_capture::stop_utterance_capture,
+            utterance_capture::take_utterance
         ])
         .build()
 }

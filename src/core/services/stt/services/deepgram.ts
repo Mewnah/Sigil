@@ -3,8 +3,10 @@ import {
   ISTTService
 } from "../types";
 
+import i18n from "i18next";
 import { isEmptyValue } from "../../../../utils";
 import { STT_State } from "../schema";
+import { normalizeDeepgramLanguage } from "../stt_data";
 import { devLog } from "@/utils/devLog";
 
 /**
@@ -46,12 +48,10 @@ export class STT_DeepgramService implements ISTTService {
   start(state: STT_State): void {
     const token = ++this.#startToken;
 
-    // `device` is optional ("" / "default" = default microphone).
-    const required = Object.entries(state.deepgram)
-      .filter(([k]) => k !== "device")
-      .map(([, v]) => v);
-    if (required.some(isEmptyValue))
-      return this.bindings.onStop("Options missing");
+    // Only the key and the language are required: `device` ("" = default microphone), the legacy `tier` (empty
+    // since the Nova model picker replaced it) and `model` (falls back to nova-3) may be empty.
+    if (isEmptyValue(state.deepgram.key) || isEmptyValue(state.deepgram.language))
+      return this.bindings.onStop(i18n.t("stt.error_deepgram_options"));
 
     this.sessionEnded = false;
 
@@ -183,12 +183,15 @@ export class STT_DeepgramService implements ISTTService {
   }
 }
 
-/** Builds the streaming URL. Without `model=` Deepgram falls back to its legacy default model. */
-function deepgramListenUrl(state: STT_State): string {
+/**
+ * Builds the streaming URL. Without `model=` Deepgram falls back to its legacy default model (research §6), so the
+ * model is always sent (nova-3 unless the user picked another). The key travels in the WebSocket subprotocol.
+ */
+export function deepgramListenUrl(state: Pick<STT_State, "deepgram">): string {
   const dg = state.deepgram;
   const params = new URLSearchParams({
     model: dg.model?.trim() || "nova-3",
-    language: dg.language,
+    language: normalizeDeepgramLanguage(dg.language),
     punctuate: String(!!dg.punctuate),
     interim_results: String(!!dg.interim),
     profanity_filter: String(!!dg.profanity),

@@ -1,0 +1,11 @@
+# Cargo config for the Sigil crate. Applies when cargo runs with src-tauri/ (or below) as the working
+# directory: `pnpm tauri dev|build`, CI (`working-directory: src-tauri`). `cargo ... --manifest-path
+# src-tauri/Cargo.toml` from the repo root does NOT read this file (cargo resolves config from the cwd).
+
+[env]
+# whisper-rs-sys forwards every GGML_* variable to whisper.cpp's CMake. Portable ggml: never tune for
+# the build machine's CPU (an AVX-512 build crashes with an illegal instruction on friends' PCs),
+# but keep the AVX2 baseline every supported x86-64 desktop CPU has.
+# whisper-rs-sys does not rerun on env changes: after changing these, `cargo clean -p whisper-rs-sys`.
+GGML_NATIVE = "OFF"
+GGML_AVX2 = "ON"

@@ -1,7 +1,9 @@
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { devLog } from "@/utils/devLog";
+import i18n from "i18next";
 import { TTS_State } from "../schema";
-import { ITTSReceiver, ITTSService } from "../types";
+import { ITTSReceiver, ITTSService, errorMessage, isAbortError } from "../types";
+import { normalizeVoicevoxHost, voicevoxHostProblem, voicevoxScales } from "../voicevoxPresets";
 
 interface VoicevoxSpeaker {
   name: string;
@@ -22,13 +24,37 @@ interface AudioQuery {
   kana: string;
 }
 
+const CONNECT_TIMEOUT_MS = 15_000;
+const SYNTHESIS_TIMEOUT_MS = 120_000;
+
+/** Localized message for a host the webview cannot reach, or `null` when the host is usable. */
+export function voicevoxHostError(host: string): string | null {
+  const problem = voicevoxHostProblem(host);
+  if (!problem) return null;
+  return i18n.t(`tts.voicevox_host_error_${problem}`, { host });
+}
+
+/**
+ * VOICEVOX-compatible engines (VOICEVOX, AivisSpeech, or a custom host) over their HTTP API:
+ * `POST /audio_query`, then `POST /synthesis` (WAV), played through Service_Sound on the chosen device.
+ *
+ * Lines are synthesized one at a time in arrival order, while the previous clip plays, so they
+ * cannot be enqueued out of order. Stop aborts every request in flight and drops clips that have
+ * not started playing.
+ */
 export class TTS_VoicevoxService implements ITTSService {
-  #abortController?: AbortController;
+  #controllers = new Set<AbortController>();
+  #chain: Promise<void> = Promise.resolve();
+  #host = "";
+  #running = false;
+  #stopped = false;
+  /** Bumped by stop(): lines queued before it are dropped. */
+  #generation = 0;
 
   constructor(private bindings: ITTSReceiver) { }
 
   dispose(): void {
-    this.#abortController?.abort();
+    this.#halt();
   }
 
   get state() {
@@ -36,121 +62,149 @@ export class TTS_VoicevoxService implements ITTSService {
   }
 
   async start(state: TTS_State): Promise<void> {
-    const { host } = state.voicevox;
+    const host = normalizeVoicevoxHost(state.voicevox.host);
+    const hostError = voicevoxHostError(host);
+    if (hostError) return this.bindings.onStop(hostError);
 
+    const controller = this.#track(new AbortController());
     try {
-      // Verify VoiceVox server is running
       const response = await fetchWithTimeout(`${host}/version`, {
         method: "GET",
-        timeoutMs: 15_000,
+        signal: controller.signal,
+        timeoutMs: CONNECT_TIMEOUT_MS,
       });
-
+      if (this.#stopped) return;
       if (!response.ok) {
-        throw new Error(`VoiceVox server not responding (status ${response.status})`);
+        throw new Error(i18n.t("tts.voicevox_not_responding", { host, status: response.status }));
       }
 
       const version = await response.text();
-      devLog(`[VoiceVox] Connected to server version: ${version}`);
+      if (this.#stopped) return;
+      devLog(`[VoiceVox] Connected to ${host}, engine version: ${version}`);
 
+      this.#host = host;
+      this.#running = true;
       this.bindings.onStart();
-    } catch (error: any) {
-      if (error.name === "TypeError" && error.message.includes("fetch")) {
-        this.bindings.onStop("VoiceVox server not running. Please start VoiceVox engine.");
+    } catch (error: unknown) {
+      if (this.#stopped) return;
+      if (isAbortError(error)) {
+        // Not our Stop, so the connect timeout fired.
+        this.bindings.onStop(i18n.t("tts.voicevox_timeout", { host }));
+      } else if (error instanceof TypeError) {
+        // fetch() rejects with TypeError when nothing listens on the port (or the CSP blocks it).
+        this.bindings.onStop(i18n.t("tts.voicevox_not_running", { host }));
       } else {
-        this.bindings.onStop(error?.message || "Failed to connect to VoiceVox");
+        this.bindings.onStop(errorMessage(error) || i18n.t("tts.voicevox_not_running", { host }));
       }
+    } finally {
+      this.#controllers.delete(controller);
     }
   }
 
-  async play(text: string): Promise<void> {
-    if (!text.trim()) return;
-
-    const { host, speaker, speedScale, pitchScale, intonationScale, volumeScale, device } = this.state;
-
-    try {
-      this.#abortController = new AbortController();
-      const signal = this.#abortController.signal;
-
-      // Step 1: Create audio query
-      const queryResponse = await fetchWithTimeout(
-        `${host}/audio_query?text=${encodeURIComponent(text)}&speaker=${speaker}`,
-        {
-          method: "POST",
-          signal,
-          timeoutMs: 120_000,
-        }
-      );
-
-      if (!queryResponse.ok) {
-        throw new Error(`Audio query failed: ${queryResponse.status}`);
-      }
-
-      const audioQuery: AudioQuery = await queryResponse.json();
-
-      // Apply user settings to the query
-      // 0 is a valid intonation/volume/pitch value, so only fall back on non-numbers.
-      const num = (v: string, fallback: number) => {
-        const n = parseFloat(v);
-        return Number.isFinite(n) ? n : fallback;
-      };
-      audioQuery.speedScale = num(speedScale, 1.0) || 1.0;
-      audioQuery.pitchScale = num(pitchScale, 0.0);
-      audioQuery.intonationScale = num(intonationScale, 1.0);
-      audioQuery.volumeScale = num(volumeScale, 1.0);
-
-      // Step 2: Synthesize audio
-      const synthesisResponse = await fetchWithTimeout(
-        `${host}/synthesis?speaker=${speaker}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(audioQuery),
-          signal,
-          timeoutMs: 120_000,
-        }
-      );
-
-      if (!synthesisResponse.ok) {
-        throw new Error(`Synthesis failed: ${synthesisResponse.status}`);
-      }
-
-      // Get WAV audio data
-      const audioData = await synthesisResponse.arrayBuffer();
-
-      // Enqueue for playback
-      window.ApiServer.sound.enqueueVoiceClip(audioData, {
-        volume: 1, // Volume is already applied in VoiceVox
-        rate: 1,   // Speed is already applied in VoiceVox
-        device_name: device,
+  play(text: string): void {
+    if (!this.#running || !text.trim()) return;
+    const generation = this.#generation;
+    this.#chain = this.#chain
+      .then(() => this.#speak(text, generation))
+      .catch((error) => {
+        // Stop bumps the generation before aborting, so an AbortError from the current generation
+        // is fetchWithTimeout's per-request limit firing, not a Stop.
+        if (generation !== this.#generation) return;
+        console.error("[VoiceVox] Synthesis error:", error);
+        const message = isAbortError(error)
+          ? i18n.t("tts.voicevox_timeout", { host: this.#host })
+          : errorMessage(error);
+        this.bindings.onError(`VOICEVOX: ${message}`);
       });
+  }
 
-    } catch (error: any) {
-      if (error.name === "AbortError") {
-        // Playback was cancelled, ignore
-        return;
+  async #speak(text: string, generation: number): Promise<void> {
+    if (generation !== this.#generation) return;
+    const { speaker, device } = this.state;
+    const host = this.#host;
+    const speakerId = encodeURIComponent(speaker.trim());
+    const controller = this.#track(new AbortController());
+    try {
+      // Step 1: audio query (accent phrases and default prosody for this speaker)
+      const queryResponse = await fetchWithTimeout(
+        `${host}/audio_query?text=${encodeURIComponent(text)}&speaker=${speakerId}`,
+        { method: "POST", signal: controller.signal, timeoutMs: SYNTHESIS_TIMEOUT_MS },
+      );
+      if (!queryResponse.ok) {
+        throw new Error(i18n.t("tts.voicevox_query_failed", { status: queryResponse.status }));
       }
-      console.error("[VoiceVox] Synthesis error:", error);
+      const audioQuery: AudioQuery = await queryResponse.json();
+      if (generation !== this.#generation) return;
+
+      // User settings; 0 is a valid pitch/intonation/volume and survives.
+      Object.assign(audioQuery, voicevoxScales(this.state));
+
+      // Step 2: synthesize WAV
+      const synthesisResponse = await fetchWithTimeout(`${host}/synthesis?speaker=${speakerId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(audioQuery),
+        signal: controller.signal,
+        timeoutMs: SYNTHESIS_TIMEOUT_MS,
+      });
+      if (!synthesisResponse.ok) {
+        throw new Error(i18n.t("tts.voicevox_synthesis_failed", { status: synthesisResponse.status }));
+      }
+      const audioData = await synthesisResponse.arrayBuffer();
+      if (generation !== this.#generation) return;
+
+      // Playback runs on its own queue so the next line can synthesize meanwhile.
+      window.ApiServer.sound
+        .enqueueVoiceClip(audioData, {
+          volume: 1, // volumeScale is already applied by the engine
+          rate: 1, // speedScale is already applied by the engine
+          device_name: device,
+        })
+        .catch((error) => {
+          if (generation === this.#generation) this.bindings.onError(errorMessage(error));
+        });
+    } finally {
+      this.#controllers.delete(controller);
     }
   }
 
   stop(): void {
-    this.#abortController?.abort();
+    this.#halt();
+    // Clips already synthesized but not yet playing are dropped; the one playing finishes.
+    window.ApiServer.sound.clearVoiceClips();
     this.bindings.onStop();
+  }
+
+  #track(controller: AbortController): AbortController {
+    this.#controllers.add(controller);
+    return controller;
+  }
+
+  #halt() {
+    this.#stopped = true;
+    this.#running = false;
+    this.#generation++;
+    for (const controller of this.#controllers) controller.abort();
+    this.#controllers.clear();
   }
 }
 
-// Utility function to fetch speakers from VoiceVox
+/** Speakers (and their styles) from the engine at `host`. Rejects when the engine cannot be reached. */
 export async function fetchVoicevoxSpeakers(host: string): Promise<VoicevoxSpeaker[]> {
+  const base = normalizeVoicevoxHost(host);
+  const hostError = voicevoxHostError(base);
+  if (hostError) throw new Error(hostError);
+  let response: Response;
   try {
-    const response = await fetchWithTimeout(`${host}/speakers`, { timeoutMs: 15_000 });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch speakers: ${response.status}`);
-    }
-    return await response.json();
+    response = await fetchWithTimeout(`${base}/speakers`, { timeoutMs: CONNECT_TIMEOUT_MS });
   } catch (error) {
-    console.error("[VoiceVox] Failed to fetch speakers:", error);
-    return [];
+    if (isAbortError(error)) throw new Error(i18n.t("tts.voicevox_timeout", { host: base }));
+    if (error instanceof TypeError) throw new Error(i18n.t("tts.voicevox_not_running", { host: base }));
+    throw error;
   }
+  if (!response.ok) {
+    throw new Error(i18n.t("tts.voicevox_speakers_failed", { status: response.status }));
+  }
+  const speakers: unknown = await response.json();
+  return Array.isArray(speakers) ? (speakers as VoicevoxSpeaker[]) : [];
 }

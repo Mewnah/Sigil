@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ITTSReceiver, ITTSService } from "../types";
+import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
+import { ClipTtsBackend } from "../clipBackend";
+import { positiveOr } from "../num";
 
 interface MeloSpeaker {
     id: string;
@@ -9,106 +11,44 @@ interface MeloSpeaker {
     language: string;
 }
 
-export class TTS_MeloService implements ITTSService {
-    #receiver: ITTSReceiver;
-    #endpoint: string = "http://localhost:8888";
-    #speakerId: string = "";
-    #speed: number = 1.0;
-    #audioContext: AudioContext | null = null;
-    #isRunning: boolean = false;
+/** MeloTTS HTTP API through the `melo-tts` plugin (WAV clips). */
+export class TTS_MeloService extends ClipTtsBackend {
+    #endpoint = "http://localhost:8888";
+    #speakerId = "";
+    #speed = 1.0;
 
     constructor(receiver: ITTSReceiver) {
-        this.#receiver = receiver;
+        super(receiver, "MeloTTS");
     }
 
-    async start(data: TTS_State): Promise<void> {
+    protected async connect(data: TTS_State): Promise<string | null> {
         const config = data.melo;
-        this.#endpoint = config.endpoint;
+        this.#endpoint = config.endpoint.trim();
         this.#speakerId = config.speaker;
-        this.#speed = parseFloat(config.speed);
+        this.#speed = positiveOr(config.speed, 1);
 
-        try {
-            // Set endpoint in backend
-            await invoke("plugin:melo-tts|set_melo_endpoint", {
-                endpoint: this.#endpoint,
-            });
-
-            // Check availability
-            const isAvailable = await invoke<boolean>("plugin:melo-tts|check_melo_availability");
-            if (!isAvailable) {
-                this.#receiver.onStop(
-                    `MeloTTS not available at ${this.#endpoint}. Start with: docker run -p 8888:8888 myshell-ai/melotts`
-                );
-                return;
-            }
-
-            this.#audioContext = new AudioContext();
-            this.#isRunning = true;
-            this.#receiver.onStart();
-            devLog("[MeloTTS] Service started");
-        } catch (error) {
-            console.error("[MeloTTS] Failed to start:", error);
-            this.#receiver.onStop(String(error));
+        await invoke("plugin:melo-tts|set_melo_endpoint", { endpoint: this.#endpoint });
+        const isAvailable = await invoke<boolean>("plugin:melo-tts|check_melo_availability", {
+            endpoint: this.#endpoint,
+        });
+        if (!isAvailable) {
+            return `MeloTTS not available at ${this.#endpoint}. Start with: docker run -p 8888:8888 myshell-ai/melotts`;
         }
+        devLog("[MeloTTS] Service started");
+        return null;
     }
 
-    stop(): void {
-        this.#isRunning = false;
-        if (this.#audioContext) {
-            this.#audioContext.close();
-            this.#audioContext = null;
-        }
-        devLog("[MeloTTS] Service stopped");
+    protected synthesize(text: string) {
+        return invoke<number[]>("plugin:melo-tts|melo_speak", {
+            text,
+            speakerId: this.#speakerId || null,
+            speed: this.#speed,
+            endpoint: this.#endpoint,
+        });
     }
 
-    async play(text: string): Promise<void> {
-        if (!this.#isRunning || !text.trim()) return;
-
-        try {
-            // Get audio bytes from backend (WAV format)
-            const audioBytes = await invoke<number[]>("plugin:melo-tts|melo_speak", {
-                text,
-                speakerId: this.#speakerId || null,
-                speed: this.#speed,
-            });
-
-            if (!audioBytes || audioBytes.length === 0) return;
-
-            // Convert to Uint8Array and play
-            const uint8Array = new Uint8Array(audioBytes);
-            await this.playAudio(uint8Array);
-        } catch (error) {
-            console.error("[MeloTTS] Speech synthesis error:", error);
-        }
-    }
-
-    private async playAudio(audioData: Uint8Array): Promise<void> {
-        if (!this.#audioContext) {
-            this.#audioContext = new AudioContext();
-        }
-
-        try {
-            const audioBuffer = await this.#audioContext.decodeAudioData(audioData.buffer.slice(0) as ArrayBuffer);
-            const source = this.#audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.#audioContext.destination);
-            source.start(0);
-        } catch (error) {
-            console.error("[MeloTTS] Audio playback error:", error);
-        }
-    }
-
-    dispose(): void {
-        this.stop();
-    }
-
-    // Static helper to get available speakers
+    /** Speakers on the server at `endpoint`. Rejects when the server cannot be reached. */
     static async getSpeakers(endpoint: string = "http://localhost:8888"): Promise<MeloSpeaker[]> {
-        try {
-            await invoke("plugin:melo-tts|set_melo_endpoint", { endpoint });
-            return await invoke<MeloSpeaker[]>("plugin:melo-tts|get_melo_speakers");
-        } catch {
-            return [];
-        }
+        return await invoke<MeloSpeaker[]>("plugin:melo-tts|get_melo_speakers", { endpoint: endpoint.trim() });
     }
 }

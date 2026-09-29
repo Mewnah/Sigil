@@ -344,7 +344,7 @@ impl VcStreamHarness {
                 speaker_id: 0,
             };
             if let Err(e) = model.warmup_at(&warm_ctx) {
-                eprintln!("[VC] warmup at live shape ({steady_ring} samples): {e}");
+                tracing::warn!("voice changer: warm-up at the live shape ({steady_ring} samples) failed: {e}");
             }
         }
 

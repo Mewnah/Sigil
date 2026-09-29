@@ -83,8 +83,10 @@
   <script>
     (() => {
       const q = new URLSearchParams(window.location.search.substring(1));
-      const host = q.get("host") || location.hostname;
-      const port = q.get("port") || location.port;
+      const rawHost = q.get("host") || location.hostname;
+      const host = rawHost.includes(":") && !rawHost.startsWith("[") ? `[${rawHost}]` : rawHost;
+      const portParam = q.get("port") || "";
+      const port = /^[0-9]{1,5}$/.test(portParam) ? portParam : location.port;
       const fontSize = parseInt(q.get("size") || "", 10);
       const maxLines = parseInt(q.get("lines") || "", 10);
       const plain = q.get("mode") === "plain";
@@ -134,7 +136,13 @@
           return;
         }
         setStatus(`connecting to ${host}:${port}`, false);
-        const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=obs-captions-${Date.now()}`);
+        let ws;
+        try {
+          ws = new WebSocket(`ws://${host}:${port}/pubsub?id=obs-captions-${Date.now()}`);
+        } catch (_) {
+          setStatus("invalid host/port in URL", false);
+          return;
+        }
 
         ws.onopen = () => {
           reconnectDelay = 1200;

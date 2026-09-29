@@ -303,7 +303,7 @@ impl ClassicPhaseVocoderProcessor {
                 );
             }
             Err(e) => {
-                eprintln!("[VoiceChanger] Resample error: {}", e);
+                tracing::warn!("voice changer: classic resample error: {e}");
                 planar_to_interleaved_into(
                     &self.pitched_planes,
                     self.ch_work,

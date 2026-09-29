@@ -1,56 +1,85 @@
 import { IServiceInterface } from "@/types";
 import { BaseDirectory } from "@tauri-apps/api/path";
-import { exists, mkdir, readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { copyFile, exists, mkdir, readFile, rename, writeFile } from "@tauri-apps/plugin-fs";
 import debounce from "lodash/debounce";
 import { proxy, subscribe } from "valtio";
 import { BackendState, BackendSchema } from "../../schema";
+import { AtomicJsonFile, JsonFileFs } from "../diagnostics/atomicJsonFile";
+import { pushSystemLog } from "../systemLog";
+
+/** Persisted settings, relative to the app-data directory (`%APPDATA%\com.sigil.app`). */
+const SETTINGS_PATH = "user/settings";
+/** Coalesce bursts of changes (typing, slider drags) into one write. */
+const SAVE_DEBOUNCE_MS = 1000;
+
+const baseDir = BaseDirectory.AppData;
+
+/** `@tauri-apps/plugin-fs` adapter (binary read/write: the capabilities allow those commands). */
+const appDataFs: JsonFileFs = {
+  exists: (path) => exists(path, { baseDir }),
+  readText: async (path) => new TextDecoder().decode(await readFile(path, { baseDir })),
+  writeText: (path, text) => writeFile(path, new TextEncoder().encode(text), { baseDir }),
+  copy: (from, to) => copyFile(from, to, { fromPathBaseDir: baseDir, toPathBaseDir: baseDir }),
+  rename: (from, to) => rename(from, to, { oldPathBaseDir: baseDir, newPathBaseDir: baseDir }),
+  mkdirp: (dir) => mkdir(dir, { baseDir, recursive: true }),
+};
 
 class Service_State implements IServiceInterface {
   state!: BackendState;
 
+  /**
+   * Crash-safe settings file: temp file + rename, `.bak` of the previous good version, and a
+   * damaged file is kept as `settings.corrupt-<time>.bak` instead of being overwritten.
+   */
+  readonly #file = new AtomicJsonFile(appDataFs, SETTINGS_PATH);
+
   async init() {
-    let data = await this.#load_state();
-    const hasData = !!data;
-    // create new state
-    if (!hasData) {
-      data = {};
-    }
-    
-    this.state = proxy(BackendSchema.parse(data));
-    !hasData && this.#save_state();
-    subscribe(this.state, () => this.#save_state());
-  }
-
-  private tryParseState(str: string | null) {
-    if (str) try {
-      const parse = JSON.parse(str);
-      if (typeof parse !== "object") return;
-      return parse;
-    } catch (error) {
-      console.error("invalid state data");
-    }
-  }
-
-  async #load_state(): Promise<Record<string, any> | undefined> {
-    const decoder = new TextDecoder();
-    const fileExists = await exists("user/settings", { baseDir: BaseDirectory.AppData });
-    if (!fileExists)
-      return;
+    const loaded = await this.#load();
+    let parsed: BackendState;
     try {
-      const data = await readFile("user/settings", { baseDir: BaseDirectory.AppData });
-      return this.tryParseState(decoder.decode(data));
+      parsed = BackendSchema.parse(loaded.data ?? {});
     } catch (error) {
-      return;
+      // Valid JSON the schema cannot use: keep a copy before defaults replace it.
+      const kept = await this.#file.preserveCurrent("the settings did not match the schema");
+      pushSystemLog(
+        "Settings",
+        `Saved settings could not be used (${error instanceof Error ? error.message : String(error)}); defaults are loaded${kept ? ` and the old file was kept as ${kept}` : ""}.`,
+        "error",
+      );
+      parsed = BackendSchema.parse({});
+      loaded.source = "none";
+    }
+    this.state = proxy(parsed);
+    // Write immediately unless the main file is the good one we just read: first run, or the
+    // settings were recovered from the backup / reset to defaults (replaces the damaged file,
+    // which was preserved first).
+    if (loaded.source !== "primary") void this.#save();
+    subscribe(this.state, () => this.#debouncedSave());
+  }
+
+  async #load(): Promise<{ data: Record<string, unknown> | undefined; source: "primary" | "backup" | "none" }> {
+    try {
+      const result = await this.#file.load();
+      for (const problem of result.problems) {
+        pushSystemLog("Settings", problem, result.source === "backup" ? "warning" : "error");
+      }
+      return { data: result.data, source: result.source };
+    } catch (error) {
+      console.error("settings load failed", error);
+      pushSystemLog("Settings", `Settings could not be loaded: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return { data: undefined, source: "none" };
     }
   }
 
-  #save_state = debounce(async () => {
-    const encoder = new TextEncoder();
-    const bExists = await exists("user", { baseDir: BaseDirectory.AppData });
-    if (!bExists)
-      await mkdir("user", { baseDir: BaseDirectory.AppData, recursive: true });
-    const value = JSON.stringify(this.state);
-    await writeFile("user/settings", encoder.encode(value), { baseDir: BaseDirectory.AppData });
-  }, 1000);
+  async #save(): Promise<void> {
+    try {
+      await this.#file.save(this.state);
+    } catch (error) {
+      console.error("settings save failed", error);
+      pushSystemLog("Settings", error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  #debouncedSave = debounce(() => void this.#save(), SAVE_DEBOUNCE_MS);
 }
 export default Service_State;

@@ -11,7 +11,8 @@ import Tooltip from "../dropdown/Tooltip";
 import Logo from "../logo";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
+import { InputCheckbox, InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
+import DiagnosticsPanel from "@/core/services/diagnostics/DiagnosticsPanel";
 import { useTranslation } from "react-i18next";
 import { i18nLanguages, loadLanguageFile } from "@/i18n";
 // 1. Core & Tech
@@ -81,6 +82,23 @@ const ExportMenu: FC = () => {
     <button className="btn btn-sm btn-primary" onClick={() => name && window.ApiClient.document.exportDocument(name)}>{t("settings_export.btn_export")}</button>
   </div>;
 }
+
+/** Local web server status and the LAN Origin-check kill switch (desktop host only). */
+const WebServerSection: FC = () => {
+  const { t } = useTranslation();
+  const { lanOriginCheck } = useSnapshot(window.ApiServer.state);
+  const { status } = useSnapshot(window.ApiShared.pubsub.webServer);
+  return <>
+    <Inspector.SubHeader>{t("settings.section_web_server")}</Inspector.SubHeader>
+    {status?.state === "listening" && <span className="text-xs text-base-content/70">{t("settings.web_server_status_listening", { port: status.port })}</span>}
+    {(status?.state === "failed" || status?.state === "stopped") && <span className="text-xs text-error">{t("settings.web_server_status_failed", { error: status.error ?? status.state })}</span>}
+    <InputCheckbox label="settings.field_lan_origin_check" value={lanOriginCheck} onChange={v => window.ApiServer.state.lanOriginCheck = v} />
+    <Inspector.Description>
+      <span className="text-base-content/60 text-xs">{t("settings.lan_origin_check_hint")}</span>
+    </Inspector.Description>
+    {status?.originCheckEnv != null && <span className="text-xs text-warning">{t("settings.lan_origin_check_env_forced")}</span>}
+  </>;
+};
 
 const Inspector_Settings: FC = memo(() => {
   const { t } = useTranslation();
@@ -190,6 +208,15 @@ const Inspector_Settings: FC = memo(() => {
           {t("settings.audio_devices_hint")}
         </span>
       </Inspector.Description>
+      <DiagnosticsPanel />
+
+      {isTauri() && <>
+        <Inspector.SubHeader>{t("settings.section_shortcuts")}</Inspector.SubHeader>
+        <InputShortcut label="settings.field_shortcut_mute_sound" shortcut="muteSound" />
+        <Inspector.Description>
+          <span className="text-base-content/60 text-xs">{t("settings.shortcuts_hint")}</span>
+        </Inspector.Description>
+      </>}
 
 
       <Inspector.SubHeader>{t('settings.section_template')}</Inspector.SubHeader>
@@ -217,6 +244,8 @@ const Inspector_Settings: FC = memo(() => {
       </Inspector.Deactivatable>
       <ServiceButton startLabel="common.btn_connect" stopLabel="common.btn_disconnect" status={linkStatus} onStart={() => window.ApiShared.pubsub.linkConnect()} onStop={() => window.ApiShared.pubsub.linkDisconnect()} />
       <button className="btn btn-sm btn-ghost" onClick={() => window.ApiShared.pubsub.copyLinkAddress()}>{t('settings.btn_copy_address')}</button>
+
+      {isTauri() && <WebServerSection />}
 
     </Inspector.Content>
   </Inspector.Body>

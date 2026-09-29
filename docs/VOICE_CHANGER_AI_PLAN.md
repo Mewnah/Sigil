@@ -1,6 +1,15 @@
 # Sigil Local AI Voice-Changer — Plan of Record
 
-> **Status:** PLAN ONLY — not yet implemented. Decisions locked 2026-07-08.
+> **SUPERSEDED (2026-09-28).** This plan is replaced by the voice-changer parts of
+> [SPEECH_STACK_IMPLEMENTATION_PLAN.md](SPEECH_STACK_IMPLEMENTATION_PLAN.md) (the Sigil Voice
+> Engine: "VC best engine", decisions, phases P0/P3/P5) and the research in
+> [SPEECH_STACK_RESEARCH_2026-09.md](SPEECH_STACK_RESEARCH_2026-09.md) §4. It is kept for its
+> history and rationale only; where the two disagree, the implementation plan wins. The P0
+> real-time fixes (latency budget, park/unpark wake, MMCSS on callbacks, aux back-pressure,
+> Rust-side persistence, EP reporting) are shipped; see
+> [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md#voice-changer).
+
+> **Status (original):** PLAN ONLY — not yet implemented. Decisions locked 2026-07-08.
 > This is the agreed design + phased roadmap for completing the local AI voice
 > changer. Nothing here has been coded yet. Untracked working doc — move,
 > commit, or delete as you like.

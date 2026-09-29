@@ -1,0 +1,11 @@
+{
+  "identifier": "diagnostics",
+  "description": "IPC for the diagnostics plugin (EP outcomes, EP probe, file log, NVIDIA runtime pack) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "diagnostics:default"
+  ]
+}

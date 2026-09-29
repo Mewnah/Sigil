@@ -1,19 +1,12 @@
-import { ITransformReceiver, ITransformService } from "../types";
-import { TextEvent } from "@/types";
+import { ITransformEngine, TransformRequest } from "../types";
 
-export class Transform_DummyService implements ITransformService {
-    constructor(private receiver: ITransformReceiver) { }
+/** Debug backend: upper-cases the line, no network. */
+export class Transform_DummyService implements ITransformEngine {
+    async start(): Promise<void> {}
 
-    start(data: any): void {
-        this.receiver.onStart();
-    }
+    stop(): void {}
 
-    stop(): void {
-        this.receiver.onStop();
-    }
-
-    transform(id: number, e: TextEvent, history: any[]): void {
-        const transformed = e.value.toUpperCase() + " (AI)";
-        this.receiver.onTransform(id, e, transformed);
+    async transform(request: TransformRequest): Promise<string> {
+        return request.text.toUpperCase() + " (AI)";
     }
 }

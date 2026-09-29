@@ -14,22 +14,31 @@ const Azure: FC = memo(() => {
   const pr = useSnapshot(window.ApiServer.state.services.translation.data.azure);
   const { azure: azureLanguages } = useSnapshot(window.ApiServer.translation.lib);
   const up = <K extends keyof Translation_State["azure"]>(key: K, v: Translation_State["azure"][K]) => window.ApiServer.state.services.translation.data.azure[key] = v;
+  // Stored codes stay selectable while the language list is loading or offline. A blank source
+  // language makes Azure auto-detect it (azureTranslateUrl leaves `from` out).
+  const languages = azureLanguages as InputSelectOption[];
+  const fromOpts: InputSelectOption[] = [
+    { label: t("transl.azure_from_auto"), value: "" },
+    ...mergeOption(languages, pr.languageFrom.trim()),
+  ];
+  const toOpts = mergeOption(languages, pr.language);
 
   return <>
     <Inspector.SubHeader>{t('transl.azure_title')}</Inspector.SubHeader>
     <InputText label="transl.azure_key" type="password" value={pr.key} onChange={e => up("key", e.target.value)} />
-    <InputText label="transl.azure_location" value={pr.location} onChange={e => up("location", e.target.value)} />
+    <InputText label="transl.azure_location_optional" value={pr.location} placeholder="westeurope" onChange={e => up("location", e.target.value)} />
+    <div className="text-xs text-base-content/70 mb-2">{t("transl.azure_location_hint")}</div>
     <InputSelect
       label="transl.azure_from_language"
-      options={azureLanguages as InputSelectOption[]}
-      value={pr.languageFrom}
-      onValueChange={e => up("languageFrom", e as any)}
+      options={fromOpts}
+      value={pr.languageFrom.trim()}
+      onValueChange={e => up("languageFrom", e)}
     />
     <InputSelect
       label="transl.azure_to_language"
-      options={azureLanguages as InputSelectOption[]}
+      options={toOpts}
       value={pr.language}
-      onValueChange={e => up("language", e as any)}
+      onValueChange={e => up("language", e)}
     />
     <InputSelect
       label="transl.azure_profanity"
@@ -45,6 +54,8 @@ const Azure: FC = memo(() => {
   </>
 })
 
+const LANGUAGE_PROBE_DEBOUNCE_MS = 400;
+
 function mergeOption(opts: InputSelectOption[], current: string): InputSelectOption[] {
   if (!current || opts.some((o) => o.value === current)) return opts;
   return [{ label: current, value: current }, ...opts];
@@ -59,17 +70,22 @@ const LibreTranslatePanel: FC = memo(() => {
 
   useEffect(() => {
     let cancel = false;
-    void Translation_LibreTranslateService.getLanguages(pr.endpoint, pr.apiKey ?? "").then((list) => {
-      if (cancel) return;
-      setLangOpts(
-        list.map((l) => ({
-          label: `${l.name} (${l.code})`,
-          value: l.code,
-        }))
-      );
-    });
+    // Debounced: the effect re-runs on every keystroke in the URL field. The endpoint is passed per
+    // call, so probing here never changes what a running translation talks to.
+    const timer = setTimeout(() => {
+      void Translation_LibreTranslateService.getLanguages(pr.endpoint, pr.apiKey ?? "").then((list) => {
+        if (cancel) return;
+        setLangOpts(
+          list.map((l) => ({
+            label: `${l.name} (${l.code})`,
+            value: l.code,
+          }))
+        );
+      });
+    }, LANGUAGE_PROBE_DEBOUNCE_MS);
     return () => {
       cancel = true;
+      clearTimeout(timer);
     };
   }, [pr.endpoint, pr.apiKey]);
 

@@ -180,8 +180,9 @@ Sidebar → **OBS Studio**.
 
 ### Tips
 
-- Browser source **FPS** and **shutdown when not visible** affect CPU; tune per scene.  
+- Browser source **FPS** and **shutdown when not visible** affect CPU; tune per scene.
 - If the preview is blank, confirm the **host** is running and the URL uses the correct **port**.
+- Use the `http://localhost:<port>/…` URL Sigil gives you. A **Local file** browser source (a saved HTML file) is refused by Sigil's connection check; see **Settings → Local web server**.
 
 ### Related
 

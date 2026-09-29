@@ -80,7 +80,9 @@ Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** 
 ```bash
 pnpm install
 pnpm tauri dev      # desktop app + Vite
-pnpm tauri build    # release artifacts under src-tauri/target/
+pnpm tauri build    # installers under src-tauri/target/release/bundle/
+pnpm tauri:release  # release build that also stages the GPU (CUDA/DirectML) provider DLLs
+pnpm test:unit      # vitest unit tests
 ```
 
 For a static web build only (no Tauri): `pnpm build` then `pnpm preview`.
@@ -110,7 +112,7 @@ Consolidated guides (fewer files, same depth):
 - [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md) — release smoke tests, threat model, dependency audits, performance, upgrade backlog
 - [ARCHITECTURE.md](ARCHITECTURE.md) — short pointer to the developer guide
 - [docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md](docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md) — resolved follow-ups and future backlog; manual screenshots use `scripts/write-manual-placeholder-pngs.mjs` until real captures replace them
-- **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; `node scripts/merge-http-tts-i18n.mjs` (and `node scripts/merge-neural-i18n.mjs` when neural TTS strings change) merge new UI keys into non-English locale files
+- **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; new UI strings from parallel work are staged in `scripts/i18n-staging/<WS-ID>.json` and merged with `node scripts/merge-i18n-staging.mjs` (the older `merge-http-tts-i18n.mjs` / `merge-neural-i18n.mjs` scripts are retired). See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md#plugin-commands-capabilities-and-i18n-staging).
 
 ## Development
 

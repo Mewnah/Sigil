@@ -1,0 +1,42 @@
+# Load-time DLL imports of Sigil.exe (`dumpbin /DEPENDENTS`), lower-case, one per line; `*` wildcards.
+# verify-bundle.ps1 fails on GPU/runtime DLLs (CUDA, cuDNN, ONNX Runtime, ggml, OpenVR, ...) that must
+# only ever be loaded lazily, and warns on any other import missing here. After reviewing a new
+# import (it must exist on every supported Windows install), add it to this list.
+#
+# Baseline: Sigil 0.4.0-1 (ort 2.0.0-rc.11 static, whisper-rs 0.16, Tauri 2.10).
+
+# Windows
+advapi32.dll
+bcrypt.dll
+bcryptprimitives.dll
+comctl32.dll
+crypt32.dll
+dbghelp.dll
+dwmapi.dll
+gdi32.dll
+iphlpapi.dll
+kernel32.dll
+ntdll.dll
+ole32.dll
+oleaut32.dll
+secur32.dll
+setupapi.dll
+shell32.dll
+shlwapi.dll
+user32.dll
+ws2_32.dll
+api-ms-win-core-*.dll
+
+# Universal CRT and the Visual C++ runtime
+api-ms-win-crt-*.dll
+msvcp140.dll
+msvcp140_1.dll
+vcruntime140.dll
+vcruntime140_1.dll
+
+# DirectX 12 + DirectML: linked by ort-sys (pyke builds always include the DirectML EP). DirectML.dll
+# resolves to the redistributable bundled next to Sigil.exe, else the System32 copy.
+d3d12.dll
+directml.dll
+dxgi.dll
+dxcore.dll

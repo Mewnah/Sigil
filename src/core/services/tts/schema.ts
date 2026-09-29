@@ -1,6 +1,8 @@
 import { TextEventSource, TextEventSourceSchema } from "@/types";
 import { zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
+import { normalizeAzureVoiceName } from "./ssml";
+import { VOICEVOX_DEFAULT_HOST, VOICEVOX_HOST_PRESETS, migrateVoicevoxSettings } from "./voicevoxPresets";
 
 export enum TTS_Backends {
   native = "native",
@@ -51,7 +53,8 @@ export const Service_TTS_Schema = z.object({
   azure: z.object({
     device: zSafe(z.coerce.string(), ""),
     language: zSafe(z.coerce.string(), "English (United States)"),
-    voice: zSafe(z.coerce.string(), ""),
+    /** Voice short name; a trailing comma from old voice-list data is dropped on load. */
+    voice: zSafe(z.coerce.string().transform(normalizeAzureVoiceName), ""),
     voiceStyle: zSafe(z.coerce.string(), ""),
     voiceRole: zSafe(z.coerce.string(), ""),
     voiceVolume: zSafe(z.coerce.string(), "default"),
@@ -63,15 +66,20 @@ export const Service_TTS_Schema = z.object({
     key: zSafe(z.coerce.string(), ""),
     location: zSafe(z.coerce.string(), ""),
   }).default({}),
-  voicevox: z.object({
-    host: zSafe(z.coerce.string(), "http://localhost:50021"),
+  voicevox: z.preprocess(migrateVoicevoxSettings, z.object({
+    /**
+     * Engine preset: `voicevox` (:50021), `aivisspeech` (:10101) or `custom` (edit `host`). Settings
+     * saved before presets existed get it inferred from `host`.
+     */
+    hostPreset: zSafe(z.enum(VOICEVOX_HOST_PRESETS), "voicevox"),
+    host: zSafe(z.coerce.string(), VOICEVOX_DEFAULT_HOST),
     speaker: zSafe(z.coerce.string(), "0"),
     speedScale: zSafe(zStringNumber(), "1.0"),
     pitchScale: zSafe(zStringNumber(), "0.0"),
     intonationScale: zSafe(zStringNumber(), "1.0"),
     volumeScale: zSafe(zStringNumber(), "1.0"),
     device: zSafe(z.coerce.string(), ""),
-  }).default({}),
+  })).default({}),
   kokoro: z.object({
     endpoint: zSafe(z.coerce.string(), "http://localhost:8880"),
     voice: zSafe(z.coerce.string(), "af_bella"),
@@ -94,6 +102,10 @@ export const Service_TTS_Schema = z.object({
   fishSpeech: z.object({
     endpoint: zSafe(z.coerce.string(), "http://localhost:8080"),
     referenceId: zSafe(z.coerce.string(), ""),
+    /** Optional Bearer key: Fish Audio's hosted API, or a self-hosted `api_server.py --api-key`. */
+    apiKey: zSafe(z.coerce.string(), ""),
+    /** Optional `model` header, e.g. `s2.1-pro-free` on the hosted API; blank = server default. */
+    model: zSafe(z.coerce.string(), ""),
     device: zSafe(z.coerce.string(), ""),
   }).default({}),
   neuralOnnx: z.object({

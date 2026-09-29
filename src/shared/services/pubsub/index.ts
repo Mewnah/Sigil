@@ -1,4 +1,4 @@
-import { BaseEvent, IServiceInterface, ObsCaptionEnvelopeSchema, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSchema, TextEventSource, TextEventType } from "@/types";
+import { BaseEvent, IServiceInterface, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSource, TextEventType } from "@/types";
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
@@ -6,15 +6,25 @@ import PubSub from "pubsub-js";
 import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
-import { proxyMap } from "valtio/utils";
+import { proxyMap, subscribeKey } from "valtio/utils";
 
 import { z } from "zod";
+import {
+  encodeWire,
+  LINK_PUBSUB_KEEPALIVE_TOPIC,
+  newMessageId,
+  nextVia,
+  PUBSUB_STT_EXTERNAL_COMMAND,
+  PUBSUB_STT_EXTERNAL_STATE,
+  RecentMessageIds,
+  routeInboundMessage,
+  type InboundSource,
+} from "./inbound";
 
 /** Application WS ping interval for linked pubsub (see docs/RELEASE_AND_ENGINEERING.md#performance-and-connection-timeout-audit). */
 export const LINK_PUBSUB_KEEPALIVE_MS = 25_000;
 
 const LINK_PUBSUB_CONNECT_TIMEOUT_MS = 12_000;
-const LINK_PUBSUB_KEEPALIVE_TOPIC = "__sigil_keepalive";
 const LINK_PUBSUB_MAX_RECONNECT_DELAY_MS = 30_000;
 const LINK_PUBSUB_MAX_ATTEMPTS = 25;
 
@@ -36,10 +46,32 @@ export type ExternalSttHandler = (event: TextEvent) => void;
 /** Chrome/Edge mic.html → host: recognition actually started or stopped. */
 export type ExternalMicLifecycleHandler = (active: boolean) => void;
 
-export const PUBSUB_STT_EXTERNAL_STATE = "stt.external.state";
-export const PUBSUB_STT_EXTERNAL_COMMAND = "stt.external.command";
+export { PUBSUB_STT_EXTERNAL_COMMAND, PUBSUB_STT_EXTERNAL_STATE };
 
-const ExternalMicLifecycleStateSchema = z.object({ active: z.boolean() });
+/** `plugin:web|server_status` / `web:server_status` payload (Rust `WebServerStatus`). */
+export type WebServerStatus = {
+  state: "starting" | "listening" | "failed" | "stopped";
+  port: number;
+  /** Bind / server error when `state` is `failed` or `stopped`. */
+  error: string | null;
+  /** Whether the Origin allow-list is enforced right now. */
+  originCheck: boolean;
+  /** The `lanOriginCheck` setting as Rust last saw it. */
+  originCheckSetting: boolean;
+  /** `SIGIL_LAN_ORIGIN_CHECK` override (wins over the setting), or null. */
+  originCheckEnv: boolean | null;
+};
+
+/** `web:origin_rejected` payload (Rust `OriginRejection`), throttled per origin in Rust. */
+export type WebOriginRejection = {
+  route: string;
+  origin: string | null;
+  remote: string | null;
+  reason: "foreign_origin" | "null_origin" | "malformed_origin" | "missing_origin_remote";
+};
+
+/** Minimum gap between "blocked a connection" toasts (Rust already throttles per origin). */
+const ORIGIN_REJECTED_TOAST_GAP_MS = 20_000;
 
 const TEXT_HISTORY_CAP = 120;
 
@@ -78,6 +110,15 @@ class Service_PubSub implements IServiceInterface {
   #textEmoteEnricher?: TextEmoteEnricher;
   #externalSttHandler?: ExternalSttHandler;
   #externalMicLifecycleHandler?: ExternalMicLifecycleHandler;
+  /** This host session's id in the `via` chain of relayed messages (see ./inbound.ts). */
+  readonly #sessionId = nanoid(12);
+  /** Ids (`mid`) of messages this host originated, relayed or accepted: repeats are dropped. */
+  readonly #seenMessageIds = new RecentMessageIds();
+  #hostWebServerAttached = false;
+  #lastServerStatusToast = "";
+  #lastOriginToastAt = 0;
+  /** Local web server status (host app only; null until known). */
+  webServer = proxy<{ status: WebServerStatus | null }>({ status: null });
   serviceState = proxy({
     state: ServiceNetworkState.disconnected,
   });
@@ -93,52 +134,55 @@ class Service_PubSub implements IServiceInterface {
     list: []
   })
 
-  private consumePubSubMessage(stringEvent?: string) {
-    if (!window.Config.isServer())
+  /**
+   * Inbound message from the local WebSocket server (`source: "local"`) or from this host's Link
+   * socket (`source: "link"`). Only allow-listed topics with valid payloads get through
+   * (./inbound.ts): peer emotes are dropped (the host rescans), markup in peer text is neutralized,
+   * and a message whose `mid` this host has already seen is dropped. Everything else is dropped
+   * silently.
+   */
+  private consumePubSubMessage(stringEvent: unknown, source: InboundSource = "local") {
+    if (!window.Config.isServer() || typeof stringEvent !== "string")
       return;
-    if (typeof stringEvent === "string") try {
-      const raw = JSON.parse(stringEvent) as { topic?: string; data?: unknown };
-      if (raw?.topic === LINK_PUBSUB_KEEPALIVE_TOPIC)
-        return;
-      const { topic, data }: BaseEvent = raw as BaseEvent;
-      if (typeof data !== "object")
-        return;
-
-      if (topic === "obs.caption") {
-        const caption = ObsCaptionEnvelopeSchema.safeParse(data);
-        if (!caption.success) return;
-        const msg = { topic, data: caption.data };
-        this.publishLocally(msg);
-        this.#fanOutPubSubRemote(topic, caption.data);
-        return;
+    try {
+      const route = routeInboundMessage(stringEvent, source, this.#sessionId, this.#seenMessageIds);
+      switch (route.kind) {
+        case "ignore":
+          return;
+        case "mic_state":
+          this.#externalMicLifecycleHandler?.(route.active);
+          return;
+        case "external_stt": {
+          const event = this.applyEmotes(route.event);
+          this.#externalSttHandler?.({ ...event, emotes: event.emotes ?? {} });
+          return;
+        }
+        case "caption":
+          this.#relay(route.topic, route.data, route.via, route.mid, source);
+          return;
+        case "text":
+          this.#relay(route.topic, this.applyEmotes(route.data), route.via, route.mid, source);
+          return;
       }
-
-      if (topic === PUBSUB_STT_EXTERNAL_STATE) {
-        const parsed = ExternalMicLifecycleStateSchema.safeParse(data);
-        if (!parsed.success) return;
-        this.#externalMicLifecycleHandler?.(parsed.data.active);
-        return;
-      }
-
-      const validated = TextEventSchema.safeParse(data);
-      if (!validated.success)
-        return;
-
-      const textEvent = this.applyEmotes(validated.data);
-      if (topic === "text.stt") {
-        this.#externalSttHandler?.({
-          ...textEvent,
-          emotes: textEvent.emotes ?? {},
-        });
-        return;
-      }
-
-      const msg = { topic, data: textEvent };
-      this.publishLocally(msg);
-      this.#fanOutPubSubRemote(topic, textEvent);
     } catch (error) {
-      // just ignore invalid messages
+      console.warn("[pubsub] inbound message handler failed", error);
     }
+  }
+
+  /**
+   * Publish an accepted inbound event locally and pass it on, keeping its `mid` (or giving it one);
+   * never back over the Link socket it came from.
+   */
+  #relay(topic: string, data: unknown, via: string[], mid: string | undefined, source: InboundSource) {
+    this.publishLocally({ topic, data });
+    this.#fanOutPubSubRemote(topic, data, nextVia(via, this.#sessionId), mid ?? this.#newMessageId(), source === "local");
+  }
+
+  /** A fresh `mid`, remembered so a copy that comes back without this host in `via` is dropped. */
+  #newMessageId() {
+    const mid = newMessageId();
+    this.#seenMessageIds.add(mid);
+    return mid;
   }
 
   public registeredEvents = proxyMap<string, RegisteredEvent>([]);
@@ -165,9 +209,66 @@ class Service_PubSub implements IServiceInterface {
       invoke("plugin:web|pubsub_broadcast", { value: JSON.stringify(msg) });
   }
 
+  /**
+   * Host app, after settings and i18n are loaded: keep the Rust Origin-check kill switch in sync
+   * with `settings.lanOriginCheck` (a valtio proxy), and surface a failed web-server bind and
+   * refused WebSocket connections as toasts. Idempotent.
+   */
+  async attachHostWebServer(settings: { lanOriginCheck: boolean }) {
+    if (!window.Config.isServer() || !window.Config.isApp() || this.#hostWebServerAttached)
+      return;
+    this.#hostWebServerAttached = true;
+
+    const pushOriginCheck = (enabled: boolean) =>
+      invoke<WebServerStatus>("plugin:web|set_origin_check", { enabled })
+        .then((status) => this.#onServerStatus(status))
+        .catch((e) => console.warn("[pubsub] set_origin_check failed", e));
+    subscribeKey(settings, "lanOriginCheck", (enabled) => void pushOriginCheck(enabled !== false));
+
+    try {
+      await listen<WebServerStatus>("web:server_status", (e) => this.#onServerStatus(e.payload));
+      await listen<WebOriginRejection>("web:origin_rejected", (e) => this.#onOriginRejected(e.payload));
+    } catch (e) {
+      console.warn("[pubsub] web server event listeners failed", e);
+    }
+    // The reply carries the current status, so a bind failure from before the webview was
+    // listening is surfaced too.
+    await pushOriginCheck(settings.lanOriginCheck !== false);
+  }
+
+  #onServerStatus(status: WebServerStatus) {
+    this.webServer.status = status;
+    if (status.state !== "failed" && status.state !== "stopped") {
+      this.#lastServerStatusToast = "";
+      return;
+    }
+    const key = `${status.state}:${status.error ?? ""}`;
+    if (key === this.#lastServerStatusToast)
+      return;
+    this.#lastServerStatusToast = key;
+    console.error("[pubsub] local web server:", status.state, status.error);
+    toast.error(
+      i18n.t("toasts.web_server_failed", { port: status.port, error: status.error ?? status.state }),
+      { toastId: "web-server-status", autoClose: 20_000 }
+    );
+  }
+
+  #onOriginRejected(rejection: WebOriginRejection) {
+    console.warn("[pubsub] local web server refused a WebSocket connection", rejection);
+    const now = Date.now();
+    if (now - this.#lastOriginToastAt < ORIGIN_REJECTED_TOAST_GAP_MS)
+      return;
+    this.#lastOriginToastAt = now;
+    const who = rejection.origin ?? rejection.remote ?? "?";
+    toast.warn(i18n.t("toasts.web_origin_rejected", { origin: who.slice(0, 120) }), {
+      toastId: "web-origin-rejected",
+      autoClose: 12_000,
+    });
+  }
+
   async init() {
     window.Config.isServer() && listen('pubsub', (event) => {
-      this.consumePubSubMessage(event.payload as string);
+      this.consumePubSubMessage(event.payload, "local");
     });
 
     this.registerEvent({ label: "Speech-to-Text", value: TextEventSource.stt });
@@ -208,14 +309,18 @@ class Service_PubSub implements IServiceInterface {
     PubSub.publishSync(topic, data);
   }
 
-  /** PeerJS + localhost WS + link socket; local PubSub already handled separately when needed. */
-  #fanOutPubSubRemote(topic: string, data: unknown) {
+  /**
+   * PeerJS + localhost WS (+ the Link socket when `toLink`); local PubSub already handled separately
+   * when needed. `via` is the loop-prevention chain and `mid` the duplicate-suppression id
+   * (./inbound.ts).
+   */
+  #fanOutPubSubRemote(topic: string, data: unknown, via: string[], mid: string, toLink: boolean) {
     const dataJson = JSON.stringify(data);
     window.ApiShared.peer.broadcastPubSubParts(topic, dataJson);
-    const wire = `{"topic":${JSON.stringify(topic)},"data":${dataJson}}`;
+    const wire = encodeWire(topic, dataJson, via, mid);
     if (window.Config.isApp())
       void invoke("plugin:web|pubsub_broadcast", { value: wire });
-    if (this.#socket && this.#socket.readyState === this.#socket.OPEN)
+    if (toLink && this.#socket && this.#socket.readyState === this.#socket.OPEN)
       this.#socket.send(wire);
   }
 
@@ -224,7 +329,7 @@ class Service_PubSub implements IServiceInterface {
       return;
     const msg = { topic, data };
     this.publishLocally(msg);
-    this.#fanOutPubSubRemote(topic, data);
+    this.#fanOutPubSubRemote(topic, data, [this.#sessionId], this.#newMessageId(), true);
   }
   publishText(topic: TextEventSource, textData: PartialWithRequired<TextEvent, "type" | "value">) {
     let data = this.applyEmotes(textData);
@@ -331,7 +436,7 @@ class Service_PubSub implements IServiceInterface {
       clearTimeout(connectTimeout);
       this.#linkReconnectAttempts = 0;
       this.serviceState.state = ServiceNetworkState.connected;
-      socket.onmessage = (msg) => this.consumePubSubMessage(msg.data as string);
+      socket.onmessage = (msg) => this.consumePubSubMessage(msg.data, "link");
       this.#startLinkPing();
     };
 

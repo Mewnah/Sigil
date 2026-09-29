@@ -3,76 +3,118 @@ import { z } from "zod";
 import { zSafe } from "@/utils";
 
 import { normalizeChunkFramesValue } from "./chunkFrames";
+import {
+    AUX_MIC_GATES,
+    EXECUTION_PROVIDERS,
+    LATENCY_PRESETS,
+    PITCH_EXTRACTORS,
+    RVC_PROFILES,
+    VC_ENUM_DEFAULTS,
+    VC_MODES,
+    VC_NUMBER_RANGES,
+    WORKER_PRIORITIES,
+} from "./contract";
 
-export const VoiceChangerModeSchema = z.enum(["classic", "onnx", "sidecar", "rvc"]);
+/**
+ * In-memory shape of the voice-changer settings. Not persisted by the TS side (no `patchService`):
+ * Rust owns `app_data/voice-changer/settings.json` and the service hydrates from
+ * `get_voice_changer_params`. Enum lists and ranges come from `contract.ts` (checked against the
+ * Rust allow-lists by `__tests__/params.test.ts`).
+ */
+export const VoiceChangerModeSchema = z.enum(VC_MODES);
 
-export const LatencyPresetSchema = z.enum(["low_latency", "stable", "custom"]);
+export const LatencyPresetSchema = z.enum(LATENCY_PRESETS);
 
 /** RVC quality/latency profile (Streamer / Low latency / Quality). */
-export const RvcProfileSchema = z.enum(["streamer", "low_latency", "quality"]);
+export const RvcProfileSchema = z.enum(RVC_PROFILES);
 
-export const PitchExtractorSchema = z.enum(["fcpe", "rmvpe", "crepe", "dio"]);
+/** `crepe` is a legacy alias of `rmvpe` (normalized on hydration) and is never offered. */
+export const PitchExtractorSchema = z.enum(PITCH_EXTRACTORS);
 
-export const ExecutionProviderSchema = z.enum(["cpu", "cuda", "dml"]);
+export const ExecutionProviderSchema = z.enum(EXECUTION_PROVIDERS);
+
+export const WorkerPrioritySchema = z.enum(WORKER_PRIORITIES);
+
+export const AuxMicGateSchema = z.enum(AUX_MIC_GATES);
+
+const R = VC_NUMBER_RANGES;
 
 export const VoiceChangerStateSchema = z.object({
     enabled: zSafe(z.boolean(), false),
-    pitch: zSafe(z.number(), 0), // semitones, ±24
-    formant: zSafe(z.number(), 0), // -1.0 to +1.0
+    pitch: zSafe(z.number(), R.pitch_semitones.default), // semitones, ±24
+    formant: zSafe(z.number(), R.formant_shift.default), // -1.0 to +1.0
     /** FFT window length (ms). Higher = usually better quality, more latency and CPU. */
-    vocoderWindowMs: zSafe(z.number().min(30).max(60), 45),
+    vocoderWindowMs: zSafe(z.number().min(R.vocoder_window_ms.min).max(R.vocoder_window_ms.max), R.vocoder_window_ms.default),
     /** Phase vocoder oversampling: 1 = lowest CPU (more artifacts), 32 = heaviest, often cleaner. */
     vocoderOversample: zSafe(
         z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8), z.literal(16), z.literal(32)]),
-        8
+        VC_ENUM_DEFAULTS.vocoderOversample,
     ),
     /** Frames per processing chunk (per channel). Changing while running restarts the voice changer. */
     chunkFrames: zSafe(
         z.coerce.number().transform((n) => normalizeChunkFramesValue(n)),
         512,
     ),
-    inputGain: zSafe(z.number().min(0).max(4), 1),
-    outputGain: zSafe(z.number().min(0).max(4), 1),
-    outputPrefillMs: zSafe(z.number(), 35),
+    inputGain: zSafe(z.number().min(R.input_gain.min).max(R.input_gain.max), R.input_gain.default),
+    outputGain: zSafe(z.number().min(R.output_gain.min).max(R.output_gain.max), R.output_gain.default),
+    outputPrefillMs: zSafe(z.number(), R.output_prefill_ms.default),
     outputMaxQueueMs: zSafe(z.number(), 70),
     bufferTruncateEnabled: zSafe(z.boolean(), false),
-    bufferTruncateRms: zSafe(z.number(), 0.0005),
-    bufferTruncateChunks: zSafe(z.number().min(1).max(500), 32),
+    bufferTruncateRms: zSafe(z.number(), R.buffer_truncate_rms.default),
+    bufferTruncateChunks: zSafe(
+        z.number().min(R.buffer_truncate_chunks.min).max(R.buffer_truncate_chunks.max),
+        R.buffer_truncate_chunks.default,
+    ),
+    /** cpal input device name; `""` = system default. Persisted by Rust (`input_device`). */
     inputDevice: zSafe(z.string(), ""),
     outputDevice: zSafe(z.string(), "default"),
     /** Second output for headphones (streamers). Empty = off; `"default"` = system default output device. */
     monitorOutputDevice: zSafe(z.string(), ""),
-    monitorGain: zSafe(z.number().min(0).max(4), 1),
+    monitorGain: zSafe(z.number().min(R.monitor_gain.min).max(R.monitor_gain.max), R.monitor_gain.default),
     /** `classic` = built-in phase vocoder; `sidecar` / `onnx` / `rvc` = converter/model first, then shared post-DSP. */
-    mode: zSafe(VoiceChangerModeSchema, "classic"),
+    mode: zSafe(VoiceChangerModeSchema, VC_ENUM_DEFAULTS.mode),
     /** WebSocket URL for sidecar mode, e.g. ws://127.0.0.1:8765 */
     sidecarWsUrl: zSafe(z.string(), ""),
     /** Path to ONNX model: float32 `[1, chunk_samples]` in/out (see scripts/neural-sidecar). */
     onnxModelPath: zSafe(z.string(), ""),
     /** Execution provider for ONNX chunk mode only (RVC has its own `rvcExecutionProvider`). */
-    onnxExecutionProvider: zSafe(ExecutionProviderSchema, "cpu"),
+    onnxExecutionProvider: zSafe(ExecutionProviderSchema, VC_ENUM_DEFAULTS.onnxExecutionProvider),
     /** Buffer templates; `custom` when prefill/max ms edited manually. */
-    latencyPreset: zSafe(LatencyPresetSchema, "low_latency"),
+    latencyPreset: zSafe(LatencyPresetSchema, VC_ENUM_DEFAULTS.latencyPreset),
     /** Directory containing BYO RVC slot files (`gen.onnx`, optional `added.index`). */
     rvcSlotDir: zSafe(z.string(), ""),
     rvcHubertPath: zSafe(z.string(), ""),
     rvcFcpePath: zSafe(z.string(), ""),
     rvcRmvpePath: zSafe(z.string(), ""),
     /** Streamer / Low latency / Quality — maps to Rust `rvc_preset`. */
-    rvcProfile: zSafe(RvcProfileSchema, "streamer"),
+    rvcProfile: zSafe(RvcProfileSchema, VC_ENUM_DEFAULTS.rvcProfile),
     /** Execution provider for RVC (HuBERT, pitch extractor, generator) — maps to Rust `rvc_execution_provider`. */
-    rvcExecutionProvider: zSafe(ExecutionProviderSchema, "cpu"),
-    pitchExtractor: zSafe(PitchExtractorSchema, "fcpe"),
+    rvcExecutionProvider: zSafe(ExecutionProviderSchema, VC_ENUM_DEFAULTS.rvcExecutionProvider),
+    pitchExtractor: zSafe(PitchExtractorSchema, VC_ENUM_DEFAULTS.pitchExtractor),
     /** Read when the RVC harness is built (restart to apply). Streamer 64 / Low latency 96 / Quality 192. */
-    extraContextMs: zSafe(z.number().min(0).max(2000), 64),
+    extraContextMs: zSafe(z.number().min(R.extra_context_ms.min).max(R.extra_context_ms.max), R.extra_context_ms.default),
     /** Read when the RVC harness is built (restart to apply). */
-    crossfadeMs: zSafe(z.number().min(0).max(200), 20),
-    indexRate: zSafe(z.number().min(0).max(1), 0),
-    protect: zSafe(z.number().min(0).max(0.5), 0.33),
-    speakerId: zSafe(z.number().int().min(0), 0),
-    gpuDeviceIndex: zSafe(z.number().int().min(0), 0),
+    crossfadeMs: zSafe(z.number().min(R.crossfade_ms.min).max(R.crossfade_ms.max), R.crossfade_ms.default),
+    indexRate: zSafe(z.number().min(R.index_rate.min).max(R.index_rate.max), R.index_rate.default),
+    protect: zSafe(z.number().min(R.protect.min).max(R.protect.max), R.protect.default),
+    speakerId: zSafe(z.number().int().min(R.speaker_id.min), R.speaker_id.default),
+    gpuDeviceIndex: zSafe(z.number().int().min(R.gpu_device_index.min), R.gpu_device_index.default),
     silenceSkip: zSafe(z.boolean(), true),
-    vramCapMb: zSafe(z.number().int().min(256).max(8192), 768),
+    vramCapMb: zSafe(z.number().int().min(R.vram_cap_mb.min).max(R.vram_cap_mb.max), R.vram_cap_mb.default),
+    /**
+     * Most captured audio (ms) that may wait for conversion; older audio is dropped instead of queued.
+     * Hot: applies while running, in every mode (also the WebSocket read timeout).
+     */
+    latencyBudgetMs: zSafe(
+        z.number().min(R.latency_budget_ms.min).max(R.latency_budget_ms.max),
+        R.latency_budget_ms.default,
+    ),
+    /** The microphone while aux (TTS) audio plays through the voice changer. Hot. */
+    auxMicGate: zSafe(AuxMicGateSchema, VC_ENUM_DEFAULTS.auxMicGate),
+    /** Worker thread priority (auto / protect game FPS / protect voice). Hot. */
+    workerPriority: zSafe(WorkerPrioritySchema, VC_ENUM_DEFAULTS.workerPriority),
+    /** The RVC voice-permission notice was acknowledged (stored by Rust, not in the webview). */
+    rvcConsentAcknowledged: zSafe(z.boolean(), false),
 });
 
 export type VoiceChangerState = z.infer<typeof VoiceChangerStateSchema>;

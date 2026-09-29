@@ -1,6 +1,25 @@
-use crate::services::http_client::http_client;
+//! `translate` plugin: LibreTranslate HTTP client.
+//!
+//! # Per-call contract (frozen by P0-S0 for P0-G)
+//! `get_languages`, `translate`, `detect_language` and `check_availability` take optional
+//! `endpoint?: string` and `apiKey?: string`. They apply to that call only:
+//! - `endpoint` absent or blank → the endpoint stored by `set_endpoint` is used;
+//! - `apiKey` absent (`undefined` / `null`) → the key stored by `set_api_key` is used;
+//!   `apiKey: ""` explicitly means "no key" for that call.
+//!
+//! `set_endpoint` / `set_api_key` stay for callers that configure once. The API key is sent only in
+//! the JSON body of `/translate` and `/detect` (LibreTranslate has no header auth); it is never put
+//! in a URL, and `/languages` is public so it gets no key at all.
+//!
+//! Every call has a per-request timeout (health 10 s, lists 20 s, translate 20 s + 10 ms/char up to
+//! 60 s), so a hung server can no longer block a caption for the shared client's 2 h download cap.
+
+use crate::services::http_client::{
+    api_url, describe_api_error, describe_request_error, http_client, non_empty_key,
+    pick_endpoint, probe_ok, translate_timeout, LIST_TIMEOUT, TRANSLATE_TIMEOUT,
+};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
@@ -12,7 +31,7 @@ const DEFAULT_ENDPOINT: &str = "http://localhost:5000";
 #[derive(Clone)]
 pub struct TranslateState {
     endpoint: Arc<Mutex<String>>,
-    /// Optional LibreTranslate API key (sent in JSON body as `api_key` and as `api_key` query on GET).
+    /// Optional LibreTranslate API key, sent in the JSON body as `api_key`.
     api_key: Arc<Mutex<String>>,
 }
 
@@ -24,15 +43,43 @@ impl TranslateState {
         }
     }
 
-    /// Value for optional LibreTranslate `api_key` JSON / query field.
-    fn api_key_for_request(&self) -> Result<Option<String>, String> {
-        let k = self.api_key.lock().map_err(|_| "Lock failed")?.clone();
-        let t = k.trim();
-        if t.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(t.to_string()))
-        }
+    /// The endpoint and key for one call (see the module docs for the precedence rules).
+    fn target(&self, endpoint: Option<String>, api_key: Option<String>) -> Target {
+        let stored_endpoint = self
+            .endpoint
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let stored_key = self
+            .api_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        resolve_target(&stored_endpoint, &stored_key, endpoint.as_deref(), api_key.as_deref())
+    }
+}
+
+/// Where one call goes and with which key.
+#[derive(Debug, PartialEq, Eq)]
+struct Target {
+    endpoint: String,
+    api_key: Option<String>,
+}
+
+/// Per-call values win over stored ones; a blank endpoint counts as absent, while an explicit empty
+/// key means "no key".
+fn resolve_target(
+    stored_endpoint: &str,
+    stored_key: &str,
+    call_endpoint: Option<&str>,
+    call_key: Option<&str>,
+) -> Target {
+    Target {
+        endpoint: pick_endpoint(call_endpoint, stored_endpoint),
+        api_key: match call_key {
+            Some(k) => non_empty_key(Some(k)),
+            None => non_empty_key(Some(stored_key)),
+        },
     }
 }
 
@@ -40,76 +87,93 @@ impl TranslateState {
 pub struct Language {
     pub code: String,
     pub name: String,
+    /// Target codes this source can translate into (LibreTranslate ≥ 1.3); omitted when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct TranslateRequest {
-    q: String,
-    source: String,
-    target: String,
+#[derive(Serialize, Debug)]
+struct TranslateRequest<'a> {
+    q: &'a str,
+    source: &'a str,
+    target: &'a str,
+    format: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    api_key: Option<String>,
+    api_key: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct TranslateResponse {
     #[serde(rename = "translatedText")]
     translated_text: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct DetectRequest {
-    q: String,
+#[derive(Serialize, Debug)]
+struct DetectRequest<'a> {
+    q: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    api_key: Option<String>,
+    api_key: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct DetectResponse {
+    #[serde(default)]
     confidence: f64,
     language: String,
 }
 
-/// Set the LibreTranslate API endpoint URL
+/// The most confident detection (servers usually sort, but do not promise to).
+fn best_detection(results: Vec<DetectResponse>) -> Option<String> {
+    results
+        .into_iter()
+        .filter(|r| !r.language.trim().is_empty())
+        .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+        .map(|r| r.language)
+}
+
+/// Set the LibreTranslate API endpoint URL (the default for calls without `endpoint`).
 #[command]
 async fn set_endpoint<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>, endpoint: String) -> Result<(), String> {
-    *state.endpoint.lock().map_err(|_| "Lock failed")? = endpoint;
+    *state.endpoint.lock().unwrap_or_else(PoisonError::into_inner) = endpoint.trim().to_string();
     Ok(())
 }
 
-/// Set optional LibreTranslate API key (empty string clears).
+/// Set the optional LibreTranslate API key (empty string clears; the default for calls without `apiKey`).
 #[command]
 async fn set_api_key<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>, api_key: String) -> Result<(), String> {
-    *state.api_key.lock().map_err(|_| "Lock failed")? = api_key;
+    *state.api_key.lock().unwrap_or_else(PoisonError::into_inner) = api_key;
     Ok(())
 }
 
-/// Get available languages from LibreTranslate
+/// Get available languages from LibreTranslate.
 #[command]
-async fn get_languages<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>) -> Result<Vec<Language>, String> {
-    let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/languages", endpoint.trim_end_matches('/'));
-    let api_key = state.api_key_for_request()?;
+async fn get_languages<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, TranslateState>,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<Language>, String> {
+    // `/languages` is public: the key is resolved (for symmetry) but never sent.
+    let target = state.target(endpoint, api_key);
+    let url = api_url(&target.endpoint, "/languages")?;
+    let what = "LibreTranslate language list";
 
-    let mut req = http_client().get(&url);
-    if let Some(ref k) = api_key {
-        req = req.query(&[("api_key", k.as_str())]);
-    }
-
-    let response = req
+    let response = http_client()
+        .get(url)
+        .timeout(LIST_TIMEOUT)
         .send()
         .await
-        .map_err(|e| format!("Failed to connect to LibreTranslate: {}. Is the service running?", e))?;
-
-    let languages: Vec<Language> = response
-        .json()
+        .map_err(|e| describe_request_error(what, &e, LIST_TIMEOUT))?;
+    if !response.status().is_success() {
+        return Err(describe_api_error(what, response).await);
+    }
+    response
+        .json::<Vec<Language>>()
         .await
-        .map_err(|e| format!("Failed to parse language list: {}", e))?;
-
-    Ok(languages)
+        .map_err(|e| format!("{what}: unexpected response ({e})"))
 }
 
-/// Translate text from source language to target language
+/// Translate text from source language to target language.
 #[command]
 async fn translate<R: Runtime>(
     _app: AppHandle<R>,
@@ -117,95 +181,89 @@ async fn translate<R: Runtime>(
     text: String,
     source: String,
     target: String,
+    endpoint: Option<String>,
+    api_key: Option<String>,
 ) -> Result<String, String> {
     if text.trim().is_empty() {
         return Ok(String::new());
     }
-
-    let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/translate", endpoint.trim_end_matches('/'));
-    let api_key = state.api_key_for_request()?;
-
-    let request_body = TranslateRequest {
-        q: text,
-        source,
-        target,
-        api_key,
-    };
+    let call = state.target(endpoint, api_key);
+    let url = api_url(&call.endpoint, "/translate")?;
+    let what = "LibreTranslate translation";
+    let timeout = translate_timeout(&text);
 
     let response = http_client()
-        .post(&url)
-        .json(&request_body)
+        .post(url)
+        .timeout(timeout)
+        .json(&TranslateRequest {
+            q: &text,
+            source: &source,
+            target: &target,
+            format: "text",
+            api_key: call.api_key.as_deref(),
+        })
         .send()
         .await
-        .map_err(|e| format!("Translation request failed: {}. Is LibreTranslate running?", e))?;
-
+        .map_err(|e| describe_request_error(what, &e, timeout))?;
     if !response.status().is_success() {
-        return Err(format!("Translation failed with status: {}", response.status()));
+        return Err(describe_api_error(what, response).await);
     }
-
     let result: TranslateResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse translation response: {}", e))?;
-
+        .map_err(|e| format!("{what}: unexpected response ({e})"))?;
     Ok(result.translated_text)
 }
 
-/// Detect the language of the input text
+/// Detect the language of the input text.
 #[command]
-async fn detect_language<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>, text: String) -> Result<String, String> {
+async fn detect_language<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, TranslateState>,
+    text: String,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+) -> Result<String, String> {
     if text.trim().is_empty() {
         return Err("Cannot detect language of empty text".to_string());
     }
-
-    let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/detect", endpoint.trim_end_matches('/'));
-    let api_key = state.api_key_for_request()?;
-
-    let request_body = DetectRequest {
-        q: text,
-        api_key,
-    };
+    let call = state.target(endpoint, api_key);
+    let url = api_url(&call.endpoint, "/detect")?;
+    let what = "LibreTranslate language detection";
 
     let response = http_client()
-        .post(&url)
-        .json(&request_body)
+        .post(url)
+        .timeout(TRANSLATE_TIMEOUT)
+        .json(&DetectRequest {
+            q: &text,
+            api_key: call.api_key.as_deref(),
+        })
         .send()
         .await
-        .map_err(|e| format!("Language detection failed: {}", e))?;
-
+        .map_err(|e| describe_request_error(what, &e, TRANSLATE_TIMEOUT))?;
     if !response.status().is_success() {
-        return Err(format!("Detection failed with status: {}", response.status()));
+        return Err(describe_api_error(what, response).await);
     }
-
     let results: Vec<DetectResponse> = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse detection response: {}", e))?;
-
-    results
-        .first()
-        .map(|r| r.language.clone())
-        .ok_or_else(|| "No language detected".to_string())
+        .map_err(|e| format!("{what}: unexpected response ({e})"))?;
+    best_detection(results).ok_or_else(|| "No language detected".to_string())
 }
 
-/// Check if LibreTranslate service is available
+/// Check if LibreTranslate is reachable (`GET /languages` answers 2xx within 10 s).
 #[command]
-async fn check_availability<R: Runtime>(_app: AppHandle<R>, state: State<'_, TranslateState>) -> Result<bool, String> {
-    let endpoint = state.endpoint.lock().map_err(|_| "Lock failed")?.clone();
-    let url = format!("{}/languages", endpoint.trim_end_matches('/'));
-    let api_key = state.api_key_for_request()?;
-
-    let mut req = http_client().get(&url);
-    if let Some(ref k) = api_key {
-        req = req.query(&[("api_key", k.as_str())]);
-    }
-
-    match req.send().await {
-        Ok(response) => Ok(response.status().is_success()),
-        Err(_) => Ok(false),
-    }
+async fn check_availability<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, TranslateState>,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+) -> Result<bool, String> {
+    let target = state.target(endpoint, api_key);
+    let Ok(url) = api_url(&target.endpoint, "/languages") else {
+        return Ok(false);
+    };
+    Ok(probe_ok("LibreTranslate availability check", http_client().get(url)).await)
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -223,4 +281,94 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             check_availability
         ])
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn per_call_values_override_stored_ones() {
+        let t = resolve_target("http://stored:5000", "stored-key", Some("http://call:5000"), Some("call-key"));
+        assert_eq!(
+            t,
+            Target {
+                endpoint: "http://call:5000".into(),
+                api_key: Some("call-key".into())
+            }
+        );
+    }
+
+    #[test]
+    fn absent_values_fall_back_to_stored() {
+        let t = resolve_target("http://stored:5000", " stored-key ", None, None);
+        assert_eq!(t.endpoint, "http://stored:5000");
+        assert_eq!(t.api_key.as_deref(), Some("stored-key"));
+    }
+
+    #[test]
+    fn blank_endpoint_is_absent_but_empty_key_means_no_key() {
+        let t = resolve_target("http://stored:5000", "stored-key", Some("   "), Some(""));
+        assert_eq!(t.endpoint, "http://stored:5000");
+        assert_eq!(t.api_key, None, "an explicit empty key must not leak the stored key");
+        let t = resolve_target("http://stored:5000", "   ", None, None);
+        assert_eq!(t.api_key, None);
+    }
+
+    #[test]
+    fn concurrent_callers_do_not_share_endpoints() {
+        // The inspector's language probe and the running service each pass their own endpoint;
+        // neither mutates the stored default.
+        let state = TranslateState::new();
+        let a = state.target(Some("http://inspector:5000".into()), Some("".into()));
+        let b = state.target(None, None);
+        assert_eq!(a.endpoint, "http://inspector:5000");
+        assert_eq!(b.endpoint, DEFAULT_ENDPOINT);
+    }
+
+    #[test]
+    fn key_is_never_part_of_a_url() {
+        let t = resolve_target("http://host:5000", "SECRET", None, None);
+        for path in ["/languages", "/translate", "/detect"] {
+            let url = api_url(&t.endpoint, path).unwrap();
+            assert!(!url.as_str().contains("SECRET"), "{url}");
+        }
+    }
+
+    #[test]
+    fn request_bodies_carry_the_key_only_when_set() {
+        let with = serde_json::to_value(TranslateRequest {
+            q: "hi",
+            source: "en",
+            target: "ja",
+            format: "text",
+            api_key: Some("k"),
+        })
+        .unwrap();
+        assert_eq!(with["api_key"], "k");
+        assert_eq!(with["format"], "text");
+        let without = serde_json::to_value(DetectRequest { q: "hi", api_key: None }).unwrap();
+        assert!(without.get("api_key").is_none());
+    }
+
+    #[test]
+    fn detection_picks_highest_confidence() {
+        let r = vec![
+            DetectResponse { confidence: 12.0, language: "en".into() },
+            DetectResponse { confidence: 88.5, language: "ja".into() },
+            DetectResponse { confidence: 99.0, language: " ".into() },
+        ];
+        assert_eq!(best_detection(r).as_deref(), Some("ja"));
+        assert_eq!(best_detection(vec![]), None);
+    }
+
+    #[test]
+    fn languages_parse_with_and_without_targets() {
+        let v: Vec<Language> =
+            serde_json::from_str(r#"[{"code":"en","name":"English","targets":["ja","de"]},{"code":"ja","name":"Japanese"}]"#)
+                .unwrap();
+        assert_eq!(v[0].targets.as_deref(), Some(&["ja".to_string(), "de".to_string()][..]));
+        let out = serde_json::to_value(&v[1]).unwrap();
+        assert!(out.get("targets").is_none());
+    }
 }

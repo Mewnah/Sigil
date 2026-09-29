@@ -54,3 +54,7 @@ stats/
 # Tauri `icon` CLI also emits iOS/Android sets; desktop bundle uses paths in tauri.conf.json only
 src-tauri/icons/ios/
 src-tauri/icons/android/
+
+# Benchmark harness output (`Sigil.exe --headless bench ... --out bench-results/...`); curated
+# scorecards go to docs/benchmarks/ instead.
+bench-results/

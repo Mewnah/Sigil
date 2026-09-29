@@ -1,97 +1,107 @@
 //! Float32 PCM in ~[-1, 1] for DSP / ML from cpal device buffers.
+//!
+//! [`build_input_stream_f32`] opens an input stream in the device's native sample format and hands
+//! every callback buffer to `on_data` as an interleaved f32 slice without allocating: f32 devices
+//! pass their buffer straight through, other formats are converted into a scratch buffer that is
+//! preallocated for [`SCRATCH_SECONDS`] of audio (it grows once if a driver ever delivers more).
 
 use cpal::traits::DeviceTrait;
 use cpal::{BuildStreamError, Device, InputCallbackInfo, SampleFormat, SizedSample, Stream, StreamConfig, StreamError, SupportedStreamConfig};
 
-pub fn samples_to_f32_i8(data: &[i8]) -> Vec<f32> {
-    data.iter().map(|&s| s as f32 * (1.0 / 128.0)).collect()
+/// Scratch capacity of the converting callbacks, in seconds of interleaved audio.
+const SCRATCH_SECONDS: f32 = 0.25;
+
+#[inline]
+pub fn i8_to_f32(s: i8) -> f32 {
+    s as f32 * (1.0 / 128.0)
 }
 
-pub fn samples_to_f32_i16(data: &[i16]) -> Vec<f32> {
-    data.iter().map(|&s| s as f32 * (1.0 / 32768.0)).collect()
+#[inline]
+pub fn i16_to_f32(s: i16) -> f32 {
+    s as f32 * (1.0 / 32768.0)
 }
 
-pub fn samples_to_f32_i32(data: &[i32]) -> Vec<f32> {
-    const SCALE: f64 = 1.0 / 2_147_483_648.0;
-    data.iter().map(|&s| (s as f64 * SCALE) as f32).collect()
+#[inline]
+pub fn i32_to_f32(s: i32) -> f32 {
+    (s as f64 * (1.0 / 2_147_483_648.0)) as f32
 }
 
-pub fn samples_to_f32_i64(data: &[i64]) -> Vec<f32> {
-    const SCALE: f64 = 1.0 / 9_223_372_036_854_775_808.0;
-    data.iter().map(|&s| (s as f64 * SCALE) as f32).collect()
+#[inline]
+pub fn i64_to_f32(s: i64) -> f32 {
+    (s as f64 * (1.0 / 9_223_372_036_854_775_808.0)) as f32
 }
 
-pub fn samples_to_f32_u8(data: &[u8]) -> Vec<f32> {
-    data.iter()
-        .map(|&s| (s as f32 - 128.0) * (1.0 / 128.0))
-        .collect()
+#[inline]
+pub fn u8_to_f32(s: u8) -> f32 {
+    (s as f32 - 128.0) * (1.0 / 128.0)
 }
 
-pub fn samples_to_f32_u16(data: &[u16]) -> Vec<f32> {
-    data.iter()
-        .map(|&s| (s as f32 - 32_768.0) * (1.0 / 32_768.0))
-        .collect()
+#[inline]
+pub fn u16_to_f32(s: u16) -> f32 {
+    (s as f32 - 32_768.0) * (1.0 / 32_768.0)
 }
 
-pub fn samples_to_f32_u32(data: &[u32]) -> Vec<f32> {
-    const MID: f64 = 2_147_483_648.0;
-    const SCALE: f64 = 1.0 / 2_147_483_648.0;
-    data.iter()
-        .map(|&s| ((s as f64 - MID) * SCALE) as f32)
-        .collect()
+#[inline]
+pub fn u32_to_f32(s: u32) -> f32 {
+    ((s as f64 - 2_147_483_648.0) * (1.0 / 2_147_483_648.0)) as f32
 }
 
-pub fn samples_to_f32_u64(data: &[u64]) -> Vec<f32> {
-    const MID: f64 = 9_223_372_036_854_775_808.0;
-    const SCALE: f64 = 1.0 / 9_223_372_036_854_775_808.0;
-    data.iter()
-        .map(|&s| ((s as f64 - MID) * SCALE) as f32)
-        .collect()
+#[inline]
+pub fn u64_to_f32(s: u64) -> f32 {
+    ((s as f64 - 9_223_372_036_854_775_808.0) * (1.0 / 9_223_372_036_854_775_808.0)) as f32
 }
 
-pub fn samples_to_f32_f64(data: &[f64]) -> Vec<f32> {
-    data.iter().map(|&s| s as f32).collect()
-}
-
-fn samples_to_f32_f32(data: &[f32]) -> Vec<f32> {
-    data.to_vec()
+#[inline]
+pub fn f64_to_f32(s: f64) -> f32 {
+    s as f32
 }
 
 fn build_converting_input_stream<T, D, E>(
     device: &Device,
     config: &StreamConfig,
-    convert: fn(&[T]) -> Vec<f32>,
+    convert: fn(T) -> f32,
     mut on_data: D,
     on_error: E,
 ) -> Result<Stream, BuildStreamError>
 where
     T: SizedSample + 'static,
-    D: FnMut(Vec<f32>) + Send + 'static,
+    D: FnMut(&[f32]) + Send + 'static,
     E: FnMut(StreamError) + Send + 'static,
 {
-    device.build_input_stream(config, move |data: &[T], _: &InputCallbackInfo| on_data(convert(data)), on_error, None)
+    let frames = (config.sample_rate.0 as f32 * SCRATCH_SECONDS) as usize;
+    let mut scratch: Vec<f32> = Vec::with_capacity(frames.max(1024) * usize::from(config.channels.max(1)));
+    device.build_input_stream(
+        config,
+        move |data: &[T], _: &InputCallbackInfo| {
+            scratch.clear();
+            scratch.extend(data.iter().map(|&s| convert(s)));
+            on_data(&scratch);
+        },
+        on_error,
+        None,
+    )
 }
 
-/// Open an input stream in the device's native sample format (every format cpal defines) and hand each
-/// callback buffer to `on_data` as interleaved f32 PCM in ~[-1, 1].
-pub fn build_input_stream_f32<D, E>(device: &Device, config: &SupportedStreamConfig, on_data: D, on_error: E) -> Result<Stream, String>
+/// Open an input stream in the device's native sample format (every format cpal defines) and hand
+/// each callback buffer to `on_data` as interleaved f32 PCM in ~[-1, 1], without allocating.
+pub fn build_input_stream_f32<D, E>(device: &Device, config: &SupportedStreamConfig, mut on_data: D, on_error: E) -> Result<Stream, String>
 where
-    D: FnMut(Vec<f32>) + Send + 'static,
+    D: FnMut(&[f32]) + Send + 'static,
     E: FnMut(StreamError) + Send + 'static,
 {
     let stream_config = config.config();
     let cfg = &stream_config;
     let built = match config.sample_format() {
-        SampleFormat::F32 => build_converting_input_stream(device, cfg, samples_to_f32_f32, on_data, on_error),
-        SampleFormat::F64 => build_converting_input_stream(device, cfg, samples_to_f32_f64, on_data, on_error),
-        SampleFormat::I8 => build_converting_input_stream(device, cfg, samples_to_f32_i8, on_data, on_error),
-        SampleFormat::I16 => build_converting_input_stream(device, cfg, samples_to_f32_i16, on_data, on_error),
-        SampleFormat::I32 => build_converting_input_stream(device, cfg, samples_to_f32_i32, on_data, on_error),
-        SampleFormat::I64 => build_converting_input_stream(device, cfg, samples_to_f32_i64, on_data, on_error),
-        SampleFormat::U8 => build_converting_input_stream(device, cfg, samples_to_f32_u8, on_data, on_error),
-        SampleFormat::U16 => build_converting_input_stream(device, cfg, samples_to_f32_u16, on_data, on_error),
-        SampleFormat::U32 => build_converting_input_stream(device, cfg, samples_to_f32_u32, on_data, on_error),
-        SampleFormat::U64 => build_converting_input_stream(device, cfg, samples_to_f32_u64, on_data, on_error),
+        SampleFormat::F32 => device.build_input_stream(cfg, move |data: &[f32], _: &InputCallbackInfo| on_data(data), on_error, None),
+        SampleFormat::F64 => build_converting_input_stream(device, cfg, f64_to_f32, on_data, on_error),
+        SampleFormat::I8 => build_converting_input_stream(device, cfg, i8_to_f32, on_data, on_error),
+        SampleFormat::I16 => build_converting_input_stream(device, cfg, i16_to_f32, on_data, on_error),
+        SampleFormat::I32 => build_converting_input_stream(device, cfg, i32_to_f32, on_data, on_error),
+        SampleFormat::I64 => build_converting_input_stream(device, cfg, i64_to_f32, on_data, on_error),
+        SampleFormat::U8 => build_converting_input_stream(device, cfg, u8_to_f32, on_data, on_error),
+        SampleFormat::U16 => build_converting_input_stream(device, cfg, u16_to_f32, on_data, on_error),
+        SampleFormat::U32 => build_converting_input_stream(device, cfg, u32_to_f32, on_data, on_error),
+        SampleFormat::U64 => build_converting_input_stream(device, cfg, u64_to_f32, on_data, on_error),
         // `SampleFormat` is non-exhaustive; formats added by a future cpal need a converter above.
         other => return Err(format!("Unsupported input sample format: {other:?}")),
     };
@@ -104,17 +114,16 @@ mod tests {
 
     #[test]
     fn integer_formats_map_origin_and_extremes() {
-        assert_eq!(samples_to_f32_i8(&[0, i8::MIN]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_i16(&[0, i16::MIN]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_i32(&[0, i32::MIN]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_i64(&[0, i64::MIN]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_u8(&[128, 0]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_u16(&[32_768, 0]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_u32(&[1 << 31, 0]), vec![0.0, -1.0]);
-        assert_eq!(samples_to_f32_u64(&[1 << 63, 0]), vec![0.0, -1.0]);
-        assert!(samples_to_f32_i16(&[i16::MAX])[0] < 1.0);
-        assert!(samples_to_f32_u8(&[u8::MAX])[0] < 1.0);
-        assert_eq!(samples_to_f32_f64(&[0.5, -0.25]), vec![0.5, -0.25]);
-        assert_eq!(samples_to_f32_f32(&[0.5, -0.25]), vec![0.5, -0.25]);
+        assert_eq!((i8_to_f32(0), i8_to_f32(i8::MIN)), (0.0, -1.0));
+        assert_eq!((i16_to_f32(0), i16_to_f32(i16::MIN)), (0.0, -1.0));
+        assert_eq!((i32_to_f32(0), i32_to_f32(i32::MIN)), (0.0, -1.0));
+        assert_eq!((i64_to_f32(0), i64_to_f32(i64::MIN)), (0.0, -1.0));
+        assert_eq!((u8_to_f32(128), u8_to_f32(0)), (0.0, -1.0));
+        assert_eq!((u16_to_f32(32_768), u16_to_f32(0)), (0.0, -1.0));
+        assert_eq!((u32_to_f32(1 << 31), u32_to_f32(0)), (0.0, -1.0));
+        assert_eq!((u64_to_f32(1 << 63), u64_to_f32(0)), (0.0, -1.0));
+        assert!(i16_to_f32(i16::MAX) < 1.0);
+        assert!(u8_to_f32(u8::MAX) < 1.0);
+        assert_eq!((f64_to_f32(0.5), f64_to_f32(-0.25)), (0.5, -0.25));
     }
 }

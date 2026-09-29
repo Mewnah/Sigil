@@ -1,4 +1,5 @@
 import OBSWebSocket from "obs-websocket-js";
+import { localPageUrl } from "@/utils/localPages";
 
 export class ObsBrowserSourceService {
   /** Canvas mirror for OBS browser source (same as upstream Curses `/client` link). */
@@ -12,13 +13,14 @@ export class ObsBrowserSourceService {
     size?: string;
     lines?: string;
   }): string {
-    const n = window.Config.serverNetwork;
-    const p = String(n.port);
-    const q = new URLSearchParams({ port: p });
-    if (options?.mode) q.set("mode", options.mode);
-    if (options?.size) q.set("size", options.size);
-    if (options?.lines) q.set("lines", options.lines);
-    return `http://${n.host}:${p}/obs-captions.html?${q.toString()}`;
+    // Empty values are left out, as before.
+    return localPageUrl("obs-captions.html", {
+      params: {
+        mode: options?.mode || undefined,
+        size: options?.size || undefined,
+        lines: options?.lines || undefined,
+      },
+    });
   }
 
   async setupObsScene({

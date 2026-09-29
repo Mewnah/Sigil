@@ -482,33 +482,47 @@ interface ShortuctProps extends InputBaseProps {
     value?: string,
     onChange?: (value: string) => void
 }
-export const InputShortcut: FC<ShortuctProps> = ({ shortcut, label, onChange, ...rest }) => {
+/**
+ * Global shortcut field. Recording finishes on the first full key combination (Esc cancels); while recording the
+ * field shows the keys held so far and why a combination was refused (keyboard service `ui` state).
+ */
+export const InputShortcut: FC<ShortuctProps> = ({ shortcut, label }) => {
     const id = useId();
+    const { t } = useTranslation();
     const { shortcuts } = useSnapshot(window.ApiServer.state);
+    const kb = useSnapshot(window.ApiServer.keyboard.ui);
+    const recording = kb.showRecorder && kb.currentTarget === shortcut;
+    const value = shortcuts[shortcut];
+    const hintKey = recording && kb.recorderHint ? `stt.shortcut_hint_${kb.recorderHint}` : "";
 
-    const startRecord = () => {
-        window.ApiServer.keyboard.startShortcutRecord(shortcut);
-    }
-
-    const clear = () => {
-        window.ApiServer.keyboard.clearShortcut(shortcut);
-    }
-
-    const stopRecord = () => {
-        window.ApiServer.keyboard.confirmShortcutRecord();
-    }
+    const startRecord = () => window.ApiServer.keyboard.startShortcutRecord(shortcut);
+    const cancelRecord = () => window.ApiServer.keyboard.cancelComboRecord();
+    const clear = () => window.ApiServer.keyboard.clearShortcut(shortcut);
 
     return <InputContainer vertical label={label} id={id}>
         <div className="input-group w-full">
-            <input type="text" value={shortcuts[shortcut]} id={id} disabled className="w-full input input-sm input-bordered" />
-            <Tooltip content="Listen" className="btn btn-sm btn-primary btn-square">
-                <button aria-label="Listen" className="w-full h-full flex items-center justify-center" onClick={startRecord}><RiKeyboardBoxFill /></button>
-            </Tooltip>
-            <Tooltip content="Clear" className="btn btn-sm btn-neutral btn-square">
-                <button aria-label="Clear" className="w-full h-full flex items-center justify-center" onClick={clear}><RiDeleteBin3Fill /></button>
+            <input
+                type="text"
+                value={recording ? (kb.currentValue || t("stt.shortcut_press_keys")) : (value || t("stt.shortcut_none"))}
+                id={id}
+                disabled
+                aria-live={recording ? "polite" : undefined}
+                className={cx("w-full input input-sm input-bordered", { "input-primary": recording })}
+            />
+            {recording ? (
+                <Tooltip content={t("stt.shortcut_cancel")} className="btn btn-sm btn-ghost btn-square">
+                    <button aria-label={t("stt.shortcut_cancel")} className="w-full h-full flex items-center justify-center" onClick={cancelRecord}><RiCloseCircleFill /></button>
+                </Tooltip>
+            ) : (
+                <Tooltip content={t("stt.shortcut_record")} className="btn btn-sm btn-primary btn-square">
+                    <button aria-label={t("stt.shortcut_record")} className="w-full h-full flex items-center justify-center" onClick={startRecord}><RiKeyboardBoxFill /></button>
+                </Tooltip>
+            )}
+            <Tooltip content={t("stt.shortcut_clear")} className="btn btn-sm btn-neutral btn-square">
+                <button aria-label={t("stt.shortcut_clear")} className="w-full h-full flex items-center justify-center" onClick={clear}><RiDeleteBin3Fill /></button>
             </Tooltip>
         </div>
-        {/* <BaseText disabled type="text" /> */}
+        {hintKey && <span className="text-xs text-warning">{t(hintKey)}</span>}
     </InputContainer>
 }
 

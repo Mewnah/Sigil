@@ -79,11 +79,7 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
                     let mut name = [0_u16; 32];
                     let res_size = ToUnicodeEx(vkCode, code, &kb_state, &mut name, 0, Some(kb_layout));
                     if res_size > 0 {
-                        if let Some(s) = String::from_utf16(&name[..res_size as usize]).ok() {
-                            Some(KeyCommand::Key(s))
-                        } else {
-                            None
-                        }
+                        String::from_utf16(&name[..res_size as usize]).ok().map(KeyCommand::Key)
                     } else {
                         None
                     }

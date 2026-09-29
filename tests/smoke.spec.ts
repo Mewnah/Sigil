@@ -41,3 +41,67 @@ test("host shell still mounts under forced rtl on html", async ({ page }) => {
   const dir = await page.evaluate(() => document.documentElement.getAttribute("dir"));
   expect(dir).toBe("rtl");
 });
+
+/**
+ * `/client` connects PeerJS only to the server that served it (or loopback): a website cannot open
+ * `/client?host=evil.example` and feed the mirror from its own server (LAN security stage 1).
+ * WebSocket is stubbed to record the URLs PeerJS opens; there is no host server in preview.
+ */
+declare global {
+  interface Window {
+    __wsUrls: string[];
+  }
+}
+
+async function recordSockets(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    window.__wsUrls = [];
+    const Real = window.WebSocket;
+    const Stub = function (url: string | URL, protocols?: string | string[]) {
+      window.__wsUrls.push(String(url));
+      return new Real("ws://127.0.0.1:1/blocked-by-test", protocols);
+    } as unknown as typeof WebSocket;
+    Object.assign(Stub, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+    Stub.prototype = Real.prototype;
+    window.WebSocket = Stub;
+  });
+}
+
+async function socketUrls(page: import("@playwright/test").Page): Promise<string[]> {
+  await page.waitForFunction(() => window.__wsUrls.length > 0, null, { timeout: 20_000 });
+  return page.evaluate(() => window.__wsUrls);
+}
+
+test.describe("client host pinning", () => {
+  test("/client?host=<foreign> never connects to the foreign host", async ({ page }) => {
+    await recordSockets(page);
+    const requests: string[] = [];
+    page.on("request", (r) => requests.push(r.url()));
+    await page.goto("/client?host=evil.example&port=80&id=abc", { waitUntil: "domcontentloaded" });
+    const servingPort = new URL(page.url()).port;
+    const urls = await socketUrls(page);
+    for (const u of urls) {
+      expect(u).not.toContain("evil.example");
+      // The PeerJS provider rewrites localhost to 127.0.0.1.
+      expect(u).toMatch(new RegExp(`^wss?://(localhost|127\.0\.0\.1):${servingPort}/`));
+    }
+    expect(requests.filter((u) => new URL(u).hostname.endsWith("evil.example"))).toEqual([]);
+    // The foreign parameters are gone from the URL; other parameters stay.
+    expect(new URL(page.url()).search).toBe("?id=abc");
+  });
+
+  test("/client keeps a loopback ?host= (old Curses links, dev server)", async ({ page }) => {
+    await recordSockets(page);
+    await page.goto("/client?host=127.0.0.1&port=3030", { waitUntil: "domcontentloaded" });
+    const urls = await socketUrls(page);
+    expect(urls[0]).toMatch(/^wss?:\/\/127\.0\.0\.1:3030\//);
+    expect(new URL(page.url()).search).toBe("?host=127.0.0.1&port=3030");
+  });
+
+  test("/client ignores a port that would inject a URL authority", async ({ page }) => {
+    await recordSockets(page);
+    await page.goto(`/client?port=${encodeURIComponent("3030@evil.example")}`, { waitUntil: "domcontentloaded" });
+    const urls = await socketUrls(page);
+    for (const u of urls) expect(u).not.toContain("evil.example");
+  });
+});

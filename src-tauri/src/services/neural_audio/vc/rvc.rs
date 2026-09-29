@@ -230,9 +230,11 @@ impl RvcModel {
         }
 
         let hubert = session_builder_for_vc(ep_hint, opts)?
+            .component("vc.content")
             .commit_from_file(hubert_path)
             .map_err(|e| format!("HuBERT load: {}", e))?;
         let generator = session_builder_for_vc(ep_hint, opts)?
+            .component("vc")
             .commit_from_file(&gen_path)
             .map_err(|e| format!("RVC generator load: {}", e))?;
         let gen_inputs = GeneratorInputs::resolve(&generator, &gen_path)?;
@@ -277,7 +279,7 @@ impl RvcModel {
             // 256-dim content features are RVC v1 (HuBERT layer 9 + final_proj), 768 is v2.
             if manifest.emb_channels == 256 {
                 manifest.version = RvcVersion::V1;
-                if !metadata.as_ref().is_some_and(|m| m.emb_layer.is_some()) {
+                if metadata.as_ref().is_none_or(|m| m.emb_layer.is_none()) {
                     manifest.emb_layer = 9;
                     manifest.use_final_proj = true;
                 }

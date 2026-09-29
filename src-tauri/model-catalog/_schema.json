@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Mewnah/Sigil/src-tauri/model-catalog/_schema.json",
+  "title": "Sigil model / runtime catalog fragment",
+  "description": "One area's catalog entries (src-tauri/model-catalog/<area>.json). build.rs validates and embeds all fragments (P1-A); SIGIL_MODEL_CATALOG_OVERRIDE replaces them at runtime for development.",
+  "type": "object",
+  "required": ["entries"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": ["string", "array"] },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$",
+      "description": "Stable, lower-case id, e.g. 'stt/silero-vad-v6.2', 'runtime/nvidia-cu12'. Never renamed once published."
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source": {
+      "type": "object",
+      "required": ["kind", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["huggingface", "hf-mirror", "modelscope", "github-release", "nvidia-redist", "direct", "custom"],
+          "description": "Mirror family; the store tries sources in order and fails over on connect errors, 403/404/429/5xx, HTML bodies or hash mismatch."
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Download URL pinned to an immutable revision (commit hash, release tag), never a moving branch."
+        },
+        "revision": { "type": "string", "description": "Commit / tag the URL is pinned to (informational)." }
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "size", "sources"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/+-]+$",
+          "description": "Relative install path inside the entry folder (no absolute paths, no '..')."
+        },
+        "size": { "type": "integer", "minimum": 0, "description": "Bytes of the downloaded file." },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "git_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Git blob id for small non-LFS files when no sha256 is published."
+        },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source" } },
+        "archive": {
+          "type": "object",
+          "required": ["format"],
+          "additionalProperties": false,
+          "description": "Extract this download into the entry folder (safe extraction: no traversal or links; entry, size and ratio caps).",
+          "properties": {
+            "format": { "enum": ["zip", "tar.bz2", "tar.gz"] },
+            "strip": { "type": "integer", "minimum": 0, "description": "Leading path components to drop." },
+            "include": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to keep (default: all)." }
+          }
+        }
+      },
+      "oneOf": [
+        { "required": ["sha256"] },
+        { "required": ["git_oid"] },
+        { "not": { "anyOf": [{ "required": ["sha256"] }, { "required": ["git_oid"] }] } }
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "required": ["id", "family", "kind", "version", "license", "files", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "family": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "Install folder under app_data/models/<family>/<id>/, e.g. 'stt', 'tts', 'vc', 'mt', 'runtime', 'bench'."
+        },
+        "kind": { "enum": ["model", "runtime", "template", "bench"] },
+        "version": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "license": {
+          "type": "string",
+          "description": "SPDX id or short name, recorded as a fact only (never shown as a warning)."
+        },
+        "status": {
+          "enum": ["published", "unpublished"],
+          "description": "'unpublished' entries (Sigil-built assets not yet released) are satisfied only by local import or SIGIL_LOCAL_ASSETS."
+        },
+        "requires": { "type": "array", "items": { "$ref": "#/$defs/id" }, "description": "Entries installed first (e.g. a runtime pack)." },
+        "min_vram_mb": { "type": "integer", "minimum": 0 },
+        "variant": { "type": "string", "description": "Runtime variant, e.g. 'cpu', 'vulkan', 'cuda13', 'avx2'." },
+        "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } }
+      }
+    }
+  }
+}

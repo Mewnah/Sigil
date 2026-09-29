@@ -5,10 +5,24 @@
 #   VITE_GOOGLE_FONTS_API_KEY (optional; Google Fonts list in app)
 # Optional redirect overrides if OAuth URLs differ from defaults: SIGIL_TWITCH_CLIENT_REDIRECT_LOCAL,
 #   SIGIL_TWITCH_IMPLICIT_REDIRECT_LOCAL, SIGIL_KICK_CLIENT_REDIRECT_LOCAL (see .env.example)
+#
+# GPU execution providers: the release build uses scripts/release/tauri.release.conf.json, which
+# stages onnxruntime_providers_shared.dll, onnxruntime_providers_cuda.dll and DirectML.dll (copied by
+# ort-sys next to Sigil.exe) into both installers, next to Sigil.exe. The NVIDIA CUDA 12 / cuDNN 9
+# runtime is NOT bundled: users install it from Settings → GPU & diagnostics. See
+# docs/adr/0003-gpu-ep-delivery.md and scripts/release/verify-bundle.ps1.
 name: 'release'
 
 on:
   workflow_dispatch:
+
+env:
+  # whisper-rs-sys forwards GGML_* to whisper.cpp's CMake. Never tune for the runner's CPU: an
+  # AVX-512 build crashes with an illegal instruction on friends' PCs. (src-tauri/.cargo/config.toml
+  # sets the same values for local builds.)
+  GGML_NATIVE: "OFF"
+  GGML_AVX2: "ON"
+  CARGO_TERM_COLOR: always
 
 jobs:
   build:
@@ -35,18 +49,53 @@ jobs:
       - run: echo ${{steps.version.outputs.value}}
       - name: setup rust
         uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Release artifacts are large and LTO-linked; cache dependencies only.
+          cache-targets: "true"
+          shared-key: release
+      # ort-sys downloads a ~500 MB ONNX Runtime build from cdn.pyke.io on a cold cache; keep it.
+      - name: Cache ONNX Runtime binaries (ort.pyke.io)
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ort.pyke.io
+          key: ort-dist-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ort-dist-${{ runner.os }}-
       - name: setup pnpm deps
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: i18n key parity
         run: pnpm i18n:check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests (vitest)
+        run: pnpm test:unit
+      - name: Frontend build (dist/ is embedded by generate_context!, also in cargo test)
+        run: pnpm build
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
       - name: compile
-        run: pnpm tauri build
+        run: pnpm tauri build --config scripts/release/tauri.release.conf.json
         env:
           SIGIL_TWITCH_CLIENT_ID: ${{ secrets.SIGIL_TWITCH_CLIENT_ID || secrets.CURSES_TWITCH_CLIENT_ID }}
           SIGIL_TWITCH_CLIENT_SECRET: ${{ secrets.SIGIL_TWITCH_CLIENT_SECRET || secrets.CURSES_TWITCH_CLIENT_SECRET }}
           SIGIL_KICK_CLIENT_ID: ${{ secrets.SIGIL_KICK_CLIENT_ID || secrets.CURSES_KICK_CLIENT_ID }}
           SIGIL_KICK_CLIENT_SECRET: ${{ secrets.SIGIL_KICK_CLIENT_SECRET || secrets.CURSES_KICK_CLIENT_SECRET }}
           VITE_GOOGLE_FONTS_API_KEY: ${{ secrets.VITE_GOOGLE_FONTS_API_KEY }}
+
+      - name: Verify bundle (provider DLLs in both installers, no new load-time imports, EP probe)
+        shell: pwsh
+        run: ./scripts/release/verify-bundle.ps1
+
+      # Portable build: Sigil.exe alone cannot load the GPU providers, so ship it with them.
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $dir = "src-tauri/target/release"
+          $files = @("$dir/Sigil.exe") + (Get-ChildItem "src-tauri/target/native-bundle" -File | ForEach-Object { $_.FullName })
+          Compress-Archive -Path $files -DestinationPath "$dir/Sigil_${{steps.version.outputs.value}}_x64_portable.zip" -Force
 
       - name: create release
         uses: softprops/action-gh-release@v1
@@ -57,8 +106,9 @@ jobs:
           draft: true
           generate_release_notes: true
           fail_on_unmatched_files: true
-          # After upgrading Tauri or the bundler, run `pnpm tauri build` locally and confirm paths under
-          # src-tauri/target/release/ and bundle/msi/ (WiX may vary MSI filename slightly).
+          # Globs: WiX rewrites pre-release versions in the MSI name (0.4.0-1 → 0.4.0), so exact
+          # names from Cargo.toml do not match. NSIS per-user setup is the recommended installer.
           files: |
-            src-tauri/target/release/Sigil.exe
-            src-tauri/target/release/bundle/msi/Sigil_${{steps.version.outputs.value}}_x64_en-US.msi
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/Sigil_*_x64_portable.zip

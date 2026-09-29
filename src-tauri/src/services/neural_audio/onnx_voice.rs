@@ -3,7 +3,7 @@
 //! when `N` differs from the live mic chunk (`chunk_frames * input_channels`), samples are
 //! adapted (mono/stereo and linear resampling).
 
-use crate::services::neural_audio::ort_session::session_builder_with_ep;
+use crate::services::neural_audio::ort_session::{session_builder_for_vc, VcSessionOptions};
 
 use ndarray::{Array1, Array2};
 use ort::session::Session;
@@ -183,7 +183,7 @@ fn adapt_runtime_to_model(
     if frames_rt == 0 || runtime_need != ch_in.saturating_mul(frames_rt) {
         return linear_resample_1d(interleaved, n_in);
     }
-    if n_in % frames_rt != 0 {
+    if !n_in.is_multiple_of(frames_rt) {
         return linear_resample_1d(interleaved, n_in);
     }
     let ch_m = n_in / frames_rt;
@@ -214,7 +214,7 @@ fn adapt_model_to_runtime(
     if frames_rt == 0 || runtime_need != ch_in.saturating_mul(frames_rt) {
         return linear_resample_1d(model, runtime_need);
     }
-    if n_out % frames_rt != 0 {
+    if !n_out.is_multiple_of(frames_rt) {
         return linear_resample_1d(model, runtime_need);
     }
     let ch_m = n_out / frames_rt;
@@ -241,11 +241,26 @@ pub struct OnnxVoiceBridge {
 }
 
 impl OnnxVoiceBridge {
+    /// [`Self::new_with_options`] with default session options (device 0, ONNX Runtime's own
+    /// thread pool).
+    #[allow(dead_code)] // Kept for callers without session options; the voice changer passes them.
     pub fn new(
         model_path: &str,
         runtime_need: usize,
         ch_in: usize,
         execution_provider_hint: &str,
+    ) -> Result<Self, String> {
+        Self::new_with_options(model_path, runtime_need, ch_in, execution_provider_hint, &VcSessionOptions::default())
+    }
+
+    /// Load the model with `opts` (e.g. `streamer_profile` keeps inference on the calling thread,
+    /// so the voice-changer worker's priority policy covers all of it).
+    pub fn new_with_options(
+        model_path: &str,
+        runtime_need: usize,
+        ch_in: usize,
+        execution_provider_hint: &str,
+        opts: &VcSessionOptions,
     ) -> Result<Self, String> {
         let path = model_path.trim();
         if path.is_empty() {
@@ -262,7 +277,8 @@ impl OnnxVoiceBridge {
             ));
         }
 
-        let session = session_builder_with_ep(execution_provider_hint)?
+        let session = session_builder_for_vc(execution_provider_hint, opts)?
+            .component("vc.onnx")
             .commit_from_file(path)
             .map_err(|e| format!("Failed to load ONNX model {:?}: {}", path, e))?;
 
@@ -288,7 +304,7 @@ impl OnnxVoiceBridge {
 
         let ch_m_in = n_in / chunk_frames;
         let uses_aligned =
-            n_in % chunk_frames == 0 && ch_m_in > 0 && ch_m_in <= MAX_MODEL_CHANNELS;
+            n_in.is_multiple_of(chunk_frames) && ch_m_in > 0 && ch_m_in <= MAX_MODEL_CHANNELS;
         let adapting_in = n_in != runtime_need;
         let hint_out = if n_out_meta != runtime_need {
             "Output size will be taken from each run and adapted."
@@ -296,8 +312,8 @@ impl OnnxVoiceBridge {
             "Output matches mic chunk."
         };
         if adapting_in && uses_aligned && ch_m_in != ch_in {
-            eprintln!(
-                "[VoiceChanger] ONNX: model expects {} samples ({} ch × {} frames); mic is {} ch ({} samples). Downmix/upmix for inference. {}",
+            tracing::info!(
+                "voice changer ONNX: model expects {} samples ({} ch × {} frames); mic is {} ch ({} samples). Downmix/upmix for inference. {}",
                 n_in,
                 ch_m_in,
                 chunk_frames,
@@ -306,13 +322,13 @@ impl OnnxVoiceBridge {
                 hint_out
             );
         } else if adapting_in {
-            eprintln!(
-                "[VoiceChanger] ONNX: model input {} samples vs mic {}; linear resampling. {}",
+            tracing::info!(
+                "voice changer ONNX: model input {} samples vs mic {}; linear resampling. {}",
                 n_in, runtime_need, hint_out
             );
         } else {
-            eprintln!(
-                "[VoiceChanger] ONNX: input/output element size {} ({} ch). {}",
+            tracing::info!(
+                "voice changer ONNX: input/output element size {} ({} ch). {}",
                 runtime_need, ch_in, hint_out
             );
         }

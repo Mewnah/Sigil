@@ -21,9 +21,21 @@ interface DockIconProps {
     active?: boolean;
     status?: ServiceNetworkState;
     onClick: () => void;
+    /** Engine status while connecting (e.g. a model download), added to the tooltip. */
+    statusText?: string;
+    statusLevel?: "info" | "warning";
+    /** 0-100 while a download or copy reports progress, else null. */
+    progress?: number | null;
 }
 
-const DockIcon: FC<DockIconProps> = memo(({ icon, label, active, status, onClick }) => {
+const DockIcon: FC<DockIconProps> = memo(({ icon, label, active, status, onClick, statusText, statusLevel, progress }) => {
+    const isConnecting = status === ServiceNetworkState.connecting;
+    const detail = isConnecting ? statusText?.trim() ?? "" : "";
+    const percent = isConnecting && progress !== null && progress !== undefined
+        ? Math.round(Math.max(0, Math.min(100, progress)))
+        : null;
+    const statusLine = [detail, percent !== null ? `(${percent}%)` : ""].filter(Boolean).join(" ");
+    const tooltip = statusLine ? `${label}: ${statusLine}` : label;
     const statusColor = status === ServiceNetworkState.connected
         ? "bg-success"
         : status === ServiceNetworkState.connecting
@@ -33,7 +45,7 @@ const DockIcon: FC<DockIconProps> = memo(({ icon, label, active, status, onClick
                 : "bg-base-content/20";
 
     return (
-        <Tooltip content={label} placement="right">
+        <Tooltip content={tooltip} placement="right">
             <motion.button
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
@@ -55,6 +67,11 @@ const DockIcon: FC<DockIconProps> = memo(({ icon, label, active, status, onClick
                         )}
                         aria-hidden="true"
                     />
+                )}
+                {percent !== null && (
+                    <div className="absolute bottom-0 inset-x-1 h-1 rounded-full bg-base-content/10 overflow-hidden" aria-hidden="true">
+                        <div className={classNames("h-full", statusLevel === "warning" ? "bg-warning" : "bg-primary")} style={{ width: `${percent}%` }} />
+                    </div>
                 )}
             </motion.button>
         </Tooltip>
@@ -113,6 +130,9 @@ const QuickActionDock: FC = memo(() => {
                 label="Speech-to-Text"
                 active={sttState.status === ServiceNetworkState.connected}
                 status={sttState.status}
+                statusText={sttState.statusText}
+                statusLevel={sttState.statusLevel}
+                progress={sttState.progress}
                 onClick={handleToggleSTT}
             />
             <DockIcon

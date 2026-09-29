@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { clientServerAddress } from "@/utils/localPages";
 
 enum AppMode {
   server,
@@ -63,10 +64,12 @@ class AppConfiguration {
     // load network params from url query
     if (this.isClient()) {
       const q = new URLSearchParams(window.location.search.substring(1));
+      // Only the server that served this page (or loopback); src/index.tsx already strips foreign ?host=/?port=.
+      const { host, port } = clientServerAddress(window.location.search, window.location);
       this.clientNetwork = {
         serverId: q.get("id") ?? "",
-        host: q.get("host") ?? location.hostname,
-        port: q.get("port") ?? location.port,
+        host,
+        port,
       };
     }
     // server is always app

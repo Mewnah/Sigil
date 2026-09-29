@@ -4,7 +4,7 @@ import { devLog } from "@/utils/devLog";
 import NiceModal from "@ebay/nice-modal-react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 import { RiCharacterRecognitionFill, RiChatVoiceFill, RiInformationLine } from "react-icons/ri";
 import { proxy, useSnapshot } from "valtio";
 import { azureVoices } from "../../services/tts/tts_data";
@@ -12,6 +12,16 @@ import { TTS_FishSpeechService } from "../../services/tts/services/fishspeech";
 import { TTS_KokoroService } from "../../services/tts/services/kokoro";
 import { TTS_MeloService } from "../../services/tts/services/melo";
 import { fetchVoicevoxSpeakers } from "../../services/tts/services/voicevox";
+import { normalizeAzureVoiceName } from "../../services/tts/ssml";
+import { errorMessage } from "../../services/tts/types";
+import { finiteOr } from "../../services/tts/num";
+import {
+  VOICEVOX_PRESET_HOSTS,
+  VOICEVOX_PRESET_WEBSITES,
+  VOICEVOX_RANGES,
+  VoicevoxHostPreset,
+  applyVoicevoxPreset,
+} from "../../services/tts/voicevoxPresets";
 import Modal from "../Modal";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
@@ -96,17 +106,20 @@ const Native: FC = () => {
 const Azure: FC = () => {
   const { t } = useTranslation();
   const data = useSnapshot(window.ApiServer.state.services.tts.data.azure);
-  const handleUpdate = <K extends keyof TTS_State["azure"]>(key: K, v: TTS_State["azure"][K]) => window.ApiServer.state.services.tts.data.azure[key] = v;
+  const handleUpdate = <K extends keyof TTS_State["azure"]>(key: K, v: TTS_State["azure"][K]) =>
+    window.ApiServer.patchService("tts", s => s.data.azure[key] = v);
   const state = useSnapshot(window.ApiServer.tts.serviceState);
   const [voiceStyles, setVoiceStyles] = useState<{ label: string, value: string }[]>([]);
   const [voiceRoles, setVoiceRoles] = useState<{ label: string, value: string }[]>([]);
 
   const updateVoice = (value: { group: string, option: string }) => {
-    window.ApiServer.state.services.tts.data.azure.language = value.group;
-    window.ApiServer.state.services.tts.data.azure.voice = value.option;
-    // clear voice and role in state
-    window.ApiServer.state.services.tts.data.azure.voiceStyle = "";
-    window.ApiServer.state.services.tts.data.azure.voiceRole = "";
+    window.ApiServer.patchService("tts", s => {
+      s.data.azure.language = value.group;
+      s.data.azure.voice = value.option;
+      // Styles and roles differ per voice: clear them.
+      s.data.azure.voiceStyle = "";
+      s.data.azure.voiceRole = "";
+    });
   };
 
   useEffect(() => {
@@ -115,7 +128,8 @@ const Azure: FC = () => {
     if (!data.language || !data.voice)
       return;
 
-    const voice = azureVoices[data.language].find(voice => voice[0] === data.voice)
+    const voiceName = normalizeAzureVoiceName(data.voice);
+    const voice = azureVoices[data.language]?.find(voice => voice[0] === voiceName);
     const voiceParams = voice?.[2];
     setVoiceStyles(voiceParams?.styles ? [{ label: "None", value: "" }, ...voiceParams.styles.map(style => ({ label: style, value: style }))] : []);
     setVoiceRoles(voiceParams?.roles ? [{ label: "None", value: "" }, ...voiceParams.roles.map(roles => ({ label: roles, value: roles }))] : []);
@@ -192,73 +206,108 @@ const VoiceVox: FC = () => {
   const [speakers, setSpeakers] = useState<VoicevoxSpeakerOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Only the latest speaker request may update the list (the URL can change mid-request). */
+  const requestRef = useRef(0);
+
+  const isAivis = data.hostPreset === "aivisspeech";
+  const website = VOICEVOX_PRESET_WEBSITES[isAivis ? "aivisspeech" : "voicevox"];
+  const pitchIsZero = finiteOr(data.pitchScale, 0) === 0;
+
+  const selectPreset = (preset: VoicevoxHostPreset) => {
+    const patch = applyVoicevoxPreset(preset);
+    window.ApiServer.patchService("tts", s => { Object.assign(s.data.voicevox, patch); });
+  };
 
   const loadSpeakers = async () => {
+    const request = ++requestRef.current;
+    const host = window.ApiServer.state.services.tts.data.voicevox.host;
     setLoading(true);
     setError(null);
     try {
-      const speakerData = await fetchVoicevoxSpeakers(data.host);
-      const options: VoicevoxSpeakerOption[] = [];
-      speakerData.forEach(speaker => {
-        speaker.styles.forEach(style => {
-          options.push({
-            label: `${speaker.name} (${style.name})`,
-            value: style.id.toString(),
-          });
-        });
-      });
+      const speakerData = await fetchVoicevoxSpeakers(host);
+      if (request !== requestRef.current) return;
+      const options: VoicevoxSpeakerOption[] = speakerData.flatMap(speaker =>
+        (speaker.styles ?? []).map(style => ({
+          label: `${speaker.name} (${style.name})`,
+          value: String(style.id),
+        })));
       setSpeakers(options);
       if (options.length === 0) {
-        setError("No speakers found. Is VoiceVox running?");
+        setError(t("tts.voicevox_no_speakers"));
+        return;
       }
-    } catch (err: any) {
-      setError("Failed to connect to VoiceVox. Make sure the engine is running.");
+      // Style ids differ per engine (a VOICEVOX id means nothing to AivisSpeech): keep the choice
+      // when the engine has it, else pick its first style.
+      const current = window.ApiServer.state.services.tts.data.voicevox.speaker;
+      if (!options.some(o => o.value === current)) handleUpdate("speaker", options[0].value);
+    } catch (err) {
+      if (request !== requestRef.current) return;
+      setSpeakers([]);
+      setError(errorMessage(err) || t("tts.voicevox_no_speakers"));
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadSpeakers();
+    // Debounced, so typing a custom URL does not fire one request per keystroke.
+    const timer = setTimeout(() => void loadSpeakers(), 300);
+    return () => clearTimeout(timer);
   }, [data.host]);
 
   return <>
-    <Inspector.SubHeader>VoiceVox</Inspector.SubHeader>
+    <Inspector.SubHeader>{t("tts.backend_voicevox")}</Inspector.SubHeader>
     <Inspector.Description>
       <span className="text-base-content/60 text-xs">
-        VoiceVox is a free Japanese TTS engine. Download from{" "}
-        <a className="link link-primary link-hover" target="_blank" rel="noopener noreferrer" href="https://voicevox.hiroshiba.jp/">
-          voicevox.hiroshiba.jp
+        {t("tts.voicevox_desc")}{" "}
+        <a className="link link-primary link-hover" target="_blank" rel="noopener noreferrer" href={website}>
+          {website.replace(/^https:\/\//, "").replace(/\/$/, "")}
         </a>
       </span>
     </Inspector.Description>
 
     <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
-      <InputText
-        label="Host URL"
-        value={data.host}
-        onChange={e => handleUpdate("host", e.target.value)}
+      <InputSelect
+        label="tts.voicevox_preset"
+        value={data.hostPreset}
+        onValueChange={e => selectPreset(e as VoicevoxHostPreset)}
+        options={[
+          { label: t("tts.voicevox_preset_voicevox"), value: "voicevox" },
+          { label: t("tts.voicevox_preset_aivisspeech"), value: "aivisspeech" },
+          { label: t("tts.voicevox_preset_custom"), value: "custom" },
+        ]}
       />
+      {data.hostPreset === "custom" ? (
+        <InputText
+          label="tts.voicevox_host"
+          placeholder={VOICEVOX_PRESET_HOSTS.voicevox}
+          value={data.host}
+          onChange={e => handleUpdate("host", e.target.value)}
+        />
+      ) : (
+        <div className="text-xs text-base-content/60 mb-1">{t("tts.voicevox_preset_host_note", { host: data.host })}</div>
+      )}
 
       {error && (
         <div className="text-error text-xs py-1">{error}</div>
       )}
 
       <div className="flex items-center gap-2">
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <InputSelect
-            label="Speaker"
+            label="tts.voicevox_speaker"
             value={data.speaker}
             onValueChange={e => handleUpdate("speaker", e)}
             options={speakers}
           />
         </div>
         <button
+          type="button"
           className={classNames("btn btn-sm btn-primary", { loading })}
-          onClick={loadSpeakers}
+          onClick={() => void loadSpeakers()}
           disabled={loading}
         >
-          Refresh
+          {t("tts.http_refresh_list")}
         </button>
       </div>
 
@@ -272,35 +321,52 @@ const VoiceVox: FC = () => {
     <InputRange
       value={data.speedScale}
       onChange={e => handleUpdate("speedScale", e.target.value)}
-      label="Speed"
-      step="0.1"
-      min="0.5"
-      max="2.0"
+      label="tts.voicevox_speed"
+      step={String(VOICEVOX_RANGES.speedScale.step)}
+      min={String(VOICEVOX_RANGES.speedScale.min)}
+      max={String(VOICEVOX_RANGES.speedScale.max)}
     />
-    <InputRange
-      value={data.pitchScale}
-      onChange={e => handleUpdate("pitchScale", e.target.value)}
-      label="Pitch"
-      step="0.01"
-      min="-0.15"
-      max="0.15"
-    />
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">
+        <InputRange
+          value={data.pitchScale}
+          onChange={e => handleUpdate("pitchScale", e.target.value)}
+          label="tts.voicevox_pitch"
+          step={String(VOICEVOX_RANGES.pitchScale.step)}
+          min={String(VOICEVOX_RANGES.pitchScale.min)}
+          max={String(VOICEVOX_RANGES.pitchScale.max)}
+        />
+      </div>
+      <button
+        type="button"
+        className="btn btn-xs btn-ghost shrink-0"
+        onClick={() => handleUpdate("pitchScale", "0")}
+        disabled={pitchIsZero}
+      >
+        {t("tts.voicevox_reset_pitch")}
+      </button>
+    </div>
     <InputRange
       value={data.intonationScale}
       onChange={e => handleUpdate("intonationScale", e.target.value)}
-      label="Intonation"
-      step="0.1"
-      min="0"
-      max="2.0"
+      label="tts.voicevox_intonation"
+      step={String(VOICEVOX_RANGES.intonationScale.step)}
+      min={String(VOICEVOX_RANGES.intonationScale.min)}
+      max={String(VOICEVOX_RANGES.intonationScale.max)}
     />
     <InputRange
       value={data.volumeScale}
       onChange={e => handleUpdate("volumeScale", e.target.value)}
       label="common.field_volume"
-      step="0.1"
-      min="0"
-      max="2.0"
+      step={String(VOICEVOX_RANGES.volumeScale.step)}
+      min={String(VOICEVOX_RANGES.volumeScale.min)}
+      max={String(VOICEVOX_RANGES.volumeScale.max)}
     />
+    {isAivis && (
+      <div className={classNames("text-xs mb-1", pitchIsZero ? "text-base-content/60" : "text-warning")}>
+        {t("tts.voicevox_aivis_hint")}
+      </div>
+    )}
   </>
 }
 
@@ -328,6 +394,9 @@ const UberDuck: FC = () => {
     }).then(res => {
       if (Array.isArray(res))
         uberduckVoices.value = res.map(v => ({ value: v.voicemodel_uuid, label: v.display_name }));
+    }).catch(err => {
+      // A wrong or expired API key is rejected here first (HTTP 401).
+      toast.error(t("tts.uberduck_voices_failed", { error: errorMessage(err) }));
     }).finally(() => setLoadingVoices(false));
   }
 
@@ -342,7 +411,7 @@ const UberDuck: FC = () => {
       <InputText label="tts.uberduck_api_key" type="password" value={data.api_key} onChange={e => handleUpdate("api_key", e.target.value)} />
       <Inspector.Description>
         <span className="text-base-content/60 text-xs mt-2">
-          {t('tts.uberduck_voice_desc')}<br />
+          {t('tts.uberduck_voice_desc_key')}<br />
           <a className="link link-primary link-hover" target="_blank" rel="noopener noreferrer" href="https://app.uberduck.ai/speak#mode=tts-reference&voice=zwf">{t('tts.uberduck_voice_desc_link')}</a>
         </span>
       </Inspector.Description>
@@ -486,7 +555,7 @@ const FishSpeech: FC = () => {
   const refreshVoices = async () => {
     setLoading(true);
     try {
-      const list = await TTS_FishSpeechService.getVoices(data.endpoint);
+      const list = await TTS_FishSpeechService.getVoices(data.endpoint, data.apiKey);
       setVoiceOpts(list.map((x) => ({ label: x.name || x.id, value: x.id })));
     } catch {
       toast.error(t("tts.http_list_fetch_failed"));
@@ -500,6 +569,9 @@ const FishSpeech: FC = () => {
     <div className="text-xs text-base-content/70 mb-2">{t("tts.fish_desc")}</div>
     <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
       <InputText label="tts.fish_endpoint" value={data.endpoint} onChange={e => handleUpdate("endpoint", e.target.value)} />
+      <InputText label="tts.fish_api_key" type="password" value={data.apiKey} onChange={e => handleUpdate("apiKey", e.target.value)} />
+      <InputText label="tts.fish_model" placeholder="s2.1-pro-free" value={data.model} onChange={e => handleUpdate("model", e.target.value)} />
+      <div className="text-xs text-base-content/60 mb-1">{t("tts.fish_hosted_hint")}</div>
       <div className="flex flex-wrap gap-2 items-end mb-1">
         <div className="flex-1 min-w-[12rem]">
           <InputSelect
@@ -755,7 +827,11 @@ const Inspector_TTS: FC = () => {
       {data.data.backend === TTS_Backends.neuralOnnx && <NeuralOnnx />}
       {data.data.backend === TTS_Backends.neuralSidecar && <NeuralSidecar />}
 
-      <ServiceButton status={state.status} onStart={() => window.ApiServer.tts.start()} onStop={() => window.ApiServer.tts.stop()} />
+      <ServiceButton
+        status={state.status}
+        onStart={() => window.ApiServer.tts.start()}
+        onStop={() => window.ApiServer.tts.stop()}
+        onPending={() => window.ApiServer.tts.stop()} />
 
 
 

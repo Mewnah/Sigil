@@ -13,6 +13,7 @@ import {
 } from "react-icons/ri";
 import { SiTwitch, SiDiscord } from "react-icons/si";
 import classNames from "classnames";
+import { STT_Backends } from "@/core/services/stt/schema";
 
 // Kick logo
 const KickIcon: FC = () => (
@@ -139,8 +140,13 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
     ];
 
     const saveAndContinue = () => {
-        // STT backend will be configured in the settings panel
-        // This step just helps users understand their options
+        // Keep the choice; marking the desktop default migration done stops it from overriding this pick.
+        if (selected) {
+            window.ApiServer.patchService("stt", s => {
+                s.data.backend = selected === "vosk" ? STT_Backends.vosk : STT_Backends.whisper;
+                s.data.desktopDefaultMigrated = true;
+            });
+        }
         onNext();
     };
 

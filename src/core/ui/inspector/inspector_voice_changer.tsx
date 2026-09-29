@@ -1,21 +1,35 @@
 import { VoiceChangerState } from "@/core/services/voice_changer/schema";
-import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
+import type { VoiceChangerMetrics, VoiceChangerModelSlot } from "@/core/services/voice_changer";
 import {
     chunkFramesToMsAt48k,
     crossfadeMaxMs as crossfadeMaxMsFor,
     isVoiceChangerChunkFrames,
     VOICE_CHANGER_CHUNK_FRAMES,
 } from "@/core/services/voice_changer/chunkFrames";
+import {
+    AUX_MIC_GATES,
+    type AuxMicGate,
+    clampLatencyBudgetMs,
+    effectivePitchExtractor,
+    GPU_ONLY_PITCH_EXTRACTORS,
+    PITCH_EXTRACTORS,
+    VC_NUMBER_RANGES,
+    WORKER_PRIORITIES,
+    type WorkerPriority,
+} from "@/core/services/voice_changer/contract";
+import { assessMetrics, epDisplayName, epStatus, formatMs } from "@/core/services/voice_changer/metrics";
+import { findSlot } from "@/core/services/voice_changer/slots";
 import classNames from "classnames";
-import { FC, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FC, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import Inspector from "./components";
 import { InputSelect, InputContainer, InputText } from "./components/input";
-import { RiInformationLine, RiMagicFill, RiPlayFill, RiStopFill } from "react-icons/ri";
+import { RiInformationLine, RiMagicFill, RiPlayFill, RiRefreshLine, RiStopFill } from "react-icons/ri";
 import Tooltip from "../dropdown/Tooltip";
 import { toast } from "react-toastify";
 
@@ -23,6 +37,8 @@ interface AudioDevice {
     id: string;
     name: string;
 }
+
+const LATENCY_BUDGET = VC_NUMBER_RANGES.latency_budget_ms;
 
 /** Scroll/clipping region for the service inspector panel (SimpleBar + inspector content width). */
 function getInspectorPopoverClip(el: HTMLElement): DOMRect {
@@ -131,6 +147,8 @@ const VC_RANGE =
 /** Label on its own row; uniform full-width slider and end caps (matches inspector tone controls). */
 const VcSliderField: FC<{
     labelKey: string;
+    /** Optional (i) next to the label. */
+    infoKey?: string;
     inactive?: boolean;
     controlsRow: ReactNode;
     rangeMin: number;
@@ -144,6 +162,7 @@ const VcSliderField: FC<{
     highLabelKey: string;
 }> = ({
     labelKey,
+    infoKey,
     inactive,
     controlsRow,
     rangeMin,
@@ -158,7 +177,14 @@ const VcSliderField: FC<{
     const { t } = useTranslation();
     return (
         <div className="flex w-full min-w-0 flex-col gap-2">
-            <div className="text-xs font-medium leading-snug text-base-content/80">{t(labelKey)}</div>
+            {infoKey ? (
+                <div className="flex min-w-0 items-center gap-1">
+                    <div className="min-w-0 flex-1 text-xs font-medium leading-snug text-base-content/80">{t(labelKey)}</div>
+                    <InspectorInfoButton text={t(infoKey)} />
+                </div>
+            ) : (
+                <div className="text-xs font-medium leading-snug text-base-content/80">{t(labelKey)}</div>
+            )}
             <div
                 className={classNames(
                     "flex w-full min-w-0 flex-col gap-2",
@@ -221,6 +247,43 @@ const VcDetails: FC<{
     );
 };
 
+/** Device list of one direction; `null` until the first reply. */
+function useAudioDevices(kind: "input" | "output"): AudioDevice[] | null {
+    const [devices, setDevices] = useState<AudioDevice[] | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        invoke<AudioDevice[]>(kind === "input" ? "plugin:audio|list_input_devices" : "plugin:audio|list_output_devices")
+            .then((d) => {
+                if (!cancelled) setDevices(Array.isArray(d) ? d : []);
+            })
+            .catch((e) => {
+                console.error(e);
+                if (!cancelled) setDevices([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [kind]);
+    return devices;
+}
+
+/**
+ * Options for the listed devices, plus the saved one when it is not connected right now (so a restored
+ * setting is shown by name instead of a blank select, and is kept until the user picks another).
+ */
+function useDeviceOptions(devices: AudioDevice[] | null, saved: string, builtIn: readonly string[]) {
+    const { t } = useTranslation();
+    return useMemo(() => {
+        const listed = (devices ?? []).map((d) => ({ label: d.name, value: d.id }));
+        const missing = devices !== null && saved !== "" && !builtIn.includes(saved) && !listed.some((o) => o.value === saved);
+        return missing ? [...listed, { label: t("voice_changer.device_not_connected", { name: saved }), value: saved }] : listed;
+    }, [devices, saved, builtIn, t]);
+}
+
+/** Select value of "system default" (Radix Select shows its placeholder for an empty value). */
+const INPUT_DEVICE_DEFAULT = "__vc_input_default__";
+const NO_BUILT_IN: readonly string[] = [];
+
 const VoiceInputDeviceSelect: FC<{
     value: string;
     onChange: (device: string) => void;
@@ -228,41 +291,29 @@ const VoiceInputDeviceSelect: FC<{
     defaultLabelKey: string;
 }> = ({ value, onChange, labelKey, defaultLabelKey }) => {
     const { t } = useTranslation();
-    const [devices, setDevices] = useState<AudioDevice[]>([]);
-
-    useEffect(() => {
-        invoke<AudioDevice[]>("plugin:audio|list_input_devices")
-            .then(setDevices)
-            .catch(console.error);
-    }, []);
+    const devices = useAudioDevices("input");
+    const options = useDeviceOptions(devices, value, NO_BUILT_IN);
 
     return (
         <InputSelect
             label={labelKey}
-            value={value || ""}
-            onValueChange={onChange}
-            options={[
-                { label: t(defaultLabelKey), value: "" },
-                ...devices.map(d => ({ label: d.name, value: d.id }))
-            ]}
+            value={value || INPUT_DEVICE_DEFAULT}
+            onValueChange={(v) => onChange(v === INPUT_DEVICE_DEFAULT ? "" : v)}
+            options={[{ label: t(defaultLabelKey), value: INPUT_DEVICE_DEFAULT }, ...options]}
         />
     );
 };
 
 const MONITOR_OUTPUT_OFF = "__vc_monitor_off__";
+const OUTPUT_BUILT_IN: readonly string[] = ["default"];
 
 const VoiceMonitorOutputDeviceSelect: FC<{
     value: string;
     onChange: (device: string) => void;
 }> = ({ value, onChange }) => {
     const { t } = useTranslation();
-    const [devices, setDevices] = useState<AudioDevice[]>([]);
-
-    useEffect(() => {
-        invoke<AudioDevice[]>("plugin:audio|list_output_devices")
-            .then(setDevices)
-            .catch(console.error);
-    }, []);
+    const devices = useAudioDevices("output");
+    const options = useDeviceOptions(devices, value, OUTPUT_BUILT_IN);
 
     const selectValue = value === "" ? MONITOR_OUTPUT_OFF : value || "default";
 
@@ -277,7 +328,7 @@ const VoiceMonitorOutputDeviceSelect: FC<{
             options={[
                 { label: t("voice_changer.monitor_off"), value: MONITOR_OUTPUT_OFF },
                 { label: t("voice_changer.device_system_default"), value: "default" },
-                ...devices.map(d => ({ label: d.name, value: d.id }))
+                ...options,
             ]}
         />
     );
@@ -290,44 +341,286 @@ const VoiceOutputDeviceSelect: FC<{
     defaultLabelKey: string;
 }> = ({ value, onChange, labelKey, defaultLabelKey }) => {
     const { t } = useTranslation();
-    const [devices, setDevices] = useState<AudioDevice[]>([]);
-
-    useEffect(() => {
-        invoke<AudioDevice[]>("plugin:audio|list_output_devices")
-            .then(setDevices)
-            .catch(console.error);
-    }, []);
+    const devices = useAudioDevices("output");
+    const options = useDeviceOptions(devices, value || "default", OUTPUT_BUILT_IN);
 
     return (
         <InputSelect
             label={labelKey}
             value={value || "default"}
             onValueChange={onChange}
-            options={[
-                { label: t(defaultLabelKey), value: "default" },
-                ...devices.map(d => ({ label: d.name, value: d.id }))
-            ]}
+            options={[{ label: t(defaultLabelKey), value: "default" }, ...options]}
         />
     );
 };
 
-const VC_CONSENT_KEY = "sigil.vc.consent";
+/**
+ * Number input that keeps what the user types until blur / Enter and only then commits the clamped value
+ * (a controlled input that clamps on every keystroke makes e.g. "250" impossible to type when min is 100).
+ */
+const VcDraftNumberInput: FC<{
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    ariaLabel: string;
+    onCommit: (v: number) => void;
+}> = ({ value, min, max, step, ariaLabel, onCommit }) => {
+    const [draft, setDraft] = useState<string | null>(null);
+    const commit = () => {
+        if (draft === null) return;
+        const x = parseFloat(draft);
+        setDraft(null);
+        if (!Number.isNaN(x)) onCommit(Math.min(max, Math.max(min, x)));
+    };
+    return (
+        <input
+            type="number"
+            className="input input-bordered input-sm w-24 shrink-0 font-mono"
+            min={min}
+            max={max}
+            step={step}
+            aria-label={ariaLabel}
+            value={draft ?? String(value)}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") setDraft(null);
+            }}
+        />
+    );
+};
 
-function hasVcConsent(): boolean {
-    try {
-        return localStorage.getItem(VC_CONSENT_KEY) === "1";
-    } catch {
-        return false;
+/** Model execution provider in use; a fallback is a warning with Rust's reason. */
+const VcEpStatus: FC<{ metrics: VoiceChangerMetrics }> = ({ metrics }) => {
+    const { t } = useTranslation();
+    const status = epStatus(metrics.ep);
+    if (!status) return null;
+    if (status.kind === "granted") {
+        return (
+            <div
+                className={classNames(
+                    "text-xs",
+                    status.active === "cpu" ? "text-base-content/60" : "text-success",
+                )}
+            >
+                {t("voice_changer.ep_running_on", { ep: epDisplayName(status.active) })}
+            </div>
+        );
     }
-}
+    return (
+        <div role="status" className="alert alert-warning alert-soft flex flex-col items-start gap-1 text-xs leading-snug">
+            <span className="font-medium">
+                {t("voice_changer.ep_fallback", {
+                    requested: epDisplayName(status.requested),
+                    active: epDisplayName(status.active),
+                })}
+            </span>
+            <span className="break-words opacity-80">
+                {t("voice_changer.ep_fallback_reason", {
+                    reason: status.reason ?? t("voice_changer.ep_reason_unknown"),
+                })}
+            </span>
+        </div>
+    );
+};
 
-function setVcConsent() {
-    try {
-        localStorage.setItem(VC_CONSENT_KEY, "1");
-    } catch {
-        /* ignore quota / private mode */
+const VcStat: FC<{ label: string; value: string; tone?: "warn" | "error" }> = ({ label, value, tone }) => (
+    <div className="flex min-w-0 items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate font-sans text-base-content/55">{label}</span>
+        <span
+            className={classNames(
+                "shrink-0 tabular-nums",
+                tone === "error" ? "text-error" : tone === "warn" ? "text-warning" : "text-base-content/80",
+            )}
+        >
+            {value}
+        </span>
+    </div>
+);
+
+/** Live latency metrics of the running engine, with plain-language warnings. */
+const VcMetricsPanel: FC<{
+    metrics: VoiceChangerMetrics;
+    prev: VoiceChangerMetrics | null;
+    budgetMs: number;
+}> = ({ metrics: m, prev, budgetMs }) => {
+    const { t } = useTranslation();
+    const ms = t("voice_changer.unit_ms");
+    const a = assessMetrics(m, budgetMs, prev);
+    if (a.starting) {
+        return <div className="text-xs text-base-content/60">{t("voice_changer.metrics_starting")}</div>;
     }
-}
+    const processValue =
+        m.process_p99_ms != null
+            ? `${formatMs(m.process_ms)} / ${formatMs(m.process_p99_ms)} ${ms}`
+            : `${formatMs(m.process_ms)} ${ms}`;
+    const warnings: { key: string; tone: "warn" | "error" }[] = [];
+    if (a.realtime === "slow") warnings.push({ key: "voice_changer.metrics_slow_warn", tone: "error" });
+    else if (a.realtime === "spikes") warnings.push({ key: "voice_changer.metrics_spikes_warn", tone: "warn" });
+    if (a.droppingNow || a.backlogHigh) warnings.push({ key: "voice_changer.metrics_dropping_warn", tone: "warn" });
+    if (a.underrunNow) warnings.push({ key: "voice_changer.metrics_underrun_warn", tone: "warn" });
+    return (
+        <div className="flex flex-col gap-1.5">
+            <div className="grid grid-cols-1 gap-y-0.5 rounded-lg border border-base-content/10 px-2.5 py-2 font-mono text-xs">
+                <VcStat
+                    label={m.process_p99_ms != null ? t("voice_changer.metrics_process_label") : t("voice_changer.metrics_process_avg_label")}
+                    value={processValue}
+                    tone={a.realtime === "slow" ? "error" : a.realtime === "spikes" ? "warn" : undefined}
+                />
+                <VcStat label={t("voice_changer.metrics_block_label")} value={`${formatMs(m.chunk_ms)} ${ms}`} />
+                {m.backlog_ms != null ? (
+                    <VcStat
+                        label={t("voice_changer.metrics_backlog_label")}
+                        value={`${formatMs(m.backlog_ms)} / ${formatMs(budgetMs)} ${ms}`}
+                        tone={a.backlogHigh ? "warn" : undefined}
+                    />
+                ) : null}
+                <VcStat label={t("voice_changer.metrics_buffer_label")} value={`${formatMs(m.buffer_ms)} ${ms}`} />
+                {m.dropped_ms != null ? (
+                    <VcStat
+                        label={t("voice_changer.metrics_dropped_label")}
+                        value={`${formatMs(m.dropped_ms)} ${ms}`}
+                        tone={a.droppingNow ? "warn" : undefined}
+                    />
+                ) : null}
+                {m.underruns != null ? (
+                    <VcStat
+                        label={t("voice_changer.metrics_underruns_label")}
+                        value={String(m.underruns)}
+                        tone={a.underrunNow ? "warn" : undefined}
+                    />
+                ) : null}
+            </div>
+            {warnings.map((w) => (
+                <p
+                    key={w.key}
+                    className={classNames("text-xs leading-snug", w.tone === "error" ? "text-error" : "text-warning")}
+                >
+                    {t(w.key)}
+                </p>
+            ))}
+        </div>
+    );
+};
+
+const SLOT_CUSTOM = "__vc_slot_custom__";
+const SLOT_NONE = "__vc_slot_none__";
+
+/**
+ * RVC voice picker over the folders in `app_data/voice-changer/models/` (Rust `list_voice_changer_model_slots`),
+ * with "Other folder…" for a voice anywhere else. Picking a voice applies its saved `slot.json`.
+ */
+const VcVoicePicker: FC<{ slotDir: string; onSlotDirChange: (path: string) => void; onCommit: () => void }> = ({
+    slotDir,
+    onSlotDirChange,
+    onCommit,
+}) => {
+    const { t } = useTranslation();
+    const vcApi = window.ApiServer.voiceChanger;
+    const [slots, setSlots] = useState<VoiceChangerModelSlot[] | null>(null);
+    const [scanning, setScanning] = useState(false);
+    const [modelsDir, setModelsDir] = useState("");
+    const [custom, setCustom] = useState(false);
+
+    const rescan = useCallback(async () => {
+        setScanning(true);
+        try {
+            setSlots(await vcApi.listModelSlots());
+        } finally {
+            setScanning(false);
+        }
+    }, [vcApi]);
+
+    useEffect(() => {
+        if (!isTauri()) return;
+        void rescan();
+        let cancelled = false;
+        appDataDir()
+            .then((d) => join(d, "voice-changer", "models"))
+            .then((p) => {
+                if (!cancelled) setModelsDir(p);
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [rescan]);
+
+    const matched = slots ? findSlot(slots, slotDir) : undefined;
+    const hasDir = slotDir.trim() !== "";
+    const hasSlots = !!slots && slots.length > 0;
+    const showPathField = !hasSlots || custom || (hasDir && !matched);
+    // "Other folder…" stays selected while its field is open, even if the typed folder is a listed voice.
+    const pickerValue = custom ? SLOT_CUSTOM : matched ? matched.path : hasDir ? SLOT_CUSTOM : SLOT_NONE;
+
+    const pathField = (
+        <VcPathField
+            labelKey={hasSlots ? "voice_changer.rvc_voice_folder" : "voice_changer.rvc_slot_dir"}
+            value={slotDir}
+            directory
+            onChange={onSlotDirChange}
+            onCommit={onCommit}
+        />
+    );
+
+    return (
+        <div className="flex flex-col gap-2">
+            {hasSlots ? (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                    <InputSelect
+                        label="voice_changer.rvc_voice"
+                        value={pickerValue}
+                        onValueChange={(v) => {
+                            if (v === SLOT_NONE) return;
+                            if (v === SLOT_CUSTOM) {
+                                setCustom(true);
+                                return;
+                            }
+                            setCustom(false);
+                            void vcApi.selectModelSlot(v);
+                        }}
+                        options={[
+                            ...(pickerValue === SLOT_NONE ? [{ label: t("voice_changer.rvc_voice_choose"), value: SLOT_NONE }] : []),
+                            ...slots!.map((s) => ({ label: s.id, value: s.path })),
+                            { label: t("voice_changer.rvc_voice_custom"), value: SLOT_CUSTOM },
+                        ]}
+                    />
+                    <Tooltip content={t("voice_changer.rvc_voices_rescan")}>
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm btn-square mb-0.5"
+                            aria-label={t("voice_changer.rvc_voices_rescan")}
+                            disabled={scanning}
+                            onClick={() => void rescan()}
+                        >
+                            <RiRefreshLine className={classNames("text-base", scanning && "animate-spin")} />
+                        </button>
+                    </Tooltip>
+                </div>
+            ) : null}
+            {showPathField ? pathField : null}
+            {slots !== null && !hasSlots ? (
+                <div className="flex items-start gap-2">
+                    <p className="min-w-0 flex-1 break-words text-xs leading-snug text-base-content/55">
+                        {t("voice_changer.rvc_voices_empty", {
+                            path: modelsDir || "%AppData%/com.sigil.app/voice-changer/models",
+                        })}
+                    </p>
+                    <button
+                        type="button"
+                        className="btn btn-ghost btn-xs shrink-0"
+                        disabled={scanning}
+                        onClick={() => void rescan()}
+                    >
+                        {t("voice_changer.rvc_voices_rescan")}
+                    </button>
+                </div>
+            ) : null}
+        </div>
+    );
+};
 
 /** Path row with optional file/folder browse (Tauri dialog) and optional (i) next to the label. */
 const VcPathField: FC<{
@@ -404,10 +697,16 @@ export const Inspector_VoiceChanger: FC = () => {
     const isRvc = voiceChanger.mode === "rvc";
     const isClassic = voiceChanger.mode === "classic";
     const vcApi = window.ApiServer.voiceChanger;
-    /** rmvpe / crepe are GPU-oriented; grey them out when RVC runs on CPU. */
+    /** GPU-only extractors (rmvpe) are greyed out when RVC runs on the CPU, where they run as fcpe. */
     const rvcEpIsCpu = voiceChanger.rvcExecutionProvider === "cpu";
+    const pitchFallsBack = effectivePitchExtractor(voiceChanger.pitchExtractor, voiceChanger.rvcExecutionProvider).fellBack;
     const vramCapApplies = voiceChanger.rvcExecutionProvider === "cuda";
-    const [metrics, setMetrics] = useState<VoiceChangerMetrics | null>(null);
+    /** Latest metrics sample and the one before it (to tell growing drop / underrun counters). */
+    const [samples, setSamples] = useState<{ cur: VoiceChangerMetrics | null; prev: VoiceChangerMetrics | null }>({
+        cur: null,
+        prev: null,
+    });
+    const metrics = samples.cur;
     /**
      * The harness clamps crossfade to one processing chunk, so cap the controls there: a longer value would
      * only restart the engine without changing anything. The stored value is kept (it applies again after a
@@ -416,8 +715,15 @@ export const Inspector_VoiceChanger: FC = () => {
      */
     const crossfadeMaxMs = crossfadeMaxMsFor(voiceChanger.chunkFrames, isRunning ? metrics?.chunk_ms : null);
     const crossfadeShownMs = Math.min(voiceChanger.crossfadeMs, crossfadeMaxMs);
-    const [consentOpen, setConsentOpen] = useState(false);
+    /**
+     * The service refuses to start RVC until the voice-permission notice is acknowledged (Start, or a
+     * restart into RVC such as a mode switch while running) and flags it; the notice shows while flagged.
+     */
+    const consentOpen = snap.rvcConsentPending;
     const [consentAck, setConsentAck] = useState(false);
+    useEffect(() => {
+        if (consentOpen) setConsentAck(false);
+    }, [consentOpen]);
     /**
      * Extra context and crossfade are read at harness construction: restart once per committed change (drag
      * release / blur), not per drag step. The service compares against what the running engine started with.
@@ -437,15 +743,13 @@ export const Inspector_VoiceChanger: FC = () => {
     );
 
     useEffect(() => {
-        if (!isTauri() || !isRunning) {
-            setMetrics(null);
-            return;
-        }
+        setSamples({ cur: null, prev: null });
+        if (!isTauri() || !isRunning) return;
         let cancelled = false;
         const tick = async () => {
             if (cancelled || document.visibilityState === "hidden") return;
             const m = await vcApi.getMetrics();
-            if (!cancelled && m) setMetrics(m);
+            if (!cancelled && m) setSamples((s) => ({ cur: m, prev: s.cur }));
         };
         void tick();
         const id = window.setInterval(tick, 600);
@@ -465,24 +769,19 @@ export const Inspector_VoiceChanger: FC = () => {
         await window.ApiServer.voiceChanger.syncParamsAndRestartIfRunning();
     };
 
-    const handleToggle = () => {
-        if (isRunning) {
-            void window.ApiServer.voiceChanger.toggle();
-            return;
-        }
-        if (isRvc && !hasVcConsent()) {
-            setConsentAck(false);
-            setConsentOpen(true);
-            return;
-        }
-        void window.ApiServer.voiceChanger.toggle();
+    /** Start / stop; a refused start is already reported by the service (toast), so only swallow it here. */
+    const toggleEngine = () => {
+        vcApi.toggle().catch(() => {});
     };
 
-    const confirmConsentAndStart = () => {
+    /** RVC without the acknowledgement does not start; the service flags it and the notice opens. */
+    const handleToggle = toggleEngine;
+
+    const confirmConsentAndStart = async () => {
         if (!consentAck) return;
-        setVcConsent();
-        setConsentOpen(false);
-        void window.ApiServer.voiceChanger.toggle();
+        // Stored in Rust's settings (clears the flag); if that fails it still holds for this session.
+        await vcApi.acknowledgeRvcConsent();
+        vcApi.start().catch(() => {});
     };
 
     const handleVocoderOversampleChange = (value: string) => {
@@ -520,23 +819,9 @@ export const Inspector_VoiceChanger: FC = () => {
                             <div className="text-sm font-medium">
                                 {isRunning ? t("voice_changer.status_running") : t("voice_changer.status_stopped")}
                             </div>
-                            {isTauri() && isRunning && metrics && (
-                                <div
-                                    className={classNames(
-                                        "mt-0.5 font-mono text-xs",
-                                        metrics.process_ms >= metrics.chunk_ms
-                                            ? "text-error"
-                                            : "text-base-content/60",
-                                    )}
-                                >
-                                    {t("voice_changer.metrics_buf", { value: metrics.buffer_ms.toFixed(1) })}{" "}
-                                    {t("voice_changer.metrics_proc", { value: metrics.process_ms.toFixed(2) })}{" "}
-                                    {t("voice_changer.metrics_chunk", { value: metrics.chunk_ms.toFixed(2) })}
-                                    {metrics.process_ms >= metrics.chunk_ms
-                                        ? ` — ${t("voice_changer.metrics_rtf_warn")}`
-                                        : null}
-                                </div>
-                            )}
+                            {isTauri() && isRunning && metrics && epStatus(metrics.ep)?.kind === "granted" ? (
+                                <VcEpStatus metrics={metrics} />
+                            ) : null}
                         </div>
                     </div>
                     <Tooltip content={isRunning ? t("voice_changer.tooltip_stop") : t("voice_changer.tooltip_start")}>
@@ -557,6 +842,12 @@ export const Inspector_VoiceChanger: FC = () => {
                         </button>
                     </Tooltip>
                 </div>
+                {isTauri() && isRunning && metrics ? (
+                    <>
+                        {epStatus(metrics.ep)?.kind === "fallback" ? <VcEpStatus metrics={metrics} /> : null}
+                        <VcMetricsPanel metrics={metrics} prev={samples.prev} budgetMs={voiceChanger.latencyBudgetMs} />
+                    </>
+                ) : null}
 
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
                     <InputSelect
@@ -581,7 +872,7 @@ export const Inspector_VoiceChanger: FC = () => {
                     <>
                         <VcSubHeader
                             titleKey="voice_changer.section_rvc_model"
-                            infoKey="voice_changer.rvc_export_help"
+                            infoKey="voice_changer.rvc_slot_help"
                         />
                         {voiceChanger.rvcProfile === "quality" && (
                             <div className="alert alert-info alert-soft text-xs leading-snug">
@@ -600,11 +891,9 @@ export const Inspector_VoiceChanger: FC = () => {
                                 { label: t("voice_changer.rvc_profile_quality"), value: "quality" },
                             ]}
                         />
-                        <VcPathField
-                            labelKey="voice_changer.rvc_slot_dir"
-                            value={voiceChanger.rvcSlotDir}
-                            directory
-                            onChange={(path) => {
+                        <VcVoicePicker
+                            slotDir={voiceChanger.rvcSlotDir}
+                            onSlotDirChange={(path) => {
                                 vcApi.state.voiceChanger.rvcSlotDir = path;
                             }}
                             onCommit={() => void vcApi.syncParamsAndRestartIfRunning()}
@@ -618,16 +907,27 @@ export const Inspector_VoiceChanger: FC = () => {
                                     void patchVcStructural("pitchExtractor", v);
                                 }}
                             >
-                                <option value="fcpe">fcpe</option>
-                                <option value="rmvpe" disabled={rvcEpIsCpu} className={rvcEpIsCpu ? "opacity-40" : undefined}>
-                                    rmvpe{rvcEpIsCpu ? " (GPU)" : ""}
-                                </option>
-                                <option value="crepe" disabled={rvcEpIsCpu} className={rvcEpIsCpu ? "opacity-40" : undefined}>
-                                    crepe{rvcEpIsCpu ? " (GPU)" : ""}
-                                </option>
-                                <option value="dio">dio</option>
+                                {PITCH_EXTRACTORS.map((p) => {
+                                    const gpuOnly = GPU_ONLY_PITCH_EXTRACTORS.includes(p);
+                                    const unavailable = gpuOnly && rvcEpIsCpu;
+                                    return (
+                                        <option
+                                            key={p}
+                                            value={p}
+                                            disabled={unavailable}
+                                            className={unavailable ? "opacity-40" : undefined}
+                                        >
+                                            {unavailable ? t("voice_changer.pitch_extractor_gpu_only", { name: p }) : p}
+                                        </option>
+                                    );
+                                })}
                             </select>
                         </InputContainer>
+                        {pitchFallsBack ? (
+                            <p className="-mt-1 text-xs leading-snug text-warning">
+                                {t("voice_changer.pitch_extractor_cpu_note", { name: voiceChanger.pitchExtractor })}
+                            </p>
+                        ) : null}
 
                         <VcDetails
                             titleKey="voice_changer.section_rvc_bases"
@@ -973,10 +1273,7 @@ export const Inspector_VoiceChanger: FC = () => {
                 <VcSubHeader titleKey="voice_changer.section_devices" infoKey="voice_changer.section_devices_info" />
                 <VoiceInputDeviceSelect
                     value={voiceChanger.inputDevice}
-                    onChange={async (device) => {
-                        window.ApiServer.voiceChanger.state.voiceChanger.inputDevice = device;
-                        await window.ApiServer.voiceChanger.syncParamsAndRestartIfRunning();
-                    }}
+                    onChange={(device) => void vcApi.setInputDevice(device)}
                     labelKey="voice_changer.device_input"
                     defaultLabelKey="voice_changer.device_system_default"
                 />
@@ -1182,6 +1479,17 @@ export const Inspector_VoiceChanger: FC = () => {
                         />
                     </InputContainer>
                 </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                    <InputSelect
+                        label="voice_changer.aux_mic_gate"
+                        value={voiceChanger.auxMicGate}
+                        onValueChange={(v) => void vcApi.setAuxMicGate(v as AuxMicGate)}
+                        options={AUX_MIC_GATES.map((g) => ({ label: t(`voice_changer.aux_mic_gate_${g}`), value: g }))}
+                    />
+                    <div className="pb-0.5">
+                        <InspectorInfoButton text={t("voice_changer.aux_mic_gate_info")} />
+                    </div>
+                </div>
 
                 <VcSubHeader
                     titleKey="voice_changer.section_timing_buffer"
@@ -1205,6 +1513,56 @@ export const Inspector_VoiceChanger: FC = () => {
                             : []),
                     ]}
                 />
+                <VcSliderField
+                    labelKey="voice_changer.latency_budget"
+                    infoKey="voice_changer.latency_budget_info"
+                    controlsRow={
+                        <>
+                            <VcDraftNumberInput
+                                value={voiceChanger.latencyBudgetMs}
+                                min={LATENCY_BUDGET.min}
+                                max={LATENCY_BUDGET.max}
+                                step={10}
+                                ariaLabel={t("voice_changer.latency_budget")}
+                                onCommit={(v) => void vcApi.setLatencyBudgetMs(v)}
+                            />
+                            <span className="shrink-0 text-xs text-base-content/60">
+                                {t("voice_changer.unit_ms")}
+                            </span>
+                            {voiceChanger.latencyBudgetMs !== LATENCY_BUDGET.default ? (
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost btn-xs shrink-0"
+                                    onClick={() => void vcApi.setLatencyBudgetMs(LATENCY_BUDGET.default)}
+                                >
+                                    {t("voice_changer.pitch_reset")}
+                                </button>
+                            ) : null}
+                        </>
+                    }
+                    rangeMin={LATENCY_BUDGET.min}
+                    rangeMax={LATENCY_BUDGET.max}
+                    rangeStep={10}
+                    rangeValue={voiceChanger.latencyBudgetMs}
+                    onRangeChange={(v) => {
+                        vcApi.state.voiceChanger.latencyBudgetMs = clampLatencyBudgetMs(v);
+                    }}
+                    // Hot param: synced once per drag (release / blur); the engine applies it on its next block.
+                    onRangeCommit={() => void vcApi.setLatencyBudgetMs(vcApi.state.voiceChanger.latencyBudgetMs)}
+                    lowLabelKey="voice_changer.label_lower_latency"
+                    highLabelKey="voice_changer.label_fewer_skips"
+                />
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                    <InputSelect
+                        label="voice_changer.worker_priority"
+                        value={voiceChanger.workerPriority}
+                        onValueChange={(v) => void vcApi.setWorkerPriority(v as WorkerPriority)}
+                        options={WORKER_PRIORITIES.map((p) => ({ label: t(`voice_changer.worker_priority_${p}`), value: p }))}
+                    />
+                    <div className="pb-0.5">
+                        <InspectorInfoButton text={t("voice_changer.worker_priority_info")} />
+                    </div>
+                </div>
 
                 <VcDetails titleKey="voice_changer.section_advanced" infoKey="voice_changer.section_advanced_info">
                     <InputSelect
@@ -1321,10 +1679,10 @@ export const Inspector_VoiceChanger: FC = () => {
                               className="w-full max-w-md rounded-lg border border-base-content/15 bg-base-100 p-4 shadow-xl"
                           >
                               <h3 id="vc-rvc-consent-title" className="text-base font-semibold">
-                                  {t("voice_changer.rvc_consent_title")}
+                                  {t("voice_changer.rvc_voice_consent_title")}
                               </h3>
                               <p className="mt-2 text-sm text-base-content/80 whitespace-pre-line">
-                                  {t("voice_changer.rvc_consent_body")}
+                                  {t("voice_changer.rvc_voice_consent_body")}
                               </p>
                               <label className="label mt-3 cursor-pointer justify-start gap-2 py-0">
                                   <input
@@ -1333,13 +1691,13 @@ export const Inspector_VoiceChanger: FC = () => {
                                       checked={consentAck}
                                       onChange={(e) => setConsentAck(e.target.checked)}
                                   />
-                                  <span className="label-text text-sm">{t("voice_changer.rvc_consent_ack")}</span>
+                                  <span className="label-text text-sm">{t("voice_changer.rvc_voice_consent_ack")}</span>
                               </label>
                               <div className="mt-4 flex justify-end gap-2">
                                   <button
                                       type="button"
                                       className="btn btn-ghost btn-sm"
-                                      onClick={() => setConsentOpen(false)}
+                                      onClick={() => vcApi.dismissRvcConsent()}
                                   >
                                       {t("voice_changer.info_close_overlay")}
                                   </button>
@@ -1347,7 +1705,7 @@ export const Inspector_VoiceChanger: FC = () => {
                                       type="button"
                                       className="btn btn-primary btn-sm"
                                       disabled={!consentAck}
-                                      onClick={confirmConsentAndStart}
+                                      onClick={() => void confirmConsentAndStart()}
                                   >
                                       {t("voice_changer.btn_start")}
                                   </button>

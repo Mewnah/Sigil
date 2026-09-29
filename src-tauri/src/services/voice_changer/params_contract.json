@@ -1,0 +1,103 @@
+{
+  "$comment": [
+    "Frozen P0 IPC contract between the Rust voice-changer plugin (P0-A) and the TS VoiceChangerService (P0-B), written by P0-S0.",
+    "Rust reads it in its tests (include_str!) and src/core/services/voice_changer/__tests__/params.test.ts reads it, so the normalize lists on both sides match (no silent option remapping).",
+    "'existing' = what Rust accepts today (set_voice_changer_params). 'p0_new' = fields P0-A adds to VoiceChangerParams / VoiceChangerMetrics and P0-B sends / shows; until P0-A lands, Rust ignores unknown params fields and TS must treat the new metrics fields as optional.",
+    "Params travel snake_case (serde field names). Change only through an INTEGRATE step."
+  ],
+  "enums": {
+    "mode": { "values": ["classic", "onnx", "sidecar", "rvc"], "default": "classic" },
+    "latency_preset": { "values": ["low_latency", "stable", "custom"], "default": "low_latency", "fallback": "low_latency" },
+    "rvc_preset": { "values": ["streamer", "low_latency", "quality"], "default": "streamer", "fallback": "streamer" },
+    "pitch_extractor": {
+      "values": ["fcpe", "rmvpe", "dio"],
+      "legacy_aliases": { "crepe": "rmvpe" },
+      "default": "fcpe",
+      "fallback": "fcpe",
+      "gpu_only": ["rmvpe"],
+      "cpu_fallback": "fcpe",
+      "$comment": "Today Rust still stores 'crepe' and runs it as rmvpe; P0-A hides the alias (maps it to rmvpe on input). TS must never offer 'crepe'."
+    },
+    "rvc_execution_provider": {
+      "values": ["cpu", "cuda", "dml"],
+      "aliases": { "gpu": "cuda" },
+      "default": "cpu",
+      "fallback": "cpu",
+      "$comment": "Rust normalize_execution_provider: case-insensitive, trimmed; '' = preset default (streamer: cpu, low_latency / quality: cuda)."
+    },
+    "onnx_execution_provider": { "values": ["cpu", "cuda", "dml"], "default": "cpu" },
+    "vocoder_oversample": { "values": [1, 2, 4, 8, 16, 32], "default": 8, "fallback": 8 },
+    "worker_priority": {
+      "values": ["auto", "protect_game", "protect_voice"],
+      "default": "auto",
+      "fallback": "auto",
+      "p0_new": true,
+      "$comment": "Rust rt_thread::WorkerPriority (serde snake_case)."
+    },
+    "aux_mic_gate": {
+      "values": ["none", "duck", "mute"],
+      "default": "none",
+      "fallback": "none",
+      "p0_new": true,
+      "$comment": "What happens to the mic while aux (TTS) audio plays through the voice changer. 'none' = today's mix."
+    }
+  },
+  "numbers": {
+    "pitch_semitones": { "min": -24, "max": 24, "default": 0 },
+    "formant_shift": { "min": -1, "max": 1, "default": 0 },
+    "vocoder_window_ms": { "min": 30, "max": 60, "default": 45 },
+    "input_gain": { "min": 0, "max": 4, "default": 1 },
+    "output_gain": { "min": 0, "max": 4, "default": 1 },
+    "monitor_gain": { "min": 0, "max": 4, "default": 1 },
+    "output_prefill_ms": { "min": 5, "max": 300, "default": 35, "stable_preset": 80 },
+    "output_max_queue_ms": { "min_above_prefill": 5, "max": 600, "default": 70, "stable_preset": 150 },
+    "buffer_truncate_rms": { "min": 1e-8, "max": 1, "default": 0.0005 },
+    "buffer_truncate_chunks": { "min": 1, "max": 500, "default": 32 },
+    "extra_context_ms": { "min": 0, "max": 2000, "default": 64 },
+    "crossfade_ms": { "min": 0, "max": 200, "default": 20 },
+    "index_rate": { "min": 0, "max": 1, "default": 0 },
+    "protect": { "min": 0, "max": 0.5, "default": 0.33 },
+    "speaker_id": { "min": 0, "default": 0 },
+    "gpu_device_index": { "min": 0, "default": 0 },
+    "vram_cap_mb": { "min": 256, "max": 8192, "default": 768 },
+    "latency_budget_ms": {
+      "min": 100,
+      "max": 2000,
+      "default": 300,
+      "p0_new": true,
+      "$comment": "Backlog above this is dropped oldest-first (whole blocks, exact length accounting); applies to every mode and the sidecar read timeout."
+    }
+  },
+  "chunk_frames": {
+    "values": [160, 192, 224, 256, 320, 384, 448, 512, 576, 640, 704, 768, 896, 1024, 1280, 1536, 2048, 2304, 2560, 2816, 3072, 3584, 4096, 5120, 6144, 8192, 10240, 12288, 16384, 20480, 24576, 32768, 40960, 48000],
+    "default": 512,
+    "fallback": 512,
+    "$comment": "neural_audio::chunk_processor::ALLOWED_CHUNK_FRAMES / clamp_chunk_frames."
+  },
+  "params_p0_new_fields": {
+    "latency_budget_ms": "number (see numbers.latency_budget_ms)",
+    "aux_mic_gate": "string (see enums.aux_mic_gate)",
+    "worker_priority": "string (see enums.worker_priority)",
+    "input_device": "string, cpal input device name; '' = system default (today passed only to start_voice_changer)",
+    "rvc_consent_acknowledged": "boolean, default false (replaces the webview localStorage key 'sigil.vc.consent')"
+  },
+  "metrics_existing_fields": {
+    "buffer_ms": "number, output queue (deque + ring) in ms",
+    "process_ms": "number, EMA of per-block processing time",
+    "chunk_ms": "number, block length in ms"
+  },
+  "metrics_p0_new_fields": {
+    "process_p99_ms": "number, p99 per-block processing time over the recent window",
+    "backlog_ms": "number, captured audio waiting to be processed (input ring + pre-accumulator) in ms",
+    "dropped_ms": "number, audio dropped by the latency budget since start",
+    "underruns": "number, output callbacks that ran dry since start",
+    "ep": "RustEpOutcome | null (src/types.ts; Rust diagnostics::EpOutcome) of the running model, null for classic / sidecar or when stopped"
+  },
+  "commands": {
+    "$comment": "IPC semantics added by P0-A (recorded at P0 INTEGRATE). New voice_changer:error codes: device, monitor_unavailable, sidecar_connect, onnx_load, worker_error (engine stopped, except monitor_unavailable, which only loses the monitor). onnx_infer, sidecar_length, sidecar_exchange and rvc_convert now mean that block was muted, never dry input.",
+    "set_voice_changer_params": "Returns the effective VoiceChangerParams (not null) after Rust clamps and normalizes. On set, every params_p0_new_fields entry is optional: absent or null keeps the stored value; get_voice_changer_params always returns them.",
+    "voice_changer:params": "Event, payload VoiceChangerParams. Emitted when Rust changed what was sent, e.g. entering an RVC voice (another slot, or switching into RVC mode) whose <slot>/slot.json supplies pitch_semitones, formant_shift, index_rate, protect, pitch_extractor and speaker_id. TS treats the event as a trigger. It ignores it while its own set is in flight, and otherwise re-reads get_voice_changer_params, dropping that read if a set was sent meanwhile. TS serializes set_voice_changer_params (one in flight; the next payload is built after the previous reply is adopted).",
+    "start_voice_changer": "{ inputDevice? }: when given, replaces and persists params.input_device ('' = system default); when absent, the stored input_device is used.",
+    "persistence": "Rust is authoritative: <app_data>/voice-changer/settings.json ({version: 1, params, outside_rvc?}; enabled is always saved false; the optional outside_rvc {pitch_semitones, formant_shift} object keeps the other modes' pitch and formant while RVC mode is active) and <slot>/slot.json for per-voice values. The TS service is not persisted (no patchService) and hydrates from get_voice_changer_params."
+  }
+}

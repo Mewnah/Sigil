@@ -28,7 +28,7 @@ STT is configured on the **desktop host**. The lightweight **`/client`** page do
 - **Uberduck** — API-backed voices (Rust plugin)
 - **VOICEVOX** — HTTP to a local VOICEVOX engine
 - **Native / Web Speech** — browser synthesis where available
-- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#local-speech-package-onnx)); **execution provider** in the inspector selects CPU vs GPU backends (CUDA / DirectML) when the build supports them
+- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#local-speech-package-onnx)); the inspector's **execution provider** choice is saved, but local speech currently always runs on the CPU
 - **HTTP server** — your own service with `GET /health` and `POST /speech` (example: [scripts/neural-sidecar/](scripts/neural-sidecar/))
 - **Kokoro** — HTTP to a Kokoro FastAPI–compatible server (e.g. `ghcr.io/remsky/kokoro-fastapi-cpu` on port 8880)
 - **MeloTTS** — HTTP to a MeloTTS instance (e.g. Docker on port 8888)
@@ -80,7 +80,9 @@ Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** 
 ```bash
 pnpm install
 pnpm tauri dev      # desktop app + Vite
-pnpm tauri build    # release artifacts under src-tauri/target/
+pnpm tauri build    # installers under src-tauri/target/release/bundle/
+pnpm tauri:release  # release build that also stages the GPU (CUDA/DirectML) provider DLLs
+pnpm test:unit      # vitest unit tests
 ```
 
 For a static web build only (no Tauri): `pnpm build` then `pnpm preview`.
@@ -110,7 +112,7 @@ Consolidated guides (fewer files, same depth):
 - [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md) — release smoke tests, threat model, dependency audits, performance, upgrade backlog
 - [ARCHITECTURE.md](ARCHITECTURE.md) — short pointer to the developer guide
 - [docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md](docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md) — resolved follow-ups and future backlog; manual screenshots use `scripts/write-manual-placeholder-pngs.mjs` until real captures replace them
-- **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; `node scripts/merge-http-tts-i18n.mjs` (and `node scripts/merge-neural-i18n.mjs` when neural TTS strings change) merge new UI keys into non-English locale files
+- **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; new UI strings from parallel work are staged in `scripts/i18n-staging/<WS-ID>.json` and merged with `node scripts/merge-i18n-staging.mjs` (the older `merge-http-tts-i18n.mjs` / `merge-neural-i18n.mjs` scripts are retired). See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md#plugin-commands-capabilities-and-i18n-staging).
 
 ## Development
 

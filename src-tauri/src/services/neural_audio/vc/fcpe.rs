@@ -29,6 +29,7 @@ impl FcpePitchExtractor {
             return Err("FCPE model path is empty".into());
         }
         let session = session_builder_for_vc(execution_provider_hint, opts)?
+            .component("vc.pitch")
             .commit_from_file(path)
             .map_err(|e| format!("Failed to load FCPE ONNX {}: {}", path, e))?;
         let inputs = PitchInputs::inspect(&session, "FCPE", path, FCPE_THRESHOLD)?;

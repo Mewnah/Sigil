@@ -235,7 +235,9 @@
     const inputOpacity = document.getElementById("opacity");
     const closeBtn = document.getElementById("btn-close");
     closeBtn.onclick = () => {
-      const w = window.__TAURI__?.window?.getCurrent()
+      // Tauri 2 (getCurrentWindow) and Tauri 1 (getCurrent) when opened in a Sigil window.
+      const api = window.__TAURI__?.window;
+      const w = api?.getCurrentWindow?.() ?? api?.getCurrent?.();
       w && w.hide();
     };
 
@@ -254,33 +256,64 @@
       applyOpacity(e.target.value);
     }
 
+    // Rows show text from the pubsub socket: always as text, never as HTML.
     function addRowNode(value, event) {
       if (listElement.childElementCount >= 20)
         listElement.firstChild.remove()
       const newDiv = document.createElement("div");
-      newDiv.innerHTML = `
-      <span class="event">${event}</span>
-      <span class="value">${value}</span>
-      `
+      const eventSpan = document.createElement("span");
+      eventSpan.className = "event";
+      eventSpan.textContent = event;
+      const valueSpan = document.createElement("span");
+      valueSpan.className = "value";
+      valueSpan.textContent = value;
+      newDiv.append(eventSpan, valueSpan);
       listElement.append(newDiv);
     }
 
-    const socket = new WebSocket(`ws://localhost:3030/pubsub?id=${Math.random()}-${Date.now()}`);
-    socket.onopen = () => {
-      socket.onmessage = (msg) => {
+    // Connect to the Sigil web server that served this page (its host and port). Inside a Sigil
+    // window (tauri.localhost) or a file, use localhost and ?port= (default 3030).
+    const query = new URLSearchParams(window.location.search.substring(1));
+    const portParam = query.get("port") || "";
+    const servedByWebServer = location.protocol === "http:" && !!location.hostname && location.hostname !== "tauri.localhost";
+    const port = /^[0-9]{1,5}$/.test(portParam) ? portParam : (servedByWebServer && location.port) || "3030";
+    const pageHost = servedByWebServer ? location.hostname : "localhost";
+    const host = pageHost.includes(":") && !pageHost.startsWith("[") ? `[${pageHost}]` : pageHost;
+
+    let socket = null;
+    let reconnectDelay = 1000;
+    let reconnectTimer = null;
+
+    function connect() {
+      const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=inputfield-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+      socket = ws;
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+      };
+      ws.onmessage = (msg) => {
         try {
-          const {topic, data: {type, value}} = JSON.parse(msg.data);
-          if (topic !== "text.textfield" && topic !== "text.stt" || type !== 0 || typeof value !== "string")
-            return;
-          addRowNode(value, topic);
-        } catch(err) {console.log(err)}
-      }
-    };
+          const parsed = JSON.parse(msg.data);
+          const topic = parsed && parsed.topic;
+          const data = parsed && parsed.data;
+          if (topic !== "text.textfield" && topic !== "text.stt") return;
+          if (!data || data.type !== 0 || typeof data.value !== "string") return;
+          addRowNode(data.value, topic);
+        } catch (err) { console.log(err) }
+      };
+      ws.onclose = () => {
+        if (socket !== ws) return;
+        socket = null;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+      };
+    }
+    connect();
 
     const form = document.getElementById("form");
 
     function send(obj) {
-      (socket.OPEN === socket.readyState) && socket.send(JSON.stringify(obj));
+      socket && socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(obj));
     }
 
     form.onsubmit = e => {

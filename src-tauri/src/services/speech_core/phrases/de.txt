@@ -1,0 +1,18 @@
+# Whisper whole-utterance hallucinations: German. Format: see en.txt.
+untertitel im auftrag des zdf*
+untertitel der amara.org-community
+untertitel von stephanie geiges
+untertitelung des zdf*
+untertitelung im auftrag*
+untertitelung aufgrund der amara.org-community
+copyright wdr*
+~vielen dank fürs zuschauen
+~danke fürs zuschauen
+~vielen dank für's zuschauen
+~abonniert den kanal
+~abonniert meinen kanal
+~vielen dank
+~danke
+~danke schön
+~bis zum nächsten mal
+~tschüss

@@ -1,4 +1,4 @@
-import { MappedGroupDictionary } from "@/types";
+import type { MappedGroupDictionary } from "@/types";
 
 export type ServiceLanguageLibrary = (string | string[])[][];
 
@@ -287,6 +287,16 @@ export const nativeLangs: MappedGroupDictionary = {
   "ภาษาไทย":[["th-TH"]],
 };
 
+/**
+ * Deepgram `language=` value for a stored setting. Older builds listed Chinese as `zn-CN` / `zn-TW` (a typo Deepgram
+ * rejects at the handshake); those map to `zh-CN` / `zh-TW`. Empty falls back to `en-US`.
+ */
+export function normalizeDeepgramLanguage(code: string): string {
+  const value = String(code ?? "").trim();
+  if (!value) return "en-US";
+  return /^zn(-|$)/i.test(value) ? `zh${value.slice(2)}` : value;
+}
+
 export const deepGramLangs: MappedGroupDictionary = {
   "English": [
     ["en-AU", "Australia"],
@@ -295,7 +305,7 @@ export const deepGramLangs: MappedGroupDictionary = {
     ["en-NZ", "New Zealand"],
     ["en-US", "United States"],
   ],
-  "Chinese": [["zn-CN", "China"], ["zn-TW", "Taiwan"]],
+  "Chinese": [["zh-CN", "China"], ["zh-TW", "Taiwan"]],
   "Dutch": [["nl"]],
   "Flemish": [["nl"]],
   "French": [["fr", "France"], ["fr-CA", "Canada"]],
