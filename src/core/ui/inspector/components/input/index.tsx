@@ -1,7 +1,7 @@
 import NiceModal from "@ebay/nice-modal-react";
 import { useId } from "@floating-ui/react-dom-interactions";
 import classNames from "classnames/bind";
-import { ChangeEvent, FC, forwardRef, InputHTMLAttributes, memo, PropsWithChildren, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ChangeEvent, FC, forwardRef, InputHTMLAttributes, memo, PropsWithChildren, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RgbaColor, RgbaColorPicker } from "react-colorful";
 import { RiUpload2Fill, RiKeyboardBoxFill, RiDeleteBin3Fill, RiCheckboxCircleFill, RiAddCircleFill, RiEdit2Fill, RiRecordCircleFill, RiCloseCircleFill } from "react-icons/ri";
 import { HiChevronDown, HiChevronUp } from "react-icons/hi";
@@ -18,6 +18,7 @@ import produce from "immer";
 import { BackendState } from "../../../../schema";
 import Tooltip from "../../../dropdown/Tooltip";
 import { invoke } from "@tauri-apps/api/core";
+import { buildRustSourceOptions } from "@/utils/rustAudioInput";
 const cx = classNames.bind(styles);
 import { useTranslation } from 'react-i18next';
 
@@ -535,11 +536,23 @@ interface AudioOutputProps extends InputBaseProps {
     value: string,
     onChange: (value: string) => void
 }
+/** Bumped by the audio devices service on every device change (0 outside the desktop host). */
+function useAudioDeviceRevision(): number {
+    const { revision } = useSnapshot(window.ApiServer.audioDevices.state);
+    return revision;
+}
+
 export const InputNativeAudioOutput: FC<AudioOutputProps> = memo(({ label, value, onChange }) => {
     const [config, setConfig] = useState<WindowsConfig>();
+    // Re-read the SAPI output list when devices change (headset plugged in, default switched).
+    const revision = useAudioDeviceRevision();
     useEffect(() => {
-        invoke<WindowsConfig>("plugin:windows-tts|get_voices").then(setConfig);
-    }, []);
+        let cancelled = false;
+        invoke<WindowsConfig>("plugin:windows-tts|get_voices")
+            .then((c) => { if (!cancelled) setConfig(c); })
+            .catch((e) => console.error("Failed to load output devices:", e));
+        return () => { cancelled = true; };
+    }, [revision]);
 
     return <InputSelect
         value={value}
@@ -571,7 +584,15 @@ export const InputWebAudioInput: FC<AudioOutputProps> = memo(({ label, value, on
     const [devices, setDevices] = useState<InputSelectOption[]>([]);
 
     useEffect(() => {
-        getMedia().then(setDevices);
+        let cancelled = false;
+        const load = () => { getMedia().then((list) => { if (!cancelled) setDevices(list); }); };
+        load();
+        // Follow plugs, unplugs and default changes while the picker is open.
+        navigator.mediaDevices?.addEventListener?.("devicechange", load);
+        return () => {
+            cancelled = true;
+            navigator.mediaDevices?.removeEventListener?.("devicechange", load);
+        };
     }, []);
 
     return <InputSelect
@@ -581,32 +602,51 @@ export const InputWebAudioInput: FC<AudioOutputProps> = memo(({ label, value, on
         label={label} />
 });
 
-type RustAudioDevice = { id: string; name: string };
 interface RustAudioInputProps extends AudioOutputProps {
     /** Optional i18n key rendered under the select. */
     hint?: string
+    /**
+     * Also offer every output device as a loopback source ("loopback:<name>": what that device plays, e.g. other
+     * players in a game). Only for consumers built for other people's audio, never the user's own speech-to-text.
+     */
+    includeLoopback?: boolean
 }
-/** cpal input devices (`plugin:audio|list_input_devices`) for Rust-captured audio; "" = system default. */
-export const InputRustAudioInput: FC<RustAudioInputProps> = memo(({ label, value, onChange, hint }) => {
+/**
+ * Capture sources for Rust-captured audio (the capture hub): "" = system default input, the microphones, and with
+ * `includeLoopback` the outputs as loopback sources. The lists come from the audio devices service, so the picker
+ * follows plugs, unplugs and default changes; a saved device that is not connected stays selectable and marked.
+ */
+export const InputRustAudioInput: FC<RustAudioInputProps> = memo(({ label, value, onChange, hint, includeLoopback }) => {
     const { t } = useTranslation();
-    const [devices, setDevices] = useState<RustAudioDevice[]>([]);
+    const devices = useSnapshot(window.ApiServer.audioDevices.state);
 
     useEffect(() => {
-        let cancelled = false;
-        invoke<RustAudioDevice[]>("plugin:audio|list_input_devices")
-            .then((list) => { if (!cancelled) setDevices(list); })
-            .catch((e) => console.error("Failed to load input devices:", e));
-        return () => { cancelled = true; };
+        void window.ApiServer.audioDevices.ensureLoaded();
     }, []);
+
+    const selected = ["default", "communications"].includes((value ?? "").trim().toLowerCase()) ? "" : (value ?? "");
+    const options = useMemo(() => {
+        const { inputs, loopback } = buildRustSourceOptions(
+            { inputs: devices.inputs, outputs: devices.outputs },
+            selected,
+            includeLoopback === true,
+            {
+                systemDefault: t("common.device_system_default"),
+                loopbackDefault: t("audio_devices.loopback_default"),
+                loopback: (name) => t("audio_devices.loopback_label", { name }),
+                unavailable: (name) => t("audio_devices.device_unavailable", { name }),
+            },
+        );
+        return loopback.length > 0
+            ? [...inputs, { label: t("audio_devices.loopback_group"), options: loopback }]
+            : inputs;
+    }, [devices.inputs, devices.outputs, selected, includeLoopback, t]);
 
     const select = <InputSelect
         label={label}
-        value={value}
+        value={selected}
         onValueChange={onChange}
-        options={[
-            { label: t("common.device_system_default"), value: "" },
-            ...devices.map((d) => ({ label: d.name, value: d.id })),
-        ]} />;
+        options={options} />;
     if (!hint)
         return select;
     return <div className="flex flex-col gap-1">

@@ -4,6 +4,8 @@
 //! every callback buffer to `on_data` as an interleaved f32 slice without allocating: f32 devices
 //! pass their buffer straight through, other formats are converted into a scratch buffer that is
 //! preallocated for [`SCRATCH_SECONDS`] of audio (it grows once if a driver ever delivers more).
+//! [`build_input_stream_f32_timed`] is the same with cpal's [`InputCallbackInfo`] (capture and
+//! callback timestamps) passed along; the capture hub turns it into a QPC capture time per block.
 
 use cpal::traits::DeviceTrait;
 use cpal::{BuildStreamError, Device, InputCallbackInfo, SampleFormat, SizedSample, Stream, StreamConfig, StreamError, SupportedStreamConfig};
@@ -65,17 +67,17 @@ fn build_converting_input_stream<T, D, E>(
 ) -> Result<Stream, BuildStreamError>
 where
     T: SizedSample + 'static,
-    D: FnMut(&[f32]) + Send + 'static,
+    D: FnMut(&[f32], &InputCallbackInfo) + Send + 'static,
     E: FnMut(StreamError) + Send + 'static,
 {
     let frames = (config.sample_rate.0 as f32 * SCRATCH_SECONDS) as usize;
     let mut scratch: Vec<f32> = Vec::with_capacity(frames.max(1024) * usize::from(config.channels.max(1)));
     device.build_input_stream(
         config,
-        move |data: &[T], _: &InputCallbackInfo| {
+        move |data: &[T], info: &InputCallbackInfo| {
             scratch.clear();
             scratch.extend(data.iter().map(|&s| convert(s)));
-            on_data(&scratch);
+            on_data(&scratch, info);
         },
         on_error,
         None,
@@ -89,10 +91,21 @@ where
     D: FnMut(&[f32]) + Send + 'static,
     E: FnMut(StreamError) + Send + 'static,
 {
+    build_input_stream_f32_timed(device, config, move |data: &[f32], _: &InputCallbackInfo| on_data(data), on_error)
+}
+
+/// [`build_input_stream_f32`] with cpal's callback info (capture / callback timestamps) passed to
+/// `on_data`. `config` may be an output device's config when `device` is a render endpoint opened
+/// for WASAPI loopback.
+pub fn build_input_stream_f32_timed<D, E>(device: &Device, config: &SupportedStreamConfig, mut on_data: D, on_error: E) -> Result<Stream, String>
+where
+    D: FnMut(&[f32], &InputCallbackInfo) + Send + 'static,
+    E: FnMut(StreamError) + Send + 'static,
+{
     let stream_config = config.config();
     let cfg = &stream_config;
     let built = match config.sample_format() {
-        SampleFormat::F32 => device.build_input_stream(cfg, move |data: &[f32], _: &InputCallbackInfo| on_data(data), on_error, None),
+        SampleFormat::F32 => device.build_input_stream(cfg, move |data: &[f32], info: &InputCallbackInfo| on_data(data, info), on_error, None),
         SampleFormat::F64 => build_converting_input_stream(device, cfg, f64_to_f32, on_data, on_error),
         SampleFormat::I8 => build_converting_input_stream(device, cfg, i8_to_f32, on_data, on_error),
         SampleFormat::I16 => build_converting_input_stream(device, cfg, i16_to_f32, on_data, on_error),

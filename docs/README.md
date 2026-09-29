@@ -3,9 +3,10 @@
 | Document | Audience |
 |----------|----------|
 | [manual/README.md](manual/README.md) | End users — chapters under **manual/** |
-| [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md) | STT/TTS backends, reliability, voice changer, speech package |
+| [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md) | STT/TTS backends, Models & Runtimes and runtime packs, reliability, voice changer, GPU packs and logs, speech package |
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Architecture, host services, connectivity audit, `src/client` rules |
-| [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md) | Release QA, GPU EP smoke, P0 exit matrix, threat model, audits, third-party components, performance, upgrade backlog |
+| [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md) | Release QA, GPU EP smoke, P0 and P1 exit matrices, threat model, audits, third-party components, performance, upgrade backlog |
+| [benchmarks/README.md](benchmarks/README.md) | Contributors — the benchmark harness (`--headless bench`, specs, metrics, perf gate) |
 | [SPEECH_STACK_IMPLEMENTATION_PLAN.md](SPEECH_STACK_IMPLEMENTATION_PLAN.md) | Contributors — phased plan for the speech stack (STT, TTS, translation, voice engine) |
 | [SPEECH_STACK_RESEARCH_2026-09.md](SPEECH_STACK_RESEARCH_2026-09.md) | Contributors — the research the plan is based on |
 | [adr/README.md](adr/README.md) | Architecture decision records |

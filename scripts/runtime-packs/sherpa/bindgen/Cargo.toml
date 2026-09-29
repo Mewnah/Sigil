@@ -1,0 +1,12 @@
+# One-off generator for src-tauri/src/services/speech_rt/sherpa/bindings.rs (see ../gen-bindings.ps1).
+# Not part of the app build; its own workspace so src-tauri never compiles it.
+[package]
+name = "sigil-sherpa-bindgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bindgen = "=0.72.1"
+
+[workspace]

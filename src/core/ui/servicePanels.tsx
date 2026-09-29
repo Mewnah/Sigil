@@ -220,6 +220,7 @@ export const EXTRA_INSPECTOR_TAB_TITLES: Record<string, string> = {
   project: "Project",
   elements: "Elements",
   files: "Files",
+  models: "Models & Runtimes",
   settings: "Settings",
   text: "Text Element",
   image: "Image Element",

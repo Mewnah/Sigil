@@ -48,6 +48,7 @@ Pick a **backend** in the inspector. Minimum requirements per engine are in [OPE
 
 - **Whisper, Vosk, Moonshine, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
 - **Azure and Deepgram** capture in the webview, so their device pickers list **browser** microphones. Leave the picker on the default to use the system microphone.
+- If a microphone is **unplugged** while STT runs, Sigil shows a toast and reconnects it by itself when it comes back; STT keeps running. With the system default selected, STT follows a change of the Windows default microphone. A saved microphone that is not plugged in is shown as **(not connected)**.
 
 Details: [Input device resolution](../OPERATOR_REFERENCE.md#input-device-resolution-srcutilsrustaudioinputts).
 
@@ -229,7 +230,7 @@ Field-by-field reference: [RVC (bring-your-own ONNX)](../OPERATOR_REFERENCE.md#r
 
 ### Status, latency and priority
 
-- The status area shows the device the model **actually** runs on (**CUDA**, **DirectML** or **CPU**). If a GPU could not be used, a warning box explains why (for example the NVIDIA GPU runtime is not installed; install it under **Settings → GPU & diagnostics**).
+- The status area shows the device the model **actually** runs on (**CUDA**, **DirectML** or **CPU**). If a GPU could not be used, a warning box explains why (for example the NVIDIA GPU runtime is not installed; install it under **Models & Runtimes** or **Settings → GPU & diagnostics**).
 - Live numbers show processing time (average and p99) against the block length, the audio waiting against the latency budget, the output buffer, skipped audio and playback gaps, each with a warning when it matters.
 - **Latency budget** (default 300 ms): when the voice changer falls behind, audio older than this is skipped instead of piling up, so your voice never drifts further behind. Applies right away.
 - **Voice changer priority:** **Automatic**, **Protect game FPS** or **Protect voice**. Applies right away; Sigil never asks for administrator rights.

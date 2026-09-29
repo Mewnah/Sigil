@@ -8,6 +8,7 @@ Release QA checklists, **network threat model**, **dependency audits**, **perfor
 - [Manual Tauri smoke checklist](#manual-tauri-checklist)
 - [Local packaged smoke (manual)](#local-packaged-smoke-manual)
 - [P0 exit matrix (speech stack stabilization)](#p0-exit-matrix-speech-stack-stabilization)
+- [P1 exit matrix (platform foundations)](#p1-exit-matrix-platform-foundations)
 - [Research §6 bug verification](#research-6-bug-verification)
 - [Network security and threat model](#network-security-and-threat-model)
 - [Dependency audit notes](#dependency-audit-notes)
@@ -34,6 +35,9 @@ Use this list before shipping a **packaged** Tauri build. Items that need a huma
 - Then run **`pwsh scripts/release/verify-bundle.ps1`** (Windows PowerShell 5.1 blocks `.ps1` by default: use `pwsh` or `powershell -ExecutionPolicy Bypass -File …`). It checks that both the NSIS and MSI installers put the three DLLs next to `Sigil.exe`, that `Sigil.exe` has no load-time import outside `scripts/release/expected-imports.txt` (no CUDA, cuDNN, ONNX Runtime, ggml or OpenVR), and prints the EP test results from the installed layout.
 - Uploads: NSIS (recommended, per-user), MSI and a portable zip. `release.yml` sets `GGML_NATIVE=OFF` and `GGML_AVX2=ON` so whisper.cpp never targets the runner's CPU.
 - The MSI also contains ort's unused `onnxruntime_providers_tensorrt.dll` (the WiX bundler adds every `*.dll` next to the built exe); verify-bundle lists it as a known extra.
+- **What the installers do not contain:** NVIDIA's CUDA / cuDNN runtime (the opt-in `runtime/nvidia-cuda13` pack, about 1.9 GB) and every runtime pack (sherpa-onnx, transcribe.cpp, llama-server): nothing in the installer runs CUDA by itself. The 62 MB CUDA provider stays bundled until `runtime/ort-cuda13-provider` is published; then, per [ADR 0007](adr/0007-native-runtime-packs.md), set that entry `published`, add it to `runtime/nvidia-cuda13`'s `requires`, and drop `onnxruntime_providers_cuda.dll` from `stage-native-dlls.mjs` and `verify-bundle.ps1` (`onnxruntime_providers_shared.dll` and `DirectML.dll` stay). The NVIDIA pins live in `src-tauri/model-catalog/runtime-nvidia.json` and `diagnostics/nvidia_pack.rs`, kept equal by a test.
+- The base `tauri.conf.json` bundles `src-tauri/resources/vc-templates/` (the RVC split-graph templates, under 1 MB; checked-in sources, so compile-time copying is safe); the release overlay's `target/native-bundle` mapping merges with it.
+- **Release catalogs must be fully pinned:** `build.rs` refuses, in release builds, a `published` catalog entry with a file lacking `sha256` or `git_oid`. Pin with `node scripts/models/pin-catalog.mjs --write` (sequential, at least 2 s apart, cached in `%LOCALAPPDATA%\sigil-dev-cache`); hosts without digests (alphacephei) need `--hash-by-download` and consent for large files. Sigil-built packs stay `unpublished` (asset hosting is local only for now).
 
 ### Before tagging a release (dependency hygiene)
 
@@ -116,7 +120,7 @@ Optional helper: `scripts/packaged-smoke-stt.ps1` prints this checklist and laun
 On the same release build ([ADR 0003](adr/0003-gpu-ep-delivery.md)):
 
 1. **CPU baseline** — voice changer **ONNX** or **RVC** mode on **CPU**; the status panel says “Running on CPU”.
-2. **NVIDIA with the pack** — Settings → GPU & diagnostics → NVIDIA GPU runtime → **Download and install** (about 1.4 GB, sequential, resumable), stop/start the voice changer, expect **CUDA** in the status panel and the diagnostics panel. Then `pwsh scripts/release/verify-bundle.ps1 -RequireCuda`.
+2. **NVIDIA with the pack** — Models & Runtimes → **NVIDIA GPU runtime (CUDA 13, cuDNN 9)** → **Download** (or Settings → GPU & diagnostics → NVIDIA GPU runtime → **Download and install**; about 1.9 GB, sequential, resumable), stop/start the voice changer, expect **CUDA** in the status panel and the diagnostics panel (**Test GPU acceleration** reports the runtime source). Then `pwsh scripts/release/verify-bundle.ps1 -RequireCuda`. CUDA needs driver R580+ and a Turing or newer GPU.
 3. **NVIDIA without the pack** — a CUDA request runs on **DirectML** with a warning box, one toast and a System log line naming the missing DLL (for example `cudnn64_9.dll`).
 4. **Without DirectML.dll** (admin-install the MSI, delete the bundled `DirectML.dll`, run `Sigil.exe --headless ep-probe --out probe.json`) — Sigil still starts; the probe notes that the System32 copy is used, or reports the CPU fallback with its reason.
 5. **Test GPU acceleration** in the diagnostics panel completes and saves `app_data\diagnostics\ep-probe-deep.json`.
@@ -155,6 +159,32 @@ Automated gates for the P0 pass (all green at P0 integration): `pnpm typecheck`,
 7. Link apps between two PCs carry text both ways with no repeats.
 8. On `https://example.com`, run `new WebSocket('ws://localhost:3030/pubsub?id=x')` in devtools: it fails (403), Sigil logs the refusal and a “Blocked a connection” toast appears.
 9. With **Only allow Sigil pages to connect** off (or `SIGIL_LAN_ORIGIN_CHECK=0`), step 8 connects.
+
+## P1 exit matrix (platform foundations)
+
+Automated gates at P1 integration (2026-09-29, dev rig: RTX 4090 driver 616.56, Ryzen 7 7800X3D): `pnpm typecheck` clean, `pnpm i18n:check` OK, `pnpm test:unit` 49 files / 585 tests, `pnpm build` OK, `cargo clippy --all-targets` 0 warnings, `cargo test` 706 passed / 0 failed / 23 ignored; re-run at the P1 final gate after the late fixes (bench `bench.vc*` EP components, catalog folder check in `build.rs`, P1-B/C/D2 strings merged): 605 unit tests, `cargo test` 788 passed / 0 failed / 24 ignored, the other gates unchanged (the ignored tests need real models, devices or GPU runtimes; see [DEVELOPER_GUIDE → Release / quality](DEVELOPER_GUIDE.md#release--quality)). `kittentts` and `hf-hub` are gone from `Cargo.lock`; `ort` is `2.0.0-rc.13`.
+
+| Exit criterion | Evidence | Status |
+|---|---|---|
+| Gates green on the chosen ORT version ([ADR 0001](adr/0001-ort-upgrade.md)); kittentts and hf-hub gone | Gates above; `Cargo.lock` has `ort 2.0.0-rc.13` and no kittentts / hf-hub | Met |
+| `--headless fetch <id>` and the Models tab install, resume, verify, cancel and delete sequentially; whisper/vosk files adopted | `model_store` fixture-server tests (resume after abort and stall, cancel keeps the partial, failover, verify, remove, one download at a time); `Sigil.exe --headless fetch base/test-small` from huggingface.co; `fetch whisper/tiny.en vosk/small-en-us-0.15` adopted existing files with no network; `fetch runtime/nvidia-cuda13` from `SIGIL_LOCAL_ASSETS` (1.4 GB in 6 s); `fetch --list`. Models tab checked against an IPC mock in the browser pane | Met (automated); real-app tab pass open (manual row 1) |
+| The capture hub serves Whisper and Vosk from one stream; unplug/replug recovers within 2 s | `audio::hub_tests` (fan-out, one stream per device, restart under the same epoch, recovery < 2 s after a device-change nudge, default follow); ignored real-WASAPI test passed on the dev rig (one 48 kHz stream shared by `default` and the named mic, loopback opened) | Met (automated); physical unplug open (manual row 2) |
+| An echo DLL loads lazily and the app starts without it; process_host children die when Sigil is killed | `native_runtime` tests (missing / garbage / foreign DLLs are errors, ABI mismatches refused); `Sigil.exe --headless engine-probe echo --runtime-dir native/out/dev/echo/cpu` ok; `Sigil.exe` load-time imports unchanged (41); `process_host::tests::helpers_die_when_sigil_is_killed` (TerminateProcess on a fake Sigil kills the helper and its child) | Met; Task-Manager check with llama-server open (manual row 3) |
+| `--headless bench` runs a stub model through the real harness in paced mode and emits report.json | `Sigil.exe --headless bench scripts/bench/specs/stub-smoke.json` → PASSED, exit 0 (offline, paced: latency 74.37 ms, 0 underruns; stall: back within budget at the next block), `report.json` + `report.md` written | Met |
+| ADRs 0002–0005 record measured go/no-go decisions | [0002](adr/0002-sherpa-onnx.md) sherpa go (SenseVoice en/ja, Kokoro, CUDA coexistence measured), [0003b](adr/0003b-transcribe-cpp.md) transcribe go (cuda13 + CPU measured; vulkan unmeasured), [0004](adr/0004-rvc-templates.md) templates go (parity tables CPU/DML/CUDA), [0005](adr/0005-process-host-llama.md) process host go (llama-server live smoke pending), plus [0001](adr/0001-ort-upgrade.md) and [0007](adr/0007-native-runtime-packs.md) | Met (0005's live smoke manual) |
+
+Also verified at integration: `Sigil.exe --headless sysinfo` (RTX 4090 Ada 8.9, CUDA 13.4 driver, DXGI budget 23,370 MB of 24,138 MB, all four GPU EPs eligible, recommendations Hy-MT2 7B / Qwen3-TTS 1.7B / Qwen3-ASR 1.7B BF16); with `runtime/nvidia-cuda13` installed from the local cache into a scratch profile, `Sigil.exe --headless ep-probe` reports `nvidia_runtime_source: model_store`, cuDNN 9.26.0 loaded, CUDA canary ok (327 ms) and recommends CUDA; `scripts/native/build-runtime-packs.ps1 -Engine echo -Variant cpu` rebuilds a byte-identical pack from a fresh build tree, and `-Engine transcribe -Variant cpu` delegates to the engine's own `build.ps1` (pack zip identical to P1-G2's, licenses included).
+
+**Manual checks still open** (need the real app, devices or permission to run downloaded binaries):
+
+1. **Models tab in `pnpm tauri dev`:** download `base/test-small`; start a Whisper model, cancel, resume; Check files; Delete; Import a local file (a folder for a multi-file entry); set a custom mirror URL.
+2. **USB microphone:** start Whisper on a USB mic, unplug it (expect the "Audio device … stopped" toast, STT stays connected), replug (expect "working again" within about 1 s and transcription continuing without an STT restart).
+3. **llama-server:** the [ADR 0005](adr/0005-process-host-llama.md) procedure (`cargo test llama_server_smoke -- --ignored --nocapture` with `SIGIL_TEST_LLAMA_SERVER` / `SIGIL_TEST_LLAMA_GGUF`, Hy-MT2 1.8B Q4); then, once P4-B's UI starts it, end `Sigil.exe` in Task Manager and confirm `llama-server.exe` disappears.
+4. **NVIDIA runtime pack in the real app:** install **NVIDIA GPU runtime (CUDA 13, cuDNN 9)** from Models & Runtimes, run an RVC voice on CUDA, then remove the pack (CUDA falls back to DirectML until restart). Users who installed the interim Settings pack before P1-I0 must reinstall it (it lacked two cuDNN 9.26 sub-libraries).
+5. **Voice changer benchmark with a real RVC voice** on CUDA, DirectML and CPU (the engine baseline for P3), and the `e2e_loopback` meter over an enabled virtual cable.
+6. **transcribe `vulkan` variant:** build with the Vulkan SDK and measure on an AMD/Intel GPU.
+
+**Voice-changer change checklist (from P1):** record `Sigil.exe --headless bench <spec>` before and after, and run `pwsh scripts/bench/run-perf-gate.ps1 -Baseline <dir>` on a release build: a p95 regression over 5 % blocks acceptance ([docs/benchmarks/README.md](benchmarks/README.md)).
 
 ---
 
@@ -226,9 +256,17 @@ This document expands the short security notes in [ARCHITECTURE.md](../ARCHITECT
 
 6. **No token auth on the local server yet** — The design assumes single-user desktop use on a trusted network. Stage 1 (Origin allow-list, binary refusal, topic allow-list, XSS fixes in the `/client` error fallback and `inputfield.html`, bind-failure reporting) closes the browser-reachable attacks; stage 2 (planned) adds a persistent token for non-loopback clients. Adding intentional remote access, tunneling, or public exposure would still require real authentication, rate limits, and TLS review.
 
-7. **NVIDIA runtime pack** — Downloads only the pinned NVIDIA redistributable URLs with pinned sha256, one file at a time with HTTP Range resume, and extracts only `*.dll` with Windows' own `tar.exe` (refusing `../` entries) into a staging folder that is renamed into place. The DLLs load by full path right before the first CUDA session.
+7. **NVIDIA runtime pack** — Downloads only the pinned NVIDIA redistributable URLs with pinned sha256, one file at a time with HTTP Range resume, and extracts only the DLLs into a staging folder that is renamed into place (the model-store pack `runtime/nvidia-cuda13` through the store's own safe extractor; the interim Settings installer with Windows' `tar.exe`, refusing `../` entries). The DLLs load by full path right before the first CUDA session.
 
 8. **Diagnostics IPC** — `log_from_frontend` is webview-only, size-capped and rate-limited; the deep EP probe runs as a separate child process (`Sigil.exe --headless ep-probe`).
+
+9. **Model store** — Catalog entries are pinned to immutable revisions with sha256 or git blob ids (release builds refuse unpinned published entries); downloads resume with HTTP Range, fail over on errors, HTML bodies, wrong sizes and hash mismatches, and are verified before an atomic rename. Archives are extracted with traversal, absolute-path, drive-letter, alternate-data-stream, device-name, case-duplicate, link, entry-count, size and compression-ratio checks. Trust-on-first-use exists only in debug builds and never for executables; `unpublished` entries never download from catalog URLs. A custom mirror must be https, or http on the LAN / loopback, and its files are still checked against the pins. `SIGIL_MODEL_CATALOG_OVERRIDE` / `SIGIL_LOCAL_ASSETS` are developer overrides.
+
+10. **Native runtime packs** — Nothing new is load-time linked. Engine DLLs load lazily from `app_data/runtimes/<name>/<version>/<variant>/` with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | DEFAULT_DIRS`, after every file matched the sizes and sha256 in the pack's `sigil-pack.json`, the ABI version and the engine info. sherpa-onnx runs a CPU-only ONNX Runtime 1.28.2 inside its pack next to Sigil's static 1.28.0; C++ exceptions do not cross its C API, so a corrupt model would abort Sigil: catalog models are hash-verified and user-supplied folders are test-loaded in a child process (`validate_in_child`) first.
+
+11. **Helper processes** (`process_host`: llama-server, later Bergamot and TTS servers) — Started suspended and joined to a kill-on-close Job Object before they run (they die with Sigil, even when Sigil is killed), `CREATE_NO_WINDOW`, optional committed-memory cap. They must listen on `127.0.0.1` only: after readiness Sigil reads the OS listener table for every process in the job and stops a helper with any non-loopback TCP listener. Each gets a random 256-bit key (from `ProcessPrng`), passed by environment variable, redacted from logs and never sent to the webview. The health client uses no proxy and follows no redirects.
+
+12. **Untrusted voice files** — RVC `.pth` / `.zip` imports are parsed by Sigil's allow-list pickle VM (only `OrderedDict`, torch tensor rebuilders, storages and `_codecs.encode`; legacy pickles and TorchScript refused) behind a zip guard, in the `Sigil.exe --headless vc-import-worker` child (Job Object limits via `process_host::run_worker` in P3-B); the worker enforces a wall-clock limit today.
 
 **PeerJS signaling** — The client uses `secure: false` against the local HTTP signaling server ([`src/shared/services/peer/provider.ts`](../src/shared/services/peer/provider.ts)). Moving signaling to HTTPS would require revisiting the `secure` flag and URL scheme together.
 
@@ -281,6 +319,10 @@ Track `whisper-rs` / `whisper-rs-sys` alignment in `Cargo.toml` when updating wh
 
 **Dependency changes in the P0 speech-stack pass:** added `tracing` 0.1 and `tracing-subscriber` 0.3 (file log; the 10 MB × 5 rotating sink is in-house because `tracing-appender` only rotates by time, so `tracing-appender` was dropped again) and the `windows` features JobObjects, Dxgi, Dxgi_Common, Console and LibraryLoader; `ort` now enables the `cuda` and `directml` features; `vitest` 3.2 as a dev dependency. The existing `rubato` and `rtrb` crates now also serve `speech_core`, audio capture and the voice changer. Re-run `cargo audit` / `pnpm audit` before the next release.
 
+**Dependency changes in the P1 pass:** `ort` 2.0.0-rc.11 → `=2.0.0-rc.13` (ONNX Runtime 1.28.0; features `cuda`, `directml`, `nvrtx`, `tensorrt`, `half`, `preload-dylibs`, `copy-dylibs`, `ndarray`; one-time pyke dist download of about 62 MB); `kittentts` 0.3.0 vendored into `local_tts/kitten/` and removed with its `hf-hub` dependency; added `espeak-ng` 0.1 (`bundled-data`), `anyhow`, `regex`, `fancy-regex`, `once_cell`, `zip` 2 (deflate only), `half` 2, `libloading` 0.9, `tar` 0.4, `bzip2` 0.6 (pure-Rust), `flate2` 1, and `serde_json` as a build dependency (catalog validation). The CUDA provider shrank from 144 MB to 62 MB and imports only cuBLAS / cuBLASLt. `ort_session` refuses a provider DLL whose file version differs from the linked ONNX Runtime. Re-run `cargo audit` / `pnpm audit` before the next release.
+
+**Native pack reproducibility:** `sigil_engine` packs are built locally with `/Brepro`, fixed zip timestamps and sorted entries (clean rebuilds are byte-identical), from sha256-pinned upstream sources (transcribe.cpp's configure step also checks its ABI hash). Packs are hash-verified at load through `sigil-pack.json` and stay `unpublished` until the maintainer publishes them. `pwsh scripts/runtime-packs/sherpa/probe-matrix.ps1` and `scripts/bench/run-perf-gate.ps1` belong to the performance checks before a release that touches those runtimes.
+
 **Known upstream issue:** whisper.cpp (vendored by `whisper-rs-sys` 0.15) reads a stale logits row for its per-segment no-speech probability whenever the prompt has more than one token (every multilingual model, any initial prompt), and used that value to discard windows. Sigil disables the internal skip and computes the value itself; worth reporting upstream.
 
 ---
@@ -293,7 +335,15 @@ License facts for components embedded in or downloaded by Sigil (Sigil itself is
 |-----------|-------|---------|-------|
 | Silero VAD v6.2 | Embedded (`src-tauri/resources/models/silero_vad_v6_2.onnx`, `include_bytes!`) | MIT, © 2020-present Silero Team | Source tag v6.2; sha256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`; notice in `src-tauri/resources/models/silero_vad_v6_2.LICENSE.txt` |
 | ONNX Runtime provider DLLs, DirectML | Installed next to `Sigil.exe` by the release installers | MIT (ONNX Runtime), Microsoft DirectML redistributable | Staged from the ort build by `scripts/release/stage-native-dlls.mjs` |
-| NVIDIA CUDA 12.9.1 / cuDNN 9.10.2 redistributables | Downloaded at runtime on request (NVIDIA GPU runtime pack) | NVIDIA redistributable licenses | Pinned URLs and sha256 in `diagnostics/nvidia_pack.rs` |
+| ONNX Runtime 1.28.0 | Linked statically into `Sigil.exe` (ort 2.0.0-rc.13, pyke dist) | MIT | Provider DLLs from the same build are staged into the installers |
+| NVIDIA CUDA 13.2 (cudart, cuBLAS 13.3, cuFFT 12.2) / cuDNN 9.26 (`cuda13`) redistributables | Downloaded at runtime on request (`runtime/nvidia-cuda13`, or the interim Settings pack) | NVIDIA redistributable licenses | Pinned URLs and sha256 in `model-catalog/runtime-nvidia.json` and `diagnostics/nvidia_pack.rs` |
+| KittenTTS 0.3.0 (Rust port) | Vendored in `src-tauri/src/services/local_tts/kitten/` | Apache-2.0 | SPDX headers, `LICENSE` and `NOTICE` kept in the folder |
+| espeak-ng (pure-Rust port, bundled data) | Linked (crate `espeak-ng` 0.1) | GPL-3.0-or-later | Kitten G2P |
+| sherpa-onnx 1.13.8 (with its ONNX Runtime 1.28.2, CPU) | Runtime pack `runtime/sherpa-onnx` downloaded on request | Apache-2.0 (sherpa-onnx), MIT (ONNX Runtime) | Official upstream `win-x64-shared-MT` archive, hash-pinned; bindings generated from the pinned `c-api.h` |
+| transcribe.cpp 0.2.4 (with its vendored ggml) | Sigil-built runtime packs `runtime/sigil-transcribe-*` (local import) | MIT | Packs ship `LICENSE-transcribe.cpp.txt`, `THIRD-PARTY-LICENSES-transcribe.cpp.md` and `NOTICE.txt` |
+| llama.cpp b11146 (`llama-server`) | Runtime packs `runtime/llama-server-*` downloaded on request | MIT | Official ggml-org release assets, pinned from GitHub digests |
+| RVC-WebUI model code (commit 81eed5e8) | Vendored in `scripts/vc-templates/rvc_arch/` (maintainer tooling, not compiled into Sigil) | MIT | `LICENSE` kept; the bundled `resources/vc-templates` graphs are exports of this architecture (no weights) |
+| RVC v2 default voice (PhoenixStormJr/RVC-V2-default-voice) | Development parity tests only (`SIGIL_TEST_MODELS_DIR`) | MIT | Revision 22e4cd2b, sha256 `c9d6b0ac…bfccc`; the zero-setup default voice lands with P3 |
 
 ---
 
@@ -360,6 +410,8 @@ Inspect `stats/rollup-stats.html` after `ANALYZE=true npm run build`. Large deps
 | Others | Unchanged from prior behavior | Further lazy-init can follow the same pattern |
 
 ### Rust HTTP timeouts
+
+Model-store downloads (`model_download_client()`) have **no total timeout** and a **30 s stall timeout** (`MODEL_STALL_TIMEOUT`); a stalled or dropped transfer resumes with HTTP Range on the same mirror before failing over.
 
 Shared client: [`src-tauri/src/services/http_client.rs`](../src-tauri/src/services/http_client.rs) — connect 10 s, and any connection that sends nothing for **120 s** is dropped (model downloads included; their total cap stays 2 h). Every API call also sets its own timeout:
 

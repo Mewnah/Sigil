@@ -1,11 +1,12 @@
 # System
 
-This chapter covers **project**, **settings**, and **keyboard shortcuts**.
+This chapter covers **project**, **settings**, **models and runtimes**, and **keyboard shortcuts**.
 
 ## Table of contents
 
 - [Project](#project)
 - [Settings](#settings)
+- [Models & Runtimes](#models--runtimes)
 - [Shortcuts and tips](#shortcuts-and-tips)
 
 ## Project
@@ -53,7 +54,7 @@ Sidebar → **Settings** (or `Ctrl+,` / `Cmd+,`).
 - **UI language** — i18n; RTL locales include Arabic and Urdu (see [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) for RTL smoke checklist).  
 - **Appearance** — theme selection aligned with header toggle.  
 - **Audio** — default input and output devices. On the desktop app the **default input device** is a native device; Whisper, Vosk, Moonshine, and local HTTP STT use it unless their inspector picks a different mic (Azure and Deepgram have their own browser-device pickers).  
-- **GPU & diagnostics** — which device (CUDA, DirectML, CPU) each model actually runs on, your graphics adapters, **Test GPU acceleration**, the optional **NVIDIA GPU runtime** download (about 1.4 GB, needed for CUDA; without it Sigil uses DirectML) and **Open log folder** (`%LOCALAPPDATA%\com.sigil.app\logs`).
+- **GPU & diagnostics** — which device (CUDA, DirectML, CPU) each model actually runs on, your graphics adapters, **Test GPU acceleration**, the optional **NVIDIA GPU runtime** download (about 1.9 GB, needed for CUDA on a GeForce 16/20 series or newer with driver R580 or newer; the installer does not include it, and without it Sigil uses DirectML; the same pack is also in [Models & Runtimes](#models--runtimes)) and **Open log folder** (`%LOCALAPPDATA%\com.sigil.app\logs`).
 - **Shortcuts** — the global **mute sound effects** shortcut (the STT start/stop and mute shortcuts are in the STT inspector), plus the **background input** combo when that feature is built in. They use Tauri global shortcut registration and work while Sigil is in the background.
 - **Timers** — e.g. background input auto-submit duration.
 - **Local web server** — whether the server is listening (and on which port) and **Only allow Sigil pages to connect** (on by default): it blocks websites open in your browser from reading or sending captions through Sigil, while the app, `/client`, OBS, the mic page, the captions page and Link apps keep working. Turn it off only if a tool you trust is refused. The `SIGIL_LAN_ORIGIN_CHECK` environment variable overrides it.
@@ -72,6 +73,30 @@ When enabled and a shortcut is set, Sigil can capture **typed text** from other 
 
 - [Shortcuts and tips](#shortcuts-and-tips)  
 - [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) — translation maintenance  
+
+## Models & Runtimes
+
+### Purpose
+
+One place for everything Sigil downloads: speech models, runtime packs (such as the NVIDIA GPU runtime), voice templates and benchmark assets, plus a **GPU and runtimes** card that shows what your PC can accelerate.
+
+### Open the tab
+
+Sigil navigation → **Models & Runtimes** (just above Settings).
+
+### What you can do
+
+- **Download**, **Cancel** (the partial download is kept, so the next attempt resumes), **Resume**, **Retry**, **Update**, **Check files** and **Delete** any entry. One download runs at a time by default.
+- **Import…** a file or folder you already have. Entries marked **Import only** are Sigil-built packs that are not published online yet.
+- Whisper and Vosk models you already downloaded are recognised and marked **Found on this PC**; they are not downloaded again.
+- **Download source:** Automatic, a preferred mirror, or your own mirror URL (for a LAN copy). Every file is checked against its known checksum whatever the source.
+- **Storage** shows how much space models use and where they live.
+- **GPU and runtimes** lists your graphics cards and drivers, which acceleration options work (and why not), and suggested model sizes for your PC.
+
+### Tips
+
+- Large downloads can be paused with **Cancel** and resumed later, even after restarting Sigil.
+- On a slow or blocked connection, try the **hf-mirror.com** source.
 
 ## Shortcuts and tips
 

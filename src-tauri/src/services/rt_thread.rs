@@ -11,6 +11,9 @@
 //! pub fn set_worker_priority(priority: WorkerPriority, gpu_ep: bool) -> bool;  // current thread
 //! ```
 //!
+//! Added by P1-C (capture hub): `prepare_audio_callback_thread_once() -> bool` (MMCSS "Pro Audio"
+//! plus the thread's EcoQoS opt-out, once per callback thread).
+//!
 //! Rules (plan "Real-time hygiene" / "Voice-changer worker priority"):
 //! - MMCSS "Pro Audio" goes on audio *callback* threads only (capture, output, monitor), never on
 //!   inference workers. Call [`preload`] from a normal thread before opening streams, then
@@ -89,6 +92,20 @@ mod imp {
         /// Whether this thread already attempted MMCSS registration (success or not).
         static MMCSS_ATTEMPTED: Cell<bool> = const { Cell::new(false) };
         static MMCSS_OK: Cell<bool> = const { Cell::new(false) };
+        /// Whether this thread already ran `prepare_audio_callback_thread_once` (result cached).
+        static CALLBACK_PREPARED: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    pub fn prepare_audio_callback_thread_once() -> bool {
+        if let Some(ok) = CALLBACK_PREPARED.with(Cell::get) {
+            return ok;
+        }
+        let mmcss = register_mmcss_pro_audio_once();
+        // HighQoS for the callback thread: Windows 11 must not park it on efficiency cores or
+        // throttle it while the app is in the background (a game has focus).
+        let _ = opt_out_power_throttling();
+        CALLBACK_PREPARED.with(|c| c.set(Some(mmcss)));
+        mmcss
     }
 
     fn resolve_av_set() -> Option<AvSetMmThreadCharacteristicsW> {
@@ -215,6 +232,9 @@ mod imp {
     pub fn register_mmcss_pro_audio_once() -> bool {
         false
     }
+    pub fn prepare_audio_callback_thread_once() -> bool {
+        false
+    }
     pub fn opt_out_power_throttling() -> bool {
         false
     }
@@ -239,6 +259,14 @@ pub fn preload() {
 /// Returns whether the thread is registered. Never call it from an inference worker.
 pub fn register_mmcss_pro_audio_once() -> bool {
     imp::register_mmcss_pro_audio_once()
+}
+
+/// Prepare the calling **audio callback** thread once: MMCSS "Pro Audio" plus the thread's EcoQoS
+/// opt-out. After the first call per thread it is a thread-local check (no allocation, lock,
+/// syscall or logging), so it can sit at the top of every cpal callback. Returns whether MMCSS is
+/// active. Call [`preload`] from a normal thread before opening the stream.
+pub fn prepare_audio_callback_thread_once() -> bool {
+    imp::prepare_audio_callback_thread_once()
 }
 
 /// Opt the calling thread out of EcoQoS power throttling (Windows 11 "HighQoS").
@@ -322,6 +350,23 @@ mod tests {
         std::thread::spawn(|| {
             let first = register_mmcss_pro_audio_once();
             assert_eq!(register_mmcss_pro_audio_once(), first);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn callback_thread_preparation_is_cached_per_thread() {
+        use super::prepare_audio_callback_thread_once;
+        std::thread::spawn(|| {
+            let first = prepare_audio_callback_thread_once();
+            assert_eq!(prepare_audio_callback_thread_once(), first);
+            // The MMCSS part is the same one-shot registration.
+            assert_eq!(register_mmcss_pro_audio_once(), first);
+            #[cfg(windows)]
+            if let (_, Some(mask)) = super::imp::current_thread_policy() {
+                assert_ne!(mask, 0, "callback threads are opted out of EcoQoS");
+            }
         })
         .join()
         .unwrap();

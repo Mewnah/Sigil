@@ -6,8 +6,7 @@
 //! fed a fixed value; any other extra input is rejected at load with a clear message.
 
 use ort::session::{Session, SessionInputValue, SessionOutputs};
-use ort::tensor::TensorElementType;
-use ort::value::{Tensor, TensorRef};
+use ort::value::{Tensor, TensorElementType, TensorRef};
 
 /// Kind of the extractor's main (audio) input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

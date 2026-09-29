@@ -1,0 +1,114 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "llama.cpp llama-server runtime packs for the local translation LLM, run as a helper process by process_host (127.0.0.1 only, random API key, kill-on-close Job Object). Owned by P1-E; decision record docs/adr/0005-process-host-llama.md.",
+    "Official ggml-org Windows x64 release zips of build b11146 (commit 7fe450e19305b828c199d602c23a8337aaa1f03b; the binaries of llama.cpp v0.5.0, 2026-09-23). Sizes and sha256 are GitHub's asset digests; the Vulkan zip was downloaded and re-hashed locally.",
+    "Only llama-server.exe (a 9 KB launcher for llama-server-impl.dll) and the DLLs are installed; the other tools in the zips are skipped. Vulkan is the default GPU pack (NVIDIA, AMD, Intel), CPU the fallback, CUDA 13 opt-in (its entry also installs llama.cpp's CUDA 13.4 runtime DLLs next to the server).",
+    "Upgrade: bump every id's version and pins together, then re-run the P1-E smoke test (process_host::tests::llama_server_smoke)."
+  ],
+  "entries": [
+    {
+      "id": "runtime/llama-server-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "b11146",
+      "title": "llama.cpp server (Vulkan)",
+      "description": "Runs local translation models (GGUF) on the GPU through Vulkan: NVIDIA, AMD and Intel graphics. Started by Sigil as a helper process that only listens on this PC.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "llama-b11146-bin-win-vulkan-x64.zip",
+          "size": 32127004,
+          "sha256": "55a378aa095b466979d85075234f66d7655c7a7483222af0c006c0e55b4d7bd6",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-vulkan-x64.zip",
+              "revision": "b11146"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["llama-server.exe", "*.dll", "LICENSE*"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/llama-server-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "b11146",
+      "title": "llama.cpp server (CPU)",
+      "description": "Runs local translation models (GGUF) on the processor, picking the fastest instruction set this CPU supports. For PCs without a suitable GPU.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "llama-b11146-bin-win-cpu-x64.zip",
+          "size": 18560055,
+          "sha256": "14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-cpu-x64.zip",
+              "revision": "b11146"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["llama-server.exe", "*.dll", "LICENSE*"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/llama-server-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "b11146",
+      "title": "llama.cpp server (CUDA 13)",
+      "description": "Runs local translation models (GGUF) on NVIDIA GPUs through CUDA 13, with its CUDA runtime included. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "cuda13",
+      "files": [
+        {
+          "path": "llama-b11146-bin-win-cuda-13.4-x64.zip",
+          "size": 149758833,
+          "sha256": "b1866c0ce76bc7bfb0c24b33e9a37e9669f1be18539b12c74ce361f81c41f047",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-cuda-13.4-x64.zip",
+              "revision": "b11146"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["llama-server.exe", "*.dll", "LICENSE*"]
+          }
+        },
+        {
+          "path": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+          "size": 423535356,
+          "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "revision": "b11146"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["*.dll"]
+          }
+        }
+      ]
+    }
+  ]
+}

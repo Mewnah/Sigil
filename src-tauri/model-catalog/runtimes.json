@@ -1,0 +1,87 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Native runtime packs loaded by native_runtime: the ONNX Runtime CUDA provider and Sigil-built sigil_engine DLL packs. Owned by P1-D1; decision record docs/adr/0007-native-runtime-packs.md. The NVIDIA CUDA 13 runtime is in runtime-nvidia.json.",
+    "Sigil-built packs stay status 'unpublished' until the maintainer publishes them (asset hosting is local-only for now): they are installed by local import or SIGIL_LOCAL_ASSETS, staged by scripts/native/build-runtime-packs.ps1 (see scripts/native/README.md).",
+    "Engine packs follow the id convention runtime/sigil-<engine>-<variant> with a matching 'variant'; each zip holds sigil_<engine>.dll and sigil-pack.json (sizes and sha256 of its files, checked before every load). They are unpinned while unpublished because local MSVC builds are not byte-reproducible; pin them when publishing.",
+    "runtime/ort-cuda13-provider: onnxruntime_providers_cuda.dll of ONNX Runtime 1.28.0 exactly as ort-sys 2.0.0-rc.13 ships it (pyke dist efb686cb...78293), pinned. Used through register_ep_library only when the provider is not installed next to Sigil.exe. Bump with the ORT build (ADR 0001)."
+  ],
+  "entries": [
+    {
+      "id": "runtime/ort-cuda13-provider",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "1.28.0",
+      "title": "ONNX Runtime CUDA provider (CUDA 13)",
+      "description": "The part of ONNX Runtime that talks to CUDA. Needed for CUDA acceleration when this Sigil install does not include it; works together with the NVIDIA GPU runtime.",
+      "license": "MIT",
+      "status": "unpublished",
+      "variant": "cuda13",
+      "requires": ["runtime/nvidia-cuda13"],
+      "files": [
+        {
+          "path": "onnxruntime_providers_cuda.dll",
+          "size": 62276096,
+          "sha256": "4ec94428733d4f3bc3d03443d059e400293bda79691b8004ed15b4ed13eb643f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/onnxruntime_providers_cuda-1.28.0-cuda13.dll",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-echo-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "Native engine self-test (echo, CPU)",
+      "description": "A tiny test engine that plays its input back. It checks that Sigil can load its native runtime packs on this PC.",
+      "license": "AGPL-3.0-only",
+      "status": "unpublished",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sigil-echo-0.1.0-cpu.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-echo-0.1.0-cpu.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": { "format": "zip" }
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-echo-cpu-avx2",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "Native engine self-test (echo, AVX2)",
+      "description": "The echo test engine built for processors with AVX2. It checks that Sigil picks the fastest build this PC supports.",
+      "license": "AGPL-3.0-only",
+      "status": "unpublished",
+      "variant": "cpu-avx2",
+      "files": [
+        {
+          "path": "sigil-echo-0.1.0-cpu-avx2.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-echo-0.1.0-cpu-avx2.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": { "format": "zip" }
+        }
+      ]
+    }
+  ]
+}

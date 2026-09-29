@@ -3,7 +3,7 @@
 //! - **Light** ([`probe`] with `deep = false`): runs on a background thread at every start, and
 //!   again after the NVIDIA runtime pack is installed or removed. Only cheap, side-effect-free
 //!   checks: ORT's compiled EPs, the provider DLLs next to `Sigil.exe`, which `DirectML.dll` the
-//!   process loaded, DXGI adapters and driver versions, where the CUDA 12 / cuDNN 9 DLLs would be
+//!   process loaded, DXGI adapters and driver versions, where the CUDA 13 / cuDNN 9 DLLs would be
 //!   found, and the NVIDIA runtime pack state. It never loads CUDA or creates a session (a CUDA
 //!   context alone costs hundreds of MB of VRAM).
 //! - **Deep** (`deep = true`): additionally preloads the runtime pack, reads the CUDA driver /
@@ -13,12 +13,16 @@
 //!   `app_data/diagnostics/ep-probe-deep.json`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::gpu_mem::{self, GpuAdapter};
 use super::nvidia_pack::{self, NvidiaPackStatus};
-use crate::services::neural_audio::ort_session::{self, CUDA_PROVIDER_DLL, EP_CPU, EP_CUDA, EP_DML, SHARED_PROVIDER_DLL};
+use crate::services::native_runtime::nvidia::{self, RuntimeSource};
+use crate::services::neural_audio::ort_session::{
+    self, CudaProviderSource, CUDA_PROVIDER_DLL, EP_CPU, EP_CUDA, EP_DML, SHARED_PROVIDER_DLL,
+};
 
 /// Tauri event carrying the startup (light) [`EpProbeReport`].
 pub const PROBE_EVENT: &str = "diagnostics:probe";
@@ -79,12 +83,26 @@ pub struct EpProbeReport {
     pub nvidia_driver: Option<String>,
     /// Highest CUDA version the installed driver supports (deep).
     pub cuda_driver_version: Option<String>,
-    /// CUDA 12 / cuDNN 9 runtime DLLs the CUDA provider needs.
+    /// CUDA 13 / cuDNN 9 runtime DLLs the CUDA provider needs.
     pub cuda_runtime_dlls: Vec<DllCheck>,
     /// Versions of the CUDA runtime / cuDNN actually loaded (deep).
     pub cudart_version: Option<String>,
     pub cudnn_version: Option<String>,
     pub nvidia_pack: NvidiaPackStatus,
+    /// Which NVIDIA runtime install CUDA uses: `model_store` (`runtime/nvidia-cuda13` from Models &
+    /// Runtimes, preferred) or `interim` (the Settings pack); `None` when neither is installed.
+    #[serde(default)]
+    pub nvidia_runtime_source: Option<String>,
+    /// The CUDA provider library this process used (deep): `exe_dir` (next to `Sigil.exe`) or
+    /// `registered` (the provider pack in app data, `register_ep_library`).
+    #[serde(default)]
+    pub cuda_provider_source: Option<String>,
+    #[serde(default)]
+    pub cuda_provider_path: Option<String>,
+    /// `native_runtime::nvidia::fingerprint()` when the probe ran: a saved deep report goes stale
+    /// once a runtime pack is installed or removed.
+    #[serde(default)]
+    pub runtime_fingerprint: String,
     /// Canary results (deep).
     pub ep_checks: Vec<EpCheck>,
     /// `cuda` / `dml` / `cpu`.
@@ -170,6 +188,32 @@ pub fn locate_dll(name: &str, pack_bin: Option<&Path>, exe_dir: Option<&Path>) -
         })
 }
 
+/// [`locate_dll`], but a DLL that is not loaded yet is looked up first in the model-store NVIDIA
+/// pack (`store`, lower-case names), which the CUDA session factory preloads before the interim pack.
+fn locate_runtime_dll(
+    name: &str,
+    store: Option<&BTreeMap<String, PathBuf>>,
+    pack_bin: Option<&Path>,
+    exe_dir: Option<&Path>,
+) -> DllCheck {
+    if imp::loaded_module_path(name).is_none() {
+        if let Some(c) = store
+            .and_then(|ix| ix.get(&name.to_ascii_lowercase()))
+            .and_then(|p| check_at(name, p.clone(), "pack"))
+        {
+            return c;
+        }
+    }
+    locate_dll(name, pack_bin, exe_dir)
+}
+
+fn runtime_source_name(source: RuntimeSource) -> &'static str {
+    match source {
+        RuntimeSource::ModelStore => "model_store",
+        RuntimeSource::Interim => "interim",
+    }
+}
+
 fn provider_dll_checks(exe_dir: Option<&Path>) -> Vec<DllCheck> {
     [SHARED_PROVIDER_DLL, CUDA_PROVIDER_DLL, "DirectML.dll"]
         .into_iter()
@@ -191,8 +235,17 @@ pub(crate) fn assess(r: &EpProbeReport) -> (String, Vec<String>) {
     let mut notes = Vec::new();
     let hardware: Vec<&GpuAdapter> = r.adapters.iter().filter(|a| !a.software).collect();
     let nvidia = hardware.iter().any(|a| a.vendor_id == gpu_mem::VENDOR_NVIDIA);
+    // Provider libraries from another ONNX Runtime release are refused by the session factory.
+    let stale_providers: Vec<String> = r
+        .provider_dlls
+        .iter()
+        .filter(|d| d.name == CUDA_PROVIDER_DLL || d.name == SHARED_PROVIDER_DLL)
+        .filter_map(|d| d.path.as_deref().and_then(|p| ort_session::provider_version_mismatch(Path::new(p))))
+        .collect();
     let provider_ok = r.provider_dlls.iter().any(|d| d.name == CUDA_PROVIDER_DLL && d.found())
-        && r.provider_dlls.iter().any(|d| d.name == SHARED_PROVIDER_DLL && d.found());
+        && r.provider_dlls.iter().any(|d| d.name == SHARED_PROVIDER_DLL && d.found())
+        && stale_providers.is_empty();
+    notes.extend(stale_providers);
     let missing_runtime: Vec<&str> = r
         .cuda_runtime_dlls
         .iter()
@@ -210,7 +263,7 @@ pub(crate) fn assess(r: &EpProbeReport) -> (String, Vec<String>) {
     }
     if nvidia && provider_ok && !missing_runtime.is_empty() {
         notes.push(format!(
-            "The CUDA 12 / cuDNN 9 runtime is not installed (missing {}). Install the NVIDIA GPU runtime pack (about {:.1} GB) to use CUDA; DirectML is used until then.",
+            "The CUDA 13 / cuDNN 9 runtime is not installed (missing {}). Install the NVIDIA GPU runtime pack (about {:.1} GB) to use CUDA; DirectML is used until then.",
             missing_runtime.join(", "),
             nvidia_pack::download_bytes() as f64 / 1e9
         ));
@@ -261,10 +314,13 @@ pub fn probe(deep: bool) -> EpProbeReport {
     let exe_dir = ort_session::provider_dir();
     let app_data = super::app_data_dir();
     let mut pack = nvidia_pack::status(app_data.as_deref());
+    // The model-store pack (runtime/nvidia-cuda13) wins over the interim pack, as in
+    // `native_runtime::nvidia::ensure_preloaded`.
+    let store_dlls = nvidia::store_dll_index();
     let pack_bin = app_data
         .as_deref()
         .map(nvidia_pack::bin_dir)
-        .filter(|_| pack.installed);
+        .filter(|_| pack.installed && store_dlls.is_none());
 
     let adapters = gpu_mem::adapters();
     let nvidia_driver = adapters
@@ -290,6 +346,10 @@ pub fn probe(deep: bool) -> EpProbeReport {
         cudart_version: None,
         cudnn_version: None,
         nvidia_pack: NvidiaPackStatus::default(),
+        nvidia_runtime_source: None,
+        cuda_provider_source: None,
+        cuda_provider_path: None,
+        runtime_fingerprint: nvidia::fingerprint(),
         ep_checks: Vec::new(),
         recommended_ep: EP_CPU.to_string(),
         notes: Vec::new(),
@@ -320,8 +380,23 @@ pub fn probe(deep: bool) -> EpProbeReport {
     }
     report.cuda_runtime_dlls = cuda_runtime_dll_names()
         .into_iter()
-        .map(|n| locate_dll(n, pack_bin.as_deref(), exe_dir.as_deref()))
+        .map(|n| locate_runtime_dll(n, store_dlls.as_ref(), pack_bin.as_deref(), exe_dir.as_deref()))
         .collect();
+    report.nvidia_runtime_source = match nvidia::preload_state() {
+        Some((source, _, _)) => Some(runtime_source_name(source)),
+        None if store_dlls.is_some() => Some(runtime_source_name(RuntimeSource::ModelStore)),
+        None if pack.installed => Some(runtime_source_name(RuntimeSource::Interim)),
+        None => None,
+    }
+    .map(str::to_string);
+    if let Some(provider) = ort_session::cuda_provider_in_use() {
+        let source = match provider {
+            CudaProviderSource::ExeDir(_) => "exe_dir",
+            CudaProviderSource::Registered(_) => "registered",
+        };
+        report.cuda_provider_source = Some(source.to_string());
+        report.cuda_provider_path = Some(provider.path().display().to_string());
+    }
     report.nvidia_pack = pack;
     let (recommended, notes) = assess(&report);
     report.recommended_ep = recommended;
@@ -447,15 +522,18 @@ pub fn last_deep_report(app_data: &Path) -> Option<EpProbeReport> {
     serde_json::from_str::<EpProbeReport>(&text).ok().filter(|r| r.schema == REPORT_SCHEMA)
 }
 
-/// Whether a saved deep report still describes this install: same Sigil version and the same
-/// NVIDIA runtime pack state (pinned label, installed, pending removal). A report from before the
-/// pack was installed or removed would contradict the pack section, so the UI drops it.
-pub fn deep_report_is_current(report: &EpProbeReport, pack_now: &NvidiaPackStatus) -> bool {
+/// Whether a saved deep report still describes this install: same Sigil version, the same interim
+/// NVIDIA runtime pack state (pinned label, installed, pending removal) and the same runtime packs
+/// (`fingerprint_now` = `native_runtime::nvidia::fingerprint()`: model-store NVIDIA and CUDA
+/// provider packs). A report from before a pack was installed or removed would contradict the pack
+/// section, so the UI drops it.
+pub fn deep_report_is_current(report: &EpProbeReport, pack_now: &NvidiaPackStatus, fingerprint_now: &str) -> bool {
     let then = &report.nvidia_pack;
     report.app_version == env!("CARGO_PKG_VERSION")
         && then.label == pack_now.label
         && then.installed == pack_now.installed
         && then.pending_removal == pack_now.pending_removal
+        && report.runtime_fingerprint == fingerprint_now
 }
 
 #[cfg(windows)]
@@ -510,9 +588,9 @@ mod imp {
         }
     }
 
-    /// `cudaRuntimeGetVersion` of the loaded cudart64_12.dll.
+    /// `cudaRuntimeGetVersion` of the loaded cudart64_13.dll (the pack's; ORT's own CUDA runtime is static).
     pub fn cudart_version() -> Option<String> {
-        let f = proc_in(module_handle("cudart64_12.dll")?, s!("cudaRuntimeGetVersion"))?;
+        let f = proc_in(module_handle("cudart64_13.dll")?, s!("cudaRuntimeGetVersion"))?;
         let mut v = 0i32;
         // SAFETY: `cudaError_t cudaRuntimeGetVersion(int*)`.
         let f: unsafe extern "system" fn(*mut i32) -> i32 = unsafe { std::mem::transmute(f) };
@@ -633,6 +711,10 @@ mod tests {
             cudart_version: None,
             cudnn_version: None,
             nvidia_pack: NvidiaPackStatus::default(),
+            nvidia_runtime_source: None,
+            cuda_provider_source: None,
+            cuda_provider_path: None,
+            runtime_fingerprint: "fp".into(),
             ep_checks: vec![],
             recommended_ep: String::new(),
             notes: vec![],
@@ -698,20 +780,52 @@ mod tests {
             ..NvidiaPackStatus::default()
         };
         let mut now = r.nvidia_pack.clone();
-        assert!(deep_report_is_current(&r, &now));
+        assert!(deep_report_is_current(&r, &now, "fp"));
         // Progress fields (preloaded, installing, errors) do not make a report stale.
         now.preloaded = true;
         now.last_error = Some("x".into());
-        assert!(deep_report_is_current(&r, &now));
+        assert!(deep_report_is_current(&r, &now, "fp"));
+        // A model-store runtime or provider pack was installed or removed after the test.
+        assert!(!deep_report_is_current(&r, &now, "fp-other"));
         now.installed = true;
-        assert!(!deep_report_is_current(&r, &now), "the pack was installed after the test");
+        assert!(!deep_report_is_current(&r, &now, "fp"), "the pack was installed after the test");
         let mut removed = r.nvidia_pack.clone();
         r.nvidia_pack.installed = true;
         removed.pending_removal = true;
-        assert!(!deep_report_is_current(&r, &removed), "the pack was removed after the test");
+        assert!(!deep_report_is_current(&r, &removed, "fp"), "the pack was removed after the test");
         let mut other_build = r.clone();
         other_build.app_version = "0.0.0-older".into();
-        assert!(!deep_report_is_current(&other_build, &r.nvidia_pack));
+        assert!(!deep_report_is_current(&other_build, &r.nvidia_pack, "fp"));
+        // Reports saved before the fingerprint existed are stale.
+        let mut older = r.clone();
+        older.runtime_fingerprint = String::new();
+        assert!(!deep_report_is_current(&older, &r.nvidia_pack, "fp"));
+    }
+
+    #[test]
+    fn reports_without_the_p1_fields_still_parse() {
+        let r = base(vec![], true, true);
+        let mut v = serde_json::to_value(&r).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        for k in ["nvidia_runtime_source", "cuda_provider_source", "cuda_provider_path", "runtime_fingerprint"] {
+            obj.remove(k);
+        }
+        let back: EpProbeReport = serde_json::from_value(v).unwrap();
+        assert!(back.runtime_fingerprint.is_empty() && back.nvidia_runtime_source.is_none());
+    }
+
+    #[test]
+    fn store_pack_dlls_are_located_before_the_interim_pack() {
+        let dir = std::env::temp_dir().join(format!("sigil-ep-probe-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dll = dir.join("cudnn_ops64_9.dll");
+        std::fs::write(&dll, b"x").unwrap();
+        let mut index = BTreeMap::new();
+        index.insert("cudnn_ops64_9.dll".to_string(), dll.clone());
+        let c = locate_runtime_dll("cudnn_ops64_9.dll", Some(&index), None, None);
+        assert_eq!(c.source, "pack");
+        assert_eq!(c.path.as_deref(), Some(dll.display().to_string().as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

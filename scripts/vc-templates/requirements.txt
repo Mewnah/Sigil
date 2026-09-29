@@ -1,0 +1,11 @@
+# Maintainer pipeline for Sigil's RVC templates (export_rvc.py, parity_test.py). Not needed to
+# build or run Sigil: the exported graph-only templates are checked in under
+# src-tauri/resources/vc-templates and src-tauri/test-fixtures/vc/tiny.
+#
+# Versions are the ones the checked-in templates were exported and verified with (exports are
+# deterministic for a given torch / onnx pair). Install one package at a time on slow networks.
+torch==2.3.1          # dev rig: the cu121 build (pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121)
+onnx==1.17.0          # graph post-processing (external initializers, metadata); keeps IR <= 10 for onnxruntime 1.19
+onnxruntime==1.19.2   # CPU parity (the Rust engine runs ONNX Runtime 1.28 through ort)
+numpy>=1.24,<2
+scipy                 # imported by the vendored RVC modules.py

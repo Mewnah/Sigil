@@ -1,0 +1,11 @@
+{
+  "identifier": "process-host",
+  "description": "IPC for the process-host plugin (helper processes bound to 127.0.0.1) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "process-host:default"
+  ]
+}

@@ -1,17 +1,19 @@
-//! Interim NVIDIA GPU runtime pack for the CUDA execution provider (ORT 1.23 "cu12" build).
+//! Interim NVIDIA GPU runtime pack for the CUDA execution provider (ORT 1.28 "cuda13" build).
 //!
-//! `onnxruntime_providers_cuda.dll` (bundled next to `Sigil.exe`) imports the CUDA 12 runtime,
-//! cuBLAS, cuFFT and cuDNN 9, which NVIDIA's driver does not install. This module installs them
-//! from NVIDIA's official redistributable archives into
-//! `app_data/runtimes/nvidia-cu12/<label>/bin/` and preloads them (full path, dependency order,
+//! `onnxruntime_providers_cuda.dll` (bundled next to `Sigil.exe`) imports cuBLAS 13 and loads
+//! cuDNN 9 and cuFFT at run time (the CUDA runtime itself is linked statically), none of which
+//! NVIDIA's driver installs. This module installs them from NVIDIA's official redistributable
+//! archives into
+//! `app_data/runtimes/nvidia-cu13/<label>/bin/` and preloads them (full path, dependency order,
 //! plus `AddDllDirectory`) right before the first CUDA session, so the provider's imports resolve
 //! to the pack no matter what is on `PATH`. Nothing is load-time linked; without the pack Sigil
 //! starts normally and the CUDA rung of the EP ladder falls back to DirectML with a visible reason.
 //!
-//! - **Pinned**: archive URLs, sizes and sha256 come from NVIDIA's `redistrib_12.9.1.json` (CUDA)
-//!   and `redistrib_9.10.2.json` (cuDNN, `cuda12` variant). Bump them together with the ORT build.
+//! - **Pinned**: archive URLs, sizes and sha256 come from NVIDIA's `redistrib_13.2.0.json` (CUDA)
+//!   and `redistrib_9.26.0.json` (cuDNN, `cuda13` variant). Bump them together with the ORT build
+//!   (ADR 0001). CUDA 13 needs driver R580+ and a Turing or newer GPU.
 //! - **Downloads**: one archive at a time (router-friendly), HTTP `Range` resume into
-//!   `.downloads/<sha256>.partial`, streaming sha256, bounded retries, cancel. ~1.4 GB total.
+//!   `.downloads/<sha256>.partial`, streaming sha256, bounded retries, cancel. ~1.9 GB total.
 //! - **Extraction**: only `*.dll` members, with Windows' own `System32\tar.exe` (bsdtar; refuses
 //!   absolute and `..` paths) into a staging directory that is renamed into place atomically.
 //!   The P1 model store replaces this interim downloader and extractor.
@@ -29,9 +31,9 @@ use std::time::{Duration, Instant};
 use super::canary;
 
 /// Runtime family folder under `app_data/runtimes/`.
-pub const FAMILY: &str = "nvidia-cu12";
+pub const FAMILY: &str = "nvidia-cu13";
 /// Pinned pack version (folder name).
-pub const LABEL: &str = "cuda-12.9.1_cudnn-9.10.2";
+pub const LABEL: &str = "cuda-13.2.0_cudnn-9.26.0";
 /// Tauri event with [`PackProgress`] payloads.
 pub const PROGRESS_EVENT: &str = "diagnostics:nvidia_pack";
 
@@ -59,38 +61,40 @@ pub struct Archive {
 const CUDA_REDIST: &str = "https://developer.download.nvidia.com/compute/cuda/redist/";
 const CUDNN_REDIST: &str = "https://developer.download.nvidia.com/compute/cudnn/redist/";
 
-/// Pinned from redistrib_12.9.1.json (2025-06-05) and cuDNN redistrib_9.10.2.json (2025-06-06).
+/// Pinned from redistrib_13.2.0.json (2026-03-09) and cuDNN redistrib_9.26.0.json (2026-09-09).
+/// cudart is optional for ORT 1.28 (its CUDA runtime is static) but kept for version reporting and
+/// for any engine that links it dynamically; cuFFT 12.x is CUDA 13's cuFFT.
 pub static ARCHIVES: [Archive; 4] = [
     Archive {
-        id: "cuda_cudart 12.9.79",
+        id: "cuda_cudart 13.2.51",
         base: CUDA_REDIST,
-        rel_path: "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.9.79-archive.zip",
-        sha256: "179e9c43b0735ffe67207b3da556eb5a0c50f3047961882b7657d3b822d34ef8",
-        size: 3_521_238,
-        dlls: &["cudart64_12.dll"],
+        rel_path: "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-13.2.51-archive.zip",
+        sha256: "906b430b53e6396f7cbaa6874fbe7f9307a184e830b119a4ad3f58dc6e0165c6",
+        size: 3_092_970,
+        dlls: &["cudart64_13.dll"],
     },
     Archive {
-        id: "libcublas 12.9.1.4",
+        id: "libcublas 13.3.0.5",
         base: CUDA_REDIST,
-        rel_path: "libcublas/windows-x86_64/libcublas-windows-x86_64-12.9.1.4-archive.zip",
-        sha256: "d534d98b0b453a98914dbf3adf47d7e84b55037abf02f87466439e1dcef581ed",
-        size: 549_755_186,
-        dlls: &["cublas64_12.dll", "cublasLt64_12.dll"],
+        rel_path: "libcublas/windows-x86_64/libcublas-windows-x86_64-13.3.0.5-archive.zip",
+        sha256: "438a88f07af3721eda15ed1f4d2b957ea810e29061b2a6292837f35520dbd212",
+        size: 387_053_964,
+        dlls: &["cublas64_13.dll", "cublasLt64_13.dll"],
     },
     Archive {
-        id: "libcufft 11.4.1.4",
+        id: "libcufft 12.2.0.37",
         base: CUDA_REDIST,
-        rel_path: "libcufft/windows-x86_64/libcufft-windows-x86_64-11.4.1.4-archive.zip",
-        sha256: "f26f80bb9abff3269c548e1559e8c2b4ba58ccb8acc6095bbc6404fc962d4b80",
-        size: 198_361_265,
-        dlls: &["cufft64_11.dll"],
+        rel_path: "libcufft/windows-x86_64/libcufft-windows-x86_64-12.2.0.37-archive.zip",
+        sha256: "e2667a2a69864e833b3b584b0b31c2abf627ea73055a3a7570a88b45d4d08650",
+        size: 216_183_815,
+        dlls: &["cufft64_12.dll"],
     },
     Archive {
-        id: "cudnn 9.10.2.21 (cuda12)",
+        id: "cudnn 9.26.0.51 (cuda13)",
         base: CUDNN_REDIST,
-        rel_path: "cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip",
-        sha256: "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
-        size: 683_336_095,
+        rel_path: "cudnn/windows-x86_64/cudnn-windows-x86_64-9.26.0.51_cuda13-archive.zip",
+        sha256: "f8610d403685c918e690de5b1ec68da0b4b1358a6be62627591362b7eb811644",
+        size: 1_279_656_673,
         dlls: &[
             "cudnn64_9.dll",
             "cudnn_graph64_9.dll",
@@ -100,6 +104,10 @@ pub static ARCHIVES: [Archive; 4] = [
             "cudnn_cnn64_9.dll",
             "cudnn_engines_precompiled64_9.dll",
             "cudnn_engines_runtime_compiled64_9.dll",
+            // New sub-libraries in cuDNN 9.2x: without them cuDNN's frontend fails to initialise
+            // and every CUDA session fails ("Failed to initialize CUDNN Frontend"; P1-D1).
+            "cudnn_engines_tensor_ir64_9.dll",
+            "cudnn_ext64_9.dll",
         ],
     },
 ];
@@ -110,11 +118,11 @@ pub fn archive_url(a: &Archive) -> String {
 }
 
 /// Load order for the preload: dependencies first. `false` = optional (loaded when it loads).
-pub const PRELOAD_ORDER: [(&str, bool); 12] = [
-    ("cudart64_12.dll", true),
-    ("cublasLt64_12.dll", true),
-    ("cublas64_12.dll", true),
-    ("cufft64_11.dll", true),
+pub const PRELOAD_ORDER: [(&str, bool); 14] = [
+    ("cudart64_13.dll", true),
+    ("cublasLt64_13.dll", true),
+    ("cublas64_13.dll", true),
+    ("cufft64_12.dll", true),
     ("cudnn64_9.dll", true),
     ("cudnn_graph64_9.dll", true),
     ("cudnn_ops64_9.dll", true),
@@ -124,6 +132,9 @@ pub const PRELOAD_ORDER: [(&str, bool); 12] = [
     // Needed only for RNN/attention graphs and runtime-fused engines (NVRTC); RVC uses neither.
     ("cudnn_adv64_9.dll", false),
     ("cudnn_engines_runtime_compiled64_9.dll", false),
+    // cuDNN 9.2x frontend dependencies, loaded by cuDNN itself when present (see ARCHIVES).
+    ("cudnn_engines_tensor_ir64_9.dll", false),
+    ("cudnn_ext64_9.dll", false),
 ];
 
 /// Total download size of the pinned pack.
@@ -230,7 +241,7 @@ pub fn required_dlls() -> impl Iterator<Item = &'static str> {
 }
 
 /// Read and check an installed pack: manifest of the pinned label, every DLL present with its
-/// recorded size. (Hashes were checked at install; re-hashing 1.4 GB on every start is avoided.)
+/// recorded size. (Hashes were checked at install; re-hashing 1.9 GB on every start is avoided.)
 pub fn verify_installed(dir: &Path) -> Result<InstalledManifest, String> {
     let text = fs::read_to_string(dir.join(MANIFEST_FILE)).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
     let manifest: InstalledManifest = serde_json::from_str(&text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
@@ -925,7 +936,7 @@ async fn install_inner(app_data: &Path, progress: &(impl Fn(PackProgress) + Send
         let _ = fs::remove_dir_all(&staging);
         format!("cannot move the pack into {}: {e}", dir.display())
     })?;
-    // The archives are no longer needed (~1.4 GB).
+    // The archives are no longer needed (~1.9 GB).
     let _ = fs::remove_dir_all(&downloads);
     canary::invalidate();
     Ok(())
@@ -1008,7 +1019,7 @@ mod tests {
             assert!(!a.dlls.is_empty());
         }
         // Every DLL the CUDA provider imports is in the pack and in the preload order.
-        for dll in ["cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll", "cufft64_11.dll", "cudnn64_9.dll"] {
+        for dll in ["cublasLt64_13.dll", "cublas64_13.dll", "cufft64_12.dll", "cudnn64_9.dll"] {
             assert!(required_dlls().any(|d| d == dll), "{dll} missing from the pack");
             assert!(PRELOAD_ORDER.iter().any(|(d, req)| *d == dll && *req), "{dll} not preloaded");
         }
@@ -1066,7 +1077,7 @@ mod tests {
     #[test]
     fn collect_finds_nested_dlls() {
         let root = temp("collect");
-        let extracted = root.join("x/cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin");
+        let extracted = root.join("x/cudnn-windows-x86_64-9.26.0.51_cuda13-archive/bin/x64");
         fs::create_dir_all(&extracted).unwrap();
         let cudnn = &ARCHIVES[3];
         for d in cudnn.dlls {
@@ -1077,7 +1088,7 @@ mod tests {
             assert!(root.join("bin").join(d).is_file());
         }
         let err = collect_dlls(&ARCHIVES[0], &root.join("x"), &root.join("bin")).unwrap_err();
-        assert!(err.contains("cudart64_12.dll"));
+        assert!(err.contains("cudart64_13.dll"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1237,16 +1248,16 @@ mod tests {
         write_zip(
             &zip,
             &[
-                ("cuda_cudart-windows-x86_64-12.9.79-archive/bin/cudart64_12.dll", b"MZ-cudart"),
-                ("cuda_cudart-windows-x86_64-12.9.79-archive/include/cuda_runtime.h", b"// header"),
-                ("cuda_cudart-windows-x86_64-12.9.79-archive/LICENSE", b"license"),
+                ("cuda_cudart-windows-x86_64-13.2.51-archive/bin/x64/cudart64_13.dll", b"MZ-cudart"),
+                ("cuda_cudart-windows-x86_64-13.2.51-archive/include/cuda_runtime.h", b"// header"),
+                ("cuda_cudart-windows-x86_64-13.2.51-archive/LICENSE", b"license"),
             ],
         );
         let x = root.join("x");
         let never = AtomicBool::new(false);
         extract_dlls(&zip, &x, &never).expect("tar.exe extracts the DLLs");
         collect_dlls(&ARCHIVES[0], &x, &root.join("bin")).unwrap();
-        assert_eq!(fs::read(root.join("bin/cudart64_12.dll")).unwrap(), b"MZ-cudart");
+        assert_eq!(fs::read(root.join("bin/cudart64_13.dll")).unwrap(), b"MZ-cudart");
         assert!(find_file(&x, "cuda_runtime.h").is_none(), "only *.dll members are extracted");
 
         // An entry escaping the target directory is never written outside it.

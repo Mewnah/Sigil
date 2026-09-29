@@ -1,0 +1,11 @@
+{
+  "identifier": "sysinfo",
+  "description": "IPC for the sysinfo plugin (GPU, driver, CPU and execution-provider eligibility probe) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "sysinfo:default"
+  ]
+}

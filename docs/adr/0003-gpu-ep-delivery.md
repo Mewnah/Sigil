@@ -1,6 +1,10 @@
 # ADR 0003: Delivering GPU execution providers and reporting the one in use
 
-- **Status:** accepted (P0 interim; P1 revisits CUDA provider placement after the ORT rc.13 gate)
+- **Status:** accepted (P0 interim; P1 revisits CUDA provider placement after the ORT rc.13 gate).
+  Update (P1-I0): the P1 follow-ups below are resolved by [ADR 0007](0007-native-runtime-packs.md):
+  the NVIDIA runtime is the model-store pack `runtime/nvidia-cuda13` (the interim installer keeps
+  working and is preferred second), and the `register_ep_library` provider path is implemented but
+  the installer keeps bundling the CUDA provider until `runtime/ort-cuda13-provider` is published.
 - **Date:** 2026-09-28
 - **Workstream:** P0-H
 - **Plan decision:** "Delivering GPU execution providers (today CUDA silently runs on CPU in releases)",

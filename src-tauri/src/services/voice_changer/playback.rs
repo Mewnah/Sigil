@@ -15,14 +15,14 @@ const RING_TOPUP_MARGIN_FRAMES: usize = 64;
 /// target: prefill (or one device callback) + one chunk + one capture callback + margin. With a
 /// 16384 floor, 48 kHz stereo, a 35 ms prefill and 512-frame chunks left room for capture
 /// callbacks of only ~124 ms; 32768 covers ~290 ms.
-pub(super) const OUT_RING_MIN_SAMPLES: usize = 32_768;
-pub(super) const OUT_RING_MAX_SAMPLES: usize = 262_144;
+pub(crate) const OUT_RING_MIN_SAMPLES: usize = 32_768;
+pub(crate) const OUT_RING_MAX_SAMPLES: usize = 262_144;
 
 /// After an underrun, blend this many **frames** (per channel) from the held sample back to live
 /// audio so playback resumes without a click.
 const RECOVER_FRAMES: usize = 16;
 
-pub(super) struct OutputPlayback {
+pub(crate) struct OutputPlayback {
     deque: VecDeque<f32>,
     prefill_target: usize,
     max_queue_samples: usize,
@@ -56,7 +56,7 @@ fn rms_interleaved(samples: &[f32]) -> f32 {
 }
 
 impl OutputPlayback {
-    pub(super) fn new(
+    pub(crate) fn new(
         prefill_target: usize,
         max_queue_samples: usize,
         ch_out: usize,
@@ -80,7 +80,7 @@ impl OutputPlayback {
 
     /// Wire the capture callback length (`in_burst_len`, interleaved samples at `ch_in` / `r_in`)
     /// into the ring target of this output (`r_out`).
-    pub(super) fn with_capture_burst(
+    pub(crate) fn with_capture_burst(
         mut self,
         in_burst_len: Arc<AtomicUsize>,
         ch_in: usize,
@@ -94,7 +94,7 @@ impl OutputPlayback {
         self
     }
 
-    pub(super) fn queue_len(&self) -> usize {
+    pub(crate) fn queue_len(&self) -> usize {
         self.deque.len()
     }
 
@@ -144,7 +144,7 @@ impl OutputPlayback {
 
     /// Apply new prefill/max targets from hot params without restarting cpal (may reset prefill gating).
     /// `ring_used` = samples already handed to the lock-free output ring (still queued for playback).
-    pub(super) fn update_limits(&mut self, prefill_target: usize, max_queue_samples: usize, ring_used: usize) {
+    pub(crate) fn update_limits(&mut self, prefill_target: usize, max_queue_samples: usize, ring_used: usize) {
         let max_queue_samples = max_queue_samples.max(prefill_target.saturating_add(1));
         if self.prefill_target == prefill_target && self.max_queue_samples == max_queue_samples {
             return;
@@ -157,7 +157,7 @@ impl OutputPlayback {
         }
     }
 
-    pub(super) fn push_interleaved(
+    pub(crate) fn push_interleaved(
         &mut self,
         samples: &[f32],
         truncate_enabled: bool,
@@ -189,7 +189,7 @@ impl OutputPlayback {
     /// Hand whole frames to the lock-free output ring once the prefill gate opens. The ring is
     /// only topped up to [`Self::ring_target`], so any backlog stays in the deque where the
     /// queue cap and silence truncation can still trim it.
-    pub(super) fn flush_to_ring(&mut self, producer: &mut rtrb::Producer<f32>, ring_used: usize) {
+    pub(crate) fn flush_to_ring(&mut self, producer: &mut rtrb::Producer<f32>, ring_used: usize) {
         if !self.prefilled {
             if self.deque.len() + ring_used >= self.gate_target() {
                 self.prefilled = true;
@@ -216,7 +216,7 @@ impl OutputPlayback {
 /// Real-time side of an output device: pulls whole frames from the lock-free ring, holds the
 /// last frame on underrun and ramps back to live audio after a starve. All state is
 /// closure-local (no locks, no allocation per callback).
-pub(super) struct RingPlayout {
+pub(crate) struct RingPlayout {
     consumer: rtrb::Consumer<f32>,
     /// Last emitted frame (one value per channel).
     hold: Vec<f32>,
@@ -232,7 +232,7 @@ pub(super) struct RingPlayout {
 }
 
 impl RingPlayout {
-    pub(super) fn new(consumer: rtrb::Consumer<f32>, ch: usize, callback_len: Arc<AtomicUsize>) -> Self {
+    pub(crate) fn new(consumer: rtrb::Consumer<f32>, ch: usize, callback_len: Arc<AtomicUsize>) -> Self {
         Self {
             consumer,
             hold: vec![0.0; ch.max(1)],
@@ -246,12 +246,12 @@ impl RingPlayout {
     }
 
     /// Count underruns into `counter` (the main output's `underruns` metric).
-    pub(super) fn with_underrun_counter(mut self, counter: Arc<AtomicU64>) -> Self {
+    pub(crate) fn with_underrun_counter(mut self, counter: Arc<AtomicU64>) -> Self {
         self.underruns = Some(counter);
         self
     }
 
-    pub(super) fn fill(&mut self, data: &mut [f32]) {
+    pub(crate) fn fill(&mut self, data: &mut [f32]) {
         self.callback_len.store(data.len(), Ordering::Relaxed);
         let ch = self.hold.len();
         let avail = (self.consumer.slots() / ch).min(data.len() / ch);
@@ -302,7 +302,7 @@ impl RingPlayout {
     }
 }
 
-pub(super) fn adapt_channels_interleaved_into(data: &[f32], from_ch: usize, to_ch: usize, out: &mut Vec<f32>) {
+pub(crate) fn adapt_channels_interleaved_into(data: &[f32], from_ch: usize, to_ch: usize, out: &mut Vec<f32>) {
     out.clear();
     if from_ch == 0 || to_ch == 0 || data.is_empty() || !data.len().is_multiple_of(from_ch) {
         return;

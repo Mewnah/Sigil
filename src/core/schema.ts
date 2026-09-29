@@ -10,7 +10,8 @@ import { Service_Twitch_Schema } from "./services/twitch/schema";
 import { Service_VRC_Schema } from "./services/vrc/schema";
 
 import type { Services } from "@/services-registry";
-import { zSafe, zStringNumber } from "@/utils";
+import type { ModelMirror } from "@/types";
+import { assertTypes, zSafe, zStringNumber } from "@/utils";
 import { z } from "zod";
 
 /** Ids for services that can appear in the bottom action bar (order is user-configurable). */
@@ -25,6 +26,21 @@ export const DEFAULT_ACTION_BAR_SERVICE_ORDER = [
   "vrc",
   "obs",
 ] as const;
+
+/**
+ * Values of the root key `modelMirror` (Rust `model_store::MirrorPreference`, TS `ModelMirror`).
+ * Only a type is imported from "@/types": a runtime import from there would change the module
+ * evaluation order of the bundle (it broke the speech SDK's circular CommonJS init in a build).
+ */
+export const MODEL_MIRRORS = [
+  "auto",
+  "huggingface",
+  "hf-mirror",
+  "modelscope",
+  "github-release",
+  "custom",
+] as const satisfies readonly ModelMirror[];
+assertTypes<(typeof MODEL_MIRRORS)[number], ModelMirror>();
 
 const zodServiceSchemaFactory = <Data extends z.ZodTypeAny>(schema: Data) => {
   return z.object({
@@ -42,6 +58,16 @@ export const BackendSchema = z.object({
    * which blocks cross-site WebSocket hijacking. `false` only to debug a client with an unexpected Origin.
    */
   lanOriginCheck: zSafe(z.boolean(), true),
+  /**
+   * Model store (P1): preferred download mirror, pushed to Rust with `plugin:model-store|set_store_config`.
+   * "auto" keeps each catalog entry's source order (Hugging Face, hf-mirror, ModelScope, GitHub release,
+   * custom); any other value is tried first, then the remaining sources in catalog order.
+   */
+  modelMirror: zSafe(z.enum(MODEL_MIRRORS), "auto"),
+  /** Base URL of the "custom" mirror (e.g. a local or LAN folder mirror; validated by Rust). "" = none. */
+  modelMirrorCustomUrl: zSafe(z.string(), ""),
+  /** Parallel model downloads: 1 (default, router-friendly) or 2 (never two on one host). */
+  modelMaxConcurrentDownloads: zSafe(z.number().int().min(1).max(2), 1),
   clientTheme: zSafe(z.string(), "sigil"),
   uiScale: zSafe(z.number(), 1),
   uiLanguage: zSafe(z.string(), "en"),

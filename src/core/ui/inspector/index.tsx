@@ -14,6 +14,7 @@ const Inspector_Files = lazy(() => import("./inspector_files"));
 const Inspector_Settings = lazy(() => import("./inspector_settings"));
 const Inspector_Project = lazy(() => import("./inspector_project"));
 const Inspector_Canvas = lazy(() => import("./inspector_canvas"));
+const Inspector_Models = lazy(() => import("./inspector_models"));
 
 const inspectorFallback = (
   <div className="flex items-center justify-center h-full min-h-[8rem] text-sm text-base-content/50">
@@ -78,6 +79,7 @@ const Inspector: FC<{ path?: InspectorTabPath }> = ({ path }) => {
             {path?.tab === "settings" && <Inspector_Settings key="settings" />}
             {path?.tab === "files" && <Inspector_Files key="files" />}
             {path?.tab === "project" && <Inspector_Project key="project" />}
+            {path?.tab === "models" && <Inspector_Models key="models" />}
             {(path?.tab === "scenes" ||
               path?.tab === "elements" ||
               path?.tab === ElementType.text ||

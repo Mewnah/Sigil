@@ -7,8 +7,7 @@ use crate::services::neural_audio::ort_session::{session_builder_for_vc, VcSessi
 
 use ndarray::{Array1, Array2};
 use ort::session::Session;
-use ort::tensor::TensorElementType;
-use ort::value::{Outlet, TensorRef, ValueType};
+use ort::value::{Outlet, TensorElementType, TensorRef, ValueType};
 
 const MAX_MODEL_CHANNELS: usize = 8;
 // Stereo models must stay supported (compile-time check).

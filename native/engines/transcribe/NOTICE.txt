@@ -1,0 +1,16 @@
+sigil_transcribe.dll - Sigil speech-to-text runtime pack
+
+This DLL is part of Sigil (https://github.com/Mewnah/Sigil, AGPL-3.0-only). It contains:
+
+  - Sigil's sigil_engine adapter (native/engines/transcribe/shim.cpp in the Sigil repository),
+    AGPL-3.0-only.
+  - transcribe.cpp by handy-computer (https://github.com/handy-computer/transcribe.cpp), MIT
+    License; see LICENSE-transcribe.cpp.txt. The exact source commit is recorded in pack.json
+    ("upstream").
+  - ggml and miniz as vendored by transcribe.cpp, MIT License; see
+    THIRD-PARTY-LICENSES-transcribe.cpp.md.
+
+The cuda13 variant additionally loads NVIDIA CUDA runtime libraries (cudart, cuBLAS) that Sigil
+installs separately in its NVIDIA runtime pack; they are not part of this pack.
+
+Build instructions: native/engines/transcribe/README.md in the Sigil repository.

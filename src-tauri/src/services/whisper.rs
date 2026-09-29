@@ -1,9 +1,11 @@
 //! `whisper` plugin: local Whisper (whisper-rs / whisper.cpp, CPU) behind a Silero VAD gate.
 //!
-//! Pipeline (P0-C): microphone → `audio::speech_capture` (rubato to 16 kHz, Silero v6.2 segmenter)
-//! → VAD-closed utterances → one ordered worker per recording (bounded, drop-oldest backlog) →
-//! whisper.cpp with one reused `WhisperState` → no-speech drop + hallucination/repeat filter →
-//! `whisper:segment_transcript` (one final per utterance). Silence never reaches Whisper.
+//! Pipeline: microphone → capture hub (`audio::hub`: one stream per device, shared with the other
+//! consumers; raw 16 kHz mono before any voice conversion; device loss recovered automatically) →
+//! `audio::speech_capture` (Silero v6.2 segmenter) → VAD-closed utterances → one ordered worker per
+//! recording (bounded, drop-oldest backlog) → whisper.cpp with one reused `WhisperState` →
+//! no-speech drop + hallucination/repeat filter → `whisper:segment_transcript` (one final per
+//! utterance). Silence never reaches Whisper, and no PCM crosses IPC.
 //!
 //! Events (all emitted under the recording's stop lock with its epoch still current):
 //! - `whisper:segment_transcript` (string): one final transcript per utterance (unchanged contract).
@@ -11,14 +13,16 @@
 //!   voiced tail after an 18 s forced split gets it right before its transcript).
 //! - `whisper:utterance_dropped` (`{ seq, audio_ms, reason }`): `reason` is `"backlog"` when the model
 //!   runs slower than real time and the oldest waiting utterance was discarded.
-//! - `whisper:capture_error` (`{ message }`): the input device failed; the recording is over.
+//! - `whisper:capture_error` (`{ message }`): the capture failed for good (speech detection error);
+//!   the recording is over. A lost or unplugged device is *not* an error here: the capture hub
+//!   reconnects it (`audio:stream_error` / `audio:stream_recovered`) and the recording continues.
 //! - `whisper:download_progress`, `whisper:load_status`, `whisper:download_complete`,
 //!   `whisper:download_dismiss`: model fetch / load (unchanged).
 
 use crate::services::audio::speech_capture::{start_speech_capture, SpeechCapture, SpeechCaptureEvent};
 use crate::services::http_client::{describe_failed_response, http_download_get};
 use crate::services::speech_core::hallucination::clean_transcript;
-use crate::services::speech_core::utterance::{samples_to_ms, BoundedQueue, SpeechFrontEnd};
+use crate::services::speech_core::utterance::{samples_to_ms, BoundedQueue};
 use crate::services::speech_core::{SegmenterEvent, VadConfig, SAMPLE_RATE};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -475,28 +479,18 @@ struct WhisperJob {
     samples: Vec<f32>,
 }
 
-/// Where a recording's audio comes from.
-enum AudioSource {
-    /// Microphone through `audio::speech_capture`.
-    Capture(SpeechCapture),
-    /// 16 kHz mono pushed by `feed_audio_chunk` (segmented synchronously).
-    Fed(Arc<Mutex<SpeechFrontEnd>>),
-}
-
 /// A running recording.
 struct RecordingSession {
-    epoch: u64,
-    source: AudioSource,
+    /// Capture-hub consumer behind the Silero segmenter.
+    capture: SpeechCapture,
     queue: Arc<BoundedQueue<WhisperJob>>,
 }
 
 impl RecordingSession {
-    /// Discard waiting utterances, wake the worker and release the device (bounded wait).
+    /// Discard waiting utterances, wake the worker and release the capture (bounded wait).
     async fn shutdown(self) {
         self.queue.close();
-        if let AudioSource::Capture(capture) = self.source {
-            capture.stop().await;
-        }
+        self.capture.stop().await;
     }
 }
 
@@ -1106,7 +1100,7 @@ fn run_whisper_worker<R: Runtime>(
     tracing::debug!(target: LOG, "worker for recording {epoch} exited");
 }
 
-/// Route a VAD event of recording `epoch` (capture worker or fed audio).
+/// Route a VAD event of recording `epoch` (runs on the capture's worker thread).
 fn handle_vad_event<R: Runtime>(
     state: &WhisperState,
     app: &AppHandle<R>,
@@ -1159,7 +1153,10 @@ fn handle_vad_event<R: Runtime>(
 
 // The argument list is the IPC contract with `whisper.ts` (one named field per setting). Legacy RMS
 // fields (`silenceThresholdDb`, `silenceDurationMs`, `minChunkDurationMs`) are still accepted by the
-// frontend call and ignored: Silero VAD (`vad`) replaced the RMS gate.
+// frontend call and ignored: Silero VAD (`vad`) replaced the RMS gate. `deviceName` takes any
+// capture-hub source id (`null`/"default", an input name, or "loopback:<output>"). `captureLocal`
+// must be absent or true: the JSON-PCM feed (`captureLocal: false` + `feed_audio_chunk`) was
+// removed with the capture hub (no PCM over IPC).
 #[command]
 async fn start_recording<R: Runtime>(
     app: AppHandle<R>,
@@ -1170,6 +1167,9 @@ async fn start_recording<R: Runtime>(
     vad: Option<VadConfig>,
     decode: Option<WhisperDecodeOptions>,
 ) -> Result<(), String> {
+    if capture_local == Some(false) {
+        return Err("Whisper no longer accepts audio over IPC (captureLocal: false); it captures through the audio hub.".to_string());
+    }
     // Stop any previous recording and claim an epoch before the (slow) device open.
     let (my_epoch, previous) = {
         let mut session = state.lock_session();
@@ -1185,31 +1185,21 @@ async fn start_recording<R: Runtime>(
     let queue = Arc::new(BoundedQueue::new(settings.max_backlog));
     let whisper = state.inner().clone();
 
-    let source = if capture_local.unwrap_or(true) {
-        let handler = {
-            let whisper = whisper.clone();
-            let app = app.clone();
-            let queue = Arc::clone(&queue);
-            move |event| match event {
-                SpeechCaptureEvent::Vad(ev) => handle_vad_event(&whisper, &app, my_epoch, &queue, ev),
-                SpeechCaptureEvent::Error(message) => {
-                    whisper.emit_for(&app, my_epoch, "whisper:capture_error", CaptureErrorPayload { message });
-                }
+    let handler = {
+        let whisper = whisper.clone();
+        let app = app.clone();
+        let queue = Arc::clone(&queue);
+        move |event| match event {
+            SpeechCaptureEvent::Vad(ev) => handle_vad_event(&whisper, &app, my_epoch, &queue, ev),
+            SpeechCaptureEvent::Error(message) => {
+                whisper.emit_for(&app, my_epoch, "whisper:capture_error", CaptureErrorPayload { message });
             }
-        };
-        AudioSource::Capture(start_speech_capture(device_name, vad.clone(), "Whisper", handler).await?)
-    } else {
-        // Audio arrives through `feed_audio_chunk` as 16 kHz mono.
-        let vad = vad.clone();
-        let front_end = tauri::async_runtime::spawn_blocking(move || SpeechFrontEnd::new(SAMPLE_RATE, 1, &vad))
-            .await
-            .map_err(|e| format!("Speech detector task failed: {e}"))??;
-        AudioSource::Fed(Arc::new(Mutex::new(front_end)))
+        }
     };
+    let capture = start_speech_capture(device_name, vad.clone(), "Whisper", handler).await?;
 
     let session = RecordingSession {
-        epoch: my_epoch,
-        source,
+        capture,
         queue: Arc::clone(&queue),
     };
     let cancelled = {
@@ -1254,44 +1244,6 @@ async fn start_recording<R: Runtime>(
     Ok(())
 }
 
-/// Feed 16 kHz mono samples that do not come from Whisper's own capture (the `feed_audio_chunk`
-/// command). Ignored unless a recording was started with `captureLocal: false`; the samples go
-/// through the same Silero gate as microphone audio, so silence never reaches Whisper. The web
-/// pubsub binary-frame path that used to call this is gone (LAN security stage 1).
-fn process_audio_chunk<R: Runtime>(state: &WhisperState, app: &AppHandle<R>, data: Vec<f32>) {
-    let (front_end, queue, epoch) = {
-        let session = state.lock_session();
-        match session.as_ref() {
-            Some(RecordingSession {
-                source: AudioSource::Fed(front_end),
-                queue,
-                epoch,
-            }) => (Arc::clone(front_end), Arc::clone(queue), *epoch),
-            _ => return,
-        }
-    };
-    let mut events = Vec::new();
-    {
-        let mut front_end = front_end.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Err(e) = front_end.push_interleaved(&data, &mut events) {
-            tracing::warn!(target: LOG, "fed audio rejected: {e}");
-            return;
-        }
-    }
-    for event in events {
-        handle_vad_event(state, app, epoch, &queue, event);
-    }
-}
-
-#[command]
-async fn feed_audio_chunk<R: Runtime>(app: AppHandle<R>, state: State<'_, WhisperState>, chunk: Vec<f32>) -> Result<(), String> {
-    let state = state.inner().clone();
-    // Silero runs here; keep it off the async runtime threads.
-    tauri::async_runtime::spawn_blocking(move || process_audio_chunk(&state, &app, chunk))
-        .await
-        .map_err(|e| e.to_string())
-}
-
 #[command]
 fn cancel_whisper_download(state: State<'_, WhisperState>) -> Result<(), String> {
     // Makes every in-flight `ensure_dependencies` run stale; each one then removes only its own partial file.
@@ -1333,8 +1285,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             import_whisper_model,
             cancel_whisper_download,
             start_recording,
-            stop_recording,
-            feed_audio_chunk
+            stop_recording
         ])
         .build()
 }

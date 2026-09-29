@@ -17,6 +17,10 @@ import Service_Kick from "./services/kick";
 import Service_VRC from "./services/vrc";
 import Service_History from "./services/history";
 import { VoiceChangerService } from "./services/voice_changer";
+import Service_Models from "./services/models";
+import Service_Sysinfo from "./services/sysinfo";
+import Service_Resources from "./services/resources";
+import Service_AudioDevices from "./services/audioDevices";
 import { initSystemLogListeners, pushSystemLog } from "./services/systemLog";
 import i18n from "i18next";
 import { changeLanguage, initI18n } from '@/i18n';
@@ -40,6 +44,14 @@ class ApiServer {
   public readonly sound = new Service_Sound();
   public readonly history = new Service_History();
   public readonly voiceChanger = new VoiceChangerService();
+  /** Model store mirror for the Models & Runtimes tab (P1-B; non-persisted, no patchService). */
+  public readonly models = new Service_Models();
+  /** System probe mirror: GPUs, drivers, EP eligibility (P1-D2). */
+  public readonly sysinfo = new Service_Sysinfo();
+  /** VRAM budget / claims / recommendations mirror (P1-D2). */
+  public readonly resources = new Service_Resources();
+  /** Capture-hub device events: picker refresh, STT restart after device changes (P1-C). */
+  public readonly audioDevices = new Service_AudioDevices();
 
   get state() {
     return this._state.state;
@@ -142,6 +154,10 @@ class ApiServer {
       { label: "Keyboard", run: run(() => this.keyboard.init()) },
       { label: "Voice changer", run: run(() => this.voiceChanger.init()) },
       { label: "Sound effects", run: run(() => this.sound.init()) },
+      { label: "Models", run: run(() => this.models.init()) },
+      { label: "System info", run: run(() => this.sysinfo.init()) },
+      { label: "Resources", run: run(() => this.resources.init()) },
+      { label: "Audio devices", run: run(() => this.audioDevices.init()) },
     ];
   }
 }

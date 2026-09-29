@@ -10,6 +10,8 @@ rust-version = "1.88"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# build.rs validates model-catalog/*.json and embeds the merged catalog (P1-S0b).
+serde_json = "1.0"
 
 [dependencies]
 serde_json = "1.0"
@@ -42,6 +44,9 @@ windows = { version = "0.61", features = [
   "Win32_Graphics_Dxgi_Common",
   "Win32_System_Console",
   "Win32_System_LibraryLoader",
+  # COM implementations (`#[windows::core::implement(IMMNotificationClient)]` for the P1 capture
+  # hub's device watcher) need no extra feature in windows 0.61: the macro is always re-exported
+  # and IMMNotificationClient_Impl only needs Win32_Media_Audio + Win32_Foundation (checked by P1-S0a).
 ] }
 clap = { version = "4.4", features = ["derive"] }
 local-ip-address = "0.4.9"
@@ -58,10 +63,39 @@ pitch_shift = "1.0"
 tungstenite = { version = "0.24", features = ["native-tls"] }
 hound = "3.5"
 base64 = "0.22"
-kittentts = { version = "0.3.0", features = ["espeak"] }
-# Voice changer + kittentts share this ort build. CUDA/DirectML need these features; the EPs are registered per
-# session in src/services/neural_audio/ort_session.rs (session_builder_for_vc). kittentts creates its own CPU session.
-ort = { version = "2.0.0-rc.11", default-features = true, features = ["cuda", "directml"] }
+# KittenTTS is vendored in src/services/local_tts/kitten (Apache-2.0, from kittentts 0.3.0, whose
+# `ort = "=2.0.0-rc.11"` pin blocked ORT upgrades). These are its dependencies; espeak-ng is the
+# pure-Rust port (GPL-3.0-or-later) with its data bundled in the crates.
+espeak-ng = { version = "0.1", features = ["bundled-data"] }
+anyhow = "1"
+fancy-regex = "0.14"
+once_cell = "1"
+regex = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Every Sigil ORT session (voice changer, Silero, Kitten, the EP canary) shares this build; EPs are
+# registered per session in src/services/neural_audio/ort_session.rs. rc.13 = ONNX Runtime 1.28.0;
+# with these features ort-sys links pyke's `cuda13,tensorrt,nvrtx,directml` Windows dist (static
+# onnxruntime.lib; the CUDA EP needs CUDA 13 + cuDNN 9, i.e. driver R580+ and a Turing or newer GPU).
+# Decision record: docs/adr/0001-ort-upgrade.md (fallback ladder rc.12 / CUDA 12, then rc.11).
+ort = { version = "=2.0.0-rc.13", default-features = true, features = [
+  "cuda",
+  "directml",
+  "nvrtx",
+  "tensorrt",
+  "half",
+  "preload-dylibs",
+  "copy-dylibs",
+  "ndarray",
+] }
+# fp16 tensors (ort `half` feature) for fp16-I/O voice-changer graphs.
+half = "2"
+# P1 foundations (declared by the P1-S0a gate so implementers need no Cargo edits):
+# lazily loaded runtime DLLs (native_runtime, sherpa-onnx, transcribe.cpp; same major as ort's),
+# and model-store archive extraction (tar.gz / tar.bz2 / zip; pure-Rust backends).
+libloading = "0.9"
+tar = { version = "0.4", default-features = false }
+bzip2 = "0.6"
+flate2 = "1"
 ndarray = "0.17"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
@@ -82,7 +116,7 @@ strip = true
 default = ["custom-protocol"]
 background_input = []
 custom-protocol = ["tauri/custom-protocol"]
-# Local speech TTS uses `kittentts` for the supported speech-package format. kittentts builds its own CPU-only ORT session; the UI's cpu/cuda/dml hint is only stored for now.
+# Local speech TTS (neural-onnx-tts) runs the vendored KittenTTS on the CPU EP; the UI's cpu/cuda/dml hint is only stored for now.
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

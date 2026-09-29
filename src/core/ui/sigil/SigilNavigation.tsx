@@ -3,6 +3,7 @@ import classNames from "classnames";
 import {
     RiDashboardFill,
     RiFolderMusicFill,
+    RiHardDrive2Fill,
     RiSettings3Fill,
     RiLayoutMasonryFill,
     RiStackFill,
@@ -153,8 +154,15 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
             {/* Spacer */}
             <div className="flex-1" />
 
-            {/* Settings at bottom */}
-            <div className="pt-4 border-t border-base-content/5">
+            {/* Models & Runtimes and Settings at bottom */}
+            <div className="pt-4 border-t border-base-content/5 space-y-0.5">
+                <NavItem
+                    label="Models & Runtimes"
+                    icon={<RiHardDrive2Fill />}
+                    active={isActive('models')}
+                    collapsed={collapsed}
+                    onClick={() => navigate('models')}
+                />
                 <NavItem
                     label="Settings"
                     icon={<RiSettings3Fill />}

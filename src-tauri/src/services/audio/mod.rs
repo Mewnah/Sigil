@@ -1,3 +1,21 @@
+//! `audio` plugin: device lists, the capture hub (one stream per physical source, fanned out to
+//! STT and other consumers), device-follow events, the Rust mute gate, and `play_async`.
+//!
+//! Capture (P1-C):
+//! - [`hub`]: sources, per-consumer rtrb rings with QPC-stamped blocks, drop-oldest per consumer,
+//!   16 kHz mono or device-rate output, mute gate; [`watchdog`]: restarts under the same epoch,
+//!   stall detection, default-device follow; [`stream`]: the cpal/WASAPI backend (MMCSS callback
+//!   threads); [`loopback`]: source ids, output devices as loopback sources; [`device_watch`]:
+//!   `IMMNotificationClient` with a polling fallback.
+//! - Consumers: Whisper (`whisper::start_recording`), utterance capture (HTTP STT), and the legacy
+//!   `audio:chunk` stream (Vosk in the webview; 16 kHz mono when `sampleRate: 16000` is requested).
+//!
+//! Events: `audio:devices_changed` ([`device_watch::DevicesChanged`]), `audio:stream_error`,
+//! `audio:stream_recovered` and `audio:stream_closed` ([`hub::StreamEvent`]), `audio:chunk`,
+//! `audio:utterance`.
+//! Source ids accepted by every `deviceName`: see [`loopback`] (`"loopback:<output>"` captures
+//! what an output device plays).
+
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -12,27 +30,51 @@ use tauri::{
     plugin::{Builder, TauriPlugin},
     AppHandle, Emitter, Manager, Runtime, State,
 };
+use tokio::sync::oneshot;
 
+pub mod consumer;
 pub mod device_resolve;
+pub mod device_watch;
+pub mod hub;
+pub mod loopback;
 pub mod speech_capture;
 pub mod stream;
 pub mod utterance_capture;
+mod watchdog;
 
-pub use device_resolve::{resolve_input_device, resolve_output_device};
+#[cfg(test)]
+mod hub_tests;
 
-use stream::{open_input_stream, InputStream};
+pub use device_resolve::resolve_output_device;
+
+use hub::{
+    CaptureConsumer, ConsumerFormat, ConsumerOptions, HubEventSink, HubStatus, MuteGroup, SourceSpec, StreamEvent,
+    STREAM_CLOSED_EVENT, STREAM_ERROR_EVENT, STREAM_RECOVERED_EVENT,
+};
 use utterance_capture::UtteranceCaptureState;
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AudioDevice {
     pub id: String,
     pub name: String,
 }
 
-/// `audio:chunk` batching period (the callback only fills a ring; a worker emits every ~20 ms).
-const CHUNK_EMIT_PERIOD: Duration = Duration::from_millis(20);
-/// Ring capacity of the raw chunk capture, in seconds of interleaved device audio.
-const CHUNK_RING_SECONDS: usize = 1;
+impl AudioDevice {
+    /// A cpal device row (id == name).
+    pub fn named(name: &str) -> Self {
+        Self {
+            id: name.to_string(),
+            name: name.to_string(),
+        }
+    }
+}
+
+/// Idle wake-up of the `audio:chunk` emitter (the hub wakes it every ~20 ms of audio).
+const CHUNK_IDLE_WAIT: Duration = Duration::from_millis(100);
+/// How far the `audio:chunk` emitter may fall behind before it drops its oldest audio.
+const CHUNK_MAX_BACKLOG_MS: u32 = 1_000;
+/// Bound on waiting for the emitter to release its consumer.
+const CHUNK_STOP_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The raw `audio:chunk` capture (Vosk and legacy polling engines).
 pub struct AudioCaptureState {
@@ -45,23 +87,23 @@ pub struct AudioCaptureState {
 }
 
 struct ChunkCapture {
-    stream: InputStream,
     stop: Arc<AtomicBool>,
     emitter: Thread,
+    /// Resolves once the emitter released its hub consumer (and the device, if it was the last).
+    done: Option<oneshot::Receiver<()>>,
 }
 
 impl ChunkCapture {
     fn signal_stop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.emitter.unpark();
-        self.stream.signal_stop();
     }
 
-    async fn stop(self) {
-        self.stop.store(true, Ordering::Release);
-        self.emitter.unpark();
-        let ChunkCapture { stream, .. } = self;
-        stream.stop().await;
+    async fn stop(mut self) {
+        self.signal_stop();
+        if let Some(done) = self.done.take() {
+            let _ = tokio::time::timeout(CHUNK_STOP_TIMEOUT, done).await;
+        }
     }
 }
 
@@ -78,32 +120,73 @@ fn lock_active(active: &Mutex<Option<ChunkCapture>>) -> MutexGuard<'_, Option<Ch
     active.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-#[command]
-pub fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
-    let host = cpal::default_host();
-    let devices = host.input_devices().map_err(|e| e.to_string())?;
-
-    let mut result = Vec::new();
-    for device in devices {
-        if let Ok(name) = device.name() {
-            result.push(AudioDevice { id: name.clone(), name });
-        }
+/// Mute group of a consumer of `spec`: the user's STT for inputs, "others" for loopback.
+pub(crate) fn stt_mute_group(spec: &SourceSpec) -> MuteGroup {
+    if spec.is_loopback() {
+        MuteGroup::Others
+    } else {
+        MuteGroup::Stt
     }
-    Ok(result)
+}
+
+/// Attach to the global hub off the async runtime (a first consumer opens the device).
+pub(crate) async fn attach_async(spec: SourceSpec, opts: ConsumerOptions) -> Result<CaptureConsumer, String> {
+    tauri::async_runtime::spawn_blocking(move || hub::global()?.attach(spec, opts))
+        .await
+        .map_err(|e| format!("Audio capture task failed: {e}"))?
+}
+
+fn list_devices(output: bool) -> Result<Vec<AudioDevice>, String> {
+    let host = cpal::default_host();
+    let devices = if output {
+        host.output_devices()
+    } else {
+        host.input_devices()
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(devices.filter_map(|d| d.name().ok()).map(|n| AudioDevice::named(n.trim())).collect())
 }
 
 #[command]
-pub fn list_output_devices() -> Result<Vec<AudioDevice>, String> {
-    let host = cpal::default_host();
-    let devices = host.output_devices().map_err(|e| e.to_string())?;
+pub async fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
+    tauri::async_runtime::spawn_blocking(|| list_devices(false))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-    let mut result = Vec::new();
-    for device in devices {
-        if let Ok(name) = device.name() {
-            result.push(AudioDevice { id: name.clone(), name });
-        }
-    }
-    Ok(result)
+#[command]
+pub async fn list_output_devices() -> Result<Vec<AudioDevice>, String> {
+    tauri::async_runtime::spawn_blocking(|| list_devices(true))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Inputs, outputs and the current defaults in one call (same shape as `audio:devices_changed`,
+/// reason `snapshot`). Loopback sources are the outputs as `"loopback:<name>"`.
+#[command]
+pub async fn get_device_snapshot() -> Result<device_watch::DevicesChanged, String> {
+    let snapshot = tauri::async_runtime::spawn_blocking(device_watch::snapshot_cpal)
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(device_watch::DevicesChanged {
+        reason: "snapshot".to_string(),
+        snapshot,
+    })
+}
+
+/// The Rust mute gate: while a group is muted its consumers receive no audio at all.
+#[command]
+pub fn set_capture_mute(group: MuteGroup, muted: bool) -> Result<(), String> {
+    hub::global()?.set_muted(group, muted);
+    Ok(())
+}
+
+/// Sources, streams and mute state of the capture hub (diagnostics).
+#[command]
+pub async fn get_capture_status() -> Result<HubStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| hub::global()?.status())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[derive(Clone, Serialize)]
@@ -113,12 +196,16 @@ struct AudioChunkPayload {
     channels: u16,
 }
 
+/// `audio:chunk` stream for webview engines (Vosk). `sampleRate: 16000` yields 16 kHz mono
+/// (band-limited, a sixth of the IPC of 48 kHz stereo); anything else the device format. Every
+/// payload states its own format. Served by the capture hub, so it shares the device with Whisper
+/// and utterance capture and follows device changes.
 #[command]
 pub async fn start_audio_capture<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, AudioCaptureState>,
     device_name: Option<String>,
-    _sample_rate: Option<u32>,
+    sample_rate: Option<u32>,
 ) -> Result<(), String> {
     // Stop any existing capture and claim an epoch before the (slow) device open.
     let (my_epoch, previous) = {
@@ -130,83 +217,73 @@ pub async fn start_audio_capture<R: Runtime>(
         previous.stop().await;
     }
 
-    let host = cpal::default_host();
-    let device = resolve_input_device(&host, device_name.as_deref())?;
-    let config = device.default_input_config().map_err(|e| e.to_string())?;
-    let sample_rate = config.sample_rate().0;
-    let channels = config.channels();
-    let frame = usize::from(channels.max(1));
-    let capacity = (sample_rate as usize * frame * CHUNK_RING_SECONDS).max(8192);
-    let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(capacity);
-    let stop = Arc::new(AtomicBool::new(false));
+    let spec = SourceSpec::parse(device_name.as_deref());
+    let format = if sample_rate == Some(hub::StreamFormat::STT.sample_rate) {
+        ConsumerFormat::Raw16kMono
+    } else {
+        ConsumerFormat::DeviceRate
+    };
+    let opts = ConsumerOptions {
+        format,
+        max_backlog_ms: CHUNK_MAX_BACKLOG_MS,
+        wake_ms: 20,
+        mute_group: Some(stt_mute_group(&spec)),
+        label: "audio-chunk",
+    };
+    let consumer = attach_async(spec, opts).await?;
 
-    // Emitter: batches the ring into `audio:chunk` events. Emits only while holding the stop lock with
-    // this start's epoch current, so once `stop_audio_capture` returns nothing more is emitted, and a
-    // superseded capture's chunks (labelled with its device's rate/channels) never reach a newer one.
-    let emitter = {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done_tx, done_rx) = oneshot::channel();
+    // Emitter: batches the consumer's audio into `audio:chunk` events. Emits only while holding the
+    // stop lock with this start's epoch current, so once `stop_audio_capture` returns nothing more is
+    // emitted, and a superseded capture's chunks never reach a newer one.
+    let spawned = {
         let stop = Arc::clone(&stop);
         let active = Arc::clone(&state.active);
         let epoch = Arc::clone(&state.capture_epoch);
-        thread::Builder::new()
-            .name("sigil-audio-chunk".into())
-            .spawn(move || loop {
+        thread::Builder::new().name("sigil-audio-chunk".into()).spawn(move || {
+            let mut consumer = consumer;
+            let mut samples = Vec::with_capacity(8192);
+            loop {
                 if stop.load(Ordering::Acquire) {
-                    return;
+                    break;
                 }
-                let available = consumer.slots() / frame * frame;
-                if available > 0 {
-                    let mut samples = vec![0.0f32; available];
-                    let _ = consumer.pop_entire_slice(&mut samples);
+                samples.clear();
+                let info = consumer.read(&mut samples);
+                if let Some(format) = info.format.filter(|_| !samples.is_empty()) {
                     let _guard = lock_active(&active);
                     if epoch.load(Ordering::SeqCst) != my_epoch || stop.load(Ordering::Acquire) {
-                        return;
+                        break;
                     }
                     let _ = app.emit(
                         "audio:chunk",
                         AudioChunkPayload {
-                            samples,
-                            sample_rate,
-                            channels,
+                            samples: samples.clone(),
+                            sample_rate: format.sample_rate,
+                            channels: format.channels,
                         },
                     );
-                } else if consumer.is_abandoned() {
-                    return;
+                    continue;
                 }
-                thread::park_timeout(CHUNK_EMIT_PERIOD);
-            })
-            .map_err(|e| format!("Failed to start the audio chunk emitter: {e}"))?
-            .thread()
-            .clone()
-    };
-
-    let stream = open_input_stream(
-        device,
-        config,
-        move |data: &[f32]| {
-            // Whole frames only; when the emitter lags a full second the newest audio is dropped.
-            let fits = if data.len() <= producer.slots() {
-                data.len()
-            } else {
-                producer.slots() / frame * frame
-            };
-            if fits > 0 {
-                let _ = producer.push_entire_slice(&data[..fits]);
+                if !info.gap_after {
+                    consumer.wait(CHUNK_IDLE_WAIT);
+                }
             }
-        },
-        |e| tracing::warn!(target: "sigil::audio", "[AudioCapture] stream error: {e}"),
-        "AudioCapture",
-    )
-    .await;
-    let stream = match stream {
-        Ok(stream) => stream,
-        Err(e) => {
-            stop.store(true, Ordering::Release);
-            emitter.unpark();
-            return Err(e);
-        }
+            consumer.close_and_wait();
+            let _ = done_tx.send(());
+        })
+    };
+    let emitter = match spawned {
+        Ok(handle) => handle.thread().clone(),
+        // The consumer moved into the failed closure and was dropped (detached).
+        Err(e) => return Err(format!("Failed to start the audio chunk emitter: {e}")),
     };
 
-    let mut capture = ChunkCapture { stream, stop, emitter };
+    let mut capture = ChunkCapture {
+        stop,
+        emitter,
+        done: Some(done_rx),
+    };
     let cancelled = {
         let mut active = lock_active(&state.active);
         if state.capture_epoch.load(Ordering::SeqCst) == my_epoch {
@@ -269,19 +346,71 @@ pub async fn play_async(data: RpcAudioPlayAsync) -> Result<(), String> {
     Ok(())
 }
 
+/// Forwards hub stream events to the webview.
+struct TauriHubEvents<R: Runtime> {
+    app: AppHandle<R>,
+}
+
+impl<R: Runtime> HubEventSink for TauriHubEvents<R> {
+    fn stream_error(&self, event: &StreamEvent) {
+        let _ = self.app.emit(STREAM_ERROR_EVENT, event.clone());
+    }
+
+    fn stream_recovered(&self, event: &StreamEvent) {
+        let _ = self.app.emit(STREAM_RECOVERED_EVENT, event.clone());
+    }
+
+    fn stream_closed(&self, event: &StreamEvent) {
+        let _ = self.app.emit(STREAM_CLOSED_EVENT, event.clone());
+    }
+}
+
+/// Keeps the device watcher alive for the app's lifetime.
+struct DeviceWatchState(#[allow(dead_code)] Mutex<Option<device_watch::DeviceWatcher>>);
+
+fn start_capture_services<R: Runtime>(app: &AppHandle<R>) {
+    match hub::global() {
+        Ok(hub) => hub.set_event_sink(Arc::new(TauriHubEvents { app: app.clone() })),
+        Err(e) => tracing::error!(target: "sigil::audio", "{e}"),
+    }
+    let emitter = app.clone();
+    let watcher = device_watch::start(
+        device_watch::snapshot_cpal,
+        move |notice| {
+            if let device_watch::WatchNotice::Changed(event) = &notice {
+                let _ = emitter.emit(device_watch::DEVICES_CHANGED_EVENT, event.clone());
+            }
+            if let Ok(hub) = hub::global() {
+                hub.devices_changed();
+            }
+        },
+        device_watch::WatchConfig::default(),
+    );
+    match watcher {
+        Ok(watcher) => {
+            app.manage(DeviceWatchState(Mutex::new(Some(watcher))));
+        }
+        Err(e) => tracing::error!(target: "sigil::audio", "{e}"),
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("audio")
         .setup(|app, _api| {
             app.manage(AudioCaptureState::new());
             app.manage(UtteranceCaptureState::new());
+            start_capture_services(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             play_async,
             list_input_devices,
             list_output_devices,
+            get_device_snapshot,
             start_audio_capture,
             stop_audio_capture,
+            set_capture_mute,
+            get_capture_status,
             utterance_capture::start_utterance_capture,
             utterance_capture::stop_utterance_capture,
             utterance_capture::take_utterance

@@ -24,15 +24,15 @@
 //! Rust <-> TS parameter / metrics contract in `params_contract.json` next to this file.
 
 mod aux_feed;
-mod budget;
+pub(crate) mod budget;
 mod commands;
 mod debug;
 mod devices;
-mod fallback;
+pub(crate) mod fallback;
 mod metrics;
 mod params;
 mod persist;
-mod playback;
+pub(crate) mod playback;
 mod resample;
 mod state;
 mod worker;

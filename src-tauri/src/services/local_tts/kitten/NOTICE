@@ -1,0 +1,32 @@
+KittenTTS for Sigil
+===================
+
+This directory contains source code vendored from kittentts 0.3.0
+(https://crates.io/crates/kittentts, https://github.com/eugenehp/kittentts-rs),
+the Rust port of KittenTTS (https://github.com/KittenML/KittenTTS).
+
+  Copyright 2026 KittenML and the kittentts-rs authors (Eugene Hauptmann).
+  Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+
+The rest of Sigil is licensed under the GNU AGPL-3.0; the files in this directory keep
+their Apache-2.0 license.
+
+Vendored files: model.rs, npz.rs, phonemize.rs, preprocess.rs and tokenize.rs (from src/),
+plus mod.rs (from src/lib.rs). Not vendored: src/download.rs (hf-hub downloader), src/ffi.rs
+(iOS/Android C FFI), build.rs, examples, tests and scripts.
+
+Changes made for Sigil (2026-09-28, P1-S0a):
+- Every file carries an SPDX / attribution header.
+- The `espeak` Cargo feature is always on: its #[cfg] gates and the non-espeak fallbacks in
+  phonemize.rs and model.rs were removed; tests gated on the feature run unconditionally.
+- Module paths: `crate::…` became `super::…`; lib.rs became mod.rs, without the `download` and
+  `ffi` modules, with `#![allow(dead_code)]` for the unused library surface and an allow-list of
+  the six clippy style lints the upstream code triggers (the code itself is unchanged).
+- model.rs: the ONNX session is built through Sigil's shared ONNX Runtime factory
+  (`neural_audio::ort_session::build_session`, explicit CPU execution provider, spinning off)
+  instead of `ort::Session::builder()`; `write_wav` logs through `tracing` instead of `println!`.
+- hub.rs is new: it replaces download.rs. It keeps upstream's `ModelConfig` schema, requires plain
+  file names in a Hub repo's config.json, reuses an existing hf-hub cache snapshot, and otherwise
+  downloads one file at a time with Sigil's HTTP client into the app-data folder.
+- The `ort` dependency follows Sigil's own version instead of kittentts' `=2.0.0-rc.11` pin, and
+  `hf-hub` is no longer a dependency.

@@ -1,7 +1,8 @@
 /**
- * PCM helpers for Rust `audio:chunk` payloads (Vosk). Rust captures at the DEVICE rate and channel count (the rate
- * requested by `start_audio_capture` is ignored). Engines that need mono 16 kHz (Moonshine, local HTTP STT, Groq)
- * use Rust utterance capture instead, which already delivers 16 kHz mono PCM (`speech_core` + rubato).
+ * PCM helpers for Rust `audio:chunk` payloads (Vosk). With `sampleRate: 16000` the capture hub sends 16 kHz mono;
+ * otherwise payloads carry the device's own rate and channel count (each payload states its format). Engines that
+ * need mono 16 kHz without IPC (Moonshine, local HTTP STT, Groq) use Rust utterance capture instead
+ * (`speech_core` + rubato).
  */
 
 /** Downmix interleaved PCM to mono by averaging the channels (a trailing partial frame is dropped). */

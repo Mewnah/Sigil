@@ -117,6 +117,21 @@ fn main() {
         .plugin(services::neural_sidecar_tts::init())
         .plugin(services::voice_changer::init())
         .plugin(services::vosk_stt::init())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // P1 foundations (P1-S0b): model store, native runtime loader, system probe, resource
+        // governor, helper-process host and benchmark harness.
+        .plugin(services::model_store::init())
+        .plugin(services::native_runtime::init())
+        .plugin(services::sysinfo::init())
+        .plugin(services::resources::init())
+        .plugin(services::process_host::init())
+        .plugin(services::bench::init())
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Helper processes (llama-server, TTS servers, sidecars) die with Sigil. The Job
+                // Object also kills them if the process is terminated without this event.
+                services::process_host::shutdown_all();
+            }
+        });
 }

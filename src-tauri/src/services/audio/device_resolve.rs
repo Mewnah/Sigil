@@ -1,5 +1,5 @@
 //! Shared cpal device lookup by name (id === name from `list_*_devices`).
-//! Empty / `"default"` / missing → host default device.
+//! Empty / `"default"` / missing → host default device. Names are compared trimmed.
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host};
@@ -9,14 +9,18 @@ fn is_default_sentinel(name: &str) -> bool {
     t.is_empty() || t.eq_ignore_ascii_case("default")
 }
 
+fn same_name(device: &Device, wanted: &str) -> bool {
+    device.name().map(|n| n.trim() == wanted.trim()).unwrap_or(false)
+}
+
 /// Resolve an input device by cpal name, or the host default.
 pub fn resolve_input_device(host: &Host, device_name: Option<&str>) -> Result<Device, String> {
     match device_name {
         Some(name) if !is_default_sentinel(name) => host
             .input_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().unwrap_or_default() == name)
-            .ok_or_else(|| format!("Input device '{}' not found", name)),
+            .find(|d| same_name(d, name))
+            .ok_or_else(|| format!("Input device '{}' not found", name.trim())),
         _ => host
             .default_input_device()
             .ok_or_else(|| "No default input device".to_string()),
@@ -31,7 +35,7 @@ pub fn resolve_output_device(host: &Host, device_name: &str) -> Result<Device, S
     } else {
         host.output_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().unwrap_or_default() == device_name)
-            .ok_or_else(|| format!("Output device '{}' not found", device_name))
+            .find(|d| same_name(d, device_name))
+            .ok_or_else(|| format!("Output device '{}' not found", device_name.trim()))
     }
 }

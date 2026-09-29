@@ -1,0 +1,92 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "NVIDIA GPU runtime for the CUDA execution provider (ONNX Runtime 1.28 'cuda13' build) and cuda13 engine packs. Owned by P1-D1; decision record docs/adr/0007-native-runtime-packs.md.",
+    "Pinned from NVIDIA's redistrib_13.2.0.json (CUDA, 2026-03-09) and redistrib_9.26.0.json (cuDNN cuda13 variant, 2026-09-09): the same archives, sizes and sha256 as the interim P0 installer (diagnostics/nvidia_pack.rs ARCHIVES; native_runtime tests keep the two in sync).",
+    "Only the DLLs are extracted (strip 1, bin/**). native_runtime::nvidia preloads them by full path in dependency order before the first CUDA session or cuda13 engine. cudart is not needed by ONNX Runtime 1.28 (static CUDA runtime) but by ggml-based cuda13 engine packs.",
+    "Upgrade: bump the version and every pin together with the ORT build (ADR 0001), then re-run the manual CUDA acceptance test in ADR 0007."
+  ],
+  "entries": [
+    {
+      "id": "runtime/nvidia-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "cuda-13.2.0_cudnn-9.26.0",
+      "title": "NVIDIA GPU runtime (CUDA 13, cuDNN 9)",
+      "description": "Runs the voice changer and other local models on NVIDIA graphics cards through CUDA, the fastest option on NVIDIA. About 1.9 GB from NVIDIA. Needs driver R580 or newer and a GTX 16 / RTX 20 series or newer GPU; without it Sigil uses DirectML.",
+      "license": "NVIDIA CUDA Toolkit EULA; NVIDIA cuDNN Software License Agreement",
+      "status": "published",
+      "variant": "cuda13",
+      "files": [
+        {
+          "path": "cuda_cudart-windows-x86_64-13.2.51-archive.zip",
+          "size": 3092970,
+          "sha256": "906b430b53e6396f7cbaa6874fbe7f9307a184e830b119a4ad3f58dc6e0165c6",
+          "sources": [
+            {
+              "kind": "nvidia-redist",
+              "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-13.2.51-archive.zip",
+              "revision": "13.2.0"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "strip": 1,
+            "include": ["bin/**/cudart64_13.dll"]
+          }
+        },
+        {
+          "path": "libcublas-windows-x86_64-13.3.0.5-archive.zip",
+          "size": 387053964,
+          "sha256": "438a88f07af3721eda15ed1f4d2b957ea810e29061b2a6292837f35520dbd212",
+          "sources": [
+            {
+              "kind": "nvidia-redist",
+              "url": "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-13.3.0.5-archive.zip",
+              "revision": "13.2.0"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "strip": 1,
+            "include": ["bin/**/cublas64_13.dll", "bin/**/cublasLt64_13.dll"]
+          }
+        },
+        {
+          "path": "libcufft-windows-x86_64-12.2.0.37-archive.zip",
+          "size": 216183815,
+          "sha256": "e2667a2a69864e833b3b584b0b31c2abf627ea73055a3a7570a88b45d4d08650",
+          "sources": [
+            {
+              "kind": "nvidia-redist",
+              "url": "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/windows-x86_64/libcufft-windows-x86_64-12.2.0.37-archive.zip",
+              "revision": "13.2.0"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "strip": 1,
+            "include": ["bin/**/cufft64_12.dll"]
+          }
+        },
+        {
+          "path": "cudnn-windows-x86_64-9.26.0.51_cuda13-archive.zip",
+          "size": 1279656673,
+          "sha256": "f8610d403685c918e690de5b1ec68da0b4b1358a6be62627591362b7eb811644",
+          "sources": [
+            {
+              "kind": "nvidia-redist",
+              "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.26.0.51_cuda13-archive.zip",
+              "revision": "9.26.0"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "strip": 1,
+            "include": ["bin/**/cudnn*64_9.dll"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": "Base assets and test entries of the model store (P1-A). base/test-small is a two-file self-test: `Sigil.exe --headless fetch base/test-small`.",
+  "entries": [
+    {
+      "id": "base/test-small",
+      "family": "base",
+      "kind": "bench",
+      "version": "1",
+      "title": "Model store self-test",
+      "description": "Two tiny text files from a public Hugging Face repository, used to check that downloads, mirror failover and verification work on this PC.",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "README.md",
+          "size": 3196,
+          "git_oid": "bb0749e3c17cdf1d040a7e95fbf45610a212ec0a",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/README.md",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        },
+        {
+          "path": "gitattributes.txt",
+          "size": 1477,
+          "git_oid": "c7d9f3332a950355d5a77d85000f05e6f45435ea",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/.gitattributes",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

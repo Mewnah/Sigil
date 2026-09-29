@@ -1,0 +1,41 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "sherpa-onnx C API runtime pack (CPU tier: streaming / utterance ASR, Kokoro / Kitten / Piper TTS with C espeak-ng, spoken language ID, speaker embeddings), loaded in-process by speech_rt::sherpa through libloading. Owned by P1-G1; decision record docs/adr/0002-sherpa-onnx.md.",
+    "Official k2-fsa release asset of tag v1.13.8 (2026-09-10): the Windows x64 shared, static-CRT (/MT) Release build, '-lib' variant (DLLs + import libs only). Size and sha256 are GitHub's asset digest; the archive was downloaded and re-hashed locally (b8eedf41...).",
+    "Only onnxruntime.dll (ONNX Runtime 1.28.2, CPU) and sherpa-onnx-c-api.dll are installed. No execution-provider DLLs: sherpa's ORT stays CPU-only; Sigil's own statically linked ORT owns every GPU session.",
+    "Upgrade: bump version and the pin together, regenerate bindings (scripts/runtime-packs/sherpa/gen-bindings.ps1), bump EXPECTED_VERSION in speech_rt/sherpa/lib.rs, and re-run the ADR 0002 probe matrix."
+  ],
+  "entries": [
+    {
+      "id": "runtime/sherpa-onnx",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "1.13.8",
+      "title": "sherpa-onnx speech runtime (CPU)",
+      "description": "Runs local speech recognition (Nemotron, SenseVoice, Qwen3-ASR, Parakeet, Moonshine) and Kokoro / Kitten / Piper voices on the processor. About 22 MB installed.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-lib.tar.bz2",
+          "size": 8032957,
+          "sha256": "b8eedf41bd6d3779218887b48367bb7a3ece5aaa7667f01f69ee823a12b0a9e7",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-lib.tar.bz2",
+              "revision": "v1.13.8"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 2,
+            "include": ["onnxruntime.dll", "sherpa-onnx-c-api.dll"]
+          }
+        }
+      ]
+    }
+  ]
+}

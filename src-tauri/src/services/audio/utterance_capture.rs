@@ -1,7 +1,9 @@
 //! VAD-closed utterance capture for HTTP / cloud STT engines (frozen IPC contract, see
 //! `speech_core` module docs):
 //! - `plugin:audio|start_utterance_capture { deviceName?, vad? }` → capture id (replaces any running
-//!   utterance capture; independent of `start_audio_capture` and of Whisper's own capture).
+//!   utterance capture). Audio comes from the capture hub, so it shares the device's one stream with
+//!   Whisper and `start_audio_capture`, survives unplug / replug and follows the default device;
+//!   `deviceName` takes any hub source id (`"loopback:<output>"` included).
 //! - `plugin:audio|stop_utterance_capture` → after it resolves, no event of that capture is emitted.
 //! - `plugin:audio|take_utterance { captureId, seq }` → `ArrayBuffer` of little-endian f32 mono
 //!   16 kHz PCM; each utterance can be taken once.

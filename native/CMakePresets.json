@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "description": "Sigil engine tree: /MD, static third-party code per DLL, GGML_NATIVE=OFF, GGML_BACKEND_DL=OFF (cmake/SigilVariant.cmake). Uses CMake's default generator (the newest Visual Studio).",
+      "binaryDir": "${sourceDir}/build/presets/${presetName}",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": { "SIGIL_REPRODUCIBLE": "ON" }
+    },
+    { "name": "cpu", "inherits": "base", "displayName": "cpu (SSE4.2 baseline)", "cacheVariables": { "SIGIL_VARIANT": "cpu" } },
+    { "name": "cpu-avx2", "inherits": "base", "displayName": "cpu-avx2 (/arch:AVX2)", "cacheVariables": { "SIGIL_VARIANT": "cpu-avx2" } },
+    { "name": "cpu-avx512", "inherits": "base", "displayName": "cpu-avx512 (/arch:AVX512)", "cacheVariables": { "SIGIL_VARIANT": "cpu-avx512" } },
+    { "name": "vulkan", "inherits": "base", "displayName": "vulkan (needs the Vulkan SDK)", "cacheVariables": { "SIGIL_VARIANT": "vulkan" } },
+    { "name": "cuda13", "inherits": "base", "displayName": "cuda13 (needs the CUDA 13 toolkit)", "cacheVariables": { "SIGIL_VARIANT": "cuda13" } }
+  ],
+  "buildPresets": [
+    { "name": "cpu", "configurePreset": "cpu", "configuration": "Release" },
+    { "name": "cpu-avx2", "configurePreset": "cpu-avx2", "configuration": "Release" },
+    { "name": "cpu-avx512", "configurePreset": "cpu-avx512", "configuration": "Release" },
+    { "name": "vulkan", "configurePreset": "vulkan", "configuration": "Release" },
+    { "name": "cuda13", "configurePreset": "cuda13", "configuration": "Release" }
+  ]
+}

@@ -6,4 +6,3 @@ import_whisper_model
 cancel_whisper_download
 start_recording
 stop_recording
-feed_audio_chunk

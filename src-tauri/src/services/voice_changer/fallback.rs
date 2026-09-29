@@ -9,10 +9,10 @@
 //! block would have had, so the output timeline never drifts.
 
 /// Fade length at both edges of a muted run.
-pub(super) const CONCEAL_FADE_MS: f64 = 5.0;
+pub(crate) const CONCEAL_FADE_MS: f64 = 5.0;
 
 /// Mutes failed blocks (interleaved f32, fixed channel count) with click-free edges.
-pub(super) struct MuteConceal {
+pub(crate) struct MuteConceal {
     ch: usize,
     fade_frames: usize,
     /// Last frame of the last block played (the fade-out starts there).
@@ -21,7 +21,7 @@ pub(super) struct MuteConceal {
 }
 
 impl MuteConceal {
-    pub(super) fn new(ch: usize, rate: u32) -> Self {
+    pub(crate) fn new(ch: usize, rate: u32) -> Self {
         let ch = ch.max(1);
         Self {
             ch,
@@ -33,12 +33,12 @@ impl MuteConceal {
 
     /// Whether the previous block was muted.
     #[cfg(test)]
-    pub(super) fn is_muted(&self) -> bool {
+    pub(crate) fn is_muted(&self) -> bool {
         self.muted
     }
 
     /// A block that converted: after a muted run it fades in; its last frame is remembered.
-    pub(super) fn pass(&mut self, block: &mut [f32]) {
+    pub(crate) fn pass(&mut self, block: &mut [f32]) {
         let ch = self.ch;
         let frames = block.len() / ch;
         if self.muted {
@@ -57,7 +57,7 @@ impl MuteConceal {
 
     /// Fill `out` (cleared first) with `frames` frames standing in for a failed block: on the
     /// first failed block a short fade from the last played frame down to silence, then silence.
-    pub(super) fn mute_into(&mut self, out: &mut Vec<f32>, frames: usize) {
+    pub(crate) fn mute_into(&mut self, out: &mut Vec<f32>, frames: usize) {
         let ch = self.ch;
         out.clear();
         out.resize(frames * ch, 0.0);

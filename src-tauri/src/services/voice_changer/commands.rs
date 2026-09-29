@@ -117,6 +117,9 @@ pub(super) async fn start_voice_changer<R: Runtime>(
         mine: my_generation,
     };
     state.is_running.store(true, Ordering::Release);
+    // Resource governor: the model-size policy leaves room for a running voice changer. Set before
+    // the worker exists, so a worker that stops itself at once always clears it afterwards.
+    crate::services::resources::set_vc_running(true);
     *lock(&state.enabled) = true;
     let previous_worker = lock(&state.worker).take();
     if let Some(prev) = &previous_worker {
@@ -157,6 +160,7 @@ pub(super) async fn start_voice_changer<R: Runtime>(
             if generation.is_current() {
                 *lock(&run_state.enabled) = false;
                 run_state.is_running.store(false, Ordering::Release);
+                crate::services::resources::set_vc_running(false);
                 let _ = app_for_thread.emit("voice_changer:stopped", ());
             }
             return;
@@ -211,6 +215,7 @@ pub(super) async fn start_voice_changer<R: Runtime>(
             // webview reload) does not report a stopped voice changer as switched on.
             *lock(&run_state.enabled) = false;
             run_state.is_running.store(false, Ordering::Release);
+            crate::services::resources::set_vc_running(false);
             let _ = app_for_thread.emit("voice_changer:stopped", ());
         }
     });
@@ -220,6 +225,7 @@ pub(super) async fn start_voice_changer<R: Runtime>(
             if state.run_generation.load(Ordering::SeqCst) == my_generation {
                 state.is_running.store(false, Ordering::Release);
                 *lock(&state.enabled) = false;
+                crate::services::resources::set_vc_running(false);
             }
             return Err(format!("could not start the voice-changer thread: {e}"));
         }
@@ -234,6 +240,7 @@ pub(super) async fn start_voice_changer<R: Runtime>(
 pub(super) fn stop_voice_changer<R: Runtime>(_app: AppHandle<R>, state: State<'_, VoiceChangerState>) -> Result<(), String> {
     *lock(&state.enabled) = false;
     state.is_running.store(false, Ordering::Release);
+    crate::services::resources::set_vc_running(false);
     if let Some(sender) = lock(&state.stop_sender).take() {
         let _ = sender.send(());
     }

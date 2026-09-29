@@ -1,0 +1,234 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "transcribe.cpp (handy-computer, MIT) as sigil_transcribe.dll: Sigil's sigil_engine ABI v1 shim over transcribe.h with transcribe.cpp and ggml linked statically. Owned by P1-G2; decision record docs/adr/0003b-transcribe-cpp.md. Upstream pin: native/engines/transcribe/UPSTREAM.json (v0.2.4, 4807edaf).",
+    "Packs are built locally by native/engines/transcribe/build.ps1 (-Variant cpu,cpu-avx2,cpu-avx512,cuda13[,vulkan with the Vulkan SDK]) and stay 'unpublished' (asset hosting is local-only for now): install them by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS (the zips are found by file name). They are unpinned while unpublished; pin size and sha256 from the build's .zip.sha256 when publishing.",
+    "Engine packs follow native_runtime's convention runtime/sigil-<engine>-<variant>: each zip holds sigil_transcribe.dll plus sigil-pack.json (sizes and sha256 of every file, checked before each load). cuda13 imports cudart64_13 / cublas64_13 / cublasLt64_13 from runtime/nvidia-cuda13; GPU variants also need AVX2.",
+    "bench/* entries are the spike's measurement models (Hugging Face LFS sha256, pinned to a repo commit). P2 adds the user-facing STT model entries.",
+    "Upgrade: bump UPSTREAM.json, then every id's version and zip name here together."
+  ],
+  "entries": [
+    {
+      "id": "runtime/sigil-transcribe-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.2.4-s2",
+      "title": "transcribe.cpp speech engine (CUDA 13)",
+      "description": "Runs GGUF speech-to-text models (Qwen3-ASR, Cohere Transcribe, Voxtral, Parakeet, Whisper and more) on NVIDIA GPUs through CUDA 13. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU; installs the NVIDIA GPU runtime with it.",
+      "license": "AGPL-3.0-only AND MIT",
+      "status": "unpublished",
+      "variant": "cuda13",
+      "requires": [
+        "runtime/nvidia-cuda13"
+      ],
+      "files": [
+        {
+          "path": "sigil-transcribe-0.2.4-s2-cuda13.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cuda13.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil_transcribe.dll",
+              "sigil-pack.json",
+              "LICENSE-transcribe.cpp.txt",
+              "THIRD-PARTY-LICENSES-transcribe.cpp.md",
+              "NOTICE.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-transcribe-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.2.4-s2",
+      "title": "transcribe.cpp speech engine (Vulkan)",
+      "description": "Runs GGUF speech-to-text models on NVIDIA, AMD and Intel GPUs through Vulkan.",
+      "license": "AGPL-3.0-only AND MIT",
+      "status": "unpublished",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "sigil-transcribe-0.2.4-s2-vulkan.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-vulkan.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil_transcribe.dll",
+              "sigil-pack.json",
+              "LICENSE-transcribe.cpp.txt",
+              "THIRD-PARTY-LICENSES-transcribe.cpp.md",
+              "NOTICE.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-transcribe-cpu-avx512",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.2.4-s2",
+      "title": "transcribe.cpp speech engine (AVX-512)",
+      "description": "Runs GGUF speech-to-text models on processors with AVX-512.",
+      "license": "AGPL-3.0-only AND MIT",
+      "status": "unpublished",
+      "variant": "cpu-avx512",
+      "files": [
+        {
+          "path": "sigil-transcribe-0.2.4-s2-cpu-avx512.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx512.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil_transcribe.dll",
+              "sigil-pack.json",
+              "LICENSE-transcribe.cpp.txt",
+              "THIRD-PARTY-LICENSES-transcribe.cpp.md",
+              "NOTICE.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-transcribe-cpu-avx2",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.2.4-s2",
+      "title": "transcribe.cpp speech engine (AVX2)",
+      "description": "Runs GGUF speech-to-text models on processors with AVX2 (most PCs from 2015 on).",
+      "license": "AGPL-3.0-only AND MIT",
+      "status": "unpublished",
+      "variant": "cpu-avx2",
+      "files": [
+        {
+          "path": "sigil-transcribe-0.2.4-s2-cpu-avx2.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx2.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil_transcribe.dll",
+              "sigil-pack.json",
+              "LICENSE-transcribe.cpp.txt",
+              "THIRD-PARTY-LICENSES-transcribe.cpp.md",
+              "NOTICE.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/sigil-transcribe-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.2.4-s2",
+      "title": "transcribe.cpp speech engine (CPU)",
+      "description": "Runs GGUF speech-to-text models on any 64-bit processor.",
+      "license": "AGPL-3.0-only AND MIT",
+      "status": "unpublished",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sigil-transcribe-0.2.4-s2-cpu.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil_transcribe.dll",
+              "sigil-pack.json",
+              "LICENSE-transcribe.cpp.txt",
+              "THIRD-PARTY-LICENSES-transcribe.cpp.md",
+              "NOTICE.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "bench/transcribe-whisper-tiny-q8_0",
+      "family": "bench",
+      "kind": "bench",
+      "version": "2678cc6",
+      "title": "Whisper tiny (GGUF Q8_0) for transcribe.cpp tests",
+      "description": "A small multilingual test model for the transcribe.cpp engine probe and tests. Not needed for normal use.",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "whisper-tiny-Q8_0.gguf",
+          "size": 45981088,
+          "sha256": "325b9c7997cd1eff81ef709d55766565e71be696130cc3a3d444713798706834",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/whisper-tiny-gguf/resolve/2678cc66038359b97c8e6fd6454c56fc9006d571/whisper-tiny-Q8_0.gguf",
+              "revision": "2678cc66038359b97c8e6fd6454c56fc9006d571"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bench/transcribe-qwen3-asr-1.7b-q8_0",
+      "family": "bench",
+      "kind": "bench",
+      "version": "3555bd2",
+      "title": "Qwen3-ASR 1.7B (GGUF Q8_0) for transcribe.cpp measurements",
+      "description": "The GPU-tier final-pass model measured by the transcribe.cpp spike (ADR 0003b). Not needed for normal use.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3900,
+      "files": [
+        {
+          "path": "Qwen3-ASR-1.7B-Q8_0.gguf",
+          "size": 2185030624,
+          "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/3555bd238a8572bbace3ebf60d23b036dc0a5dbe/Qwen3-ASR-1.7B-Q8_0.gguf",
+              "revision": "3555bd238a8572bbace3ebf60d23b036dc0a5dbe"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

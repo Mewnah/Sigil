@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Toolchain and runtime pins for Sigil's native runtime packs (read by build-runtime-packs.ps1; see README.md). Owned by P1-D1.",
+    "Engine versions live in native/engines/<name>/engine.json (each engine's workstream owns its folder); catalog pins live in src-tauri/model-catalog/*.json. This file only holds what the build machine needs."
+  ],
+  "schema": 1,
+  "abi_version": 1,
+  "variants": ["cpu", "cpu-avx2", "cpu-avx512", "vulkan", "cuda13"],
+  "toolchain": {
+    "cmake_min": "3.25",
+    "msvc_min": "19.40",
+    "generator_note": "CMake's default generator (the newest Visual Studio) with -A x64; pass -Generator Ninja from a Developer PowerShell for CUDA builds without the CUDA Visual Studio integration."
+  },
+  "cuda13": {
+    "toolkit_min": "13.0",
+    "toolkit_tested": "13.2",
+    "architectures": "75-real;80-real;86-real;89-real;90-real;100-real;120-real;120-virtual",
+    "runtime_pack": "runtime/nvidia-cuda13",
+    "note": "CUDA 13 supports Turing (sm_75) and newer only; the NVIDIA runtime pack provides cudart64_13 / cublas64_13 at run time (never bundled in an engine pack)."
+  },
+  "vulkan": {
+    "sdk_min": "1.3.275",
+    "note": "Set VULKAN_SDK. The Vulkan loader (vulkan-1.dll) comes with every GPU driver; nothing Vulkan-related is packed."
+  },
+  "ort_cuda_provider": {
+    "catalog_id": "runtime/ort-cuda13-provider",
+    "file": "onnxruntime_providers_cuda.dll",
+    "onnxruntime": "1.28.0",
+    "ort_crate": "2.0.0-rc.13",
+    "pyke_dist": "efb686cb49318e476cbb65d8ef40d4005f541a40bdee66afb7b60e3714e78293",
+    "note": "The provider is taken byte-identical from the ort-sys build (src-tauri/target/<profile>) or pyke's dist cache (%LOCALAPPDATA%/ort.pyke.io/dfbin/x86_64-pc-windows-msvc/<pyke_dist>/) and must match the sha256 pinned in the catalog."
+  }
+}

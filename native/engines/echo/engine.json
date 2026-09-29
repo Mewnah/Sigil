@@ -1,0 +1,8 @@
+{
+  "$comment": "sigil_echo.dll: the sigil_engine ABI v1 test engine. Read by native/engines/echo/CMakeLists.txt and scripts/native/build-runtime-packs.ps1; the catalog entries are runtime/sigil-echo-<variant> in src-tauri/model-catalog/runtimes.json (bump their version and file names with this one).",
+  "name": "echo",
+  "version": "0.1.0",
+  "kind": "test",
+  "variants": ["cpu", "cpu-avx2", "cpu-avx512"],
+  "default_variants": ["cpu", "cpu-avx2"]
+}

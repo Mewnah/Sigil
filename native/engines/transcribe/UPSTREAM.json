@@ -1,0 +1,28 @@
+{
+  "$comment": [
+    "Pinned transcribe.cpp source for sigil_transcribe.dll (P1-G2; docs/adr/0003b-transcribe-cpp.md).",
+    "build.ps1 downloads the archive once into %LOCALAPPDATA%/sigil-dev-cache/transcribe.cpp/, refuses it unless sha256 and size match, and extracts it without the upstream agent/CI folders.",
+    "Upgrade: change tag, commit, version, abihash and the archive pin together, re-read include/transcribe.h for ABI changes (0.x breaks on minor releases), rebuild every variant, re-run the ignored speech_rt::transcribe tests, and bump shim_revision if shim.cpp changed."
+  ],
+  "name": "transcribe.cpp",
+  "repo": "https://github.com/handy-computer/transcribe.cpp",
+  "license": "MIT",
+  "tag": "v0.2.4",
+  "commit": "4807edaf210d0d7e8a6f7fb2a44b65966a2797f0",
+  "version": "0.2.4",
+  "abihash": "7df72bf9e667b8c2",
+  "ggml_commit": "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+  "shim_revision": 2,
+  "archive": {
+    "url": "https://codeload.github.com/handy-computer/transcribe.cpp/tar.gz/4807edaf210d0d7e8a6f7fb2a44b65966a2797f0",
+    "file": "transcribe.cpp-4807edaf210d0d7e8a6f7fb2a44b65966a2797f0.tar.gz",
+    "sha256": "00c3bc4f2f505b4e6865c559a3c9aad30e98a48c9b6a304a2e73b50cb2f42522",
+    "size": 43775342,
+    "root": "transcribe.cpp-4807edaf210d0d7e8a6f7fb2a44b65966a2797f0"
+  },
+  "cuda": {
+    "toolkit": "13.2",
+    "architectures": "75-real;80-virtual;86-real;89-real;120a-real",
+    "$comment": "Turing (RTX 20 / GTX 16), Ampere (RTX 30), Ada (RTX 40) and Blackwell (RTX 50) as native code; compute_80 PTX lets the driver JIT anything newer or in between. CUDA 13 dropped Maxwell, Pascal and Volta, matching the ORT CUDA 13 floor (ADR 0001)."
+  }
+}

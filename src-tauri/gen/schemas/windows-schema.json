@@ -2235,10 +2235,22 @@
           "markdownDescription": "Denies the oauth_loopback_start command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`",
           "type": "string",
           "const": "audio:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-play-async`\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`"
+        },
+        {
+          "description": "Enables the get_capture_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-get-capture-status",
+          "markdownDescription": "Enables the get_capture_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_device_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-get-device-snapshot",
+          "markdownDescription": "Enables the get_device_snapshot command without any pre-configured scope."
         },
         {
           "description": "Enables the list_input_devices command without any pre-configured scope.",
@@ -2257,6 +2269,12 @@
           "type": "string",
           "const": "audio:allow-play-async",
           "markdownDescription": "Enables the play_async command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_capture_mute command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-set-capture-mute",
+          "markdownDescription": "Enables the set_capture_mute command without any pre-configured scope."
         },
         {
           "description": "Enables the start_audio_capture command without any pre-configured scope.",
@@ -2289,6 +2307,18 @@
           "markdownDescription": "Enables the take_utterance command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_capture_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-get-capture-status",
+          "markdownDescription": "Denies the get_capture_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_device_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-get-device-snapshot",
+          "markdownDescription": "Denies the get_device_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_input_devices command without any pre-configured scope.",
           "type": "string",
           "const": "audio:deny-list-input-devices",
@@ -2305,6 +2335,12 @@
           "type": "string",
           "const": "audio:deny-play-async",
           "markdownDescription": "Denies the play_async command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_capture_mute command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-set-capture-mute",
+          "markdownDescription": "Denies the set_capture_mute command without any pre-configured scope."
         },
         {
           "description": "Denies the start_audio_capture command without any pre-configured scope.",
@@ -2335,6 +2371,48 @@
           "type": "string",
           "const": "audio:deny-take-utterance",
           "markdownDescription": "Denies the take_utterance command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-run-benchmark`\n- `allow-cancel-benchmark`\n- `allow-get-last-report`",
+          "type": "string",
+          "const": "bench:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-run-benchmark`\n- `allow-cancel-benchmark`\n- `allow-get-last-report`"
+        },
+        {
+          "description": "Enables the cancel_benchmark command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:allow-cancel-benchmark",
+          "markdownDescription": "Enables the cancel_benchmark command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_last_report command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:allow-get-last-report",
+          "markdownDescription": "Enables the get_last_report command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_benchmark command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:allow-run-benchmark",
+          "markdownDescription": "Enables the run_benchmark command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_benchmark command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:deny-cancel-benchmark",
+          "markdownDescription": "Denies the cancel_benchmark command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_last_report command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:deny-get-last-report",
+          "markdownDescription": "Denies the get_last_report command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_benchmark command without any pre-configured scope.",
+          "type": "string",
+          "const": "bench:deny-run-benchmark",
+          "markdownDescription": "Denies the run_benchmark command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-chatterbox-endpoint`\n- `allow-get-chatterbox-voices`\n- `allow-chatterbox-speak`\n- `allow-check-chatterbox-availability`",
@@ -6573,6 +6651,120 @@
           "markdownDescription": "Denies the set_melo_endpoint command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-catalog`\n- `allow-get-entry-states`\n- `allow-set-store-config`\n- `allow-install-entries`\n- `allow-cancel-install`\n- `allow-remove-entry`\n- `allow-verify-entry`\n- `allow-import-local`\n- `allow-get-disk-usage`",
+          "type": "string",
+          "const": "model-store:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-catalog`\n- `allow-get-entry-states`\n- `allow-set-store-config`\n- `allow-install-entries`\n- `allow-cancel-install`\n- `allow-remove-entry`\n- `allow-verify-entry`\n- `allow-import-local`\n- `allow-get-disk-usage`"
+        },
+        {
+          "description": "Enables the cancel_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-cancel-install",
+          "markdownDescription": "Enables the cancel_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-get-catalog",
+          "markdownDescription": "Enables the get_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_disk_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-get-disk-usage",
+          "markdownDescription": "Enables the get_disk_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_entry_states command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-get-entry-states",
+          "markdownDescription": "Enables the get_entry_states command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-import-local",
+          "markdownDescription": "Enables the import_local command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-install-entries",
+          "markdownDescription": "Enables the install_entries command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-remove-entry",
+          "markdownDescription": "Enables the remove_entry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_store_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-set-store-config",
+          "markdownDescription": "Enables the set_store_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the verify_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:allow-verify-entry",
+          "markdownDescription": "Enables the verify_entry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-cancel-install",
+          "markdownDescription": "Denies the cancel_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-get-catalog",
+          "markdownDescription": "Denies the get_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_disk_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-get-disk-usage",
+          "markdownDescription": "Denies the get_disk_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_entry_states command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-get-entry-states",
+          "markdownDescription": "Denies the get_entry_states command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-import-local",
+          "markdownDescription": "Denies the import_local command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-install-entries",
+          "markdownDescription": "Denies the install_entries command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-remove-entry",
+          "markdownDescription": "Denies the remove_entry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_store_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-set-store-config",
+          "markdownDescription": "Denies the set_store_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the verify_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "model-store:deny-verify-entry",
+          "markdownDescription": "Denies the verify_entry command without any pre-configured scope."
+        },
+        {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-moonshine-endpoint`\n- `allow-moonshine-transcribe`\n- `allow-check-moonshine-availability`",
           "type": "string",
           "const": "moonshine-stt:default",
@@ -6855,6 +7047,108 @@
           "markdownDescription": "Denies the restart command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-helpers`\n- `allow-stop-helper`\n- `allow-get-helper-logs`",
+          "type": "string",
+          "const": "process-host:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-helpers`\n- `allow-stop-helper`\n- `allow-get-helper-logs`"
+        },
+        {
+          "description": "Enables the get_helper_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:allow-get-helper-logs",
+          "markdownDescription": "Enables the get_helper_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:allow-list-helpers",
+          "markdownDescription": "Enables the list_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_helper command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:allow-stop-helper",
+          "markdownDescription": "Enables the stop_helper command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_helper_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:deny-get-helper-logs",
+          "markdownDescription": "Denies the get_helper_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:deny-list-helpers",
+          "markdownDescription": "Denies the list_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_helper command without any pre-configured scope.",
+          "type": "string",
+          "const": "process-host:deny-stop-helper",
+          "markdownDescription": "Denies the stop_helper command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-resource-snapshot`\n- `allow-get-recommendation`",
+          "type": "string",
+          "const": "resources:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-resource-snapshot`\n- `allow-get-recommendation`"
+        },
+        {
+          "description": "Enables the get_recommendation command without any pre-configured scope.",
+          "type": "string",
+          "const": "resources:allow-get-recommendation",
+          "markdownDescription": "Enables the get_recommendation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_resource_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "resources:allow-get-resource-snapshot",
+          "markdownDescription": "Enables the get_resource_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_recommendation command without any pre-configured scope.",
+          "type": "string",
+          "const": "resources:deny-get-recommendation",
+          "markdownDescription": "Denies the get_recommendation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_resource_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "resources:deny-get-resource-snapshot",
+          "markdownDescription": "Denies the get_resource_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-runtime-packs`\n- `allow-remove-legacy-runtime`",
+          "type": "string",
+          "const": "runtime:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-runtime-packs`\n- `allow-remove-legacy-runtime`"
+        },
+        {
+          "description": "Enables the list_runtime_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "runtime:allow-list-runtime-packs",
+          "markdownDescription": "Enables the list_runtime_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_legacy_runtime command without any pre-configured scope.",
+          "type": "string",
+          "const": "runtime:allow-remove-legacy-runtime",
+          "markdownDescription": "Enables the remove_legacy_runtime command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_runtime_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "runtime:deny-list-runtime-packs",
+          "markdownDescription": "Denies the list_runtime_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_legacy_runtime command without any pre-configured scope.",
+          "type": "string",
+          "const": "runtime:deny-remove-legacy-runtime",
+          "markdownDescription": "Denies the remove_legacy_runtime command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nshell functionality is exposed by default.\n\n#### Granted Permissions\n\nIt allows to use the `open` functionality with a reasonable\nscope pre-configured. It will allow opening `http(s)://`,\n`tel:` and `mailto:` links.\n\n#### This default permission set includes:\n\n- `allow-open`",
           "type": "string",
           "const": "shell:default",
@@ -6919,6 +7213,24 @@
           "type": "string",
           "const": "shell:deny-stdin-write",
           "markdownDescription": "Denies the stdin_write command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-system-info`",
+          "type": "string",
+          "const": "sysinfo:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-system-info`"
+        },
+        {
+          "description": "Enables the get_system_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "sysinfo:allow-get-system-info",
+          "markdownDescription": "Enables the get_system_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_system_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "sysinfo:deny-get-system-info",
+          "markdownDescription": "Denies the get_system_info command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`",
@@ -7377,10 +7689,10 @@
           "markdownDescription": "Denies the set_origin_check command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`",
           "type": "string",
           "const": "whisper:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-feed-audio-chunk`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-ensure-dependencies`\n- `allow-import-whisper-model`\n- `allow-cancel-whisper-download`\n- `allow-start-recording`\n- `allow-stop-recording`"
         },
         {
           "description": "Enables the cancel_whisper_download command without any pre-configured scope.",
@@ -7393,12 +7705,6 @@
           "type": "string",
           "const": "whisper:allow-ensure-dependencies",
           "markdownDescription": "Enables the ensure_dependencies command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the feed_audio_chunk command without any pre-configured scope.",
-          "type": "string",
-          "const": "whisper:allow-feed-audio-chunk",
-          "markdownDescription": "Enables the feed_audio_chunk command without any pre-configured scope."
         },
         {
           "description": "Enables the import_whisper_model command without any pre-configured scope.",
@@ -7429,12 +7735,6 @@
           "type": "string",
           "const": "whisper:deny-ensure-dependencies",
           "markdownDescription": "Denies the ensure_dependencies command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the feed_audio_chunk command without any pre-configured scope.",
-          "type": "string",
-          "const": "whisper:deny-feed-audio-chunk",
-          "markdownDescription": "Denies the feed_audio_chunk command without any pre-configured scope."
         },
         {
           "description": "Denies the import_whisper_model command without any pre-configured scope.",

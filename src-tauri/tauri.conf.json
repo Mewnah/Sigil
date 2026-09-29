@@ -18,7 +18,9 @@
       "timestampUrl": ""
     },
     "longDescription": "",
-    "resources": [],
+    "resources": {
+      "resources/vc-templates": "resources/vc-templates"
+    },
     "shortDescription": "",
     "linux": {
       "deb": {

@@ -1,0 +1,966 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Legacy STT models (Whisper ggml, Vosk), owned by P1-A. Families 'whisper' and 'vosk' install into the legacy",
+    "app_data/whisper/ and app_data/vosk-models/ folders that the Whisper plugin and the Vosk WASM loader read,",
+    "and files already there are adopted after a hash check instead of being downloaded again.",
+    "Whisper ids are 'whisper/<id the Whisper plugin persists>'. Pin with scripts/models/pin-catalog.mjs.",
+    "Vosk: alphacephei.com publishes no digests. vosk/small-en-us-0.15 was hashed from a real download (it matches the",
+    "zip Sigil fetched earlier). The other ten vosk/* sha256 and size values were added during P1 without a recorded",
+    "pin-catalog run and have not been checked against the files yet: before relying on them, re-derive them with",
+    "'node scripts/models/pin-catalog.mjs --only vosk/ --force --hash-by-download' (a dry run prints any difference;",
+    "about 475 MB, sequential; needs consent), or smoke one with 'Sigil.exe --headless fetch vosk/small-pt-0.3' against",
+    "a scratch SIGIL_APP_DATA_DIR. A wrong value makes that language fail with 'the file does not match the catalog'."
+  ],
+  "entries": [
+    {
+      "id": "whisper/tiny.en",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny.en",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny.en.bin",
+          "size": 77704715,
+          "sha256": "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/tiny",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny.bin",
+          "size": 77691713,
+          "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base.en",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base.en",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base.en.bin",
+          "size": 147964211,
+          "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base.bin",
+          "size": 147951465,
+          "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small.en",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small.en",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small.en.bin",
+          "size": 487614201,
+          "sha256": "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small.bin",
+          "size": 487601967,
+          "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium.en",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium.en",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium.en.bin",
+          "size": 1533774781,
+          "sha256": "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium.bin",
+          "size": 1533763059,
+          "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/tiny.en-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny.en-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny.en-q5_1.bin",
+          "size": 32166155,
+          "sha256": "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/tiny-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny-q5_1.bin",
+          "size": 32152673,
+          "sha256": "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base.en-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base.en-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base.en-q5_1.bin",
+          "size": 59721011,
+          "sha256": "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base-q5_1.bin",
+          "size": 59707625,
+          "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small.en-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small.en-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small.en-q5_1.bin",
+          "size": 190098681,
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small-q5_1",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small-q5_1",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small-q5_1.bin",
+          "size": 190085487,
+          "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium.en-q5_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium.en-q5_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium.en-q5_0.bin",
+          "size": 539225533,
+          "sha256": "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en-q5_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium-q5_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium-q5_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium-q5_0.bin",
+          "size": 539212467,
+          "sha256": "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q5_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/tiny.en-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny.en-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny.en-q8_0.bin",
+          "size": 43550795,
+          "sha256": "5bc2b3860aa151a4c6e7bb095e1fcce7cf12c7b020ca08dcec0c6d018bb7dd94",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/tiny-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper tiny-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-tiny-q8_0.bin",
+          "size": 43537433,
+          "sha256": "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base.en-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base.en-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base.en-q8_0.bin",
+          "size": 81781811,
+          "sha256": "a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/base-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper base-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-base-q8_0.bin",
+          "size": 81768585,
+          "sha256": "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small.en-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small.en-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small.en-q8_0.bin",
+          "size": 264477561,
+          "sha256": "67a179f608ea6114bd3fdb9060e762b588a3fb3bd00c4387971be4d177958067",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/small-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper small-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-small-q8_0.bin",
+          "size": 264464607,
+          "sha256": "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium.en-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium.en-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium.en-q8_0.bin",
+          "size": 823382461,
+          "sha256": "43fa2cd084de5a04399a896a9a7a786064e221365c01700cea4666005218f11c",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/medium-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper medium-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-medium-q8_0.bin",
+          "size": 823369779,
+          "sha256": "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/large-v3-turbo",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper large-v3-turbo",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-large-v3-turbo.bin",
+          "size": 1624555275,
+          "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/large-v3-turbo-q5_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper large-v3-turbo-q5_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-large-v3-turbo-q5_0.bin",
+          "size": 574041195,
+          "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/large-v3-turbo-q8_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper large-v3-turbo-q8_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-large-v3-turbo-q8_0.bin",
+          "size": 874188075,
+          "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q8_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/large-v3",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper large-v3",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-large-v3.bin",
+          "size": 3095033483,
+          "sha256": "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper/large-v3-q5_0",
+      "family": "whisper",
+      "kind": "model",
+      "version": "5359861c",
+      "title": "Whisper large-v3-q5_0",
+      "description": "OpenAI Whisper converted for whisper.cpp (runs on the CPU).",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "ggml-large-v3-q5_0.bin",
+          "size": 1081140203,
+          "sha256": "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
+              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-en-us-0.15",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.15",
+      "title": "Vosk English (US) small",
+      "description": "Small, fast English model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-en-us-0.15.zip",
+          "size": 41205931,
+          "sha256": "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-en-in-0.4",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.4",
+      "title": "Vosk English (India) small",
+      "description": "Small, fast English (India) model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-en-in-0.4.zip",
+          "size": 37573330,
+          "sha256": "20663dcac4d5cb783a579c54d98339344a688e4ec6e1b4a4b059fd1235454cc7",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-cn-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk Chinese small",
+      "description": "Small, fast Chinese model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-cn-0.22.zip",
+          "size": 43898754,
+          "sha256": "3af8b0e7e0f835ae9d414ce5df580237a3cfb08d586c9fbbb0f7ff29ad5b14ba",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-ru-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk Russian small",
+      "description": "Small, fast Russian model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-ru-0.22.zip",
+          "size": 46236750,
+          "sha256": "961d5ff98a17f4aa6de69864d0aa71fa5bac682301d2b5d17a3f24c5c99a46d4",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-de-0.15",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.15",
+      "title": "Vosk German small",
+      "description": "Small, fast German model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-de-0.15.zip",
+          "size": 46499967,
+          "sha256": "b7e53c90b1f0a38456f4cd62b366ecd58803cd97cd42b06438e2c131713d5e43",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-fr-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk French small",
+      "description": "Small, fast French model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-fr-0.22.zip",
+          "size": 42233323,
+          "sha256": "cabf6180e177eb9b3a9a9d43a437bd5e549f3a7d09525e5d69a3fed787be12ad",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-es-0.42",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.42",
+      "title": "Vosk Spanish small",
+      "description": "Small, fast Spanish model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-es-0.42.zip",
+          "size": 39817833,
+          "sha256": "09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-pt-0.3",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.3",
+      "title": "Vosk Portuguese small",
+      "description": "Small, fast Portuguese model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-pt-0.3.zip",
+          "size": 32453112,
+          "sha256": "6e1ce909032e1afa7a88e68a3d628ecafff302bdf195befab308826c395e93b7",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-it-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk Italian small",
+      "description": "Small, fast Italian model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-it-0.22.zip",
+          "size": 49665141,
+          "sha256": "9ec65e75861d1c6c2e457cccd932705340dcdf233f5b239f00733b4de0bf3267",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-ja-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk Japanese small",
+      "description": "Small, fast Japanese model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-ja-0.22.zip",
+          "size": 49704573,
+          "sha256": "efa092d280153a77615e9e0c7d7283e93e600de3d19d3bec686c57ef19d52eac",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vosk/small-ko-0.22",
+      "family": "vosk",
+      "kind": "model",
+      "version": "0.22",
+      "title": "Vosk Korean small",
+      "description": "Small, fast Korean model for the Vosk backend.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "vosk-model-small-ko-0.22.zip",
+          "size": 86914329,
+          "sha256": "eea36124087fed26c59996a4761519458e3bd185e8ea9d9865ad8760c4a1d989",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://alphacephei.com/vosk/models/vosk-model-small-ko-0.22.zip"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

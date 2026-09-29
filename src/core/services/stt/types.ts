@@ -1,8 +1,9 @@
 import { STT_State } from "./schema";
 
 /**
- * Rust `audio:chunk`: interleaved f32 at the capture DEVICE's own `sample_rate` / `channels` (the rate passed to
- * `start_audio_capture` is not applied). Downmix with `audioConvert.ts`; for mono 16 kHz use utterance capture.
+ * Rust `audio:chunk`: interleaved f32 from the shared capture hub. `start_audio_capture({ sampleRate: 16000 })`
+ * delivers 16 kHz mono; any other request delivers the device's own rate and channel count. Every payload states
+ * its own `sample_rate` / `channels`, so downmix with `audioConvert.ts` when `channels > 1`.
  */
 export interface RustAudioChunkPayload {
   samples: number[];

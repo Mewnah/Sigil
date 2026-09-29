@@ -10,3 +10,7 @@ stop_audio_capture
 start_utterance_capture
 stop_utterance_capture
 take_utterance
+# Capture hub (P1-C): device snapshot (same shape as audio:devices_changed), Rust mute gate, status.
+get_device_snapshot
+set_capture_mute
+get_capture_status

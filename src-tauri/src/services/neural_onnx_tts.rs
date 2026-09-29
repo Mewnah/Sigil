@@ -1,6 +1,6 @@
 //! In-process ONNX speech TTS: Hub download or local **speech package** folder (see
 //! `docs/OPERATOR_REFERENCE.md#local-speech-package-onnx`).
-//! Implementation uses the `kittentts` crate for the supported package format.
+//! Implementation uses KittenTTS, vendored in `services/local_tts/kitten` (see its NOTICE).
 //!
 //! # Threading
 //! Every command is `async`. Model loading (which may download from the Hugging Face Hub) and
@@ -16,15 +16,18 @@
 //! does not bump the generation, so the loaded model stays.
 //!
 //! # Execution provider
-//! `kittentts` builds its own CPU ONNX Runtime session, so the UI's EP hint cannot select a GPU yet.
-//! Each load records the truthful outcome under the `tts.kitten` diagnostics component
-//! (requested = hint, active = `cpu`).
+//! Kitten sessions are built on the CPU EP through Sigil's ORT factory, so the UI's EP hint cannot
+//! select a GPU yet. Each load records the truthful outcome under the `tts.kitten` diagnostics
+//! component (requested = hint, active = `cpu`).
+//!
+//! # Hub models
+//! A Hub repo already in the legacy hf-hub cache is used in place; otherwise its files are fetched
+//! one at a time into `<app_data>/models/kitten/<org>--<name>/` (see `local_tts::kitten::hub`).
 
 use crate::services::diagnostics::{record_ep_outcome, EpOutcome};
-use crate::services::neural_audio::ort_session::ensure_ort_environment;
+use crate::services::local_tts::kitten::{self, hub};
 use crate::services::voice_changer::{push_aux_wav_bytes, VoiceChangerState};
 use hound::{SampleFormat, WavSpec, WavWriter};
-use kittentts::download::{self, ModelConfig};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::path::Path;
@@ -47,8 +50,8 @@ struct TtsConfig {
     hub_id: String,
     voice: String,
     speed: f32,
-    /// Last EP hint from the UI (`cpu` / `cuda` / `dml`). Recorded only: `kittentts` builds its own
-    /// ORT session with the default (CPU) provider, so the hint does not select a device yet.
+    /// Last EP hint from the UI (`cpu` / `cuda` / `dml`). Recorded only: Kitten sessions run on the
+    /// CPU EP, so the hint does not select a device yet.
     execution_provider_hint: String,
     /// When true, load from `local_model_dir` instead of Hugging Face.
     use_local: bool,
@@ -107,7 +110,7 @@ enum ModelSource {
 }
 
 struct LoadedModel {
-    tts: kittentts::KittenTTS,
+    tts: kitten::KittenTTS,
     generation: u64,
 }
 
@@ -289,11 +292,11 @@ impl NeuralOnnxTtsState {
             .generate(text, &voice, speed, true)
             .map_err(|e| format!("Synthesis failed: {e}"))?;
         drop(slot);
-        encode_wav_f32(&audio, kittentts::SAMPLE_RATE)
+        encode_wav_f32(&audio, kitten::SAMPLE_RATE)
     }
 }
 
-/// A finite speed in kittentts' useful range (0.5–2.0); anything else becomes 1.0.
+/// A finite speed in Kitten's useful range (0.5–2.0); anything else becomes 1.0.
 fn sanitize_speed(speed: f32) -> f32 {
     if speed.is_finite() && speed > 0.0 {
         speed.clamp(0.5, 2.0)
@@ -320,7 +323,7 @@ fn kitten_ep_outcome(hint: &str) -> EpOutcome {
         EpOutcome::fallback(
             requested,
             "cpu",
-            "Kitten TTS runs on its own CPU ONNX Runtime session; GPU execution is not available for this backend yet.",
+            "Kitten TTS runs on the CPU ONNX Runtime execution provider; GPU execution is not available for this backend yet.",
         )
     }
 }
@@ -348,33 +351,12 @@ pub struct NeuralOnnxVoice {
     pub name: String,
 }
 
-fn load_from_local_dir(dir: &Path) -> Result<kittentts::KittenTTS, String> {
-    let config_path = dir.join("config.json");
-    let config_bytes = std::fs::read(&config_path)
-        .map_err(|e| format!("Cannot read {}: {}", config_path.display(), e))?;
-    let config: ModelConfig = serde_json::from_slice(&config_bytes)
-        .map_err(|e| format!("Invalid config.json in {}: {}", dir.display(), e))?;
-    if !matches!(config.model_type.as_str(), "ONNX1" | "ONNX2") {
-        return Err(format!(
-            "Unsupported model type '{}' in config.json (expected ONNX1 or ONNX2)",
-            config.model_type
-        ));
-    }
-    let model_path = dir.join(&config.model_file);
-    let voices_path = dir.join(&config.voices);
-    // Commit the app-owned ORT environment before kittentts creates its first session.
-    ensure_ort_environment();
-    kittentts::KittenTTS::load(
-        &model_path,
-        &voices_path,
-        config.speed_priors,
-        config.voice_aliases,
-    )
-    .map_err(|e| format!("Failed to load local speech model from folder: {}", e))
+fn load_from_local_dir(dir: &Path) -> Result<kitten::KittenTTS, String> {
+    hub::load_from_dir(dir).map_err(|e| format!("Failed to load local speech model from folder: {e:#}"))
 }
 
 /// Blocking: load the model `cfg` describes (local folder or Hugging Face Hub download).
-fn load_model_from(cfg: &TtsConfig) -> Result<kittentts::KittenTTS, String> {
+fn load_model_from(cfg: &TtsConfig) -> Result<kitten::KittenTTS, String> {
     if cfg.use_local {
         let fmt = cfg.local_package_format.trim().to_lowercase();
         if fmt != SUPPORTED_LOCAL_FORMAT {
@@ -389,10 +371,7 @@ fn load_model_from(cfg: &TtsConfig) -> Result<kittentts::KittenTTS, String> {
         }
         load_from_local_dir(Path::new(trimmed))
     } else {
-        // Commit the app-owned ORT environment before kittentts creates its first session.
-        ensure_ort_environment();
-        download::load_from_hub(&cfg.hub_id)
-            .map_err(|e| format!("Failed to load speech model from Hub: {}", e))
+        hub::load_from_hub(&cfg.hub_id).map_err(|e| format!("Failed to load speech model from Hub: {e:#}"))
     }
 }
 
@@ -686,12 +665,35 @@ mod tests {
     }
 
     #[test]
+    fn local_package_loads_and_speaks_offline() {
+        let dir = crate::services::local_tts::test_model::write_package("plugin");
+        let s = NeuralOnnxTtsState::new();
+        s.set_model_source("local", Some(dir.display().to_string())).unwrap();
+        s.set_voice_speed("Luna", 1.0);
+        s.set_execution_hint("dml").unwrap();
+        let wav = s.synthesize_wav_bytes("Hello from Sigil.").expect("speak");
+        assert!(s.is_loaded());
+        let mut voices = s.voices();
+        voices.sort();
+        assert_eq!(voices, ["Jasper", "Luna"]);
+        let mut r = hound::WavReader::new(Cursor::new(wav)).unwrap();
+        assert_eq!(r.spec().sample_rate, kitten::SAMPLE_RATE);
+        let samples: Vec<f32> = r.samples::<f32>().map(Result::unwrap).collect();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|x| (x - crate::services::local_tts::test_model::LEVEL).abs() < 1e-6));
+        // The outcome is truthful: a DirectML hint still runs on the CPU, with the reason.
+        let o = crate::services::diagnostics::ep_outcome(EP_COMPONENT).expect("recorded");
+        assert_eq!((o.requested.as_str(), o.active.as_str()), ("dml", "cpu"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn poisoned_model_mutex_recovers() {
         let s = NeuralOnnxTtsState::new();
         let p = s.clone();
         let _ = std::thread::spawn(move || {
             let _slot = p.model.lock().unwrap();
-            panic!("simulated kittentts panic");
+            panic!("simulated Kitten panic");
         })
         .join();
         assert!(s.model.is_poisoned());
@@ -715,9 +717,9 @@ mod tests {
     #[test]
     fn wav_encoding_round_trips() {
         let samples = [0.0f32, 0.5, -0.25, 1.0];
-        let wav = encode_wav_f32(&samples, kittentts::SAMPLE_RATE).unwrap();
+        let wav = encode_wav_f32(&samples, kitten::SAMPLE_RATE).unwrap();
         let mut r = hound::WavReader::new(Cursor::new(wav)).unwrap();
-        assert_eq!(r.spec().sample_rate, kittentts::SAMPLE_RATE);
+        assert_eq!(r.spec().sample_rate, kitten::SAMPLE_RATE);
         let back: Vec<f32> = r.samples::<f32>().map(Result::unwrap).collect();
         assert_eq!(back, samples);
     }

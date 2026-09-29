@@ -136,7 +136,7 @@ pub fn run(ep: &str, device_id: i32) -> Result<u64, String> {
         streamer_profile: true,
         ..ort_session::VcSessionOptions::default()
     };
-    let builder = ort_session::builder_for_ep(ep, device_id, &opts)?;
+    let mut builder = ort_session::builder_for_ep(ep, device_id, &opts)?;
     let mut session = builder
         .commit_from_memory(model_bytes())
         .map_err(|e| ort_session::explain_ep_error(ep, &e.to_string()))?;
@@ -327,8 +327,8 @@ mod tests {
         }
         // These need an install, a driver update or another device index.
         for permanent in [
-            "cudnn64_9.dll (CUDA 12 / cuDNN 9 runtime) was not found; install the NVIDIA GPU runtime pack in Settings (Error loading ...)",
-            "the NVIDIA driver is too old for CUDA 12; update the GPU driver (CUDA failure 35: CUDA driver version is insufficient)",
+            "cudnn64_9.dll (CUDA 13 / cuDNN 9 runtime) was not found; install the NVIDIA GPU runtime pack in Settings (Error loading ...)",
+            "the NVIDIA driver is too old for CUDA 13 (it needs driver R580 or newer); update the GPU driver (CUDA failure 35: CUDA driver version is insufficient)",
             "no CUDA-capable NVIDIA GPU was found (CUDA failure 100: no CUDA-capable device is detected)",
             "dml_provider_factory.cc(123): Exception(1) 887A0002 The object was not found.",
             "DirectML returned wrong results for a test convolution (got [0.0])",
@@ -345,7 +345,7 @@ mod tests {
         let later = t0 + TRANSIENT_FAILURE_TTL + Duration::from_secs(1);
         let pass = CachedRun::new(Ok(12), t0);
         assert!(pass.is_fresh(t0) && pass.is_fresh(later));
-        let missing_dll = CachedRun::new(Err("cudnn64_9.dll (CUDA 12 / cuDNN 9 runtime) was not found".into()), t0);
+        let missing_dll = CachedRun::new(Err("cudnn64_9.dll (CUDA 13 / cuDNN 9 runtime) was not found".into()), t0);
         assert!(!missing_dll.transient && missing_dll.is_fresh(later));
         let oom = CachedRun::new(Err("the GPU is out of memory (CUDA failure 2: out of memory)".into()), t0);
         assert!(oom.transient);

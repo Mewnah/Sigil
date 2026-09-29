@@ -1,4 +1,4 @@
-<!-- Working plan generated 2026-09-28 by a multi-agent architecture pass over docs/SPEECH_STACK_RESEARCH_2026-09.md. Not synced to public/docs. -->
+<!-- Working plan generated 2026-09-28 by a multi-agent architecture pass over docs/SPEECH_STACK_RESEARCH_2026-09.md. Not synced to public/docs. P1 is complete: the section '## P1 outcomes (binding amendments for P2–P7)' after 'Open questions' amends the P2–P7 workstreams; read it before starting P2+ work. -->
 # Sigil Speech Stack 2026-09: merged master implementation plan (every research item; Sigil-owned voice engine built to beat all other engines, proven by its own benchmark)
 
 ## Principles
@@ -480,6 +480,48 @@ Exit: docs/benchmarks/VC_BENCHMARKS.md and SPEECH_BENCHMARKS.md hold dev-rig num
 - Should the voice-changer worker default be 'auto' (NORMAL on GPU, BELOW_NORMAL on CPU), or do you prefer always protecting game FPS?
 - Should the optional Beatrice 2 VST3 host (P6-M) be attempted at all, given the closed runtime?
 
+## P1 outcomes (binding amendments for P2–P7)
+Recorded by P1-I0 (2026-09-29) from the P1 spike and foundation results. Where this section and a workstream entry disagree, this section wins. ADRs: [0001](adr/0001-ort-upgrade.md), [0002](adr/0002-sherpa-onnx.md), [0003b](adr/0003b-transcribe-cpp.md), [0004](adr/0004-rvc-templates.md), [0005](adr/0005-process-host-llama.md), [0007](adr/0007-native-runtime-packs.md). Developer-facing contracts are in [DEVELOPER_GUIDE.md → Speech stack internals](DEVELOPER_GUIDE.md#speech-stack-internals).
+
+### Every phase
+- **ORT is rc.13 (ORT 1.28.0, CUDA 13).** CUDA needs driver R580+ and Turing or newer; DirectML covers the rest. Build every session through `ort_session` (rc.13's bare `SessionBuilder::new()` applies ORT's auto-EP policy); import `TensorElementType` from `ort::value`; builders are `mut` before `commit_from_*`; never call `ort::ep::cuda::preload_dylibs` (its list still names CUDA 12 DLLs). `register_ep_library` works (ADR 0001/0007).
+- **Model store is the only downloader.** Locate files with `model_store::installed_path(id)`, install with `model_store::ensure(&[ids]).await`; custom URLs use `Store::fetch_unpinned`. Ids: `whisper/<plugin id>`, `vosk/<id>`, `runtime/<name>`, `runtime/sigil-<engine>-<variant>`. Runtime packs land in `runtimes/<id rest>/<version>/<variant>/`. Pin with `scripts/models/pin-catalog.mjs` (≥ 2 s apart).
+- **Asset hosting is local only** (user decision 2026-09-28). Sigil-built packs, templates and exports are built by local scripts and installed by Import, `SIGIL_LOCAL_ASSETS` or a custom mirror; their catalog entries stay `unpublished`. No publishing or runtime-pack release workflows: P3-A's "publish script", P7-D's "publish packs" and ADR 0007's CUDA-provider publication wait for a new user decision.
+- **Catalog ids for size recommendations** come from `resources::policy::ids` (`mt/hy-mt2-7b-q4_k_m`, `mt/hy-mt2-1.8b-q4_k_m`, `mt/hy-mt2-1.8b-1.25bit`, `mt/milmmt-46-4b-q4_k_m`, `mt/milmmt-46-12b-q4_k_m`, `mt/hy-mt2-30b-a3b-q4_k_m`, `tts/qwen3-tts-1.7b`, `tts/qwen3-tts-0.6b`, `stt/qwen3-asr-1.7b-bf16`, `stt/qwen3-asr-1.7b-q8_0`, `stt/cohere-transcribe-q4_k`, `stt/qwen3-asr-0.6b-int8`). Use them in the catalog fragments, or change `policy.rs` and `resources/format.ts` together (a vitest drift test checks the pair). GPU-model subsystems hold `resources::claim_vram` (in-process) or `claim_external_vram` (helpers) resized to the measured footprint; policy footprints are provisional until P7.
+- **Native code** loads only through `native_runtime` (sigil_engine ABI v1, `open_engine`, hash-checked `sigil-pack.json`) or `process_host` helpers. Engines with special build needs keep their own `native/engines/<name>/build.ps1`; `scripts/native/build-runtime-packs.ps1` delegates to it.
+- **The NVIDIA runtime** is `runtime/nvidia-cuda13` (CUDA 13.2, cuBLAS 13.3, cuFFT 12.2, cuDNN 9.26 `cuda13`). cuDNN 9.26 also needs `cudnn_engines_tensor_ir64_9.dll` and `cudnn_ext64_9.dll`; P1-I0 added them to the interim Settings installer, whose earlier installs fail CUDA until reinstalled. Follow-up (any phase that touches diagnostics): point `install/remove/get_nvidia_pack_status` at the store pack and retire the interim downloader.
+- **Headless:** `Sigil.exe --headless sysinfo [--out f]` exists (P1-I0); new arms are added by the phase integrator.
+
+### P2 (speech engine)
+- **P2-S0:** the Azure speech-SDK chunk has a circular CommonJS init that breaks the production app ("Class extends value undefined", "Application failed to start") when module evaluation order shifts; P1-S0b triggered it with one runtime import of `@/types` in `src/core/schema.ts`. The schema and inspector splits must keep cross-module imports type-only where possible and prove the production bundle boots (unchanged speech-sdk chunk hash, or an IPC-mock host smoke in the browser pane); lazy-loading the SDK in `stt/tts` `azure.ts` removes the hazard. Playwright cannot catch it (web mode fails earlier at `plugin:web|config`).
+- **P2-A:** consume the capture hub (`hub::global()?.attach(SourceSpec::parse(device), ConsumerOptions::speech("<label>"))`); `ReadInfo.gap_after` / `restarted` must close the open utterance; the STT mute gate is `MuteGroup::Stt` (the TS audioDevices service already mirrors the hard mute to it). The JSON-PCM whisper feed is already gone. Move `whisper.rs`'s downloader to `model_store::ensure([whisper_entry_id(id)])` (the store already installs `whisper/*` into the same folder and adopts existing files).
+- **P2-B:** use SenseVoice **`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17`** (163,002,883 B, sha256 `7d1efa21…fd347e`); the 2025-09-09 package is a Cantonese fine-tune. SenseVoice ignores the per-stream language option; punctuation-only output is dropped by the wrapper. Nemotron 3.5 160 ms int8 is 475,273,363 B (sha256 `a81909a1…f7a61a`, not ~650 MB), Qwen3-ASR-0.6B int8 878,702,423 B (sha256 `393f8a14…78ee96`); both are supported by 1.13.8 but not yet run. Streaming recognizers default to 1 thread (ORT's spin-wait costs ~25 ms per extra thread per run and cannot be disabled through the C API); others 2, max 4. Load the sherpa runtime at speech-plugin init whenever a sherpa engine is configured (it refuses to load after another `onnxruntime.dll`). Non-catalog model folders go through `probe::validate_in_child`.
+- **P2-C / P2-D:** measured Qwen3-ASR-1.7B Q8_0 on CUDA: about 3.45–3.5 GB process VRAM while loaded and running plus ~0.38 GB CUDA context kept while any `cuda13` engine DLL is loaded (whisper-tiny ~0.46 GB); RTF ≈ 0.018 on the RTX 4090, ≈ 0.25 on 8 CPU threads. Replace `policy.rs`'s provisional `ASR_Q8` 2700 MB with the measured value (and re-check the 16 GB rows) when the stt_final claim lands.
+- **P2-D:** `speech_rt::transcribe::TranscribeModel` is the adapter base. Qwen3-ASR in transcribe.cpp 0.2.4 checks cancel only before its single-shot decode: drop stale results by epoch (or use `transcribe_run_batch` with n=1). The `vulkan` variant is unbuilt and unmeasured (no Vulkan SDK on the dev PC): until it is, non-NVIDIA GPUs use the CPU variants. ORT's CUDA EP and ggml-cuda in one process (both on `cublas64_13`) are not verified yet: test it before enabling the GPU tier next to a CUDA voice changer. Whether Qwen3-ASR-1.7B honours a language hint is untested.
+- **P2-E:** mount `<ModelRequirement ids …>` for consent and downloads; deep-link with `changeTab({ tab: "models", value: id })`.
+- **P2-F:** `start_audio_capture({ sampleRate: 16000 })` already delivers 16 kHz mono `audio:chunk` from the hub; a binary channel for Vosk is optional.
+- **P2-H:** **risk to the acceptance "Kokoro RTF ≤ 0.3 on 4 threads":** Kokoro int8 multi-lang v1.0 through sherpa measured RTF ≈ 1.1 (en) / 1.3 (ja) on an idle 7800X3D at 1–4 threads (first sentence 2.2–2.6 s). Measure the fp32 package (`kokoro-multi-lang-v1_0`, ~350 MB) first; if neither meets the target, take the plan fallback (Sigil's own ORT runner for Kokoro) or ask the user to relax the target. TTS generation through sherpa is serialized process-wide (espeak-ng). Move the Kitten hub downloader (`local_tts/kitten/hub.rs`) onto catalog entries plus `ensure()`.
+- **P2-I0:** the Nemotron consent text says about 475 MB, not 650 MB.
+
+### P3 (voice engine)
+- **P3-S0:** the vc-templates are already bundled (`tauri.conf.json` `bundle.resources` map form, P1-I0): drop that hotspot. `voice_changer::{budget, playback, fallback}` are `pub(crate)` and used by `bench::vc_rt`; keep them so.
+- **P3-A:** the fp16 text encoder misses the 5e-3 gate on every GPU EP (DirectML 2.1e-2, CUDA 6.0e-3): `enc` always runs fp32. The shipped fp16 `flowdec` keeps decoder stage 0 in fp32 (DirectML 2.9e-3 on one voice); the T8 corpus must confirm it, else export with `--fp32-stages 0,1` (1.4e-3). nof0 `flowdec`, RefineGAN and MRF are not exported yet (Applio code must be vendored). `knn` needs ≥ 64 index rows (pad or disable retrieval below that).
+- **P3-B:** build on `neural_audio::vc::import` (P1-G3); run it through `process_host::run_worker` (Job Object memory cap, wall-clock limit, bounded output). Still to do: slot manifest `sigil-rvc-1`, `.index` adoption, sha256 import cache, the 200-file fuzz corpus, and the `pthrs` dev-dependency cross-check (needs a Cargo.toml request). Training checkpoints, bare state dicts and multi-`.pth` archives are refused today.
+- **P3-C1 / P3-C2:** add a builder hook to `ort_session` (for example `build_session_with(…, configure)`) so template sessions get `with_external_initializer_file_in_memory` and dimension overrides through the full EP ladder (preflight, canary, CPU retry, EpOutcome); today they build on one explicit EP through `builder_for_ep`. Set `use_tf32 = 0` for voice-changer CUDA sessions (ORT's default TF32 puts fp32 RVC graphs at ~1.2e-3, 10× over the 1e-4 gate), benchmarked before and after. Real-time sessions move to 1–2 intra-op threads once measured (bench spec `engine.intra_threads`).
+- **P3-E:** move the voice changer onto the hub: `ConsumerOptions::device_rate("vc").with_mute_group(Some(MuteGroup::VoiceChanger))`, using `gap_after` / `restarted` for SOLA resets and `end_qpc_ns` for latency telemetry (this completes one stream per physical mic). Fix the benchmark's post-stall finding: after a stall the output queue refills to `output_max_queue_ms` instead of the prefill and never drains (latency 74.4 → 94.4 ms, persistent); trim back toward the prefill with a crossfade after an underrun or budget drop. `resources::set_vc_running` is wired (P1-I0); add a `claim_vram(Subsystem::Vc, …)` for GPU sessions resized to the measured process-VRAM delta (0 MB on CPU).
+- **P3-F:** the bench core exists (`--headless bench`, paced/offline/e2e-loopback, load simulator, perf gate). Not yet run: the live e2e-loopback path (the dev PC's virtual-cable endpoints are disabled) and any real RVC voice; the first real-voice run on CUDA, DirectML and CPU becomes the engine baseline. Optional: make `params.rs`'s normalization helpers `pub(crate)` so `bench/{engine,spec}.rs` stop mirroring them.
+- **P3-G:** optional UX from P1: a Remove button for `legacy/*` runtime folders (`plugin:runtime|remove_legacy_runtime`).
+
+### P4–P7
+- **P4-B:** `process_host::recipes::llama_server` and `runtime/llama-server-{vulkan,cuda13,cpu}` (llama.cpp b11146, pinned) exist. The live llama-server + Hy-MT2 1.8B smoke has **not** run (running the downloaded exe was not permitted to the P1 agent): run ADR 0005's procedure first; the recipe's flags are untested against b11146. The CUDA entry extracts two zips into one folder: check for duplicate file names on first install. Hold `claim_external_vram` for the server. The exposure audit runs once after readiness; a periodic re-audit is a cheap follow-up.
+- **P4-E:** Bergamot uses `StdioMode::Protocol` + `take_stdio`; the client must keep reading stdout or the helper blocks.
+- **P6-A:** pass `includeLoopback` to `InputRustAudioInput` only in the others.stt picker; loopback sources are `loopback:default` / `loopback:<output name>` (WASAPI loopback is silent while nothing plays; per-process loopback is P6).
+- **P6-E:** Qwen3-TTS ids are `tts/qwen3-tts-1.7b` / `tts/qwen3-tts-0.6b`; the helper claims VRAM with `claim_external_vram`.
+- **P7:** replace every provisional footprint in `resources::policy` with measured values; decide on publishing (runtime packs, templates, the CUDA provider pack, then drop the 62 MB provider from the installer per ADR 0007).
+
+### P1 manual checks still open
+Real-app Models tab pass (download, cancel/resume, verify, delete, import, custom mirror) in `pnpm tauri dev`; USB microphone unplug/replug; the llama-server + Hy-MT2 smoke; Sigil killed in Task Manager ends llama-server; the NVIDIA runtime pack through the Models tab with a CUDA voice-changer session; a real RVC voice benchmark; the e2e-loopback meter over a virtual cable; the transcribe `vulkan` variant. See [RELEASE_AND_ENGINEERING.md → P1 exit matrix](RELEASE_AND_ENGINEERING.md#p1-exit-matrix-platform-foundations).
+
 ## Workstreams
 
 ### P0-S0 [P0, L] P0 scaffold: checkpoint, conventions, splits, tooling, stubs
@@ -897,7 +939,7 @@ Verify: All gates; manual inspector smoke (splits identical)
 Accept: Implementers can work on disjoint files.
 Assets: 
 Risk: low
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-A [P2, L] Speech pipeline core
 Goal: Keyed pipelines (mic, later loopback): hub Raw16k consumer, then the Silero segmenter, then an ordered engine worker with a latency budget, then events. Epoch discipline and the Rust mute gate. A Whisper engine adapter (whisper.rs keeps model management and delegates legacy start_recording). Whisper downloads move to the model store. The HTTP utterance engine: OpenAI-compatible, Groq and Moonshine HTTP in Rust, with a limiter and keys only in headers.
@@ -910,7 +952,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml speech::pipeline (fake e
 Accept: No segment leaks across sessions. | Whisper downloads are adopted into the store.
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-B [P2, L] sherpa CPU STT engines
 Goal: Engine adapters:
@@ -930,7 +972,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml speech -- --ignored (wit
 Accept: All five engines decode through the pipeline, and tags ride on finals.
 Assets: Nemotron int8 (~650 MB), Parakeet Ultra, Qwen3-ASR-0.6B (0.94 GB), SenseVoice, Moonshine v2: sequential, only when tested
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-C [P2, L] Language router, two-pass orchestration, Smart Turn
 Goal: router.rs: a catalog-driven table mapping language, tier, VRAM and VC state to a streaming model, a final model and a runtime. It encodes every never-route rule:
@@ -952,7 +994,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml speech::router speech::t
 Accept: The rules are enforced in code, and turn_end never shortens caption finals.
 Assets: Smart Turn v3.2 int8 ONNX (8 MB)
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-D [P2, L] transcribe.cpp GPU tier
 Goal: Engine adapters:
@@ -972,7 +1014,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml speech::engines::transcr
 Accept: The GPU tier is offered only when the governor allows it.
 Assets: 
 Risk: high
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-E [P2, M] STT TS: local backend and zero setup
 Goal: A TS driver for speech events that maps segmentId, revision and lang into TextEvent. Local panel: language (auto or explicit), tier, two-pass, Smart Turn commit, hotwords, route preview and ModelRequirement. A 'Best for my PC' option. Consent before downloading. Auto-restart on stream errors. 'local' counts as heavy for connectingFallbackMs. A TS router mirror tested against the shared fixture.
@@ -985,7 +1027,7 @@ Verify: pnpm typecheck; pnpm test:unit -- src/core/services/stt | Manual: fresh 
 Accept: Zero setup works on a clean profile.
 Assets: 
 Risk: low
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-F [P2, M] Legacy STT backends on the new plumbing
 Goal: rustCapturePolling, openai_audio (Groq) and Moonshine use speech:utterance from the Rust HTTP engine. Vosk is fed by the hub, keeping audio:chunk compatibility. Azure, Deepgram, native and external-mic report status through the status channel. Moonshine HTTP is marked legacy, and dead vosk stubs are removed.
@@ -998,7 +1040,7 @@ Verify: pnpm typecheck; pnpm test:unit | Manual: Vosk and Groq
 Accept: No backend regresses.
 Assets: 
 Risk: low
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-G [P2, L] TTS sentence pipeline and unified Rust sink
 Goal: pipeline.ts: a splitter covering JP punctuation, merging and capping fragments, synthesizing N ahead in order, with cancel and skip. tts_sink: persistent output per device, a queue with cancel and flush, binary IPC, and routes device|voiceChanger|both through the VC aux API with the P0 back-pressure. A top-level route setting replaces the per-backend routeThroughVoiceChanger flags, which are migrated. Azure, VOICEVOX, Uberduck and SAPI (self-playing for now) use the PCM contract or an adapter. Service_Sound is folded in. Stop and skip in StatusFooter. Device lists come from cpal names, migrating old SAPI names.
@@ -1030,7 +1072,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml local_tts -- --ignored |
 Accept: Kokoro RTF ≤ 0.3 on 4 threads (dev CPU). | No inference on the main thread.
 Assets: kokoro-multi-lang int8 (~130 MB) | one Piper voice (~60 MB)
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P2-I [P2, M] Generic OpenAI-compatible streaming TTS client
 Goal: openai_speech.rs: POST {model, input, voice, response_format pcm|wav, speed, stream, extra}, optional Bearer, bytes_stream into the sink, per-request timeout. Presets: Kokoro-FastAPI :8880, Chatterbox :5555, Voxtral-4B-TTS on vLLM, IndexTTS-2.5, VoxCPM2, and qwentts tts-server. Legacy kokoro, chatterbox and melo enums map onto it, keeping their settings. neural_sidecar streams. The reference sidecar gets a streaming mode and binds 127.0.0.1.
@@ -1056,7 +1098,7 @@ Verify: All gates plus the P2 exit matrix
 Accept: P2 exit criteria met
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-S0 [P3, M] P3 scaffold: voice-engine contracts
 Goal: Take the checkpoint. Add every new VC parameter end to end with no-op serde defaults: slotId, block, context, precision, f0Method (+swiftf0, crepe, pesto, fusion), rmsMix, formant, noiseScale, silenceDb, partialDecode, f0Cache, governor, denoiser, hotSlots, vramBudget, ep (+tensorrt_rtx, dml_hp, which also updates normalize_execution_provider and its test). Add manifest v2 fields. Stub modules: vc/engine/*, neural_audio/{gpu,denoise}/*, vc/import/* commands, pitch files, bench v2. Split inspector_voice_changer.tsx into inspector/voice_changer/*. Add the TS IPC contract. Bundle vc-templates as resources.
@@ -1069,7 +1111,7 @@ Verify: All gates; VC bench within 5% of the P0 baseline
 Accept: No behaviour change.
 Assets: 
 Risk: low
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-A [P3, L] Template matrix and base-asset export pipeline
 Goal: Full split-graph templates for v1/v2 × 32/40/48k × f0/nof0 × HiFiGAN-NSF/RefineGAN/MRF, in fp32 and fp16-internal. Exports:
@@ -1088,7 +1130,7 @@ Verify: python scripts/vc-templates/parity_test.py --all (fp32 ≤1e-4, fp16 ≤
 Accept: Every matrix cell passes parity or is documented as unsupported. | Bundled templates total ≤ 30 MB.
 Assets: embedder checkpoints (5 × ~360 MB, sequential across sessions) | pitch and denoiser checkpoints (small)
 Risk: medium: RefineGAN and MRF export correctness
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-B [P3, L] Production .pth/.zip importer and slot store
 Goal: Zip guard. The --headless vc-import-worker running in a Job Object. The allow-list unpickler. Metadata detection. weight_norm fold. Template selection and shape validation. The weights.f32.bin writer. Manifest sigil-rvc-1 plus speakers.bin and index adoption. Smoke inference. sha256 cache. Specific rejection codes. Commands for import, slot CRUD and set-active. Auto-import of the default voice. A 200-file fuzz corpus.
@@ -1101,7 +1143,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml vc::import: tiny fixture
 Accept: T8 compatibility met on the user-supplied corpus.
 Assets: 
 Risk: high
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-C1 [P3, L] Engine algorithmic core: partial decode, anchored noise, phase0, F0 cache, fixed shapes
 Goal: SigilRvc family over the split templates. Harness fixed-block mode with a pre-accumulator. The enc and flowdec partial decode. Counter-based time-anchored noise. phase0 continuity. Incremental F0 with cache. Shape plans per preset. Speaker vector g with blending. The legacy full-decode path accepts fp16 I/O and falls back when there is no skip support. Per-slot embedder resolution and int8 encoder selection.
@@ -1114,7 +1156,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml vc: existing harness tes
 Accept: Extra-context cost scaling meets T2, and T5 is met in P3-F runs.
 Assets: 
 Risk: high
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-C2 [P3, L] GPU layer: IOBinding, CUDA graphs, priority stream/queue, TensorRT-RTX, arena
 Goal: neural_audio/gpu:
@@ -1133,7 +1175,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml neural_audio::gpu (plan 
 Accept: Zero host allocations per block. | T3 met. | A TRT cache hit loads in ≤ 3 s.
 Assets: TensorRT-RTX runtime (<200 MB, one download)
 Risk: high
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-D [P3, L] Pitch bank, retrieval and post stage
 Goal: Pitch: SwiftF0 resampled to the hop-160 grid, a real CREPE-tiny, streaming PESTO, F0 fusion, an improved octave gate, singing range, and auto-key.
@@ -1163,7 +1205,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml voice_changer: stall rec
 Accept: T7 met. | With the denoiser off, e2e latency is unchanged (±2 ms).
 Assets: 
 Risk: high
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-F [P3, L] Benchmark v2, quality metrics, competitor compare, autotuner
 Goal: Quality metrics: MCD, F0 RMSE/GPE/VUV, CAMPPlus cosine, DNSMOS, CER via Sigil STT, click detector. Offline ceiling. Contention and live-record modes. A compare mode for competitor WAVs, with drivers for RVC WebUI and Applio. The autotuner search. A counting-allocator test. A listening-test kit. run-matrix and perf-gate scripts. VC_BENCHMARKS scorecard.
@@ -1176,7 +1218,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml bench (metrics on analyt
 Accept: The scorecard covers T1–T9. | The autotuner returns a valid preset on CPU and GPU.
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-G [P3, L] Voice-changer frontend
 Goal: Slot manager with drag-and-drop import, rename, delete and duplicate, voice hotkeys, and model merge. First-run one-click base set plus default voice. Presets: Streamer, Low latency, Quality, Studio-TRT. All new parameters. Embedder and vocoder shown read-only. EP status with its reason. Live e2e/p99/dropped/VRAM readouts. Benchmark and autotune panel. TRT build progress.
@@ -1189,7 +1231,7 @@ Verify: pnpm typecheck; pnpm test:unit (parameter normalization parity with Rust
 Accept: Every engine feature is reachable, with no silent remapping.
 Assets: 
 Risk: low
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P3-H [P3, M] Zero-shot and singing export spike
 Goal: Export Seed-VC realtime (XLSR/whisper content encoder, DiT step, vocoder, CAMPPlus), DDSP-SVC 6.3 (encoder, velocity) and MeanVC2 to ONNX. Write reference Python sampler loops. Check offline parity (SNR ≥ 35 dB). Measure step cost on the 4090 GPU and CPU. Write ADR 0006 with a go or no-go per family.
@@ -1261,7 +1303,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml llm_server | Manual: Hy-
 Accept: Helpers are managed with no orphans, and choices obey the governor.
 Assets: GGUF models on demand (≥1 GB each, with consent)
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P4-C [P4, L] Translation pipeline host
 Goal: Engine contract returns a Promise and throws (Azure, LibreTranslate and onDevice ported). Utterance tracker. LocalAgreement-2: word LCP, or Intl.Segmenter for CJK; commits go out as interims, FINAL only on the STT final; handles interim-after-final and revisions. Throttling and latest-wins. Prompt builder: Hy-MT2 context and terminology blocks, TranslateGemma, MiLMMT, Seed-X raw prompt, generic; rolling final-pair context; glossary filtered to the line; source fenced as data. Router: per-pair chain, circuit breaker, cloud-to-local fallback, interim engine. languages.ts canonicalizes BCP-47 to Azure, ISO-639-1 and FLORES. turnEnd triggers commits. A createTranslationPipeline factory for multiple instances.
@@ -1300,7 +1342,7 @@ Verify: pwsh scripts/runtime-packs/bergamot/build.ps1; manual en↔ja < 150 ms p
 Accept: The helper works, or the ADR records a no-go and names NLLB and Hy-MT2 CPU as the fallback.
 Assets: bergamot-translator source (one fetch) | one direction's model (~40 MB)
 Risk: high: marian/intgemm on MSVC
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P4-F [P4, M] Translation inspector UI
 Goal: Panels for LLM (presets, reasoning, templates), NLLB, Bergamot, DeepL and LibreTranslate (including an LTEngine preset). A router chain editor and interim engine picker. Glossary and context editors outside Deactivatable, so they apply live.
@@ -1482,7 +1524,7 @@ Verify: pnpm test:unit (a test that 'text' subscribers never receive others.*) |
 Accept: The user's own captions are unaffected.
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P6-B [P6, L] Caption window and SteamVR overlay
 Goal: An always-on-top, click-through caption window: an early route with no ApiServer, closing with main. A vr_overlay plugin using lazy openvr_api.dll FFI (Background app type, handles VREvent_Quit), rendered with cosmic-text and tiny-skia (CJK and RTL) at 10 Hz or less. openvr_api.dll is a runtime pack.
@@ -1534,7 +1576,7 @@ Verify: Manual: time to first audio and RTF logged; cloning from a library clip
 Accept: Streaming cloning works.
 Assets: qwentts.cpp source | Qwen3-TTS 0.6B GGUF (sequential)
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P6-F [P6, L] Experimental ggml TTS helpers: Magpie, Breeze, OmniVoice, Fish S2 Pro
 Goal: A time-boxed spike per engine: NeMo-Speech.cpp Magpie (sharing the runtime with Nemotron if feasible), Breeze-TTS-2.cpp, omnivoice.cpp and s2.cpp. Each becomes a helper-process preset (server or a thin shim) or gets a no-go note. Fish S2 Pro is also reachable through the fishSpeech backend.
@@ -1671,7 +1713,7 @@ Verify: cargo test --manifest-path src-tauri/Cargo.toml bench speech::router; pn
 Accept: Reports are published and friends can export theirs.
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P7-B [P7, L] Voice-changer campaign, competitor head-to-head, preset tuning
 Goal: H1 live-record runs from friends. Competitor comparison with the user's recordings or installs. Listening tests: X-VC vs Seed-VC vs MeanVC2, and SwiftF0 vs RMVPE in cents. Final T1–T10 scorecard. Tune presets and autotuner priors.
@@ -1710,7 +1752,7 @@ Verify: pnpm tauri build; pwsh scripts/release/verify-bundle.ps1; pwsh scripts/r
 Accept: Hashes are pinned and the smoke passes.
 Assets: 
 Risk: medium
-Notes: 
+Notes: amended by '## P1 outcomes (binding amendments for P2–P7)' (P1-I0).
 
 ### P7-I0 [P7, S] Final integrate
 Goal: Apply the approved default flips and migrations, run the final gates, and prepare the release notes.

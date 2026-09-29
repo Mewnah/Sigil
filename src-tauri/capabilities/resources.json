@@ -1,0 +1,11 @@
+{
+  "identifier": "resources",
+  "description": "IPC for the resources plugin (VRAM budget, claims and model recommendations) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "resources:default"
+  ]
+}

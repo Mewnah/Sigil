@@ -7,7 +7,7 @@ Detailed reference for **STT/TTS backends**, **reliability**, **voice changer** 
 - [STT / TTS backend minimum configuration](#stt--tts-backend-minimum-configuration)
 - [Remote client](#remote-client)
 - [Upstream verification (Parakeet, speaches, sherpa-onnx)](#upstream-verification-parakeet-speaches-sherpa-onnx)
-- [In-process sherpa-onnx (optional / future)](#in-process-sherpa-onnx-optional--future)
+- [Models & Runtimes](#models--runtimes)
 - [STT reliability and troubleshooting](#stt-reliability-and-troubleshooting)
 - [Voice changer](#voice-changer)
 - [GPU acceleration, diagnostics and logs](#gpu-acceleration-diagnostics-and-logs)
@@ -41,8 +41,8 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 
 | Backend | Minimum required |
 |--------|-------------------|
-| **Whisper (Rust)** | First run downloads the chosen GGML **`.bin`** from Hugging Face (`ggerganov/whisper.cpp`) into **`app_data/whisper/`**. Each download run writes its own **`.partial`** file and **renames** it on success; failed/incomplete/cancelled downloads remove only that run’s partial file, never a completed model. Very small or HTML-looking payloads are rejected. You can also drop a matching `.bin` into that folder manually. Model ids: `tiny`, `base`, `small`, `medium` (each also `.en`), their `-q5_1` / `-q8_0` builds (`medium` uses `-q5_0`), `large-v3-turbo` (plus `-q5_0` / `-q8_0`) and `large-v3` (plus `-q5_0`). The old `medium-q5_1` ids never existed upstream and load `-q5_0`; an unknown id is an error instead of silently loading `base.en`. **Anime-Whisper** is bring-your-own: convert `litagin/anime-whisper` with whisper.cpp's `models/convert-h5-to-ggml.py` and select the `.bin` as a local model (Japanese is forced and no prompt is used). |
-| **Vosk** | The catalog is served from the **Rust** plugin (`get_vosk_models`). The app downloads **`{app_data}/vosk-models/{model_id}.zip`** via the Rust HTTP client (official Alpha Cephei URLs unless you set **Custom model URL**). **vosk-browser** loads the zip from AppData via Tauri **`convertFileSrc`** (asset protocol, scoped to **`$APPDATA/vosk-models/**`** only); repeat use does not re-fetch the CDN. Custom URL must point to a full **`.zip`**; it overrides the catalog URL but the on-disk name still follows the selected **model id**. |
+| **Whisper (Rust)** | First run downloads the chosen GGML **`.bin`** from Hugging Face (`ggerganov/whisper.cpp`) into **`app_data/whisper/`** (the same models can also be installed from [Models & Runtimes](#models--runtimes) or with `Sigil.exe --headless fetch whisper/<id>`, pinned to a fixed revision and checksum; files already in `whisper/` are adopted without downloading again). Each download run writes its own **`.partial`** file and **renames** it on success; failed/incomplete/cancelled downloads remove only that run’s partial file, never a completed model. Very small or HTML-looking payloads are rejected. You can also drop a matching `.bin` into that folder manually. Model ids: `tiny`, `base`, `small`, `medium` (each also `.en`), their `-q5_1` / `-q8_0` builds (`medium` uses `-q5_0`), `large-v3-turbo` (plus `-q5_0` / `-q8_0`) and `large-v3` (plus `-q5_0`). The old `medium-q5_1` ids never existed upstream and load `-q5_0`; an unknown id is an error instead of silently loading `base.en`. **Anime-Whisper** is bring-your-own: convert `litagin/anime-whisper` with whisper.cpp's `models/convert-h5-to-ggml.py` and select the `.bin` as a local model (Japanese is forced and no prompt is used). |
+| **Vosk** | The catalog is served from the **Rust** plugin (`get_vosk_models`). The app downloads **`{app_data}/vosk-models/{model_id}.zip`** through Sigil's model store (official Alpha Cephei URLs unless you set **Custom model URL**): one download at a time, resumed after a break (Stop keeps the partial file), a 30 s no-data limit, HTML pages rejected, and a full zip check before an existing model is replaced. The default `small-en-us-0.15` is pinned to a checksum; importing a local zip is checked the same way. **vosk-browser** loads the zip from AppData via Tauri **`convertFileSrc`** (asset protocol, scoped to **`$APPDATA/vosk-models/**`** only); repeat use does not re-fetch the CDN. Custom URL must point to a full **`.zip`**; it overrides the catalog URL but the on-disk name still follows the selected **model id**. |
 | **Moonshine** | **Moonshine server** reachable at the configured URL (default `http://localhost:8090`). Must expose `GET /health` and `POST /transcribe` (JSON body with base64 WAV), as in Useful Sensors’ published container (`moonshine-onnx-server`). Example: `docker run -p 8090:8090 useful-sensors/moonshine-onnx-server` (or `:tiny` for a smaller model). Set **language** to what the server expects (e.g. `en`). |
 | **Local HTTP API (OpenAI-style)** | **Base URL** including `/v1` (e.g. `http://127.0.0.1:8000/v1`). Sigil sends one `POST …/audio/transcriptions` per spoken sentence (multipart `file` as 16 kHz mono WAV, `model`, optional `language`, `prompt`, `temperature=0`, `response_format=json`), matching the [OpenAI transcription API](https://platform.openai.com/docs/api-reference/audio/createTranscription) shape. You must set **model id** in the inspector to whatever your **local** server expects (field defaults empty). **API key** is optional for localhost; it is sent only in the `Authorization` header. |
 | **Groq Whisper (free cloud)** | A free API key from [console.groq.com/keys](https://console.groq.com/keys). Model `whisper-large-v3-turbo` (default) or `whisper-large-v3`. Speech is sent to Groq. See [Groq preset](#groq-whisper-preset). |
@@ -64,11 +64,44 @@ Before relying on a local stack for **NVIDIA Parakeet** or **sherpa-onnx**, conf
 
 Re-run a quick **latency and WER** check on your own machine (VRChat + OBS load) after any engine change; published benchmarks do not replace on-device measurement.
 
-## In-process sherpa-onnx (optional / future)
+## Models & Runtimes
 
-Bundling **sherpa-onnx** inside the Sigil Tauri binary via Rust **FFI** could reduce HTTP overhead and ease single-artifact distribution, at the cost of **larger binaries**, **native build complexity** (per OS/CPU), **crash blast radius** vs an isolated sidecar, and **model update** shipping. Prefer the **sidecar** pattern (Moonshine Docker or OpenAI-compatible server) until a concrete product requirement (e.g. offline boxed builds) justifies FFI maintenance.
+The **Models & Runtimes** tab (Sigil navigation, above Settings) manages everything Sigil downloads: speech models, runtime packs, voice templates and benchmark assets. It is backed by one model store shared with `Sigil.exe --headless fetch`.
+
+- **Entries** are grouped by kind (Models, Runtime packs, Voice templates, Benchmark assets) and then by family, with a search box and an **Installed only** filter (entries that are downloading, failed or paused always show). Each row shows the size, version, license (as plain information), variant and VRAM notes, and the state.
+- **Actions:** **Download** / **Update** / **Retry** / **Resume**, **Cancel** (keeps the partial download so the next attempt resumes), **Check files** (re-hashes the files; a damaged install is removed), **Delete** (with a confirmation), and **Import…** (a file for single-file entries, a folder for multi-file ones). Progress shows percent, bytes, speed, time left, the server in use, the attempt number and the file.
+- **"Import only"** entries are Sigil-built assets (runtime packs, templates) that are not published anywhere yet: install them with **Import…**, a custom mirror, or `SIGIL_LOCAL_ASSETS`.
+- **"Found on this PC"** means an existing file in `whisper\` or `vosk-models\` was recognised by its checksum and adopted without downloading again.
+- **Download source:** **Automatic** (the catalog's order; every Hugging Face file also has an hf-mirror.com fallback), a preferred mirror (Hugging Face, hf-mirror.com, ModelScope, GitHub releases), or a **custom mirror** laid out as `<URL>/<entry id>/<file path>` (https anywhere, http only on the local network). Files from any source are checked against the catalog's pinned checksums.
+- **Parallel downloads:** 1 by default, at most 2, and never two from the same server. A download that receives nothing for 30 s is retried with resume; there is no overall time limit.
+- **Storage:** total and per-family disk use (installed files plus resumable partial downloads), free space, and the models folder (`%APPDATA%\com.sigil.app\models\`; runtime packs in `runtimes\`).
+- **GPU and runtimes** card: your GPUs, driver and CUDA versions, video memory (Sigil's share and all apps), which acceleration options work on this PC and why not (for example "driver too old" or "GPU too old"), and suggested model sizes for local translation, Qwen3-TTS and the GPU speech-to-text final pass. Suggestions leave room for the voice changer while it runs (a 7B translation model only when it fits next to it; Qwen3-TTS 0.6B while the voice changer runs on a card under 16 GB). **Check again** re-probes.
+
+**Command line** (for troubleshooting and scripted installs; development builds are in `src-tauri\target\debug\`):
+
+```
+Sigil.exe --headless fetch <id>... [--mirror auto|huggingface|hf-mirror|modelscope|github-release|custom] [--custom-url URL]
+Sigil.exe --headless fetch --list          # catalog, install states and sizes
+Sigil.exe --headless sysinfo [--out f]     # GPUs, drivers, VRAM budget, suggested model sizes (JSON)
+Sigil.exe --headless engine-probe <sherpa|transcribe|echo> [model] [wav]   # load a native runtime and run a smoke test
+```
+
+`SIGIL_APP_DATA_DIR=<folder>` points any of these at a scratch profile instead of `%APPDATA%\com.sigil.app`.
+
+### CPU speech runtime pack (sherpa-onnx)
+
+`runtime/sherpa-onnx` (sherpa-onnx 1.13.8, CPU only; 8 MB download, 22 MB installed) is the CPU runtime for the upcoming local speech engines (SenseVoice, Nemotron streaming, Qwen3-ASR 0.6B, Kokoro, Piper). It is optional: Sigil starts and every existing feature works without it. Install it from Models & Runtimes or with `Sigil.exe --headless fetch runtime/sherpa-onnx`; check it with `Sigil.exe --headless engine-probe sherpa [model folder] [wav]`. The error **"another ONNX Runtime is already loaded"** means some other `onnxruntime.dll` (for example Windows ML's copy in System32) was loaded into Sigil before the pack; restart Sigil so the pack loads first. Models that are not from the catalog are test-loaded in a separate process first, so a damaged model folder cannot crash Sigil.
+
+### GPU speech runtime packs (transcribe.cpp)
+
+`runtime/sigil-transcribe-<variant>` (`cuda13`, `vulkan`, `cpu-avx512`, `cpu-avx2`, `cpu`) run GGUF speech models such as Qwen3-ASR 1.7B. They are built locally and installed by **Import…** or `SIGIL_LOCAL_ASSETS` until they are published. The best variant for the PC is picked automatically; `cuda13` needs driver R580 or newer, a GeForce 16/20 series or newer GPU and the NVIDIA GPU runtime pack (only its cuBLAS is used); GPU variants need an AVX2 CPU. Budget about 3.5 GB of video memory for Qwen3-ASR 1.7B Q8_0. The speech-to-text backend that uses them arrives with the P2 speech engine.
+
+### Local LLM runtime packs (llama-server)
+
+`runtime/llama-server-vulkan` (default GPU build), `runtime/llama-server-cuda13` and `runtime/llama-server-cpu` are the official llama.cpp server builds used by the upcoming local translation. Sigil runs them as helper processes that listen only on `127.0.0.1` with a random key and are killed together with Sigil, even when Sigil is ended in Task Manager.
 
 ---
+
 
 ## STT reliability and troubleshooting
 
@@ -107,7 +140,7 @@ All backends implement the same contract toward `Service_STT`:
 
 ### Input device resolution ([`src/utils/rustAudioInput.ts`](../src/utils/rustAudioInput.ts))
 
-Backends that use **Rust cpal** (Whisper, Vosk, Moonshine, local HTTP STT) call `resolveRustInputDeviceForInvoke(perServiceDevice)`, which uses the first of these that is set:
+Backends that use **Rust capture** (Whisper, Vosk, Moonshine, local HTTP STT, Groq) call `resolveRustInputDeviceForInvoke(perServiceDevice)`, which uses the first of these that is set:
 
 1. The STT inspector’s per-engine **input device** (a cpal device name).
 2. **Settings → Audio → Default input device** — on the desktop app this is the **native (cpal)** device, persisted as `audioInputDeviceNative`.
@@ -116,6 +149,8 @@ Backends that use **Rust cpal** (Whisper, Vosk, Moonshine, local HTTP STT) call 
 A per-engine value of `default` / `communications` means “system default” and stops there (it does **not** fall through to the Settings device); the same sentinels in the Settings field also mean system default. The Web Audio `deviceId` in `audioInputDevice` is **never** passed to cpal; it is only used by Deepgram (webview capture) when Deepgram’s own device is empty. Azure uses only its own device field. Older builds stored the Settings cpal name in `audioInputDevice`; on first run it is migrated to `audioInputDeviceNative` when it exactly matches a device returned by `plugin:audio|list_input_devices`.
 
 **User impact:** Pick the mic once under **Settings → Audio** and every Rust-captured engine uses it; override per engine in the STT inspector only when one engine needs a different mic.
+
+**Shared microphone and device changes (capture hub):** every Rust-captured engine now shares **one stream per microphone**, so two engines on the same mic open it once. With **System default** selected, STT follows the Windows default microphone when it changes. Unplugging a microphone no longer ends STT: a toast says the device stopped and that Sigil reconnects it, and when it is plugged back in (or a stream that delivered no audio for 2.5 s is restarted) a second toast confirms it is working again, in the same session. A saved device that is not connected stays selected and is shown as **(not connected)**. Muting STT stops audio reaching the engines at the source. Browser-captured engines (Azure, Deepgram, Web Speech) restart by themselves after the default microphone changes. `SIGIL_CAPTURE_SHARING=0` is an internal switch that restores one stream per engine (for A/B soak tests only); stream opens, failures and recoveries are logged under `sigil::audio::hub`.
 
 ### Voice detection (Silero VAD)
 
@@ -129,7 +164,7 @@ Whisper and the utterance engines (Moonshine, local HTTP, Groq) are gated by the
 | Shortest speech kept | 250 ms | Shorter blips are discarded; a sentence starts only once this much speech is confirmed. |
 | Longest sentence | 18000 ms | Longer speech is split at its quietest moment. |
 
-The old volume-gate fields (silence threshold dB, silence duration, minimum chunk) are ignored. For Whisper, turning **VAD off** now means 5-second forced splits, still Silero-gated. A device error flushes the open sentence first, then ends the capture.
+The old volume-gate fields (silence threshold dB, silence duration, minimum chunk) are ignored. For Whisper, turning **VAD off** now means 5-second forced splits, still Silero-gated. A device outage closes the open sentence first; the capture then continues once the device is back.
 
 ### Per-backend notes
 
@@ -143,7 +178,7 @@ The old volume-gate fields (silence threshold dB, silence duration, minimum chun
 - **No-speech drop:** each utterance's no-speech probability is computed the way OpenAI defines it (P(`<|nospeech|>`) at the start of the transcript). Above **0.6** (setting "No-speech cutoff"; 1 disables) the utterance is dropped. This replaces whisper.cpp's own value, which is stale for multilingual models and prompts (they used to print "you" / "Thank you." on silence).
 - **Hallucination filter** (default on): drops curated stock phrases ("Thanks for watching", per-language lists) only when they are the whole sentence, collapses repeat loops (3 or more; CJK uses character n-grams) and strips markers such as `[MUSIC]` or `(laughs)`.
 - **Hotwords** and the **context prompt** are passed to Whisper as its initial prompt. **CPU threads** default to about half the logical CPUs (at most 4). Stopping cancels a running decode promptly.
-- Other events: `whisper:speech_start` `{seq, start_ms}` and `whisper:capture_error` `{message}` (the input device failed and the recording ended).
+- Other events: `whisper:speech_start` `{seq, start_ms}` and `whisper:capture_error` `{message}` (voice detection failed and the recording ended). A lost microphone is not an error any more: it is reported as `audio:stream_error` / `audio:stream_recovered` and the recording continues.
 - **Silence check:** every decode logs `transcribe utterance seq=… audio_ms=…` at info level under the log target `sigil::stt::whisper` in the [log file](#gpu-acceleration-diagnostics-and-logs). Ten minutes of silence and keyboard noise should add no such line.
 
 #### Vosk ([`vosk.ts`](../src/core/services/stt/services/vosk.ts))
@@ -151,7 +186,7 @@ The old volume-gate fields (silence threshold dB, silence duration, minimum chun
 - Models load from **AppData** via Tauri **`convertFileSrc`**. The asset protocol scope in `tauri.conf.json` is limited to **`$APPDATA/vosk-models/**`** — the rest of app data (settings with API keys, other models) and the WebView2 profile under `$APPLOCALDATA` are **not** readable through it. vosk-browser fetches the zip as data from a `blob:` worker, so release builds need CSP `worker-src blob:` and `connect-src` for `asset:` (macOS/Linux) and `https://asset.localhost` (Windows, because the window uses `useHttpsScheme`).
 - Tauri event **`vosk:download_progress`** (`{ file, progress }`, same shape and rate as Whisper’s; `-1` when the server sends no size) while the model zip downloads; shown as interim status (“Downloading …”).
 - Model WASM load has a **120s** timeout.
-- Capture via `plugin:audio|start_audio_capture`. `audio:chunk` payloads carry the **device’s** sample rate and channel count (the requested 16 kHz is not applied in Rust); `vosk.ts` downmixes to mono and passes the device rate to the recognizer.
+- Capture via `plugin:audio|start_audio_capture` from the shared capture hub. With `sampleRate: 16000` the `audio:chunk` payloads are 16 kHz mono (about a sixth of the old 48 kHz stereo traffic); every payload states its own sample rate and channel count, and `vosk.ts` downmixes when needed and passes that rate to the recognizer.
 
 #### Utterance engines: Moonshine, local HTTP, Groq ([`rustCapturePolling.ts`](../src/core/services/stt/rustCapturePolling.ts), [`utterancePipeline.ts`](../src/core/services/stt/utterancePipeline.ts))
 
@@ -221,6 +256,7 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 | Groq session stopped | Daily cap reached, or a rejected key (4xx). The status line and toast say which. |
 | Stuck “connecting” ~45s | Backend never called `onStart` (e.g. Deepgram before `getUserMedia` catch; reduced after fix). |
 | Wrong microphone | Rust engines: per-engine **Input device**, else the native **Settings → Audio** default (see [Input device resolution](#input-device-resolution-srcutilsrustaudioinputts)). Azure / Deepgram: their own browser-device picker. |
+| "Audio device … stopped" toast | The microphone was unplugged, disabled or stopped delivering audio. Sigil reconnects it by itself; STT stays running. If it never recovers, check the device in Windows sound settings; a saved device shown as "(not connected)" needs replugging or another choice. |
 
 ### Related files
 
@@ -311,12 +347,12 @@ Rust is authoritative. Every voice-changer setting, including the **input, outpu
 | Provider | When to use | Requirements |
 |----------|-------------|--------------|
 | **CPU** | Default; maximum compatibility | Always available |
-| **CUDA** | NVIDIA GPU acceleration | NVIDIA GPU, a current driver, and the **NVIDIA GPU runtime pack** (Settings → GPU & diagnostics). Without the pack Sigil falls back automatically. |
+| **CUDA** | NVIDIA GPU acceleration | GeForce 16/20 series (Turing) or newer, driver **R580+** (CUDA 13), and the **NVIDIA GPU runtime pack** (Models & Runtimes, or Settings → GPU & diagnostics). Without the pack Sigil falls back automatically. |
 | **DirectML** | Windows GPU without CUDA | AMD/Intel/NVIDIA via DirectML; the installer bundles `DirectML.dll` |
 
 A GPU request never falls back silently: sessions try **CUDA → DirectML → CPU** (a DirectML request tries DirectML → CPU), each GPU step is checked with a tiny test model before the real one loads, and the provider actually in use plus the reason for any fallback appear in the voice-changer status panel, a toast, the System log and **Settings → GPU & diagnostics**. See [GPU acceleration, diagnostics and logs](#gpu-acceleration-diagnostics-and-logs).
 
-Neural ONNX TTS (Kitten, local speech package) always runs on the **CPU**: the `kittentts` crate builds its own ONNX Runtime session, so the TTS inspector’s execution provider choice is only stored. The real outcome is recorded under **Local TTS** in the diagnostics panel. Loading and synthesis run on a background thread, so the UI stays responsive.
+Neural ONNX TTS (Kitten, local speech package) always runs on the **CPU**: the KittenTTS code (now part of Sigil) builds its session on the CPU provider, so the TTS inspector’s execution provider choice is only stored. The real outcome is recorded under **Local TTS** in the diagnostics panel. Loading and synthesis run on a background thread, so the UI stays responsive. Hub models are downloaded one file at a time into `%APPDATA%\com.sigil.app\models\kitten\` (an existing Hugging Face cache copy is reused).
 
 ### ONNX chunk shape
 
@@ -331,12 +367,14 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## GPU acceleration, diagnostics and logs
 
-**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**.
+**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**. The **Models & Runtimes** tab's **GPU and runtimes** card shows which acceleration options this PC supports and why not.
 
-- **Installers** (NSIS per-user, recommended, and MSI) put `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll` and `DirectML.dll` next to `Sigil.exe`. Nothing GPU-related is load-time linked: Sigil starts on every PC.
-- **NVIDIA GPU runtime pack** (about 1.4 GB: CUDA 12.9.1 + cuDNN 9.10.2) is needed for CUDA and is installed from the diagnostics panel into `%APPDATA%\com.sigil.app\runtimes\nvidia-cu12`. Downloads come only from pinned NVIDIA URLs, one file at a time, resumable, with pinned sha256; only `*.dll` files are extracted. Without the pack, a CUDA request runs on DirectML, then CPU, with the reason shown. Removing a pack that is in use completes at the next start.
-- **Test GPU acceleration** runs `Sigil.exe --headless ep-probe` in a separate process (the app never pays for a CUDA context it does not use); the report is saved in `app_data\diagnostics\ep-probe-deep.json`. A light probe runs at every start without loading any GPU runtime.
-- **Log file:** `%LOCALAPPDATA%\com.sigil.app\logs\sigil.log` (10 MB × 5 rotating files, panics included). Warnings and errors are also forwarded to the in-app System log. `SIGIL_LOG` sets verbosity with tracing `Targets` syntax, for example `SIGIL_LOG=sigil=debug,warn` (default `sigil=info,ort=info,warn`).
+- **What the installer contains:** the installers (NSIS per-user, recommended, and MSI) put `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll` (ONNX Runtime 1.28) and `DirectML.dll` next to `Sigil.exe`. **They do not contain NVIDIA's CUDA runtime**, so no installer runs CUDA out of the box: CUDA needs the NVIDIA GPU runtime pack below, and without it NVIDIA GPUs use DirectML. Nothing GPU-related is load-time linked: Sigil starts on every PC.
+- **CUDA requirements:** an NVIDIA GeForce 16/20 series (Turing) or newer GPU, driver **R580 or newer** (CUDA 13), and the NVIDIA GPU runtime pack. Older GPUs and drivers use DirectML automatically, with the reason shown.
+- **NVIDIA GPU runtime pack** (about 1.9 GB download: CUDA 13.2 runtime, cuBLAS 13.3, cuFFT 12.2 and cuDNN 9.26 for CUDA 13; about 1.4 GB installed). Install it from **Models & Runtimes** as **NVIDIA GPU runtime (CUDA 13, cuDNN 9)** (`runtime/nvidia-cuda13`, installed into `%APPDATA%\com.sigil.app\runtimes\nvidia-cuda13\<version>\cuda13\`; also `Sigil.exe --headless fetch runtime/nvidia-cuda13`), or from **Settings → GPU & diagnostics** (the older installer, `runtimes\nvidia-cu13`). Sigil uses the Models & Runtimes pack when both are installed, so nobody needs to download it twice. Downloads come only from pinned NVIDIA URLs, one file at a time, resumable, with pinned sha256; only the DLLs are extracted. Without the pack, a CUDA request runs on DirectML, then CPU, with the reason shown. A pack removed while Sigil runs keeps working as DirectML until the next start (loaded DLLs cannot be unloaded).
+- **Old runtime folders:** packs from earlier Sigil versions (for example `runtimes\nvidia-cu12`, CUDA 12) are never loaded by this version and can be deleted to free 1.4–1.9 GB (`plugin:runtime|remove_legacy_runtime`; a Remove button in the Models tab is planned).
+- **Test GPU acceleration** runs `Sigil.exe --headless ep-probe` in a separate process (the app never pays for a CUDA context it does not use); the report is saved in `%APPDATA%\com.sigil.app\diagnostics\ep-probe-deep.json` and is discarded when Sigil is updated or a runtime pack is installed or removed. It reports which NVIDIA runtime install and which CUDA provider were used. A light probe runs at every start without loading any GPU runtime.
+- **Log file:** `%LOCALAPPDATA%\com.sigil.app\logs\sigil.log` (10 MB × 5 rotating files `sigil.1.log` … `sigil.4.log`, panics included; **Open log folder** opens it). Warnings and errors are also forwarded to the in-app System log. `SIGIL_LOG` sets verbosity with tracing `Targets` syntax, for example `SIGIL_LOG=sigil=debug,warn` (default `sigil=info,ort=info,warn`). Useful targets: `sigil::ort` (execution providers), `sigil::runtime` (runtime packs), `sigil::models` (downloads), `sigil::audio::hub` (microphone streams opening, failing and recovering), `sigil::helper` (helper-process output), `sigil::sherpa`, `sigil::transcribe`, `sigil::stt`. `Sigil.exe --headless …` commands print to the terminal instead of the log file.
 - **Settings recovery:** the app settings file is written atomically with a `.bak` of the last good version. A damaged file is kept as `settings.corrupt-<time>.bak` and the backup is restored, with a message in the System log.
 - **Power throttling:** Sigil opts out of Windows 11 EcoQoS and timer-resolution throttling at startup.
 

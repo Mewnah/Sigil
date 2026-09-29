@@ -1,0 +1,13 @@
+{
+  "$comment": [
+    "sigil_transcribe.dll: transcribe.cpp behind the sigil_engine ABI v1 (P1-G2, docs/adr/0003b-transcribe-cpp.md). Read by CMakeLists.txt here, by build.ps1 here and by scripts/native/build-runtime-packs.ps1.",
+    "version = <transcribe.cpp version from UPSTREAM.json>-s<shim_revision>; CMakeLists.txt refuses a mismatch. The catalog entries runtime/sigil-transcribe-<variant> (src-tauri/model-catalog/runtime-transcribe.json) carry the same version and zip names sigil-transcribe-<version>-<variant>.zip: bump all three together.",
+    "default_variants are the CPU builds (no GPU toolkit needed); build cuda13 (CUDA 13 toolkit) and vulkan (Vulkan SDK) explicitly."
+  ],
+  "name": "transcribe",
+  "version": "0.2.4-s2",
+  "kind": "asr",
+  "variants": ["cpu", "cpu-avx2", "cpu-avx512", "vulkan", "cuda13"],
+  "default_variants": ["cpu", "cpu-avx2"],
+  "pack_files": ["LICENSE-transcribe.cpp.txt", "THIRD-PARTY-LICENSES-transcribe.cpp.md", "NOTICE.txt"]
+}

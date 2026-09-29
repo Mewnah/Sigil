@@ -2,6 +2,9 @@ pub mod chunk_processor;
 pub mod onnx_voice;
 pub mod ort_session;
 pub mod sidecar_bridge;
+/// Hand-encoded stand-in ONNX models for engine tests (no downloads, no Python `onnx`).
+#[cfg(test)]
+pub(crate) mod test_onnx;
 pub mod vc;
 
 pub use chunk_processor::{

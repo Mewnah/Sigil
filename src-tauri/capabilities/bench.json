@@ -1,0 +1,11 @@
+{
+  "identifier": "bench",
+  "description": "IPC for the bench plugin (benchmark harness, Benchmark this PC, autotuner) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "bench:default"
+  ]
+}

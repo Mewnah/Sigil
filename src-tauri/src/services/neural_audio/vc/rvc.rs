@@ -4,8 +4,7 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use ort::session::{Session, SessionInputValue};
-use ort::tensor::TensorElementType;
-use ort::value::TensorRef;
+use ort::value::{TensorElementType, TensorRef};
 
 use crate::services::neural_audio::ort_session::{session_builder_for_vc, VcSessionOptions};
 

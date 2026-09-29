@@ -1,0 +1,11 @@
+{
+  "identifier": "model-store",
+  "description": "IPC for the model-store plugin (catalog, downloads, install, import, disk usage) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "model-store:default"
+  ]
+}

@@ -7,7 +7,7 @@
 //!
 //! Submodules: [`logging`] (file log + UI forwarding), [`qos`] (EcoQoS opt-out), [`gpu_mem`]
 //! (DXGI adapters, per-process VRAM), [`canary`] (GPU EP canary model), [`ep_probe`] (light and
-//! deep probe), [`nvidia_pack`] (CUDA 12 / cuDNN 9 runtime pack).
+//! deep probe), [`nvidia_pack`] (CUDA 13 / cuDNN 9 runtime pack).
 //!
 //! # Frozen contract (P0-S0; change only through an INTEGRATE step)
 //! - [`EpOutcome`] `{ requested, active, reason }` — the EP a session asked for, the EP it actually
@@ -292,7 +292,8 @@ async fn run_deep_ep_probe() -> Result<ep_probe::EpProbeReport, String> {
 fn get_last_deep_ep_probe() -> Option<ep_probe::EpProbeReport> {
     let app_data = app_data_dir()?;
     let report = ep_probe::last_deep_report(&app_data)?;
-    ep_probe::deep_report_is_current(&report, &nvidia_pack::status(Some(&app_data))).then_some(report)
+    let fingerprint = crate::services::native_runtime::nvidia::fingerprint();
+    ep_probe::deep_report_is_current(&report, &nvidia_pack::status(Some(&app_data)), &fingerprint).then_some(report)
 }
 
 #[command]
@@ -339,7 +340,7 @@ fn get_nvidia_pack_status() -> nvidia_pack::NvidiaPackStatus {
     nvidia_pack::status(app_data_dir().as_deref())
 }
 
-/// Download (~1.4 GB, one file at a time) and install the NVIDIA runtime pack. Progress arrives as
+/// Download (~1.9 GB, one file at a time) and install the NVIDIA runtime pack. Progress arrives as
 /// [`nvidia_pack::PROGRESS_EVENT`]; the result is the final status.
 #[command]
 async fn install_nvidia_pack() -> Result<nvidia_pack::NvidiaPackStatus, String> {

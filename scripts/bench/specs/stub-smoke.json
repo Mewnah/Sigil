@@ -1,0 +1,60 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "stub-smoke",
+  "description": "Plumbing smoke test: a stub model (identity, 2 ms simulated GPU compute) through the real voice-changer harness, latency budget and output path. Offline throughput, a real-time paced run under a light CPU + ONNX Runtime load, and a 3 s stall on the simulated clock (plan T7; deterministic). Needs no model files and no audio devices. Thresholds only catch broken plumbing (they hold on a busy PC and in debug builds); performance is gated by run-perf-gate.ps1 against a baseline.",
+  "seed": 20260928,
+  "input": { "kind": "synthetic", "signal": "voice", "seconds": 6, "level_dbfs": -12 },
+  "stream": {
+    "input_rate": 48000,
+    "output_rate": 48000,
+    "input_channels": 1,
+    "output_channels": 2,
+    "block_frames": 512
+  },
+  "engine": {
+    "kind": "stub",
+    "behavior": "passthrough",
+    "output_rate": 40000,
+    "compute_ms": 2.0,
+    "compute_jitter_ms": 0.5,
+    "compute": "sleep"
+  },
+  "runs": [
+    {
+      "mode": "offline",
+      "name": "offline",
+      "thresholds": { "throughput_x": { "min": 2.0 } }
+    },
+    {
+      "mode": "paced",
+      "name": "paced",
+      "seconds": 5,
+      "clock": "wall",
+      "load": {
+        "cpu": { "threads": 1, "duty": 0.25, "period_ms": 10 },
+        "gpu": { "duty": 0.2, "period_ms": 20, "execution_provider": "cpu", "size": 128, "depth": 2 }
+      },
+      "thresholds": {
+        "underruns": { "max": 100 },
+        "latency_ms_p50": { "max": 150 },
+        "backlog_over_budget_ms": { "max": 0 }
+      }
+    },
+    {
+      "mode": "paced",
+      "name": "stall",
+      "seconds": 8,
+      "clock": "simulated",
+      "stalls": [{ "at_s": 3.0, "ms": 3000 }],
+      "thresholds": {
+        "stall_recovery_blocks": { "max": 2 },
+        "backlog_over_budget_ms": { "max": 0 }
+      }
+    }
+  ],
+  "thresholds": {
+    "block_ms_p99": { "max": 100 },
+    "model_errors": { "max": 0 }
+  },
+  "output": { "write_timeline": true, "write_audio": false }
+}

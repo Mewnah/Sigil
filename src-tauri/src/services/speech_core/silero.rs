@@ -19,8 +19,7 @@
 //! with a message.
 
 use ort::session::Session;
-use ort::tensor::TensorElementType;
-use ort::value::Tensor;
+use ort::value::{Tensor, TensorElementType};
 
 use super::{SAMPLE_RATE, VAD_FRAME_SAMPLES};
 use crate::services::diagnostics::{record_ep_outcome, EpOutcome};

@@ -114,6 +114,13 @@ export interface RustEpProbeReport {
   cudart_version: string | null;
   cudnn_version: string | null;
   nvidia_pack: RustNvidiaPackStatus;
+  /** Which NVIDIA runtime install CUDA uses (`model_store` = runtime/nvidia-cuda13, `interim` = Settings pack). */
+  nvidia_runtime_source?: "model_store" | "interim" | null;
+  /** CUDA provider library used by the deep probe: next to Sigil.exe or the registered app-data pack. */
+  cuda_provider_source?: "exe_dir" | "registered" | null;
+  cuda_provider_path?: string | null;
+  /** Runtime-pack fingerprint at probe time (a changed pack makes a saved deep report stale). */
+  runtime_fingerprint?: string;
   ep_checks: RustEpCheck[];
   recommended_ep: EpId | string;
   notes: string[];

@@ -1,0 +1,70 @@
+{
+  "$comment": "Template for the local benchmark corpus manifest. Copy it to <app_data>/bench/corpus/corpus.json (Windows: %APPDATA%\\com.sigil.app\\bench\\corpus\\corpus.json) and list the clips stored next to it. The corpus holds consented recordings of real people: it lives only on your PC and is never committed or uploaded. Specs reference a clip with an input such as {\"kind\": \"wav\", \"path\": \"corpus/clips/speech-01.wav\"} (IPC specs resolve paths against <app_data>/bench/; CLI specs against the spec file's folder, so use an absolute path there). Synthetic stand-ins for every kind can be written with scripts/bench/make-test-clips.py.",
+  "schema": "sigil-bench-corpus/1",
+  "name": "local",
+  "description": "20 consented speech clips (VRChat-style mic, several speakers and languages), the same clips with world-music bleed at -20 dB, and a singing set.",
+  "defaults": {
+    "sample_rate": 48000,
+    "channels": 1,
+    "level": "as recorded (do not normalize; the harness measures real mic levels)"
+  },
+  "clips": [
+    {
+      "id": "speech-01",
+      "file": "clips/speech-01.wav",
+      "kind": "speech",
+      "speaker": "S1",
+      "language": "en",
+      "seconds": 10.0,
+      "mic": "headset",
+      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
+      "tags": ["male", "casual"],
+      "notes": "Plain reading, quiet room."
+    },
+    {
+      "id": "speech-02",
+      "file": "clips/speech-02.wav",
+      "kind": "speech",
+      "speaker": "S2",
+      "language": "ja",
+      "seconds": 10.0,
+      "mic": "desk condenser",
+      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
+      "tags": ["female", "fast"],
+      "notes": "Casual conversation, keyboard noise."
+    },
+    {
+      "id": "speech-01-bleed",
+      "file": "clips/speech-01-bleed.wav",
+      "kind": "speech_bleed",
+      "source": "speech-01",
+      "bleed_db": -20,
+      "speaker": "S1",
+      "language": "en",
+      "seconds": 10.0,
+      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
+      "notes": "speech-01 mixed with VRChat world music at -20 dB (make-test-clips.py --mix can make a synthetic stand-in)."
+    },
+    {
+      "id": "singing-01",
+      "file": "clips/singing-01.wav",
+      "kind": "singing",
+      "speaker": "S3",
+      "language": "en",
+      "seconds": 15.0,
+      "range": "E2-D#5",
+      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
+      "notes": "Sustained notes and a scale (F0 range and pitch-error checks)."
+    },
+    {
+      "id": "synthetic-voice",
+      "file": "clips/voice_48000.wav",
+      "kind": "synthetic",
+      "speaker": null,
+      "language": null,
+      "seconds": 10.0,
+      "consent": { "given": true, "date": null, "scope": "generated; no person" },
+      "notes": "python scripts/bench/make-test-clips.py --out <corpus>/clips --signals voice"
+    }
+  ]
+}

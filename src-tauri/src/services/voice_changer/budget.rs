@@ -25,11 +25,11 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Default latency budget (ms) of captured audio waiting to be converted.
-pub(super) const DEFAULT_LATENCY_BUDGET_MS: f64 = 300.0;
-pub(super) const MIN_LATENCY_BUDGET_MS: f64 = 100.0;
-pub(super) const MAX_LATENCY_BUDGET_MS: f64 = 2000.0;
+pub(crate) const DEFAULT_LATENCY_BUDGET_MS: f64 = 300.0;
+pub(crate) const MIN_LATENCY_BUDGET_MS: f64 = 100.0;
+pub(crate) const MAX_LATENCY_BUDGET_MS: f64 = 2000.0;
 /// Crossfade length at a budget splice, and fade length around an overflow hole.
-pub(super) const SPLICE_FADE_MS: f64 = 5.0;
+pub(crate) const SPLICE_FADE_MS: f64 = 5.0;
 /// Capture ring headroom beyond the largest budget: a worker stall shorter than this (plus the
 /// largest budget) never makes the ring refuse audio, so the budget can still keep the newest.
 const RING_STALL_HEADROOM_MS: f64 = 2000.0;
@@ -38,7 +38,7 @@ const MIN_RING_SAMPLES: usize = 16_384;
 const MAX_RING_SAMPLES: usize = 4_194_304;
 
 /// Clamp a latency budget from IPC / disk to the supported range (non-finite = default).
-pub(super) fn clamp_latency_budget_ms(ms: f64) -> f64 {
+pub(crate) fn clamp_latency_budget_ms(ms: f64) -> f64 {
     if ms.is_finite() {
         ms.clamp(MIN_LATENCY_BUDGET_MS, MAX_LATENCY_BUDGET_MS)
     } else {
@@ -47,13 +47,13 @@ pub(super) fn clamp_latency_budget_ms(ms: f64) -> f64 {
 }
 
 /// Frames in `ms` at `rate` Hz, rounded to the nearest frame.
-pub(super) fn ms_to_frames(ms: f64, rate: u32) -> usize {
+pub(crate) fn ms_to_frames(ms: f64, rate: u32) -> usize {
     (ms.max(0.0) * f64::from(rate) / 1000.0).round() as usize
 }
 
 /// Capacity (interleaved samples, whole frames) of the lock-free capture ring: the largest budget
 /// plus [`RING_STALL_HEADROOM_MS`], and never below four blocks.
-pub(super) fn capture_ring_capacity(rate: u32, ch: usize, block_frames: usize) -> usize {
+pub(crate) fn capture_ring_capacity(rate: u32, ch: usize, block_frames: usize) -> usize {
     let ch = ch.max(1);
     let frames = ms_to_frames(MAX_LATENCY_BUDGET_MS + RING_STALL_HEADROOM_MS, rate).max(block_frames.saturating_mul(4));
     let samples = frames.saturating_mul(ch).clamp(MIN_RING_SAMPLES, MAX_RING_SAMPLES);
@@ -64,7 +64,7 @@ pub(super) fn capture_ring_capacity(rate: u32, ch: usize, block_frames: usize) -
 /// Real-time safe: no allocation, no lock; one ring commit per call, so the worker never observes
 /// a partial frame. Returns the number of frames the ring had no room for (the newest ones; the
 /// caller counts them).
-pub(super) fn push_capture(producer: &mut rtrb::Producer<f32>, data: &[f32], ch: usize) -> usize {
+pub(crate) fn push_capture(producer: &mut rtrb::Producer<f32>, data: &[f32], ch: usize) -> usize {
     let ch = ch.max(1);
     let frames = data.len() / ch;
     let n = frames.min(producer.slots() / ch);
@@ -81,15 +81,15 @@ pub(super) fn push_capture(producer: &mut rtrb::Producer<f32>, data: &[f32], ch:
 
 /// What one [`InputBacklog::enforce`] call discarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DropEvent {
+pub(crate) struct DropEvent {
     /// Oldest backlog frames dropped to get back within the budget.
-    pub(super) frames: usize,
+    pub(crate) frames: usize,
     /// Frames the capture ring refused (lost before reaching the backlog).
-    pub(super) overflow_frames: u64,
+    pub(crate) overflow_frames: u64,
 }
 
 /// Worker-owned capture backlog (interleaved f32, whole frames) with the latency budget.
-pub(super) struct InputBacklog {
+pub(crate) struct InputBacklog {
     buf: VecDeque<f32>,
     ch: usize,
     rate: u32,
@@ -107,7 +107,7 @@ pub(super) struct InputBacklog {
 
 impl InputBacklog {
     /// `capacity_samples` pre-allocates the backlog so a drained stall does not reallocate.
-    pub(super) fn new(ch: usize, rate: u32, budget_ms: f64, capacity_samples: usize) -> Self {
+    pub(crate) fn new(ch: usize, rate: u32, budget_ms: f64, capacity_samples: usize) -> Self {
         let ch = ch.max(1);
         let rate = rate.max(1);
         let mut s = Self {
@@ -128,48 +128,48 @@ impl InputBacklog {
     }
 
     /// Change the budget (clamped); takes effect at the next [`Self::enforce`].
-    pub(super) fn set_budget_ms(&mut self, budget_ms: f64) {
+    pub(crate) fn set_budget_ms(&mut self, budget_ms: f64) {
         self.budget_frames = ms_to_frames(clamp_latency_budget_ms(budget_ms), self.rate).max(1);
     }
 
     #[cfg(test)]
-    pub(super) fn budget_frames(&self) -> usize {
+    pub(crate) fn budget_frames(&self) -> usize {
         self.budget_frames
     }
 
     /// Frames waiting in the backlog.
-    pub(super) fn frames(&self) -> usize {
+    pub(crate) fn frames(&self) -> usize {
         self.buf.len() / self.ch
     }
 
     #[cfg(test)]
-    pub(super) fn captured_frames(&self) -> u64 {
+    pub(crate) fn captured_frames(&self) -> u64 {
         self.captured
     }
 
     #[cfg(test)]
-    pub(super) fn consumed_frames(&self) -> u64 {
+    pub(crate) fn consumed_frames(&self) -> u64 {
         self.consumed
     }
 
     /// Frames dropped by the budget plus frames the ring refused, since this backlog was created.
-    pub(super) fn dropped_frames(&self) -> u64 {
+    pub(crate) fn dropped_frames(&self) -> u64 {
         self.dropped
     }
 
-    pub(super) fn drop_events(&self) -> u64 {
+    pub(crate) fn drop_events(&self) -> u64 {
         self.drop_events
     }
 
     /// Ring overflow not yet accounted by [`Self::enforce`].
     #[cfg(test)]
-    pub(super) fn pending_overflow_frames(&self) -> u64 {
+    pub(crate) fn pending_overflow_frames(&self) -> u64 {
         self.gap_frames
     }
 
     /// Append captured audio (whole frames; a trailing partial frame is ignored).
     #[cfg(test)]
-    pub(super) fn push(&mut self, interleaved: &[f32]) {
+    pub(crate) fn push(&mut self, interleaved: &[f32]) {
         let n = interleaved.len() / self.ch * self.ch;
         self.push_slice(&interleaved[..n]);
     }
@@ -196,7 +196,7 @@ impl InputBacklog {
     }
 
     /// Move everything the capture callback has committed (whole frames) into the backlog.
-    pub(super) fn drain_from(&mut self, consumer: &mut rtrb::Consumer<f32>) {
+    pub(crate) fn drain_from(&mut self, consumer: &mut rtrb::Consumer<f32>) {
         let n = consumer.slots() / self.ch * self.ch;
         if n == 0 {
             return;
@@ -238,7 +238,7 @@ impl InputBacklog {
     /// anything still in the ring: the hole really is right after the backlog, as
     /// [`Self::enforce`] assumes. Reading the counter first would let a refusal that lands between
     /// the read and the drain be charged to the next wake, after audio captured behind it.
-    pub(super) fn ingest(&mut self, consumer: &mut rtrb::Consumer<f32>, overflow: &AtomicU64) {
+    pub(crate) fn ingest(&mut self, consumer: &mut rtrb::Consumer<f32>, overflow: &AtomicU64) {
         self.ingest_with(consumer, overflow, || {});
     }
 
@@ -251,7 +251,7 @@ impl InputBacklog {
     }
 
     /// Record frames the capture ring refused (the newest audio of a stall longer than the ring).
-    pub(super) fn note_overflow(&mut self, frames: u64) {
+    pub(crate) fn note_overflow(&mut self, frames: u64) {
         if frames > 0 {
             self.gap_frames += frames;
             self.captured += frames;
@@ -259,7 +259,7 @@ impl InputBacklog {
     }
 
     /// Enforce the budget for blocks of `block_frames`. Returns what was dropped, if anything.
-    pub(super) fn enforce(&mut self, block_frames: usize) -> Option<DropEvent> {
+    pub(crate) fn enforce(&mut self, block_frames: usize) -> Option<DropEvent> {
         let ch = self.ch;
         let block_frames = block_frames.max(1);
         let limit = self.budget_frames.max(block_frames);
@@ -331,7 +331,7 @@ impl InputBacklog {
 
     /// Move the oldest `frames` frames into `out` (cleared first). `false` (and `out` untouched)
     /// while fewer frames are waiting.
-    pub(super) fn take_block(&mut self, out: &mut Vec<f32>, frames: usize) -> bool {
+    pub(crate) fn take_block(&mut self, out: &mut Vec<f32>, frames: usize) -> bool {
         let n = frames * self.ch;
         if frames == 0 || self.buf.len() < n {
             return false;

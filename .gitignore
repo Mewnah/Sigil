@@ -58,3 +58,13 @@ src-tauri/icons/android/
 # Benchmark harness output (`Sigil.exe --headless bench ... --out bench-results/...`); curated
 # scorecards go to docs/benchmarks/ instead.
 bench-results/
+
+# Native runtime-pack builds (P1: CMake build trees and packaged packs under native/); packs are
+# installed locally through the model store / SIGIL_LOCAL_ASSETS, never committed.
+native/build/
+native/out/
+native/dist/
+# sherpa-onnx bindgen helper (gen-bindings.ps1 builds outside the repo; this guards a manual `cargo run`).
+scripts/runtime-packs/sherpa/bindgen/target/
+# Python tooling caches (scripts/vc-templates, scripts/bench).
+__pycache__/

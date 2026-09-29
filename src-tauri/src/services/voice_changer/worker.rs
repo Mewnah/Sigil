@@ -547,6 +547,8 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
             } else {
                 None
             },
+            // The voice changer's rows stay the plain `vc` / `vc.*` keys.
+            component_prefix: None,
         };
         if matches!(preset, RvcPresetProfile::Streamer)
             && crate::services::neural_audio::vc::supports_int8_content_encoder()
@@ -651,6 +653,16 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
             ),
             _ => tracing::info!("voice changer: running on the {} execution provider", o.active),
         }
+    }
+    // Resource governor: report the device the models landed on (DSP-only and sidecar modes run
+    // no local model, so `false`). Without a recorded outcome, resources infers it from the
+    // `vc` / `vc.*` rows. A superseded worker never reports over its successor.
+    let report_gpu = match mode {
+        VoiceChangerMode::Rvc | VoiceChangerMode::Onnx => run_ep.as_ref().map(EpOutcome::is_gpu),
+        VoiceChangerMode::Classic | VoiceChangerMode::Sidecar => Some(false),
+    };
+    if let Some(on_gpu) = report_gpu.filter(|_| generation.is_current()) {
+        crate::services::resources::set_vc_gpu(on_gpu);
     }
     *lock(&st.run_ep) = run_ep;
     let mut applied_priority = h_init.worker_priority;

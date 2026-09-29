@@ -1,0 +1,11 @@
+{
+  "identifier": "runtime",
+  "description": "IPC for the runtime plugin (native runtime packs and sigil_engine DLLs) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "runtime:default"
+  ]
+}

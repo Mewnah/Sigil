@@ -1,9 +1,11 @@
 //! Shared outbound HTTP for plugins: local/cloud TTS and STT servers, translation, model downloads.
 //!
 //! # Timeouts (no call may hang for hours)
-//! The shared [`http_client`] keeps a 2 h whole-request cap because multi-GB model downloads go through
+//! The shared [`http_client`] keeps a 2 h whole-request cap because legacy model downloads go through
 //! it ([`http_download_get`]), plus a [`STALL_TIMEOUT`] read timeout: a connection that delivers no
-//! bytes for that long fails, downloads included. **Every API call must also set a per-request
+//! bytes for that long fails, downloads included. The model store uses its own
+//! [`model_download_client`] instead: a 30 s stall limit ([`MODEL_STALL_TIMEOUT`]) and no total
+//! timeout, because it resumes with HTTP Range. **Every API call must also set a per-request
 //! timeout** with `.timeout(...)`, using the classes below:
 //! - [`HEALTH_TIMEOUT`] (10 s) for availability probes,
 //! - [`LIST_TIMEOUT`] (20 s) for voice / language / model lists,
@@ -127,6 +129,36 @@ pub fn local_http_client() -> &'static Client {
 /// GET with an explicit timeout suitable for multi‑GB model files (the stall timeout still applies).
 pub fn http_download_get(url: &str) -> reqwest::RequestBuilder {
     http_client().get(url).timeout(DOWNLOAD_TIMEOUT)
+}
+
+/// Read (idle) timeout of the model store's downloads: a transfer that delivers no bytes for this
+/// long fails its attempt, and the store resumes it (HTTP Range) or moves to the next mirror.
+pub const MODEL_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Build a client for model-store downloads: [`CONNECT_TIMEOUT`], a `read_timeout` stall limit and
+/// **no** whole-request timeout (a 3 GB model on a slow line may legitimately take hours; the stall
+/// limit is what catches a dead connection). `system_proxy: false` ignores proxy settings (tests
+/// against a loopback fixture server).
+pub fn build_model_download_client(read_timeout: Duration, system_proxy: bool) -> Client {
+    let ua = format!(
+        "Sigil/{} (desktop; https://github.com/Mewnah/Sigil)",
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut b = Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(read_timeout)
+        .user_agent(ua)
+        .default_headers(default_headers());
+    if !system_proxy {
+        b = b.no_proxy();
+    }
+    b.build().expect("reqwest Client builder")
+}
+
+/// Shared client of the model store (see [`build_model_download_client`]).
+pub fn model_download_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| build_model_download_client(MODEL_STALL_TIMEOUT, true))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1046,6 +1078,25 @@ mod tests {
         assert!(msg.contains("no data for 120 s"), "{msg}");
         assert!(msg.contains("not finished within 7200 s"), "{msg}");
         assert!(!msg.contains("no response within 7200 s"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn model_download_client_has_no_total_timeout_but_a_stall_limit() {
+        // One chunk, a pause longer than the read timeout, then the rest: the stall limit fires.
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabc".to_vec();
+        let base = serve_once(vec![head, b"def".to_vec()], Duration::from_millis(600)).await;
+        let client = build_model_download_client(Duration::from_millis(200), false);
+        let req = client.get(&base).build().unwrap();
+        assert_eq!(req.timeout(), None, "no whole-request timeout on model downloads");
+        let resp = client.execute(req).await.unwrap();
+        assert!(resp.bytes().await.is_err(), "a stalled body must fail");
+
+        // Slow but steady (every gap shorter than the stall limit) succeeds.
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabc".to_vec();
+        let base = serve_once(vec![head, b"def".to_vec()], Duration::from_millis(50)).await;
+        let resp = client.get(&base).send().await.unwrap();
+        assert_eq!(resp.bytes().await.unwrap().as_ref(), b"abcdef");
+        assert_eq!(MODEL_STALL_TIMEOUT, Duration::from_secs(30));
     }
 
     #[tokio::test]

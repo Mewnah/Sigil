@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Mewnah/Sigil/scripts/vc-templates/layout_schema.json",
+  "title": "Sigil RVC template layout (layout.json)",
+  "description": "Written by scripts/vc-templates/export_rvc.py next to a template's graph-only ONNX files; read by the Rust importer (src-tauri/src/services/neural_audio/vc/import/layout.rs), which also recomputes weights.weights_id. Unknown keys are ignored by the reader (forward compatible); the listed ones are required unless marked optional.",
+  "type": "object",
+  "required": ["format", "format_version", "template", "arch", "streaming", "weights", "speakers", "graphs"],
+  "properties": {
+    "format": { "const": "sigil-rvc-layout" },
+    "format_version": { "const": 1 },
+    "template": {
+      "description": "Template id: <version>-<sr/1000>k-<f0|nof0>-<vocoder>; also the folder name. The importer derives it from the checkpoint.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+$"
+    },
+    "arch": {
+      "type": "object",
+      "required": ["version", "f0", "vocoder", "sample_rate", "upp", "frame_rate", "emb_channels", "inter_channels", "gin_channels", "config", "arch_fields"],
+      "properties": {
+        "version": { "enum": ["v1", "v2"] },
+        "f0": { "type": "boolean" },
+        "vocoder": { "enum": ["hifigan", "mrf-hifigan", "refinegan"] },
+        "sample_rate": { "type": "integer", "minimum": 8000 },
+        "upp": { "description": "Output samples per 10 ms content frame (product of the upsample rates).", "type": "integer", "minimum": 1 },
+        "frame_rate": { "description": "sample_rate / upp (100 for every RVC config).", "type": "integer", "minimum": 1 },
+        "emb_channels": { "description": "Content feature width (v1 256, v2 768).", "type": "integer" },
+        "inter_channels": { "type": "integer" },
+        "gin_channels": { "description": "Speaker vector width; equals speakers.dim.", "type": "integer" },
+        "config": { "description": "The RVC checkpoint config list the template was exported for (18 entries).", "type": "array", "minItems": 18, "maxItems": 18 },
+        "arch_fields": { "description": "Indices of config that must equal a checkpoint's for the template to apply.", "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 17 } }
+      }
+    },
+    "streaming": {
+      "type": "object",
+      "required": ["flow_margin", "dec_margin", "noise_scale", "knn_k", "knn_coarse_k", "min_index_rows"],
+      "properties": {
+        "flow_margin": { "description": "Leading frames of a flowdec window that only feed the flow's receptive field.", "type": "integer" },
+        "dec_margin": { "description": "Frames after those that only feed the decoder's (measured) left receptive field. flowdec returns F - flow_margin - dec_margin frames.", "type": "integer" },
+        "noise_scale": { "description": "The prior noise scale RVC uses (z_noise = N(0,1) * noise_scale).", "type": "number" },
+        "knn_k": { "type": "integer" },
+        "knn_coarse_k": { "type": "integer" },
+        "knn_eps": { "type": "number" },
+        "min_index_rows": { "description": "The knn graph needs at least this many index rows.", "type": "integer" },
+        "flow_receptive_left": { "type": "integer" },
+        "flow_receptive_right": { "type": "integer" },
+        "dec_receptive_left_frames": { "type": "integer" },
+        "dec_receptive_left_samples": { "type": "integer" },
+        "dims": { "type": "object" }
+      }
+    },
+    "weights": {
+      "type": "object",
+      "required": ["file_f32", "file_f16", "alignment", "bytes_f32", "weights_id", "tensors"],
+      "properties": {
+        "file_f32": { "const": "weights.f32.bin" },
+        "file_f16": { "description": "Every f32 word of file_f32 cast to f16, so each offset and length halves.", "const": "weights.f16.bin" },
+        "alignment": { "description": "Every tensor offset is a multiple of this (bytes, in the f32 file).", "type": "integer" },
+        "bytes_f32": { "type": "integer" },
+        "weights_id": {
+          "description": "sha256 of the compact JSON of [{bytes, name, offset, shape}] sorted by offset (keys sorted); stored in every weighted graph as the sigil.weights_id metadata property.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tensors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "graph", "shape", "offset", "bytes", "source"],
+            "properties": {
+              "name": { "description": "ONNX initializer name (the RVC parameter name after weight_norm removal).", "type": "string" },
+              "graph": { "enum": ["enc", "flowdec"] },
+              "shape": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+              "offset": { "type": "integer" },
+              "bytes": { "description": "4 * number of elements.", "type": "integer" },
+              "source": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["key"],
+                    "properties": { "key": { "description": "Checkpoint key copied as is.", "type": "string" } },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": ["weight_norm"],
+                    "properties": {
+                      "weight_norm": {
+                        "type": "object",
+                        "required": ["g", "v", "dim", "folded", "g_shape"],
+                        "properties": {
+                          "g": { "type": "string" },
+                          "v": { "type": "string" },
+                          "dim": { "description": "Axis g keeps; -1 = whole-tensor norm.", "type": "integer", "minimum": -1 },
+                          "folded": { "description": "Key of an already folded weight, used when g / v are absent.", "type": "string" },
+                          "g_shape": { "type": "array", "items": { "type": "integer" } }
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "speakers": {
+      "type": "object",
+      "required": ["key", "dim", "file"],
+      "properties": {
+        "key": { "const": "emb_g.weight" },
+        "dim": { "type": "integer" },
+        "file": { "const": "speakers.f32.bin" }
+      }
+    },
+    "ignored_keys": { "description": "Checkpoint key prefixes the templates do not use (training-only modules).", "type": "array", "items": { "type": "string" } },
+    "graphs": {
+      "type": "object",
+      "required": ["enc", "flowdec", "knn"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["variants"],
+        "properties": {
+          "recommended": { "description": "Variant to run per device class (from the ADR 0004 GPU parity measurements; the autotuner may override).", "type": "object" },
+          "variants": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["file", "sha256", "bytes", "weights_file", "inputs", "outputs"],
+              "properties": {
+                "file": { "type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$" },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "bytes": { "type": "integer" },
+                "weights_file": { "type": ["string", "null"] },
+                "parity": {
+                  "description": "ADR 0004 parity gate result per device class; Sigil refuses a variant marked fail on that class (a recommended variant must not be).",
+                  "type": "object",
+                  "properties": {
+                    "cpu": { "enum": ["pass", "fail", "untested"] },
+                    "gpu": { "enum": ["pass", "fail", "untested"] }
+                  },
+                  "additionalProperties": false
+                },
+                "inputs": { "type": "array" },
+                "outputs": { "type": "array" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "exporter": { "type": "object" }
+  }
+}
