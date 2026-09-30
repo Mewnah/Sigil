@@ -14,7 +14,7 @@ function withServerNetwork(host: string, port: string) {
 describe("localPageUrl", () => {
   it("matches the hand-built URLs it replaces", () => {
     withServerNetwork("localhost", "3030");
-    // inspector_stt.tsx micPageUrl()
+    // inspector/stt/ExternalMic.tsx micPageUrl()
     expect(localPageUrl("mic.html")).toBe("http://127.0.0.1:3030/mic.html?port=3030");
     // ObsBrowserSourceService.getCaptionsLink()
     expect(localPageUrl("obs-captions.html", { params: { mode: "plain", size: "48", lines: undefined } })).toBe(

@@ -1,0 +1,341 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "sherpa-onnx STT models for the CPU tier (speech::engines::sherpa_online / sherpa_offline), owned by P2-B. How each id runs (files, family, languages, capabilities) is speech_rt::sherpa::catalog; a unit test keeps that table and this fragment in step.",
+    "Archives are official k2-fsa 'asr-models' release assets (sha256 = GitHub asset digests, re-checked by downloading them through the model store on 2026-09-29); only the int8 model files, tokens and notices are extracted (strip 1, include).",
+    "Nemotron 3.5 streaming: 560 ms chunks are the default (RTF 0.30-0.35 on one thread of a 7800X3D, fewer errors); 160 ms chunks give earlier partials at RTF 0.80-0.87. Always given an explicit language (per-stream 'language' option).",
+    "SenseVoice: the 2024-07-17 package is the original FunAudioLLM SenseVoiceSmall; the 2025-09-09 package is a Cantonese (WSYue) fine-tune and is not listed (ADR 0002).",
+    "Parakeet Ultra: community sherpa-onnx int8 export of moondream/parakeet-ultra (HF mldecode/parakeet-ultra-onnx-int8, pinned commit 3282a6e3; credit NVIDIA and Moondream). Sigil checked it against Parakeet TDT v3 int8 (2026-09-29, en/de/es/fr/ru clips: identical transcripts on four, one word better and one word worse on es; same encoder metadata and speed, RTF 0.065 at 2 threads); third-party FLEURS / LibriSpeech results favour Ultra.",
+    "Language ID: the multilingual Whisper base int8 encoder / decoder from HF csukuangfj/sherpa-onnx-whisper-base (pinned commit bb53ee20).",
+    "Update: pin new assets with scripts/models/pin-catalog.mjs and update speech_rt/sherpa/catalog.rs in the same change."
+  ],
+  "entries": [
+    {
+      "id": "stt/nemotron-3.5-streaming-560ms-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2026-06-11",
+      "title": "Nemotron 3.5 streaming (560 ms)",
+      "description": "NVIDIA's multilingual streaming recognizer for live captions on the processor (28 languages, needs the spoken language). About 475 MB download.",
+      "license": "OpenMDW-1.1",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+          "size": 475271763,
+          "sha256": "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "encoder.int8.onnx",
+              "decoder.int8.onnx",
+              "joiner.int8.onnx",
+              "tokens.txt",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/nemotron-3.5-streaming-160ms-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2026-06-11",
+      "title": "Nemotron 3.5 streaming (160 ms, low latency)",
+      "description": "The same streaming recognizer with the earliest partial captions; uses about three times the processor time. About 475 MB download.",
+      "license": "OpenMDW-1.1",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11.tar.bz2",
+          "size": 475273363,
+          "sha256": "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "encoder.int8.onnx",
+              "decoder.int8.onnx",
+              "joiner.int8.onnx",
+              "tokens.txt",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/parakeet-ultra-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "3282a6e3",
+      "title": "Parakeet Ultra",
+      "description": "Accurate final captions for 25 European languages on the processor (a retrained Parakeet TDT 0.6B v3). About 630 MB download.",
+      "license": "CC-BY-4.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "encoder.int8.onnx",
+          "size": 611879344,
+          "sha256": "181382735a719c75076d13658dc4418de4b566aef39935ca0f8f55da16928f4e",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mldecode/parakeet-ultra-onnx-int8/resolve/3282a6e32885b431c1543d58c7710e6e3412eac0/encoder.int8.onnx",
+              "revision": "3282a6e32885b431c1543d58c7710e6e3412eac0"
+            }
+          ]
+        },
+        {
+          "path": "decoder.int8.onnx",
+          "size": 12257685,
+          "sha256": "0ba8ace2de04bb2d9a6b20ed2d67138c23df4a385f268438df0ff200502de77a",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mldecode/parakeet-ultra-onnx-int8/resolve/3282a6e32885b431c1543d58c7710e6e3412eac0/decoder.int8.onnx",
+              "revision": "3282a6e32885b431c1543d58c7710e6e3412eac0"
+            }
+          ]
+        },
+        {
+          "path": "joiner.int8.onnx",
+          "size": 5281747,
+          "sha256": "20ae4350c2484ba607d94f08ef25ae3ead762d8aaf70753758ffcc504e255ebb",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mldecode/parakeet-ultra-onnx-int8/resolve/3282a6e32885b431c1543d58c7710e6e3412eac0/joiner.int8.onnx",
+              "revision": "3282a6e32885b431c1543d58c7710e6e3412eac0"
+            }
+          ]
+        },
+        {
+          "path": "tokens.txt",
+          "size": 93939,
+          "git_oid": "fc43e1c723e262df60b70e1919614417162d1fe2",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mldecode/parakeet-ultra-onnx-int8/resolve/3282a6e32885b431c1543d58c7710e6e3412eac0/tokens.txt",
+              "revision": "3282a6e32885b431c1543d58c7710e6e3412eac0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stt/parakeet-tdt-0.6b-v3-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2025-08-16",
+      "title": "Parakeet TDT 0.6B v3",
+      "description": "NVIDIA Parakeet v3: final captions for 25 European languages on the processor. About 490 MB download.",
+      "license": "CC-BY-4.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+          "size": 487170055,
+          "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "encoder.int8.onnx",
+              "decoder.int8.onnx",
+              "joiner.int8.onnx",
+              "tokens.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/qwen3-asr-0.6b-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2026-03-25",
+      "title": "Qwen3-ASR 0.6B",
+      "description": "Final captions for Japanese, Korean, Chinese, Russian and 26 more languages on the processor; recognizes the spoken language and takes custom terms. About 880 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+          "size": 878702423,
+          "sha256": "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "conv_frontend.onnx",
+              "encoder.int8.onnx",
+              "decoder.int8.onnx",
+              "tokenizer/*",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/sense-voice-small-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2024-07-17",
+      "title": "SenseVoice Small",
+      "description": "Fast final captions for Chinese, Cantonese, English, Japanese and Korean, with emotion and sound-event tags. About 165 MB download.",
+      "license": "FunASR-Model-License-1.1",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "size": 163002883,
+          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "model.int8.onnx",
+              "tokens.txt",
+              "LICENSE",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/moonshine-base-en-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "2026-02-27",
+      "title": "Moonshine base (English)",
+      "description": "A small, fast English recognizer for final captions on low-end processors. About 110 MB download.",
+      "license": "MIT",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2",
+          "size": 111266225,
+          "sha256": "43232c1d13013d37317163baec3135bd771a186a4356f28c889bab453bb0e891",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2",
+              "revision": "asr-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "encoder_model.ort",
+              "decoder_model_merged.ort",
+              "tokens.txt",
+              "LICENSE"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stt/lid-whisper-base-int8",
+      "family": "stt",
+      "kind": "model",
+      "version": "bb53ee20",
+      "title": "Spoken language detection (Whisper base)",
+      "description": "Recognizes which language is spoken when the caption language is set to automatic. About 160 MB download.",
+      "license": "MIT",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "base-encoder.int8.onnx",
+          "size": 29120534,
+          "sha256": "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/base-encoder.int8.onnx",
+              "revision": "bb53ee204431c90d314c1cc08d28d23e5b7927cc"
+            }
+          ]
+        },
+        {
+          "path": "base-decoder.int8.onnx",
+          "size": 130672026,
+          "sha256": "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/base-decoder.int8.onnx",
+              "revision": "bb53ee204431c90d314c1cc08d28d23e5b7927cc"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

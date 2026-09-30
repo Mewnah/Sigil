@@ -182,24 +182,47 @@ pub struct RuntimeSelection {
     pub build_info: String,
     /// Variants that were skipped or failed first (in order).
     pub attempts: Vec<Attempt>,
+    /// A GPU backend of a runtime this open loaded was initialized (its devices queried or a model
+    /// created on it), even when the model ended on the CPU: the GPU DLL stays pinned for the
+    /// process lifetime, and so does the CUDA context it created (about 380 MiB, ADR 0003b).
+    pub gpu_backend_initialized: bool,
 }
 
 /// Variants to try for `choice` among the installed `available` ones (pure; `candidates` does the
-/// support filtering and preference order).
+/// support filtering and preference order). `allowed` (the resource governor's admission) removes
+/// every other variant; a forced variant is tried alone.
+///
+/// The CPU choice uses the CPU builds; when none is installed (a PC with only the `cuda13` pack),
+/// the CPU backend of an installed GPU build takes its place (GPU builds carry AVX2 CPU kernels), so
+/// a model the governor keeps off the GPU still runs.
 pub(crate) fn plan_variants(
     choice: BackendChoice,
     forced: Option<RuntimeVariant>,
     available: &[RuntimeVariant],
     support: &VariantSupport,
+    allowed: Option<&[RuntimeVariant]>,
 ) -> Vec<RuntimeVariant> {
-    let order = candidates(available, support, forced);
+    let permitted = |v: &RuntimeVariant| allowed.is_none_or(|a| a.contains(v));
+    let order: Vec<RuntimeVariant> = candidates(available, support, forced)
+        .into_iter()
+        .filter(permitted)
+        .collect();
     if forced.is_some() {
         return order;
     }
     match choice {
         BackendChoice::Auto => order,
         BackendChoice::Gpu => order.into_iter().filter(|v| v.is_gpu()).collect(),
-        BackendChoice::Cpu => order.into_iter().filter(|v| !v.is_gpu()).collect(),
+        BackendChoice::Cpu => {
+            let cpu: Vec<RuntimeVariant> = order.into_iter().filter(|v| !v.is_gpu()).collect();
+            if !cpu.is_empty() {
+                return cpu;
+            }
+            RuntimeVariant::PREFERENCE
+                .into_iter()
+                .filter(|v| v.is_gpu() && available.contains(v) && support.cpu_supports(*v) && permitted(v))
+                .collect()
+        }
     }
 }
 
@@ -216,7 +239,8 @@ pub(crate) fn backend_for(choice: BackendChoice, variant: Option<RuntimeVariant>
     }
 }
 
-fn catalog() -> Result<&'static Catalog, TranscribeError> {
+/// The catalog in effect (loaded once per process).
+pub(crate) fn catalog() -> Result<&'static Catalog, TranscribeError> {
     static CATALOG: OnceLock<Result<Catalog, String>> = OnceLock::new();
     CATALOG
         .get_or_init(Catalog::load)
@@ -352,7 +376,10 @@ fn create_gpu_or_cpu(
 ) -> Result<EngineInstance, CreateFailure> {
     if let Some(b) = backend.filter(|b| is_gpu_backend(b)) {
         if let Some(found) = library_devices(library).and_then(|all| select_device(&all, b, device.as_ref())) {
-            if matches!(device, Some(DeviceRef::Index(_))) {
+            // An index becomes the device's stable id; an id becomes the device's own spelling of
+            // it (the shim compares PCI ids literally, while NVML writes `00000000:01:00.0` for
+            // CUDA's `0000:01:00.0`).
+            if device.is_some() {
                 if let Some(stable) = DeviceRef::stable_for(&found) {
                     *device = Some(stable);
                 }
@@ -533,8 +560,9 @@ impl TranscribeModel {
             ));
         }
         let mut device = opts.device_ref();
-        let (instance, fallback) =
-            create_on(&library, opts, backend_for(opts.backend, lib_variant), &mut device, opts.cpu_fallback).map_err(|f| f.error)?;
+        let backend = backend_for(opts.backend, lib_variant);
+        let gpu = backend.map_or_else(|| library.info().has(abi::SIGIL_CAP_GPU), is_gpu_backend);
+        let (instance, fallback) = create_on(&library, opts, backend, &mut device, opts.cpu_fallback).map_err(|f| f.error)?;
         let runtime = RuntimeSelection {
             variant: lib_variant,
             pack_id: None,
@@ -542,6 +570,7 @@ impl TranscribeModel {
             version: library.info().version.clone(),
             build_info: library.info().build_info.clone(),
             attempts: Vec::new(),
+            gpu_backend_initialized: gpu,
         };
         Ok((library, instance, runtime, fallback))
     }
@@ -569,7 +598,8 @@ impl TranscribeModel {
         }
         let available: Vec<RuntimeVariant> = installed.iter().map(|(v, _, _)| *v).collect();
         let support = VariantSupport::detect();
-        let order = plan_variants(opts.backend, opts.variant, &available, &support);
+        let allowed = opts.allowed_variants.as_deref();
+        let order = plan_variants(opts.backend, opts.variant, &available, &support, allowed);
         let mut attempts: Vec<Attempt> = installed
             .iter()
             .filter(|(v, _, _)| !order.contains(v))
@@ -581,6 +611,7 @@ impl TranscribeModel {
                     .unsupported_reason(*v)
                     .unwrap_or_else(|| match (opts.variant, opts.backend) {
                         (Some(forced), _) => format!("only {} was requested", forced.as_str()),
+                        _ if allowed.is_some_and(|a| !a.contains(v)) => "not allowed by the resource governor for this model".into(),
                         (None, BackendChoice::Gpu) => "a GPU backend was requested".into(),
                         (None, BackendChoice::Cpu) => "the CPU backend was requested".into(),
                         (None, BackendChoice::Auto) => "not selected".into(),
@@ -609,6 +640,8 @@ impl TranscribeModel {
         // runtime that takes over reports it as the fallback reason.
         let mut kinds: Vec<ErrorKind> = Vec::new();
         let mut gpu_failure: Option<String> = None;
+        // A GPU DLL that opened and was asked for its devices / a model keeps its CUDA context.
+        let mut gpu_initialized = false;
         // The requested GPU; an index becomes the device's stable id once a GPU backend saw it.
         let mut device = opts.device_ref();
         for (i, variant) in order.iter().copied().enumerate() {
@@ -645,6 +678,7 @@ impl TranscribeModel {
             //    candidates fall through to the next variant instead.
             let mut no_device = None;
             let device_slot = if gpu { &mut device } else { &mut no_device };
+            gpu_initialized |= gpu;
             match create_on(&opened.library, opts, backend, device_slot, is_last && gpu && opts.cpu_fallback) {
                 Ok((instance, fallback)) => {
                     let fallback = fallback.or_else(|| takeover_reason(gpu_failure.as_deref(), gpu, variant));
@@ -657,6 +691,7 @@ impl TranscribeModel {
                         version: opened.library.info().version.clone(),
                         build_info: opened.library.info().build_info.clone(),
                         attempts,
+                        gpu_backend_initialized: gpu_initialized,
                     };
                     return Ok((opened.library, instance, runtime, fallback));
                 }
@@ -808,6 +843,15 @@ impl TranscribeModel {
         }
     }
 
+    /// The pre-run VRAM check of a GPU model on demand (no-op on the CPU): what `transcribe` and
+    /// `open_stream` do first. Callers that keep a stream open across utterances call it before
+    /// each utterance, so the headroom guard runs per stream session, not once per stream. With
+    /// `cpu_fallback` a GPU without headroom moves the model to the CPU (closing its streams: check
+    /// [`TranscribeStream::is_open`]); without it the check fails with [`ErrorKind::OutOfMemory`].
+    pub fn check_headroom(&mut self) -> Result<(), TranscribeError> {
+        self.ensure_gpu_headroom()
+    }
+
     /// Close every stream opened from the current instance (their next call fails with
     /// [`ErrorKind::Backend`]), so they stop holding it. Returns how many were open.
     fn close_streams(&mut self) -> usize {
@@ -909,7 +953,8 @@ impl TranscribeModel {
     ///   [`ErrorKind::InvalidInput`]. Two live caption sources need two loaded models.
     /// - A CPU fallback of the model closes its open streams: their next push / finish fails with
     ///   [`ErrorKind::Backend`] ([`TranscribeStream::is_open`] turns false); open a new stream.
-    /// - The VRAM headroom is checked here, not on every push (the warm-up sized the GPU pool).
+    /// - The VRAM headroom is checked here, not on every push (the warm-up sized the GPU pool); a
+    ///   stream reused for several utterances is re-checked with [`Self::check_headroom`].
     pub fn open_stream(&mut self, opts: &TranscribeOptions) -> Result<TranscribeStream, TranscribeError> {
         if !self.info.capabilities.streaming {
             return Err(TranscribeError::new(

@@ -1,0 +1,1347 @@
+{
+  "$comment": [
+    "Shared STT routing fixture (format frozen by P2-S0; cases owned by P2-C). Read by the Rust router test (speech::router) and the TS mirror test (src/core/services/stt/__tests__/router.test.ts, P2-E).",
+    "case = { name, request: RouteRequest, context: RouteContext, expect }. Every expect key is optional: language, tier, streamingModel / finalModel / fallbackModel / languageIdModel (catalog id, or null for 'none'), streamingLanguage (the streaming spec's options.language, null = none), neverModels (ids that must not appear anywhere in the plan), notesInclude (codes that must be in notes), missingInclude (ids that must be in missing). The Rust test rejects unknown keys.",
+    "RouteContext fields not given default to false / 0 / empty: 'installed' empty means nothing is installed (every planned id is missing); 'unavailable' empty means every id can be installed; 'physicalCores' 0 means unknown (enough for two passes); 'vramTotalMb' 0 means unknown (no BF16, and a running voice changer keeps the GPU in auto tier).",
+    "The seed cases encode the never-route rule 'Cohere is never used for ja / zh / ko / ru' on a GPU PC with everything installed; the rest cover every rule of speech::router (see its module docs and model-catalog/stt-routing.json).",
+    "Auto plans also carry the streaming spec's options.streamLanguages (the detected languages the stream may be opened with; never zh / yue). The fixture has no key for it yet (the TS mirror test rejects unknown keys): the Rust router tests check it (auto_streams_only_for_languages_whose_route_streams and the every-request invariants)."
+  ],
+  "version": 1,
+  "cases": [
+    {
+      "name": "ja on GPU never routes to Cohere",
+      "request": {
+        "language": "ja",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 16000,
+        "vcRunning": false,
+        "physicalCores": 8,
+        "installed": [
+          "stt/cohere-transcribe-q4_k",
+          "stt/qwen3-asr-1.7b-q8_0",
+          "stt/qwen3-asr-0.6b-int8"
+        ]
+      },
+      "expect": {
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "zh on GPU never routes to Cohere",
+      "request": {
+        "language": "zh",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 16000,
+        "vcRunning": false,
+        "physicalCores": 8,
+        "installed": [
+          "stt/cohere-transcribe-q4_k",
+          "stt/qwen3-asr-1.7b-q8_0"
+        ]
+      },
+      "expect": {
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ko on GPU never routes to Cohere",
+      "request": {
+        "language": "ko",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 16000,
+        "vcRunning": false,
+        "physicalCores": 8,
+        "installed": [
+          "stt/cohere-transcribe-q4_k",
+          "stt/qwen3-asr-1.7b-q8_0"
+        ]
+      },
+      "expect": {
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ru on GPU never routes to Cohere",
+      "request": {
+        "language": "ru",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 16000,
+        "vcRunning": false,
+        "physicalCores": 8,
+        "installed": [
+          "stt/cohere-transcribe-q4_k",
+          "stt/qwen3-asr-1.7b-q8_0"
+        ]
+      },
+      "expect": {
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "en on CPU: Nemotron partials with en, Parakeet Ultra re-decode",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "en",
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "en",
+        "finalModel": "stt/parakeet-ultra-int8",
+        "fallbackModel": null,
+        "languageIdModel": null
+      }
+    },
+    {
+      "name": "en on a 4-core CPU: Nemotron alone",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 4
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": null,
+        "notesInclude": [
+          "few_cores_single_pass"
+        ]
+      }
+    },
+    {
+      "name": "en single pass on CPU keeps Nemotron's own finals",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": false
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": null,
+        "notesInclude": [
+          "single_pass"
+        ]
+      }
+    },
+    {
+      "name": "de on CPU: Nemotron partials, Parakeet Ultra final",
+      "request": {
+        "language": "de-DE",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "de",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "de",
+        "finalModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "de single pass on CPU: Parakeet Ultra finals only",
+      "request": {
+        "language": "de",
+        "tier": "cpu",
+        "twoPass": false
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/parakeet-ultra-int8",
+        "notesInclude": [
+          "single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "zh on CPU: SenseVoice finals, no Nemotron",
+      "request": {
+        "language": "zh",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": null,
+        "finalModel": "stt/sense-voice-small-int8",
+        "neverModels": [
+          "stt/nemotron-3.5-streaming-560ms-int8",
+          "stt/cohere-transcribe-q4_k"
+        ],
+        "notesInclude": [
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "yue on CPU: SenseVoice",
+      "request": {
+        "language": "yue",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "yue",
+        "streamingModel": null,
+        "finalModel": "stt/sense-voice-small-int8"
+      }
+    },
+    {
+      "name": "a zh-yue tag routes as Cantonese",
+      "request": {
+        "language": "zh-yue",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "yue",
+        "finalModel": "stt/sense-voice-small-int8"
+      }
+    },
+    {
+      "name": "ja on CPU: Nemotron partials with ja, Qwen3-ASR-0.6B final",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "ja",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ko on CPU: Qwen3-ASR-0.6B final",
+      "request": {
+        "language": "ko",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ru on CPU: Qwen3-ASR-0.6B final",
+      "request": {
+        "language": "ru-RU",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "ru",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ja on a 4-core CPU: Qwen3-ASR finals only",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 4
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "few_cores_single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "sl has no Nemotron: Parakeet Ultra finals only",
+      "request": {
+        "language": "sl",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "ar on CPU: Nemotron alone (its finals beat Qwen3-ASR-0.6B)",
+      "request": {
+        "language": "ar",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "ar",
+        "finalModel": null
+      }
+    },
+    {
+      "name": "th on CPU: Qwen3-ASR finals only",
+      "request": {
+        "language": "th",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "nb: Nemotron alone",
+      "request": {
+        "language": "nb",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": null
+      }
+    },
+    {
+      "name": "an unlisted language uses Whisper small",
+      "request": {
+        "language": "sw",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "sw",
+        "streamingModel": null,
+        "finalModel": "whisper/small-q5_1",
+        "notesInclude": [
+          "generic_language_model"
+        ]
+      }
+    },
+    {
+      "name": "an unlisted language on a 4-core CPU uses Whisper base",
+      "request": {
+        "language": "sw",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 4
+      },
+      "expect": {
+        "finalModel": "whisper/base-q5_1"
+      }
+    },
+    {
+      "name": "auto on CPU: Nemotron waits for the language-ID engine next to Qwen3-ASR",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "auto",
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "languageIdModel": "stt/lid-whisper-base-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ],
+        "notesInclude": [
+          "auto_language",
+          "language_id"
+        ]
+      }
+    },
+    {
+      "name": "auto on a 4-core CPU: Qwen3-ASR finals only",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 4
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "an empty language means auto",
+      "request": {
+        "language": "",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "auto",
+        "finalModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "auto on a 12 GB GPU: Qwen3-ASR-1.7B Q8_0 with the CPU fallback",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ja on a 12 GB GPU: Qwen3-ASR-1.7B Q8_0, Qwen3-ASR-0.6B fallback",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "ja",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "ja on a 16 GB GPU takes BF16",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 11400,
+        "vramTotalMb": 16376,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/qwen3-asr-1.7b-bf16",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "en on a 12 GB GPU: Cohere final, Parakeet Ultra fallback",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/cohere-transcribe-q4_k",
+        "fallbackModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "zh on GPU: Qwen3-ASR-1.7B, SenseVoice fallback, no partials",
+      "request": {
+        "language": "zh-CN",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "zh",
+        "tier": "gpu",
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/sense-voice-small-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k",
+          "stt/nemotron-3.5-streaming-560ms-int8"
+        ]
+      }
+    },
+    {
+      "name": "el on GPU: Cohere final, no Nemotron partials",
+      "request": {
+        "language": "el",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": null,
+        "finalModel": "stt/cohere-transcribe-q4_k",
+        "fallbackModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "cs on GPU stays on Parakeet Ultra (no GPU model beats it)",
+      "request": {
+        "language": "cs",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/parakeet-ultra-int8",
+        "notesInclude": [
+          "no_gpu_model_for_language"
+        ]
+      }
+    },
+    {
+      "name": "GPU tier on a PC without a usable GPU falls back to the CPU",
+      "request": {
+        "language": "en",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/parakeet-ultra-int8",
+        "notesInclude": [
+          "gpu_unavailable",
+          "no_gpu"
+        ]
+      }
+    },
+    {
+      "name": "auto tier keeps a 12 GB card for the voice changer",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "vcRunning": true,
+        "vcGpu": true
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/parakeet-ultra-int8",
+        "notesInclude": [
+          "gpu_denied_vc_running"
+        ]
+      }
+    },
+    {
+      "name": "an unknown voice-changer device counts as the GPU",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "vcRunning": true
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "gpu_denied_vc_running",
+          "vc_unknown_single_pass"
+        ],
+        "streamingModel": null
+      }
+    },
+    {
+      "name": "GPU tier shares the GPU with the voice changer",
+      "request": {
+        "language": "en",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 5400,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "vcRunning": true,
+        "vcGpu": true
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/cohere-transcribe-q4_k",
+        "notesInclude": [
+          "vc_shares_gpu"
+        ]
+      }
+    },
+    {
+      "name": "auto tier on a 24 GB card runs next to the voice changer",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16,
+        "vcRunning": true,
+        "vcGpu": true
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/qwen3-asr-1.7b-bf16",
+        "notesInclude": [
+          "vc_shares_gpu"
+        ]
+      }
+    },
+    {
+      "name": "a voice changer on the CPU makes CPU routes single pass",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8,
+        "vcRunning": true,
+        "vcGpu": false
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "vc_running_single_pass"
+        ]
+      }
+    },
+    {
+      "name": "a voice changer on the CPU leaves GPU two-pass alone",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "vcRunning": true,
+        "vcGpu": false
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": null,
+        "notesInclude": [
+          "no_cpu_fallback"
+        ]
+      }
+    },
+    {
+      "name": "too little free VRAM keeps finals on the CPU",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 1000,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "gpu_full"
+        ]
+      }
+    },
+    {
+      "name": "without the transcribe runtime pack the GPU is not offered",
+      "request": {
+        "language": "ja",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16,
+        "unavailable": [
+          "runtime/sigil-transcribe-cuda13"
+        ]
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "gpu_runtime_unavailable"
+        ]
+      }
+    },
+    {
+      "name": "a GPU model the catalog lacks is skipped for the next one",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "unavailable": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "explicit CPU tier on a GPU PC",
+      "request": {
+        "language": "ja",
+        "tier": "cpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "fallbackModel": null
+      }
+    },
+    {
+      "name": "GPU two-pass also runs on a 4-core CPU",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 4
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": null,
+        "notesInclude": [
+          "no_cpu_fallback"
+        ]
+      }
+    },
+    {
+      "name": "missing lists the models and packs to download",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8,
+        "installed": [
+          "runtime/sherpa-onnx"
+        ]
+      },
+      "expect": {
+        "missingInclude": [
+          "stt/nemotron-3.5-streaming-560ms-int8",
+          "stt/parakeet-ultra-int8"
+        ]
+      }
+    },
+    {
+      "name": "a GPU route lists its runtime packs as missing",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "missingInclude": [
+          "stt/qwen3-asr-1.7b-q8_0",
+          "runtime/sigil-transcribe-cuda13",
+          "runtime/nvidia-cuda13",
+          "stt/qwen3-asr-0.6b-int8",
+          "runtime/sherpa-onnx"
+        ]
+      }
+    },
+    {
+      "name": "pt-BR routes as Portuguese",
+      "request": {
+        "language": "pt-BR",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "language": "pt",
+        "streamingLanguage": "pt",
+        "finalModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "Cohere is never used for ko, even on a big GPU",
+      "request": {
+        "language": "ko",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/qwen3-asr-1.7b-bf16",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "auto never uses Cohere, even on a big GPU",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "gpu",
+        "finalModel": "stt/qwen3-asr-1.7b-bf16",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "uk on CPU: Nemotron partials, Parakeet Ultra final",
+      "request": {
+        "language": "uk",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/parakeet-ultra-int8"
+      }
+    },
+    {
+      "name": "auto without a language-detecting final drops Nemotron",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8,
+        "unavailable": [
+          "stt/qwen3-asr-0.6b-int8",
+          "whisper/small-q5_1",
+          "whisper/base-q5_1"
+        ]
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": null,
+        "notesInclude": [
+          "nemotron_needs_language",
+          "no_engine"
+        ]
+      }
+    },
+    {
+      "name": "auto single pass on CPU: Qwen3-ASR finals only",
+      "request": {
+        "language": "auto",
+        "tier": "auto",
+        "twoPass": false
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "ja single pass on a GPU: Qwen3-ASR-1.7B finals only",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": false
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "a big card with little free VRAM takes Q8_0",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 5000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "an unknown core count allows two passes on the CPU",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 0
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "ja",
+        "finalModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    },
+    {
+      "name": "a vulkan GPU without its imported runtime pack stays on the CPU",
+      "request": {
+        "language": "ja",
+        "tier": "gpu",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "vulkan",
+        "vramAvailableMb": 12000,
+        "vramTotalMb": 16368,
+        "physicalCores": 8,
+        "unavailable": [
+          "runtime/sigil-transcribe-vulkan"
+        ]
+      },
+      "expect": {
+        "tier": "cpu",
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "gpu_runtime_unavailable"
+        ],
+        "neverModels": [
+          "runtime/sigil-transcribe-vulkan",
+          "stt/qwen3-asr-1.7b-q8_0"
+        ]
+      }
+    },
+    {
+      "name": "an unknown voice-changer device counts as the CPU for CPU two-pass",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8,
+        "vcRunning": true
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "vc_unknown_single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "an unknown voice-changer device drops the CPU fallback of GPU two-pass",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16,
+        "vcRunning": true
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/qwen3-asr-1.7b-bf16",
+        "fallbackModel": null,
+        "notesInclude": [
+          "vc_shares_gpu",
+          "no_cpu_fallback"
+        ]
+      }
+    },
+    {
+      "name": "a finals-only GPU plan keeps its CPU fallback on a 4-core CPU",
+      "request": {
+        "language": "zh",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 4
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/sense-voice-small-int8"
+      }
+    },
+    {
+      "name": "GPU single pass keeps the CPU fallback next to a CPU voice changer",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": false
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8,
+        "vcRunning": true,
+        "vcGpu": false
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": null,
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "notesInclude": [
+          "single_pass",
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "a voice changer on the GPU keeps the CPU fallback of GPU two-pass",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16,
+        "vcRunning": true,
+        "vcGpu": true
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+      }
+    }
+  ]
+}

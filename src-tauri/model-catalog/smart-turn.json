@@ -1,0 +1,35 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Smart Turn v3.2 end-of-turn classifier (speech::smart_turn::MODEL_ID), owned by P2-C.",
+    "pipecat-ai/smart-turn-v3 on Hugging Face (BSD-2-Clause): a Whisper Tiny encoder with a linear head, int8 quantized for the CPU (the 32 MB fp32 '-gpu' export is not listed: Sigil runs it on the CPU, two threads, ~30 ms per pause on the dev PC).",
+    "Input contract (checked by speech::smart_turn's tests against transformers' WhisperFeatureExtractor): the last 8 s of 16 kHz mono audio, zero-padded at the start, zero-mean / unit-variance normalized, 80-bin Whisper log-mel [1, 80, 800] as 'input_features'; output: the turn-end probability (sigmoid).",
+    "Update: pin with scripts/models/pin-catalog.mjs --fragment src-tauri/model-catalog/smart-turn.json --write, and keep MODEL_ID / MODEL_FILE in speech/smart_turn.rs in step."
+  ],
+  "entries": [
+    {
+      "id": "vad/smart-turn-v3.2",
+      "family": "vad",
+      "kind": "model",
+      "version": "3.2",
+      "title": "Smart Turn v3.2",
+      "description": "Recognizes when you have finished speaking, so translation, text-to-speech and the VRChat chatbox can send sooner. Captions are unaffected. About 9 MB download.",
+      "license": "BSD-2-Clause",
+      "status": "published",
+      "files": [
+        {
+          "path": "smart-turn-v3.2-cpu.onnx",
+          "size": 8679182,
+          "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
+              "revision": "f766f81d3cfdf7737ac64aad813d91bbfd56bf93"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

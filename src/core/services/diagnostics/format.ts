@@ -38,6 +38,7 @@ export function componentKey(component: string): string | null {
     "vc.onnx": "vc_onnx",
     "tts.kitten": "tts_kitten",
     "stt.vad": "stt_vad",
+    "stt.turn": "stt_turn",
   };
   return known[component] ?? null;
 }
@@ -51,6 +52,7 @@ export function componentLabel(component: string): string {
     "vc.onnx": "Voice changer ONNX model",
     "tts.kitten": "Local TTS",
     "stt.vad": "Speech detection",
+    "stt.turn": "End-of-turn detection",
   };
   return labels[component] ?? component;
 }

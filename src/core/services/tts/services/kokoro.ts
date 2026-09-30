@@ -2,26 +2,27 @@ import { invoke } from "@tauri-apps/api/core";
 import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
-import { ClipTtsBackend } from "../clipBackend";
-import { positiveOr } from "../num";
+import { OpenAiSpeechBackend, OpenAiSpeechSettings, kokoroSpeechSettings } from "./openaiSpeech";
 
-/** Kokoro-FastAPI (OpenAI-style `/v1/audio/speech`) through the `kokoro-tts` plugin. */
-export class TTS_KokoroService extends ClipTtsBackend {
+/**
+ * Kokoro-FastAPI (backend `kokoro`, legacy settings kept): speech goes through the OpenAI-compatible streaming client
+ * (`{endpoint}/v1`, model `kokoro`, raw 24 kHz PCM streamed into the TTS sink, see {@link kokoroSpeechSettings}); the
+ * server check and the voice list stay on the `kokoro-tts` plugin.
+ */
+export class TTS_KokoroService extends OpenAiSpeechBackend {
     #endpoint = "http://localhost:8880";
-    #voice = "af_bella";
-    #speed = 1.0;
 
     constructor(receiver: ITTSReceiver) {
         super(receiver, "Kokoro");
     }
 
-    protected async connect(data: TTS_State): Promise<string | null> {
-        const config = data.kokoro;
-        this.#endpoint = config.endpoint.trim();
-        this.#voice = config.voice;
-        this.#speed = positiveOr(config.speed, 1);
+    protected settings(state: TTS_State): OpenAiSpeechSettings | string {
+        this.#endpoint = state.kokoro.endpoint.trim();
+        return kokoroSpeechSettings(state.kokoro);
+    }
 
-        // Keep the plugin's stored default in sync; every call below also passes the endpoint.
+    protected async check(): Promise<string | null> {
+        // Keep the plugin's stored default in sync; the voice list also passes the endpoint per call.
         await invoke("plugin:kokoro-tts|set_kokoro_endpoint", { endpoint: this.#endpoint });
         const isAvailable = await invoke<boolean>("plugin:kokoro-tts|check_kokoro_availability", {
             endpoint: this.#endpoint,
@@ -31,15 +32,6 @@ export class TTS_KokoroService extends ClipTtsBackend {
         }
         devLog("[Kokoro] TTS service started");
         return null;
-    }
-
-    protected synthesize(text: string) {
-        return invoke<number[]>("plugin:kokoro-tts|kokoro_speak", {
-            text,
-            voice: this.#voice,
-            speed: this.#speed,
-            endpoint: this.#endpoint,
-        });
     }
 
     /** Voices on the server at `endpoint`. Rejects when the server cannot be reached. */

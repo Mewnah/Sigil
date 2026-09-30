@@ -1,6 +1,7 @@
 import {
   ISTTReceiver,
-  ISTTService
+  ISTTService,
+  SttTextMeta
 } from "../types";
 
 import i18n from "i18next";
@@ -8,6 +9,18 @@ import { isEmptyValue } from "../../../../utils";
 import { STT_State } from "../schema";
 import { normalizeDeepgramLanguage } from "../stt_data";
 import { devLog } from "@/utils/devLog";
+import { baseLanguageTag } from "../rustCapturePolling";
+
+/** How often the recorder follows the STT mute. */
+export const DEEPGRAM_MUTE_POLL_MS = 250;
+/** MediaRecorder timeslice: one WebM chunk is sent this often. */
+export const DEEPGRAM_TIMESLICE_MS = 250;
+/**
+ * KeepAlive spacing while the recorder is paused: Deepgram closes a stream that gets neither audio nor a KeepAlive
+ * for about 10 s (NET-0001); its docs ask for one every 3-5 s.
+ */
+export const DEEPGRAM_KEEPALIVE_MS = 4_000;
+const KEEPALIVE_MESSAGE = JSON.stringify({ type: "KeepAlive" });
 
 /**
  * getUserMedia constraints for a stored Web Audio `deviceId`. `exact` is used only for an id that currently
@@ -32,6 +45,29 @@ async function resolveAudioConstraints(deviceId: string): Promise<MediaTrackCons
   return true;
 }
 
+/** Stop message for a failed `getUserMedia`. Pure. */
+export function deepgramMicrophoneError(error: unknown): string {
+  const name = error instanceof Error || error instanceof DOMException ? error.name : "";
+  const msg = error instanceof Error || error instanceof DOMException ? error.message : String(error);
+  const lower = `${name} ${msg}`.toLowerCase();
+  if (name === "NotAllowedError" || name === "SecurityError" || lower.includes("permission") || lower.includes("denied"))
+    return i18n.t("stt.error_mic_denied");
+  if (name === "NotFoundError" || name === "OverconstrainedError")
+    return i18n.t("stt.error_mic_missing");
+  return i18n.t("stt.error_mic_generic", { detail: msg || name || "error" });
+}
+
+/**
+ * Stop message for a socket that closed on its own: `null` for a clean close. Before the socket opened, any failure
+ * means the handshake was refused (browsers hide the HTTP status of a rejected key behind code 1006). Pure.
+ */
+export function deepgramCloseMessage(opened: boolean, code: number, reason: string, wasClean: boolean): string | null {
+  if (!opened) return i18n.t("stt.error_deepgram_connect");
+  if (wasClean && (code === 1000 || code === 1005)) return null;
+  const detail = reason.trim() ? `${code}: ${reason.trim()}` : String(code);
+  return i18n.t("stt.error_deepgram_lost", { detail });
+}
+
 export class STT_DeepgramService implements ISTTService {
   constructor(private bindings: ISTTReceiver) { }
 
@@ -44,6 +80,15 @@ export class STT_DeepgramService implements ISTTService {
   private sessionEnded = false;
   /** Bumped by `start()` and `stop()`; a microphone that opens under an older token is released unused. */
   #startToken = 0;
+  /** The socket opened (a failure before that is a refused connection). */
+  #opened = false;
+  /** A partial is on screen (an empty final then abandons it). */
+  #interimOpen = false;
+  #muteTimer?: ReturnType<typeof setInterval>;
+  #lastKeepAlive = 0;
+  /** The recorder was started (it starts only once STT is not muted; a stopped recorder is never restarted). */
+  #recorderStarted = false;
+  #meta: SttTextMeta | undefined;
 
   start(state: STT_State): void {
     const token = ++this.#startToken;
@@ -54,9 +99,15 @@ export class STT_DeepgramService implements ISTTService {
       return this.bindings.onStop(i18n.t("stt.error_deepgram_options"));
 
     this.sessionEnded = false;
+    this.#opened = false;
+    this.#interimOpen = false;
+    this.#recorderStarted = false;
+    const lang = baseLanguageTag(normalizeDeepgramLanguage(state.deepgram.language));
+    this.#meta = lang ? { lang } : undefined;
 
     // Service device, else the Settings Web Audio default.
     const deviceId = (state.deepgram.device || window.ApiServer.state.audioInputDevice || "").trim();
+    this.bindings.onStatus(i18n.t("stt.status_mic_opening"));
     void this.#openMicrophoneAndSession(token, deviceId, state);
   }
 
@@ -71,12 +122,8 @@ export class STT_DeepgramService implements ISTTService {
     } catch (err: unknown) {
       if (token !== this.#startToken)
         return;
-      const msg = err instanceof Error ? err.message : String(err);
-      this.bindings.onStop(
-        msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("denied")
-          ? "Microphone permission denied or unavailable. Allow the mic for Sigil or pick another input device."
-          : `Microphone: ${msg}`
-      );
+      this.bindings.onStatus("");
+      this.bindings.onStop(deepgramMicrophoneError(err));
       return;
     }
 
@@ -87,6 +134,7 @@ export class STT_DeepgramService implements ISTTService {
     }
 
     this.stream = stream;
+    this.bindings.onStatus(i18n.t("stt.status_connecting_engine", { engine: "Deepgram" }));
     try {
       this.#openSession(state, stream);
     } catch (err) {
@@ -94,11 +142,10 @@ export class STT_DeepgramService implements ISTTService {
       // quotes the rejected subprotocol, i.e. the API key.
       this.sessionEnded = true;
       this.socket = undefined;
-      this.recorder = undefined;
       this.stopRecorder();
-      this.bindings.onStop(
-        `[Deepgram] Failed to start (${err instanceof Error ? err.name : "error"}). Check the API key and audio settings.`
-      );
+      this.recorder = undefined;
+      this.bindings.onStatus("");
+      this.bindings.onStop(i18n.t("stt.error_deepgram_start", { detail: err instanceof Error ? err.name : "error" }));
     }
   }
 
@@ -119,10 +166,12 @@ export class STT_DeepgramService implements ISTTService {
           /* ignore */
         }
         this.socket = undefined;
-        this.bindings.onStop("[Deepgram] WebSocket error");
+        this.bindings.onStatus("");
+        this.bindings.onStop(this.#opened ? i18n.t("stt.error_deepgram_lost", { detail: "error" }) : i18n.t("stt.error_deepgram_connect"));
       };
 
       this.socket.onopen = () => {
+        this.#opened = true;
         this.bindings.onStart();
         this.recorder?.addEventListener("dataavailable", (event) => {
           if (!this.socket || this.socket.readyState === this.socket.CLOSING)
@@ -133,19 +182,32 @@ export class STT_DeepgramService implements ISTTService {
           )
             this.socket.send(event.data);
         });
-        this.recorder?.start(250);
+        // Starts the recorder now, or (while STT is muted) only once it is unmuted: muted audio is never recorded.
+        this.#followMute();
       };
       this.socket.onmessage = (e) => {
         try {
           const rec = JSON.parse(e.data);
-          const transcript = rec?.channel?.alternatives?.[0]?.transcript;
-
-          if (!transcript)
+          if (rec?.type && rec.type !== "Results")
+            return; // Metadata, SpeechStarted, UtteranceEnd
+          const transcript = String(rec?.channel?.alternatives?.[0]?.transcript ?? "");
+          const final = !!(rec?.speech_final || rec?.is_final);
+          if (!transcript.trim()) {
+            // A final without words closes a partial that turned out not to be speech.
+            if (final && this.#interimOpen) {
+              this.#interimOpen = false;
+              this.bindings.onInterim("");
+            }
             return;
-          if (rec.speech_final || rec.is_final)
-            this.bindings.onFinal(transcript);
-          else
-            this.bindings.onInterim(transcript);
+          }
+          if (final) {
+            this.#interimOpen = false;
+            this.bindings.onFinal(transcript, this.#meta);
+          }
+          else {
+            this.#interimOpen = true;
+            this.bindings.onInterim(transcript, this.#meta);
+          }
         } catch (err) {
           devLog("[Deepgram] Failed to parse message:", err);
         }
@@ -156,21 +218,78 @@ export class STT_DeepgramService implements ISTTService {
           return;
         this.sessionEnded = true;
         this.socket = undefined;
-        if (ev.wasClean)
-          return this.bindings.onStop();
-        else
-          return this.bindings.onStop(ev.code === 1006 ? "" : "[Deepgram] Unexpected error");
+        this.bindings.onStatus("");
+        const message = deepgramCloseMessage(this.#opened, ev.code, ev.reason ?? "", ev.wasClean);
+        return this.bindings.onStop(message ?? undefined);
       };
+  }
+
+  /**
+   * While STT is hard-muted the recorder is paused, so muted speech never leaves the PC (and is not billed); the
+   * socket is kept open with KeepAlive messages. Pausing keeps the WebM stream continuous, unlike dropping chunks.
+   * The first check runs synchronously when the socket opens: a session that opens while muted does not start the
+   * recorder at all until it is unmuted, so not even the first timeslice of muted audio is recorded or sent.
+   */
+  #followMute(): void {
+    this.#clearMuteTimer();
+    this.#lastKeepAlive = Date.now();
+    this.#syncMute();
+    this.#muteTimer = setInterval(() => this.#syncMute(), DEEPGRAM_MUTE_POLL_MS);
+  }
+
+  /** Recorder follows the mute (start / pause / resume); KeepAlive while no audio flows. */
+  #syncMute(): void {
+    const recorder = this.recorder;
+    const socket = this.socket;
+    if (!recorder || !socket || socket.readyState !== socket.OPEN) return;
+    const muted = this.bindings.isMuted();
+    try {
+      if (muted) {
+        if (recorder.state === "recording") {
+          recorder.pause();
+          devLog("[Deepgram] Paused (muted)");
+        }
+      }
+      else if (recorder.state === "paused") {
+        recorder.resume();
+        devLog("[Deepgram] Resumed");
+      }
+      else if (recorder.state === "inactive" && !this.#recorderStarted) {
+        this.#recorderStarted = true;
+        recorder.start(DEEPGRAM_TIMESLICE_MS);
+      }
+    } catch (err) {
+      devLog("[Deepgram] Recorder start/pause/resume failed:", err);
+    }
+    // Not started yet (muted since the socket opened) counts as paused; a recorder that ended on its own does not
+    // (the socket then closes on Deepgram's no-audio timeout and the session reports it).
+    const silent = recorder.state === "paused" || (recorder.state === "inactive" && !this.#recorderStarted);
+    if (silent && Date.now() - this.#lastKeepAlive >= DEEPGRAM_KEEPALIVE_MS) {
+      this.#lastKeepAlive = Date.now();
+      socket.send(KEEPALIVE_MESSAGE);
+    }
+    else if (recorder.state === "recording") {
+      this.#lastKeepAlive = Date.now();
+    }
+  }
+
+  #clearMuteTimer(): void {
+    if (this.#muteTimer !== undefined) {
+      clearInterval(this.#muteTimer);
+      this.#muteTimer = undefined;
+    }
   }
 
   stopSocket() {
     this.socket?.close();
   }
   stopRecorder() {
-    if (this.recorder && this.recorder?.state !== "inactive") {
-      this.recorder?.stop();
-      this.recorder = undefined;
-    }
+    this.#clearMuteTimer();
+    // Also forgets a recorder that never started (muted for the whole session).
+    const recorder = this.recorder;
+    this.recorder = undefined;
+    if (recorder && recorder.state !== "inactive")
+      recorder.stop();
     // Release the microphone; MediaRecorder.stop() does not stop the stream tracks.
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = undefined;

@@ -7,7 +7,16 @@
 //! Extra arguments after `--` (all optional):
 //! - `kind=<family>`, `mode=online|offline`, `fp32=1`, `vocoder=<file>`: model detection hints
 //!   ([`super::detect::DetectHints`]).
-//! - `threads=N` (default 2; 1 for streaming models), `lang=<code>`, `model_type=<t>`, `hotwords=<text>`.
+//! - `threads=N` (default 2; 1 for streaming models), `lang=<code>`, `model_type=<t>`, `hotwords=<text>`
+//!   (`;`-separated phrases; transducers need `beam=1`). `lang` goes where each family reads it: the
+//!   model config (SenseVoice, Whisper, Cohere, Canary), the stream's `language` option as the
+//!   English name (Qwen3-ASR), or the stream's `language` option (Nemotron 3.5 streaming).
+//! - `hotwords_score=F`: boost per hotword token (sherpa default 1.5).
+//! - `beam=1`: modified beam search (transducers; NeMo ones get a `bpe.vocab` derived from
+//!   `tokens.txt` for hotwords).
+//! - The positional model may be a catalog id of `speech_rt::sherpa::catalog` (e.g.
+//!   `stt/nemotron-3.5-streaming-560ms-int8`): it is located with `model_store::installed_path`
+//!   and configured exactly as the speech engines configure it.
 //! - `repeat=N` (default 3) decode runs; `chunk_ms=N` (streaming feed, default 100);
 //!   `idle_ms=N` (idle window after decoding, default 1000; 0 skips it).
 //! - `text=<sentence>`, `sid=N`, `speed=F`, `silence=F` (pause scale, 0.01-10), `out=<file.wav>`: TTS.
@@ -223,7 +232,8 @@ struct RunOutput {
 /// A loaded model plus the workload the probe runs on it.
 enum Workload {
     Offline(OfflineRecognizer, Vec<f32>, u32, DecodeOptions),
-    Online(OnlineRecognizer, Vec<f32>, u32, usize),
+    /// Recognizer, samples, rate, chunk size, per-stream `language`, padding (as the engine).
+    Online(OnlineRecognizer, Vec<f32>, u32, usize, Option<String>, super::online::StreamPadding),
     Tts(Box<OfflineTts>, String, GenerateOptions),
     Lid(SpokenLanguageId, Vec<f32>, u32),
     Speaker(SpeakerEmbeddingExtractor, Vec<f32>, u32),
@@ -240,8 +250,15 @@ impl Workload {
                     detail: serde_json::to_value(&r).unwrap_or(Value::Null),
                 })
             }
-            Workload::Online(rec, samples, rate, chunk) => {
+            Workload::Online(rec, samples, rate, chunk, lang, pad) => {
                 let mut stream = rec.create_stream()?;
+                if let Some(l) = lang {
+                    stream.set_option("language", l)?;
+                }
+                let silence = |ms: u32| vec![0.0f32; (*rate as usize) * ms as usize / 1000];
+                if pad.head_ms > 0 {
+                    stream.accept_waveform(*rate, &silence(pad.head_ms))?;
+                }
                 let mut chunk_ms = Vec::new();
                 let mut first_partial_s = None;
                 let mut fed = 0usize;
@@ -255,8 +272,8 @@ impl Workload {
                         first_partial_s = Some(round3(fed as f64 / f64::from(*rate)));
                     }
                 }
-                // Right context of the last chunk (NeMo cache-aware models need a tail).
-                stream.accept_waveform(*rate, &vec![0.0; (*rate as usize) * 3 / 10])?;
+                // Right context of the last chunk (a whole decode window for NeMo cache-aware models).
+                stream.accept_waveform(*rate, &silence(pad.tail_ms))?;
                 stream.input_finished();
                 stream.decode();
                 let r = stream.result()?;
@@ -355,13 +372,27 @@ fn apply_overrides(model: &mut SherpaModel, extra: &Extra) -> Result<(), String>
     let threads: Option<u32> = extra.num("threads")?;
     let lang = extra.str("lang").map(str::to_string);
     let model_type = extra.str("model_type").map(str::to_string);
+    let beam = extra.flag("beam");
+    let hotwords_score: Option<f32> = extra.num("hotwords_score")?;
     match model {
         SherpaModel::Offline(c) => {
+            if let Some(score) = hotwords_score {
+                c.hotwords_score = score;
+            }
             if threads.is_some() {
                 c.num_threads = threads;
             }
             if model_type.is_some() {
                 c.model_type = model_type;
+            }
+            if beam {
+                if let (OfflineModel::Transducer { .. }, Some(tokens)) = (&c.model, c.tokens.clone()) {
+                    if c.model_type.as_deref() == Some("nemo_transducer") && c.bpe_vocab.is_none() {
+                        c.bpe_vocab = Some(super::hotwords::ensure_bpe_vocab(&tokens, &super::hotwords::default_cache_dir())?);
+                        c.modeling_unit = Some("bpe".into());
+                    }
+                }
+                c.decoding = super::online::Decoding::ModifiedBeamSearch { max_active_paths: 4 };
             }
             match &mut c.model {
                 OfflineModel::SenseVoice { language, .. }
@@ -386,6 +417,9 @@ fn apply_overrides(model: &mut SherpaModel, extra: &Extra) -> Result<(), String>
             }
             if model_type.is_some() {
                 c.model_type = model_type;
+            }
+            if beam {
+                c.decoding = super::online::Decoding::ModifiedBeamSearch { max_active_paths: 4 };
             }
         }
         SherpaModel::Tts(c) => {
@@ -423,9 +457,24 @@ fn build_workload(rt: &Arc<SherpaRuntime>, model: &SherpaModel, wav: Option<&(Ve
     Ok(match model {
         SherpaModel::Offline(c) => {
             let (s, r) = need_wav()?;
+            let phrases: Vec<String> = extra
+                .str("hotwords")
+                .map(|h| h.split(';').map(str::to_string).collect())
+                .unwrap_or_default();
+            let qwen3 = matches!(c.model, OfflineModel::Qwen3Asr { .. });
             let opts = DecodeOptions {
-                language: None,
-                hotwords: extra.str("hotwords").map(str::to_string),
+                // Qwen3-ASR reads the stream's `language` option as the English name; the other
+                // families take `lang` in their config (`apply_overrides`).
+                language: extra.str("lang").filter(|_| qwen3).map(|l| {
+                    super::languages::qwen3_language_name(l)
+                        .unwrap_or(l)
+                        .to_string()
+                }),
+                hotwords: if qwen3 {
+                    super::hotwords::qwen3_context(&phrases, None)
+                } else {
+                    super::hotwords::transducer_hotwords(&phrases)
+                },
             };
             Workload::Offline(OfflineRecognizer::new(rt, c)?, s, r, opts)
         }
@@ -433,7 +482,9 @@ fn build_workload(rt: &Arc<SherpaRuntime>, model: &SherpaModel, wav: Option<&(Ve
             let (s, r) = need_wav()?;
             let chunk_ms: u32 = extra.num("chunk_ms")?.unwrap_or(100).clamp(10, 2000);
             let chunk = (r as usize * chunk_ms as usize / 1000).max(1);
-            Workload::Online(OnlineRecognizer::new(rt, c)?, s, r, chunk)
+            let lang = extra.str("lang").map(str::to_string);
+            let pad = super::online::StreamPadding::for_config(c);
+            Workload::Online(OnlineRecognizer::new(rt, c)?, s, r, chunk, lang, pad)
         }
         SherpaModel::Tts(c) => {
             let text = extra.str("text").unwrap_or(DEFAULT_TEXT).to_string();
@@ -584,15 +635,24 @@ pub fn headless_probe(args: &EngineProbeArgs) -> Result<String, String> {
             report["note"] = json!("runtime only (pass a model folder and a WAV to run a model)");
             return serde_json::to_string_pretty(&report).map_err(|e| e.to_string());
         };
-        let hints = DetectHints {
-            kind: extra.str("kind").map(str::to_string),
-            mode: extra.str("mode").map(str::to_lowercase),
-            prefer_fp32: extra.flag("fp32"),
-            vocoder: extra.str("vocoder").map(PathBuf::from),
-        };
-        let mut model = detect(model_path, &hints)?;
-        apply_overrides(&mut model, &extra)?;
-        (model, model_path.display().to_string())
+        if let Some(cm) = catalog_model(model_path) {
+            let dir = crate::services::model_store::installed_path(cm.id)
+                .ok_or_else(|| format!("{} is not installed: run `Sigil.exe --headless fetch {}`", cm.id, cm.id))?;
+            let mut model = cm.config(&dir);
+            apply_overrides(&mut model, &extra)?;
+            report["catalog_id"] = json!(cm.id);
+            (model, dir.display().to_string())
+        } else {
+            let hints = DetectHints {
+                kind: extra.str("kind").map(str::to_string),
+                mode: extra.str("mode").map(str::to_lowercase),
+                prefer_fp32: extra.flag("fp32"),
+                vocoder: extra.str("vocoder").map(PathBuf::from),
+            };
+            let mut model = detect(model_path, &hints)?;
+            apply_overrides(&mut model, &extra)?;
+            (model, model_path.display().to_string())
+        }
     };
     report["model"] = json!({ "path": source, "task": model.label(), "config": &model });
     if extra.flag("validate_child") {
@@ -657,6 +717,16 @@ pub fn headless_probe(args: &EngineProbeArgs) -> Result<String, String> {
         "onnxruntime.dll": super::lib::loaded_module_path("onnxruntime.dll").map(|p| p.display().to_string()),
     });
     serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+}
+
+/// The catalog model the positional model argument names (a catalog id that is not an existing
+/// path).
+pub(super) fn catalog_model(arg: &Path) -> Option<&'static super::catalog::CatalogModel> {
+    if arg.exists() {
+        return None;
+    }
+    let id = arg.to_str()?.replace('\\', "/");
+    super::catalog::find(id.trim())
 }
 
 /// A serialized [`SherpaModel`] (the `config=<file>` extra).

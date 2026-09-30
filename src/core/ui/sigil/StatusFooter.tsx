@@ -15,6 +15,8 @@ import {
     RiRecordCircleFill,
     RiPlayFill,
     RiStopFill,
+    RiSkipForwardFill,
+    RiVolumeMuteFill,
 } from "react-icons/ri";
 import { KickIcon } from "../icons/KickIcon";
 import { Services } from "@/services-registry";
@@ -162,6 +164,8 @@ type ActionBarCardDef = {
     /** The toggle stays clickable while connecting and cancels the start. */
     cancelWhileConnecting?: boolean;
     onToggle?: () => void;
+    /** Extra buttons before the toggle (e.g. TTS skip / stop speaking). */
+    actions?: React.ReactNode;
 };
 
 interface StatusCardProps {
@@ -175,6 +179,7 @@ interface StatusCardProps {
     reorderEnabled?: boolean;
     onGripPointerDown?: (serviceId: string, e: React.PointerEvent) => void;
     isReorderSource?: boolean;
+    actions?: React.ReactNode;
 }
 
 const StatusCard: FC<StatusCardProps> = ({
@@ -188,6 +193,7 @@ const StatusCard: FC<StatusCardProps> = ({
     reorderEnabled,
     onGripPointerDown,
     isReorderSource,
+    actions,
 }) => {
     const { t } = useTranslation();
     const isConn = status === ServiceNetworkState.connected;
@@ -248,6 +254,7 @@ const StatusCard: FC<StatusCardProps> = ({
             </button>
 
             <div className="flex items-center gap-1 flex-shrink-0">
+                {actions}
                 {canToggle && (
                     <button
                         onClick={handleToggle}
@@ -274,6 +281,41 @@ const StatusCard: FC<StatusCardProps> = ({
                 </button>
             </div>
         </div>
+    );
+};
+
+/**
+ * Skip / stop-speaking buttons of the TTS card, shown while sentences are queued or playing (sentence pipeline
+ * backends). Both leave the service running; the card's own toggle stops it.
+ */
+const TtsSpeechActions: FC<{ pending: number; status: ServiceNetworkState }> = ({ pending, status }) => {
+    const { t } = useTranslation();
+    if (status !== ServiceNetworkState.connected || pending <= 0) return null;
+    const stop = (e: React.MouseEvent, fn: () => void) => {
+        e.stopPropagation();
+        fn();
+    };
+    return (
+        <>
+            <button
+                type="button"
+                onClick={(e) => stop(e, () => window.ApiServer.tts.skip())}
+                className="p-2 rounded-md bg-base-content/5 text-base-content/70 hover:bg-primary/10 hover:text-primary transition-all"
+                title={t("tts.skip_sentence")}
+                aria-label={t("tts.skip_sentence")}
+            >
+                <RiSkipForwardFill className="rtl:-scale-x-100" />
+            </button>
+            <button
+                type="button"
+                onClick={(e) => stop(e, () => window.ApiServer.tts.stopSpeaking())}
+                className="p-2 rounded-md bg-base-content/5 text-base-content/70 hover:bg-warning/10 hover:text-warning transition-all"
+                title={t("tts.stop_speaking", { n: pending })}
+                aria-label={t("tts.stop_speaking", { n: pending })}
+            >
+                <RiVolumeMuteFill />
+            </button>
+        </>
     );
 };
 
@@ -344,6 +386,7 @@ export const StatusFooter: FC = memo(() => {
             onToggle: () => toggleService("tts"),
             canToggle: true,
             cancelWhileConnecting: true,
+            actions: <TtsSpeechActions pending={ttsState.pending} status={ttsState.status} />,
         },
         {
             id: Services.translation,
@@ -516,6 +559,7 @@ export const StatusFooter: FC = memo(() => {
                         reorderEnabled={reorderEnabled}
                         onGripPointerDown={onGripPointerDown}
                         isReorderSource={reorderDraggingId === card.id}
+                        actions={card.actions}
                     />
                 ))}
                 {reorderDraggingId && activeSorted.length > 0 && (

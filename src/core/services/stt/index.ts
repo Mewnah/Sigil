@@ -5,7 +5,7 @@ import { toast } from "react-toastify";
 import { PUBSUB_STT_EXTERNAL_COMMAND } from "@/shared/services/pubsub";
 import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
-import { STT_Backends } from "./schema";
+import { STT_Backends, type STT_State } from "./schema";
 import { STT_AzureService } from "./services/azure";
 import { STT_DeepgramService } from "./services/deepgram";
 import { STT_NativeService } from "./services/native";
@@ -14,6 +14,7 @@ import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
 import { STT_OpenAI_AudioService } from "./services/openaiAudio";
 import { STT_ExternalMicService } from "./services/externalMic";
+import { STT_LocalService } from "./services/local";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { invoke } from "@tauri-apps/api/core";
 import { migrateLegacyNativeInputDevice } from "@/utils/rustAudioInput";
@@ -21,15 +22,18 @@ import {
   ISTTReceiver,
   ISTTServiceConstructor,
   SttMuteState,
-  SttStatusLevel
+  SttStatusLevel,
+  type SttTextMeta,
 } from "./types";
 import { isAbortError, untilAborted } from "./abort";
 import { createScopedReceiver, EMPTY_STT_STATUS, SttStatus } from "./statusChannel";
-import { planDesktopDefaultMigration } from "./migrate";
+import { planDesktopDefaultMigration, type WhisperMigration } from "./migrate";
 import { findWhisperModel, formatModelSize } from "./whisperModels";
 import { i18nReady } from "./statusMessages";
 import { useAppUIStore } from "@/core/ui/store";
 import { Services } from "@/services-registry";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { normalizeLanguage } from "./router";
 
 export type SttBackendMap = {
   [k in STT_Backends]?: ISTTServiceConstructor;
@@ -46,8 +50,10 @@ const backends: SttBackendMap = {
   [STT_Backends.vosk]: STT_VoskService,
   [STT_Backends.moonshine]: STT_MoonshineService,
   [STT_Backends.openai_audio]: STT_OpenAI_AudioService,
+  [STT_Backends.local]: STT_LocalService,
 };
 
+/** How long Chrome / Edge may take to open the microphone page (`EXTERNAL_MIC_WAITING_LINE_MS` in externalMic.ts is the same). */
 const EXTERNAL_MIC_CONNECT_TIMEOUT_MS = 6000;
 /**
  * Inactivity window while connecting: fires when onStart never arrives (Web Speech quirks) or an async engine
@@ -63,10 +69,70 @@ const STT_CONNECTING_FALLBACK_HEAVY_MS = 300_000;
  */
 const STT_PROGRESS_TOAST_ID = "stt-model-progress";
 
-function connectingFallbackMs(backend: STT_Backends): number {
-  return backend === STT_Backends.whisper || backend === STT_Backends.vosk || backend === STT_Backends.moonshine
-    ? STT_CONNECTING_FALLBACK_HEAVY_MS
-    : STT_CONNECTING_FALLBACK_MS;
+/**
+ * Backends that download and load local models (or runtimes) before they are ready. (Moonshine is an HTTP server
+ * since P2-F: a pipeline start plus one health probe of at most 10 s fits the default window.)
+ */
+const HEAVY_BACKENDS: ReadonlySet<STT_Backends> = new Set([
+  STT_Backends.whisper,
+  STT_Backends.vosk,
+  STT_Backends.local,
+]);
+
+export function connectingFallbackMs(backend: STT_Backends): number {
+  return HEAVY_BACKENDS.has(backend) ? STT_CONNECTING_FALLBACK_HEAVY_MS : STT_CONNECTING_FALLBACK_MS;
+}
+
+/**
+ * `SttTextMeta` -> the optional `TextEvent` fields (`segmentId`, `revision`, `lang`, `turnEnd`). Only valid values are
+ * copied (the schema would drop malformed ones on peers anyway), and absent ones leave no key, so events of engines
+ * without segments are unchanged.
+ */
+export function textEventMeta(meta: SttTextMeta | undefined): Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd"> {
+  const out: Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd"> = {};
+  if (!meta) return out;
+  if (typeof meta.segmentId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(meta.segmentId)) out.segmentId = meta.segmentId;
+  if (typeof meta.revision === "number" && Number.isInteger(meta.revision) && meta.revision >= 0 && meta.revision <= 1_000_000)
+    out.revision = meta.revision;
+  if (typeof meta.lang === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(meta.lang)) out.lang = meta.lang;
+  if (typeof meta.turnEnd === "boolean") out.turnEnd = meta.turnEnd;
+  return out;
+}
+
+/** Options of `Service_STT.start`. */
+export interface SttStartOptions {
+  /** Nobody pressed Start just now (auto-start at launch): engines must not ask questions such as download consent. */
+  automatic?: boolean;
+}
+
+/** Settings carried over when a profile moves to the `local` backend (language and microphone of the old backend). */
+export interface LocalBackendCarryOver {
+  /** Normalized language, or null to keep `local.language`. */
+  language: string | null;
+  /** Capture device, or null to keep `local.device`. */
+  device: string | null;
+}
+
+/**
+ * What the `local` backend takes over from the backend the profile used before: its language (normalized; only when
+ * `local.language` is still "auto", since an explicit language gives live captions) and its Rust capture device
+ * (only when `local.device` is still the default).
+ */
+export function localBackendCarryOver(data: STT_State): LocalBackendCarryOver {
+  const previous =
+    data.backend === STT_Backends.native || data.backend === STT_Backends.browser ? data.native.language
+    : data.backend === STT_Backends.whisper ? data.whisper.language
+    : data.backend === STT_Backends.openai_audio ? data.openai_audio.language
+    : data.backend === STT_Backends.moonshine ? data.moonshine.language
+    : "";
+  const language = data.local.language === "auto" || data.local.language === "" ? normalizeLanguage(previous) : null;
+  const device =
+    data.backend === STT_Backends.whisper ? data.whisper.device
+    : data.backend === STT_Backends.vosk ? data.vosk.device
+    : data.backend === STT_Backends.moonshine ? data.moonshine.device
+    : data.backend === STT_Backends.openai_audio ? data.openai_audio.device
+    : "";
+  return { language, device: data.local.device === "" && device ? device : null };
 }
 
 type SttEngineInstance = InstanceType<NonNullable<SttBackendMap[STT_Backends]>>;
@@ -78,10 +144,17 @@ class Service_STT implements IServiceInterface {
   #serviceInstance?: SttEngineInstance;
   /** Bumped on each user stop and on each successful start handoff so stale backend callbacks are ignored. */
   #sessionEpoch = 0;
-  #lastMessageState = {
+  #lastMessageState: { value: string; isInterim: boolean; meta?: SttTextMeta } = {
     value: "",
-    isInterim: false
-  }
+    isInterim: false,
+  };
+  /** Segment id of the last final handed to `#sendFinal` (set before any await): that segment is closed. */
+  #lastFinalSegmentId: string | null = null;
+  /**
+   * Segments closed by the "[...]" marker: their later interims and finals are dropped, so consumers that follow
+   * segment ids get exactly one final per segment (and the marker's revision is never reused).
+   */
+  readonly #cancelledSegments = new Set<string>();
 
   #_wordReplacementsCache!: WordReplacementsCache;
   private eventDisposers: (() => void)[] = [];
@@ -98,8 +171,8 @@ class Service_STT implements IServiceInterface {
   /** Session epoch the download progress toast was shown for (`null` = not shown). */
   #progressToastEpoch: number | null = null;
 
-  updateLastMessage(value: string, isInterim: boolean) {
-    this.#lastMessageState = { value, isInterim };
+  updateLastMessage(value: string, isInterim: boolean, meta?: SttTextMeta) {
+    this.#lastMessageState = meta ? { value, isInterim, meta } : { value, isInterim };
   }
 
   serviceState = proxy({
@@ -150,6 +223,8 @@ class Service_STT implements IServiceInterface {
         return;
       if (this.serviceState.status !== ServiceNetworkState.connecting)
         return;
+      // The "waiting for the microphone page" line ends with the wait.
+      this.#clearEngineStatus();
       toast.warning(i18n.t("toasts.stt_external_mic_timeout"));
       this.#setStatus(ServiceNetworkState.disconnected);
     }, EXTERNAL_MIC_CONNECT_TIMEOUT_MS);
@@ -179,8 +254,8 @@ class Service_STT implements IServiceInterface {
       isCurrent: () => epoch === this.#sessionEpoch,
       start: () => this.#onStartScoped(epoch),
       stop: (err) => this.#onStopScoped(epoch, err),
-      interim: (v) => void this.#sendInterim(v),
-      final: (v) => void this.#sendFinal(v),
+      interim: (v, meta) => void this.#sendInterim(v, meta),
+      final: (v, meta) => void this.#sendFinal(v, meta),
       status: (status) => this.#applyEngineStatus(status),
       // Progress while connecting (download %, load status, first words) proves the engine is alive: restart the
       // window so long first-time downloads are not cut off while they are still moving.
@@ -317,6 +392,8 @@ class Service_STT implements IServiceInterface {
     if (!this.#isChromeOrEdgeBackend())
       return;
     this.#clearExternalMicConnectingTimeout();
+    // The page answered: the "waiting for the microphone page" line is over either way.
+    this.#clearEngineStatus();
     if (active) {
       this.#setStatus(ServiceNetworkState.connected);
     }
@@ -328,7 +405,22 @@ class Service_STT implements IServiceInterface {
     }
   }
 
+  /**
+   * Lets the live engine publish the finished sentences it still holds (two-pass) while its receiver is current:
+   * called right before the open sentence is closed with the "[...]" marker.
+   */
+  #commitEnginePending(): void {
+    try {
+      this.#serviceInstance?.commitPending?.();
+    }
+    catch (e) {
+      console.error("[STT] commitPending failed:", e);
+    }
+  }
+
   stop(): void {
+    // Before the epoch bump: the engine's receiver must still be current to publish them.
+    this.#commitEnginePending();
     this.#startAbortController?.abort();
     this.#startAbortController = null;
     this.#sessionEpoch++;
@@ -370,8 +462,11 @@ class Service_STT implements IServiceInterface {
     if (muted) {
       if (current === SttMuteState.muted)
         return;
-      if (current === SttMuteState.unmuted)
+      if (current === SttMuteState.unmuted) {
+        // A sentence the engine finished but still holds (two-pass) is published, not cut off by the marker.
+        this.#commitEnginePending();
         this.tryCancelSentence();
+      }
       this.serviceState.muted = SttMuteState.muted;
       return;
     }
@@ -462,16 +557,91 @@ class Service_STT implements IServiceInterface {
 
     const migrated = this.#migrateDesktopDefault();
 
-    // Web Speech ("native") cannot run in the desktop webview. Right after the migration the model is not on disk
-    // yet: the user starts once (one click downloads it) instead of a silent download at launch.
+    // Web Speech ("native") cannot run in the desktop webview. Right after the migration the models are not on disk
+    // yet: the user starts once (and agrees to the download) instead of a silent download at launch.
     const nativeBackend = this.data.backend === STT_Backends.native || this.data.backend === STT_Backends.browser;
     if (this.data.autoStart && !nativeBackend && !migrated)
-      this.start();
+      this.start({ automatic: true });
   }
 
   /**
-   * One-time desktop default migration: `native` (the old default, broken in the desktop webview) becomes local
-   * Whisper behind the Silero VAD gate. Returns true when the backend was switched in this launch.
+   * One-time offer to move an existing desktop profile to the `local` backend (Sigil picks and runs the speech models
+   * itself). Never a silent switch: a native dialog asks, and the answer is recorded (`stt.localOfferShown`) either
+   * way so it is asked once. The language and microphone of the previous backend carry over. A running session is
+   * stopped first; nothing downloads until the next Start asks for consent. Resolves true when the user switched.
+   *
+   * Launch flow: `runStartupOffer` asks existing desktop profiles on `native` (the P2 desktop default).
+   */
+  async offerLocalBackend(): Promise<boolean> {
+    if (!window.Config.isApp() || this.data.localOfferShown || this.data.backend === STT_Backends.local)
+      return false;
+    await i18nReady();
+    window.ApiServer.patchService("stt", s => { s.data.localOfferShown = true; });
+    let accepted = false;
+    try {
+      accepted = await ask(i18n.t("stt.local_offer_message"), {
+        title: i18n.t("stt.local_offer_title"),
+        kind: "info",
+        okLabel: i18n.t("stt.local_offer_yes"),
+        cancelLabel: i18n.t("stt.local_offer_no"),
+      });
+    }
+    catch (e) {
+      console.error("[STT] local backend offer failed:", e);
+      return false;
+    }
+    // Re-read after the dialog: the user may have picked a backend meanwhile.
+    const backendNow: STT_Backends = window.ApiServer.state.services.stt.data.backend;
+    if (!accepted || backendNow === STT_Backends.local)
+      return false;
+    if (this.serviceState.status !== ServiceNetworkState.disconnected)
+      this.stop();
+    const carry = localBackendCarryOver(this.data);
+    window.ApiServer.patchService("stt", s => {
+      if (carry.language)
+        s.data.local.language = carry.language;
+      if (carry.device)
+        s.data.local.device = carry.device;
+      s.data.backend = STT_Backends.local;
+    });
+    pushSystemLog("STT", i18n.t("stt.local_offer_switched"), "info");
+    return true;
+  }
+
+  /** Whisper migration to apply when the one-time `local` offer of this launch is declined (`runStartupOffer`). */
+  #pendingLocalOffer?: WhisperMigration;
+
+  /**
+   * The one-time `local` offer planned by the desktop default migration of this launch (existing profiles on
+   * `native`). Called once after startup (before the TTS offer, so two dialogs never overlap). Yes switches to
+   * `local`; no (or a failed dialog) applies the P0 Whisper migration, so the broken Web Speech default never stays.
+   */
+  async runStartupOffer(): Promise<void> {
+    const fallback = this.#pendingLocalOffer;
+    this.#pendingLocalOffer = undefined;
+    if (!fallback)
+      return;
+    let switched = false;
+    try {
+      switched = await this.offerLocalBackend();
+    }
+    catch (e) {
+      console.error("[STT] local backend offer failed:", e);
+    }
+    const backend = this.data.backend;
+    if (switched || (backend !== STT_Backends.native && backend !== STT_Backends.browser)) {
+      // Switched, or the user picked a backend while the dialog was open.
+      window.ApiServer.patchService("stt", s => { s.data.desktopDefaultMigrated = true; });
+      return;
+    }
+    this.#applyWhisperMigration(fallback);
+  }
+
+  /**
+   * One-time desktop default migration of profiles on `native` (the old default, broken in the desktop webview):
+   * a new install starts on `local`; an existing profile is offered `local` once by {@link runStartupOffer} (Whisper
+   * when it declines, or right away when it already saw the offer). Returns true when the backend was switched or an
+   * offer is pending in this launch (no auto-start then).
    */
   #migrateDesktopDefault(): boolean {
     let plan: ReturnType<typeof planDesktopDefaultMigration>;
@@ -484,6 +654,8 @@ class Service_STT implements IServiceInterface {
         whisperModel: this.data.whisper.model,
         whisperLanguage: this.data.whisper.language,
         logicalCores: typeof navigator !== "undefined" ? navigator.hardwareConcurrency : undefined,
+        freshInstall: !window.ApiServer.state.onboardingComplete,
+        localOfferShown: this.data.localOfferShown,
       });
     }
     catch (e) {
@@ -496,6 +668,24 @@ class Service_STT implements IServiceInterface {
       window.ApiServer.patchService("stt", s => { s.data.desktopDefaultMigrated = true; });
       return false;
     }
+    if (plan.action === "local") {
+      // A new install: onboarding shows the choice; nothing downloads before the first Start asks.
+      window.ApiServer.patchService("stt", s => {
+        s.data.backend = STT_Backends.local;
+        s.data.desktopDefaultMigrated = true;
+      });
+      return true;
+    }
+    if (plan.action === "offer") {
+      this.#pendingLocalOffer = plan.fallback;
+      return true;
+    }
+    this.#applyWhisperMigration(plan);
+    return true;
+  }
+
+  /** Moves a profile on `native` to local Whisper (P0) and tells existing users about it. */
+  #applyWhisperMigration(plan: WhisperMigration): void {
     const { backend, whisperModel, whisperLanguage } = plan;
     window.ApiServer.patchService("stt", s => {
       s.data.backend = backend;
@@ -517,14 +707,40 @@ class Service_STT implements IServiceInterface {
       if (window.ApiServer.state.onboardingComplete)
         toast.info(message, { autoClose: 12_000 });
     });
-    return true;
   }
 
   tryCancelSentence() {
     if (this.#lastMessageState.isInterim) {
-      this.#sendFinal("[...]");
+      const open = this.#lastMessageState.meta;
+      if (open?.segmentId && open.segmentId === this.#lastFinalSegmentId) {
+        // The segment's own final is already on its way (e.g. through the UwU filter): nothing is left open.
+        this.updateLastMessage("", false);
+        return;
+      }
+      // Closes the open segment for consumers that follow segment ids (a final one revision above the interim);
+      // anything the engine still sends for that segment is dropped, so the marker stays its only final.
+      const meta: SttTextMeta | undefined = open?.segmentId
+        ? { segmentId: open.segmentId, revision: (open.revision ?? 0) + 1, lang: open.lang }
+        : undefined;
+      this.#sendFinal("[...]", meta);
+      if (meta?.segmentId)
+        this.#rememberCancelled(meta.segmentId);
       this.updateLastMessage("", false);
     }
+  }
+
+  #rememberCancelled(segmentId: string): void {
+    this.#cancelledSegments.add(segmentId);
+    // Segment ids never repeat (they carry the session epoch): only the newest few can still receive events.
+    if (this.#cancelledSegments.size > 64) {
+      const oldest = this.#cancelledSegments.values().next().value;
+      if (oldest !== undefined)
+        this.#cancelledSegments.delete(oldest);
+    }
+  }
+
+  #isCancelled(meta: SttTextMeta | undefined): boolean {
+    return !!meta?.segmentId && this.#cancelledSegments.has(meta.segmentId);
   }
 
   processExternalMessage(event: Partial<TextEvent>) {
@@ -536,7 +752,19 @@ class Service_STT implements IServiceInterface {
       this.#sendInterim(event.value);
   }
 
-  async #sendFinal(sentence: string) {
+  async #sendFinal(sentence: string, meta?: SttTextMeta) {
+    if (this.#isCancelled(meta))
+      return; // the "[...]" marker already closed this segment
+    if (meta?.segmentId)
+      this.#lastFinalSegmentId = meta.segmentId;
+    // Decided when the engine delivers the final, not after the UwU filter: a sentence finished before a mute is
+    // published even when the mute lands while it is being filtered.
+    // A pending unmute suppresses only the tail of the sentence that was open when the user unmuted. With no open
+    // interim (engines that emit only finals) this final is a new sentence spoken after the unmute: publish it.
+    const muted = this.serviceState.muted;
+    const suppress =
+      muted === SttMuteState.muted || (muted === SttMuteState.pendingUnmute && this.#lastMessageState.isInterim);
+
     let value = sentence;
     if (this.data.uwu) {
       try {
@@ -548,15 +776,11 @@ class Service_STT implements IServiceInterface {
     }
 
     value = this.runReplacements(value);
-    // A pending unmute suppresses only the tail of the sentence that was open when the user unmuted. With no open
-    // interim (engines that emit only finals) this final is a new sentence spoken after the unmute: publish it.
-    const muted = this.serviceState.muted;
-    const suppress =
-      muted === SttMuteState.muted || (muted === SttMuteState.pendingUnmute && this.#lastMessageState.isInterim);
     !suppress &&
       window.ApiShared.pubsub.publishText(TextEventSource.stt, {
         value,
         type: TextEventType.final,
+        ...textEventMeta(meta),
       });
 
     this.updateLastMessage(value, false);
@@ -565,7 +789,9 @@ class Service_STT implements IServiceInterface {
     this.triggerPendingUnmute();
   }
 
-  async #sendInterim(sentence: string) {
+  async #sendInterim(sentence: string, meta?: SttTextMeta) {
+    if (this.#isCancelled(meta))
+      return; // the "[...]" marker already closed this segment
     if (sentence.trim() === "") {
       // The engine abandoned the open sentence: nothing is left for a pending unmute to wait for.
       this.updateLastMessage("", false);
@@ -580,14 +806,18 @@ class Service_STT implements IServiceInterface {
         const msg = e instanceof Error ? e.message : String(e);
         pushSystemLog("STT", `UwU filter failed (interim): ${msg}`, "warning");
       }
+      // The segment was closed (its final or the marker) while this interim was being filtered: it stays closed.
+      if (this.#isCancelled(meta) || (meta?.segmentId !== undefined && meta.segmentId === this.#lastFinalSegmentId))
+        return;
     }
     value = this.runReplacements(value);
     !this.isMuted() &&
       window.ApiShared.pubsub.publishText(TextEventSource.stt, {
         value,
         type: TextEventType.interim,
+        ...textEventMeta(meta),
       });
-    this.updateLastMessage(value, true);
+    this.updateLastMessage(value, true, meta);
   }
 
   #setStatus(value: ServiceNetworkState) {
@@ -595,23 +825,26 @@ class Service_STT implements IServiceInterface {
     this.#syncProgressToast();
   }
 
-  start() {
+  start(options: SttStartOptions = {}) {
     this.#startAbortController?.abort();
     // Captured per call: by the time a queued start runs, stop() may have replaced/cleared the field.
     const controller = new AbortController();
     this.#startAbortController = controller;
+    const automatic = options.automatic === true;
     this.#startChain = this.#startChain
-      .then(() => this.#runStartAsync(controller.signal))
+      .then(() => this.#runStartAsync(controller.signal, automatic))
       .catch((e: unknown) => {
         console.error("[STT] start chain failed:", e);
         toast.error(i18n.t("toasts.stt_start_failed"));
       });
   }
 
-  async #runStartAsync(startSignal: AbortSignal) {
+  async #runStartAsync(startSignal: AbortSignal, automatic = false) {
     // Superseded by stop() or a newer start() while queued behind the previous one.
     if (startSignal.aborted)
       return;
+    // A start without a stop replaces a live engine: its held sentences go out before its receiver goes stale.
+    this.#commitEnginePending();
     this.#sessionEpoch++;
     const epoch = this.#sessionEpoch;
     this.#clearExternalMicConnectingTimeout();
@@ -642,6 +875,7 @@ class Service_STT implements IServiceInterface {
     const fallbackMs = external ? null : connectingFallbackMs(backend);
     const inst = new serviceConstructor(this.#wrapReceiver(epoch, fallbackMs)) as SttEngineInstance;
     inst.startAbortSignal = startSignal;
+    inst.startAutomatic = automatic;
     this.#serviceInstance = inst;
 
     if (fallbackMs === null) {

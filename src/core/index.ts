@@ -124,6 +124,7 @@ class ApiServer {
     }
     this.changeTheme(this.state.clientTheme);
     this.changeScale(this.state.uiScale);
+    void this.runSpeechDefaultOffers();
 
     window.ApiShared.pubsub.setTextEmoteEnricher((data) => {
       if (!data.emotes) {
@@ -134,6 +135,25 @@ class ApiServer {
       }
       return data;
     });
+  }
+
+  /**
+   * One-time offers of the P2 local speech defaults to existing desktop profiles (STT `local`, then the Kokoro
+   * voice), one dialog after the other. Each service decides at init whether its offer is due.
+   */
+  private async runSpeechDefaultOffers() {
+    try {
+      await this.stt.runStartupOffer();
+    }
+    catch (e) {
+      console.error("[ApiServer] STT default offer failed:", e);
+    }
+    try {
+      await this.tts.runStartupOffer();
+    }
+    catch (e) {
+      console.error("[ApiServer] TTS default offer failed:", e);
+    }
   }
 
   /** Single source for parallel host init: label and runner stay aligned. */

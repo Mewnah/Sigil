@@ -1,0 +1,5 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": "New Whisper entries. The existing whisper/* and vosk/* entries live in stt-legacy.json (ids must stay unique across fragments). Owned by P2-A (created empty by P2-S0).",
+  "entries": []
+}

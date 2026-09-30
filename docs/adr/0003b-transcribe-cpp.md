@@ -267,9 +267,11 @@ keep utterances at or below the VAD cap and hold the VRAM claim in the `resource
   engine model was dropped.
 - **With Sigil's ONNX Runtime:** the DirectML canary passed before the CUDA engine loaded and again
   after its runs (`--ort-canary dml`: 790 ms and 301 ms).
-- **ORT's CUDA EP next to ggml-cuda was not verified.** This PC has no cuDNN, and the 1.9 GB NVIDIA
-  pack was not downloaded. Both share `cublas64_13` and carry their own static cudart. Re-run
-  `--ort-canary cuda` once the pack is installed.
+- **ORT's CUDA EP next to ggml-cuda: verified in P2 (P2-D).** With the NVIDIA pack installed,
+  `Sigil.exe --headless engine-probe transcribe Qwen3-ASR-1.7B-Q8_0.gguf ja-short.wav -- --repeat 3
+  --ort-canary cuda` passed the ORT CUDA canary before the engine loaded (509 ms) and after its runs
+  (4 ms); both share one CUDA context (process VRAM 3472 MiB). The shared context means the STT
+  context claim double-counts about 380 MB next to a CUDA voice changer (conservative).
 - **A partial cuDNN kills the process.** A partial cuDNN on the DLL search path (DaVinci Resolve's
   9.8 without `cudnn_graph64_9.dll`, added through the dev variable) made cuDNN terminate the process
   with exit code 127 inside ORT's CUDA provider. This is an ORT/cuDNN hazard for ADR 0003 and 0007,
@@ -329,6 +331,26 @@ keep utterances at or below the VAD cap and hold the VRAM claim in the `resource
   - P7: decide whether whisper-rs retires. On the same clip, transcribe's whisper-tiny Q8_0 on AVX2
     was about 1.5× faster than whisper-rs tiny.en f16 (221 ms vs 335 ms), and about 6× faster on
     CUDA.
+- **P2 results (recorded by P2-I0 from P2-D; RTX 4090, process VRAM including the CUDA context):**
+  - The speech plugin's engine (`speech/engines/transcribe.rs`) runs Qwen3-ASR-1.7B Q8_0 (3470–3494
+    MiB; ja-short in 245 ms; a 28 s clip split and decoded in 600 ms), BF16 (5914 MiB), Cohere Q4_K_M
+    (1950 MiB; refuses ja, needs a language), Granite Speech 5.0 TurboCTC Q8_0 (890 MiB, 56–68 ms on
+    jfk, but lower-case without punctuation, so it is never routed as a caption final) and Voxtral
+    Mini 4B Realtime Q4_K_M (about 4100 MiB, streaming; append-only partials never retract).
+  - Two-pass ja through the real `TwoPass` queue: the GPU final landed 198–204 ms after the
+    utterance closed on an 8 s clip (P2 target ≤ 800 ms).
+  - The GPU context stays with the pinned GPU DLL: 378–380 MiB remain after the last model is
+    dropped, so the governor keeps one context claim per runtime for the process lifetime once a
+    model ran on the GPU. `resources::policy` and `stt-routing.json` now use the measured footprints
+    (Q8_0 3500, BF16 6000, Cohere 2000 MB).
+  - Worker isolation (`Sigil.exe --headless stt-worker`, SGW1 framed stdio protocol) exists as
+    fallback 1 and is off by default (in-process measured stable).
+  - **Confucius4-R2T2** is not available in the pinned 0.2.4 (no r2t2 architecture); newer
+    transcribe.cpp releases and official GGUFs (`netease-youdao/Confucius4-R2T2-GGUF`) support it.
+    A re-pin, pack rebuild (cuda13 about 14 min) and catalog entry are a follow-up; the engine
+    already maps an r2t2 architecture to append-only streaming.
+  - Qwen3-ASR cancel still acts only before the single-shot decode; the engine drops stale results
+    by generation. The `transcribe_run_batch` (n = 1) shim change remains a follow-up.
 - **What is harder now:**
   - Sigil owns the builds: each upgrade re-pins, rebuilds five variants, and re-runs the probe.
   - The `cuda13` build takes about 14 minutes.

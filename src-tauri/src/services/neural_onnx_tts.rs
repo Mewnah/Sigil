@@ -2,6 +2,14 @@
 //! `docs/OPERATOR_REFERENCE.md#local-speech-package-onnx`).
 //! Implementation uses KittenTTS, vendored in `services/local_tts/kitten` (see its NOTICE).
 //!
+//! # Legacy (P2-H)
+//! Since P2 the `neuralOnnx` TTS backend speaks through the `local-tts` plugin
+//! (`services/local_tts`): its Hub setting becomes `hub:<repo>` (KittenML 0.8 repos run as the
+//! catalog Kitten packages once installed) and its folder setting a folder model, both played
+//! through the TTS sink with the top-level route. Nothing in the app calls this plugin any more;
+//! it stays registered for one release so older frontends keep working, and can then be retired
+//! (main.rs registration, `capabilities/neural-onnx-tts.json`, `plugin-commands/neural-onnx-tts.txt`).
+//!
 //! # Threading
 //! Every command is `async`. Model loading (which may download from the Hugging Face Hub) and
 //! synthesis run on Tauri's blocking pool via `spawn_blocking`, never on the main thread, so loading

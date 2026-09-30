@@ -1,0 +1,137 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "transcribe.cpp GGUF speech models: the GPU tier of the 'local' STT backend (owned by P2-D). They run on sigil_transcribe.dll (runtime/sigil-transcribe-<variant>, runtime-transcribe.json): cuda13 on NVIDIA Turing or newer when the resource governor admits the GPU, else the CPU variants. Engine: speech::engines::transcribe; per-family rules: speech_rt::transcribe::models (Cohere is never used for ja/zh/ko/ru/yue and always needs the language).",
+    "The GGUFs are handy-computer's conversions for transcribe.cpp 0.2.4 (catalog records in transcribe.cpp's catalog/*.json at the pinned commit), pinned to a repo commit with the LFS sha256 (scripts/models/pin-catalog.mjs).",
+    "min_vram_mb is the whole engine on a GPU: the model plus the ~0.4 GB CUDA context (speech_rt::transcribe::models::GPU_CONTEXT_MB), measured on the RTX 4090 dev rig (P2-D, process VRAM with the 20 s GPU warm-up, transcribe.cpp 0.2.4-s2 cuda13): Qwen3-ASR-1.7B Q8_0 3470-3494 MiB, BF16 5914 MiB, Cohere Q4_K_M 1950 MiB, Granite TurboCTC Q8_0 890 MiB, Voxtral Realtime Q4_K_M about 4100 MiB (streaming). The engine claims the catalog number while it loads and resizes the claim to the measured process-VRAM delta afterwards.",
+    "Granite Speech 5.0 TurboCTC writes lower-case text without punctuation in transcribe.cpp 0.2.4 (measured on jfk.wav), so it suits commands and fast English drafts more than caption finals.",
+    "Confucius4-R2T2 (NetEase's streaming fine-tune of Qwen3-ASR-1.7B) has no entry yet: the pinned transcribe.cpp 0.2.4 has no architecture for it (later transcribe.cpp releases and audio.cpp run it; official GGUFs: netease-youdao/Confucius4-R2T2-GGUF, NetEase Model Use License). It needs a transcribe.cpp re-pin and pack rebuild (runtime-transcribe.json, ADR 0003b). The engine already maps an r2t2 architecture to append-only streaming, and its opt-in 'appendOnly' mode gives Voxtral Realtime flicker-free partials in the meantime."
+  ],
+  "entries": [
+    {
+      "id": "stt/qwen3-asr-1.7b-q8_0",
+      "family": "stt",
+      "kind": "model",
+      "version": "3555bd2",
+      "title": "Qwen3-ASR 1.7B (graphics card)",
+      "description": "Alibaba's multilingual recognizer for caption finals on an NVIDIA graphics card: 30 languages, detects the spoken language, best for Japanese, Korean, Chinese and Russian. About 2.2 GB download; uses about 3.5 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3500,
+      "files": [
+        {
+          "path": "Qwen3-ASR-1.7B-Q8_0.gguf",
+          "size": 2185030624,
+          "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/3555bd238a8572bbace3ebf60d23b036dc0a5dbe/Qwen3-ASR-1.7B-Q8_0.gguf",
+              "revision": "3555bd238a8572bbace3ebf60d23b036dc0a5dbe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stt/qwen3-asr-1.7b-bf16",
+      "family": "stt",
+      "kind": "model",
+      "version": "3555bd2",
+      "title": "Qwen3-ASR 1.7B, full precision (16 GB graphics cards)",
+      "description": "The same multilingual recognizer at full precision, for NVIDIA graphics cards with 16 GB or more. About 4.1 GB download; uses about 6 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 6000,
+      "files": [
+        {
+          "path": "Qwen3-ASR-1.7B-BF16.gguf",
+          "size": 4083087904,
+          "sha256": "57db745f8ec3ad2ea391b0205661e7d74f76158877a33f151e4d4624ed2b7cc9",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/3555bd238a8572bbace3ebf60d23b036dc0a5dbe/Qwen3-ASR-1.7B-BF16.gguf",
+              "revision": "3555bd238a8572bbace3ebf60d23b036dc0a5dbe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stt/cohere-transcribe-q4_k",
+      "family": "stt",
+      "kind": "model",
+      "version": "ab667ac",
+      "title": "Cohere Transcribe (graphics card)",
+      "description": "Accurate caption finals for English and European languages on an NVIDIA graphics card. It needs the spoken language and is never used for Japanese, Chinese, Korean or Russian. About 1.6 GB download; uses about 2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 2000,
+      "files": [
+        {
+          "path": "cohere-transcribe-03-2026-Q4_K_M.gguf",
+          "size": 1558162944,
+          "sha256": "0ea56826d8bd5d74b7143a4a04e022dc1bb75452cfae49d98b6acb0c1d16a1fb",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf/resolve/ab667acedcb5d8d56837ef3ed3568c3ad50dde47/cohere-transcribe-03-2026-Q4_K_M.gguf",
+              "revision": "ab667acedcb5d8d56837ef3ed3568c3ad50dde47"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stt/granite-speech-5.0-turboctc-q8_0",
+      "family": "stt",
+      "kind": "model",
+      "version": "2b0b44d",
+      "title": "Granite Speech 5.0 TurboCTC (English)",
+      "description": "IBM's small, very fast English recognizer, on the graphics card or the processor. It writes lower-case text without punctuation. About 510 MB download; uses about 0.9 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 900,
+      "files": [
+        {
+          "path": "granite-speech-5.0-470m-turboctc-Q8_0.gguf",
+          "size": 505606496,
+          "sha256": "0408fe0b33be19af5be423d8ba6b43768608b6f065e1ac97b78c84b55c140738",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/2b0b44d0d6c8b94a2e4f04a2cf3ec6a5c054463b/granite-speech-5.0-470m-turboctc-Q8_0.gguf",
+              "revision": "2b0b44d0d6c8b94a2e4f04a2cf3ec6a5c054463b"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stt/voxtral-mini-4b-realtime-q4_k_m",
+      "family": "stt",
+      "kind": "model",
+      "version": "65d1c94",
+      "title": "Voxtral Mini 4B Realtime (graphics card, streaming)",
+      "description": "Mistral's streaming recognizer for live captions in 13 languages on a large NVIDIA graphics card. About 2.8 GB download; uses about 4.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 4200,
+      "files": [
+        {
+          "path": "Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf",
+          "size": 2830493984,
+          "sha256": "39dc1f65539373a406edea7490505822d77c12edff521744678717eef4da4723",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf/resolve/65d1c9408859a0ca0f1c11b025ee951486af21d6/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf",
+              "revision": "65d1c9408859a0ca0f1c11b025ee951486af21d6"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

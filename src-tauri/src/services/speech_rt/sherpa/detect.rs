@@ -278,8 +278,10 @@ fn build(family: &str, pkg: &Package, name: &str, online: bool, hints: &DetectHi
                     encoder: need("encoder", pkg.role(&["encoder"]))?,
                     decoder: need("decoder", pkg.role(&["decoder"]))?,
                     tokenizer,
-                    max_total_len: None,
-                    max_new_tokens: None,
+                    // Sized for the pipeline's longest utterance, as for the catalog package
+                    // (sherpa's defaults cut long captions; see `catalog::qwen3_max_total_len`).
+                    max_total_len: Some(super::catalog::QWEN3_MAX_TOTAL_LEN),
+                    max_new_tokens: Some(super::catalog::QWEN3_MAX_NEW_TOKENS),
                     hotwords: None,
                 },
                 pkg.tokens(),

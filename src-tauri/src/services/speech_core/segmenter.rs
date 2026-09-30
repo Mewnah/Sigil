@@ -34,7 +34,6 @@ pub trait FrameClassifier {
     /// Speech probability (0..1) of one [`VAD_FRAME_SAMPLES`]-sample frame, in stream order.
     fn frame_probability(&mut self, frame: &[f32]) -> Result<f32, String>;
     /// Forget all stream state.
-    #[allow(dead_code)] // Behind the frozen `Segmenter::reset`.
     fn reset(&mut self);
 }
 
@@ -180,7 +179,6 @@ impl<C: FrameClassifier> SegmenterEngine<C> {
     }
 
     /// Drop the open segment, history and model state; `seq` and the stream position keep counting.
-    #[allow(dead_code)] // Behind the frozen `Segmenter::reset`.
     pub fn reset(&mut self) {
         self.classifier.reset();
         self.open = None;

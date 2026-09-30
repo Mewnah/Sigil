@@ -9,8 +9,9 @@
 //!   hosted API the user's own voice models (`GET /model?self=true`, `items[]._id` / `title`). A
 //!   synthetic `default` voice is always first and is never sent as `reference_id`. When neither
 //!   route exists (an older self-hosted server run with `--api-key`), only `default` is listed.
-//! - Synthesis: `POST /v1/tts` `{ text, reference_id?, normalize, format: "wav" }`, with the local
-//!   budget ([`crate::services::http_client::tts_post`]) for servers on this PC or the LAN.
+//! - Synthesis: `POST /v1/tts` `{ text, reference_id?, normalize, format: "wav" }`, streamed into
+//!   the TTS sink (`fish_speak_to_sink`, P2-I) by the shared HTTP speech core
+//!   (`openai_speech::speak_http`), with the long local budget for servers on this PC or the LAN.
 //!
 //! # Auth and model
 //! Every command takes optional per-call `endpoint`, `apiKey` and (for synthesis) `model`:
@@ -19,19 +20,18 @@
 //! Blank values are not sent. A blank `endpoint` uses the one stored by `set_fish_endpoint`.
 //!
 //! # Streamed WAV
-//! The audio body is read chunk by chunk with a stall timeout ([`TTS_STALL_TIMEOUT`]) and a size cap,
-//! so the hosted API's chunked stream is consumed as it arrives and a server that stops mid-stream
-//! fails fast. A WAV written for streaming declares placeholder sizes (0 or `0xFFFFFFFF`); those are
-//! repaired ([`repair_streamed_wav`]) so the webview and `hound` decode the whole clip. Self-hosted
-//! servers are asked for a complete WAV (`streaming` is not requested) because their streaming mode
-//! is not guaranteed to send a WAV header at all.
+//! The audio body is decoded as it arrives, so the hosted API's chunked stream starts playing
+//! before it ends. A WAV written for streaming declares placeholder sizes (0 or `0xFFFFFFFF`); the
+//! decoder reads such a data chunk to the end of the body. Self-hosted servers are asked for a
+//! complete WAV (`streaming` is not requested) because their streaming mode is not guaranteed to
+//! send a WAV header at all.
 
 use crate::services::http_client::{
-    api_url, content_type, describe_api_error, describe_request_error, ensure_audio_body,
-    http_client, is_auth_failure, non_empty_key, parse_named_list, pick_endpoint, probe,
-    read_body_capped, tts_post, NamedEntry, LIST_TIMEOUT, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT,
+    api_url, describe_api_error, describe_request_error, http_client, is_auth_failure,
+    non_empty_key, parse_named_list, pick_endpoint, probe, NamedEntry, LIST_TIMEOUT,
 };
-use reqwest::header::HeaderValue;
+use crate::services::openai_speech::{speak_http, HttpSpeech, SpeakReport, SpeechFormat};
+use reqwest::header::{HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -154,54 +154,6 @@ fn parse_hosted_models(v: &serde_json::Value) -> Vec<FishSpeechVoice> {
     to_voices(parse_named_list(v, &["items"], &["_id", "id"], &["title", "name"])).collect()
 }
 
-/// Fix the size fields of a WAV written for streaming, where the header was sent before the length
-/// was known (data size 0 or `0xFFFFFFFF`, or larger than what arrived). A partial last sample frame
-/// is dropped. Returns whether anything changed; complete WAVs and non-WAV bodies are untouched.
-pub(crate) fn repair_streamed_wav(buf: &mut Vec<u8>) -> bool {
-    fn read_u32(b: &[u8], at: usize) -> u32 {
-        u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
-    }
-    if buf.len() < 12 || buf[0..4] != *b"RIFF" || buf[8..12] != *b"WAVE" {
-        return false;
-    }
-    let mut pos = 12usize;
-    let mut block_align = 1usize;
-    let mut changed = false;
-    while pos + 8 <= buf.len() {
-        let id = [buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]];
-        let size = read_u32(buf, pos + 4);
-        let body = pos + 8;
-        if id == *b"fmt " && body + 14 <= buf.len() {
-            block_align = usize::from(u16::from_le_bytes([buf[body + 12], buf[body + 13]])).max(1);
-        }
-        if id == *b"data" {
-            let available = buf.len() - body;
-            if size == 0 || size == u32::MAX || size as usize > available {
-                // Whole sample frames only; bodies are capped far below 4 GiB (MAX_AUDIO_BYTES).
-                let whole = (available - available % block_align).min(u32::MAX as usize);
-                if whole != size as usize || buf.len() != body + whole {
-                    buf.truncate(body + whole);
-                    buf[pos + 4..pos + 8].copy_from_slice(&(whole as u32).to_le_bytes());
-                    changed = true;
-                }
-            }
-            break;
-        }
-        let next = body as u64 + u64::from(size) + u64::from(size & 1);
-        if next > buf.len() as u64 {
-            break; // malformed chunk before `data`: leave the body for the decoder to judge
-        }
-        pos = next as usize;
-    }
-    let riff = read_u32(buf, 4);
-    let actual = (buf.len() - 8).min(u32::MAX as usize) as u32;
-    if (changed || riff == 0 || riff == u32::MAX || riff > actual) && riff != actual {
-        buf[4..8].copy_from_slice(&actual.to_le_bytes());
-        changed = true;
-    }
-    changed
-}
-
 /// Set the Fish Speech API endpoint URL (the default for calls without `endpoint`).
 #[command]
 async fn set_fish_endpoint<R: Runtime>(_app: AppHandle<R>, state: State<'_, FishSpeechState>, endpoint: String) -> Result<(), String> {
@@ -291,9 +243,34 @@ async fn get_fish_voices<R: Runtime>(
     list_voices(http_client(), &base, key.as_deref()).await
 }
 
-/// Synthesize speech; returns WAV bytes.
+/// The streaming request for one sentence: `POST {base}/v1/tts`, WAV back, with the key and model
+/// headers when set.
+fn fish_spec(base: &str, text: &str, reference_id: Option<&str>, api_key: Option<&str>, model: Option<&str>) -> Result<HttpSpeech, String> {
+    let model = model_header(model)?;
+    let url = api_url(base, "/v1/tts")?;
+    let body = serde_json::to_value(TtsRequest {
+        text,
+        // "default" is the synthetic entry from get_fish_voices, not a saved reference.
+        reference_id: reference_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty() && *id != DEFAULT_VOICE_ID),
+        normalize: true,
+        format: "wav",
+    })
+    .map_err(|e| format!("Fish Speech request: {e}"))?;
+    let mut spec = HttpSpeech::new("Fish Speech synthesis", url, body, text, SpeechFormat::Wav).bearer(api_key)?;
+    if let Some(m) = model {
+        spec = spec.header(HeaderName::from_static("model"), m);
+    }
+    Ok(spec)
+}
+
+/// Speak `text` into the begun TTS sink utterance `utteranceId` (WAV, decoded as it arrives).
+/// Resolves once the last audio was queued; `Err("cancelled")` after stop / skip /
+/// `openai_speech_cancel`.
 #[command]
-async fn fish_speak<R: Runtime>(
+#[allow(clippy::too_many_arguments)]
+async fn fish_speak_to_sink<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, FishSpeechState>,
     text: String,
@@ -301,44 +278,12 @@ async fn fish_speak<R: Runtime>(
     endpoint: Option<String>,
     api_key: Option<String>,
     model: Option<String>,
-) -> Result<Vec<u8>, String> {
-    if text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
+    utterance_id: String,
+) -> Result<SpeakReport, String> {
     let base = state.endpoint_for(endpoint.as_deref());
     let key = non_empty_key(api_key.as_deref());
-    let model = model_header(model.as_deref())?;
-    let url = api_url(&base, "/v1/tts")?;
-    let what = "Fish Speech synthesis";
-
-    let body = TtsRequest {
-        text: &text,
-        // "default" is the synthetic entry from get_fish_voices, not a saved reference.
-        reference_id: reference_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && *id != DEFAULT_VOICE_ID),
-        normalize: true,
-        format: "wav",
-    };
-    // Self-hosted servers on this PC / LAN (often CPU, non-streaming) get the longer local budget.
-    let (req, timeout) = tts_post(url, &text);
-    let mut req = with_auth(req, key.as_deref()).json(&body);
-    if let Some(m) = model {
-        req = req.header("model", m);
-    }
-    let response = req
-        .send()
-        .await
-        .map_err(|e| describe_request_error(what, &e, timeout))?;
-    if !response.status().is_success() {
-        return Err(describe_api_error(what, response).await);
-    }
-    let ct = content_type(&response);
-    let mut audio = read_body_capped(what, response, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT).await?;
-    ensure_audio_body(what, ct.as_deref(), &audio)?;
-    repair_streamed_wav(&mut audio);
-    Ok(audio)
+    let spec = fish_spec(&base, &text, reference_id.as_deref(), key.as_deref(), model.as_deref())?;
+    speak_http(spec, &utterance_id).await
 }
 
 /// Whether the server answers. `Err` (instead of `false`) when it answers but rejects the API key,
@@ -391,7 +336,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             set_fish_endpoint,
             get_fish_voices,
-            fish_speak,
+            fish_speak_to_sink,
             check_fish_availability
         ])
         .build()
@@ -400,120 +345,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-    use std::io::Cursor;
-
-    fn wav_i16(samples: &[i16], sample_rate: u32) -> Vec<u8> {
-        let spec = WavSpec {
-            channels: 1,
-            sample_rate,
-            bits_per_sample: 16,
-            sample_format: SampleFormat::Int,
-        };
-        let mut cur = Cursor::new(Vec::new());
-        {
-            let mut w = WavWriter::new(&mut cur, spec).unwrap();
-            for s in samples {
-                w.write_sample(*s).unwrap();
-            }
-            w.finalize().unwrap();
-        }
-        cur.into_inner()
-    }
-
-    fn data_chunk_pos(wav: &[u8]) -> usize {
-        wav.windows(4).position(|w| w == b"data").unwrap()
-    }
-
-    fn decode(wav: &[u8]) -> Vec<i16> {
-        WavReader::new(Cursor::new(wav.to_vec()))
-            .unwrap()
-            .samples::<i16>()
-            .collect::<Result<_, _>>()
-            .unwrap()
-    }
-
-    fn with_placeholder_sizes(mut wav: Vec<u8>, placeholder: u32) -> Vec<u8> {
-        let d = data_chunk_pos(&wav);
-        wav[d + 4..d + 8].copy_from_slice(&placeholder.to_le_bytes());
-        wav[4..8].copy_from_slice(&placeholder.max(36).to_le_bytes());
-        wav
-    }
-
-    #[test]
-    fn repairs_zero_size_streamed_header() {
-        let samples: Vec<i16> = (0..4410).map(|i| (i % 300) as i16 - 150).collect();
-        let mut wav = with_placeholder_sizes(wav_i16(&samples, 44_100), 0);
-        assert!(repair_streamed_wav(&mut wav));
-        assert_eq!(decode(&wav), samples);
-        assert_eq!(u32::from_le_bytes(wav[4..8].try_into().unwrap()) as usize, wav.len() - 8);
-    }
-
-    #[test]
-    fn repairs_max_size_streamed_header() {
-        let samples = vec![1i16, -2, 3, -4];
-        let mut wav = with_placeholder_sizes(wav_i16(&samples, 24_000), u32::MAX);
-        assert!(repair_streamed_wav(&mut wav));
-        assert_eq!(decode(&wav), samples);
-    }
-
-    #[test]
-    fn drops_partial_last_frame_of_truncated_stream() {
-        let samples = vec![10i16, 20, 30];
-        let mut wav = with_placeholder_sizes(wav_i16(&samples, 16_000), 0);
-        wav.push(0x7f); // half of a 16-bit sample
-        assert!(repair_streamed_wav(&mut wav));
-        assert_eq!(decode(&wav), samples);
-    }
-
-    #[test]
-    fn complete_wav_and_non_wav_are_untouched() {
-        let original = wav_i16(&[5, 6, 7, 8], 22_050);
-        let mut wav = original.clone();
-        assert!(!repair_streamed_wav(&mut wav));
-        assert_eq!(wav, original);
-
-        let empty = wav_i16(&[], 44_100);
-        let mut still_empty = empty.clone();
-        assert!(!repair_streamed_wav(&mut still_empty), "a genuinely empty WAV is valid");
-        assert_eq!(still_empty, empty);
-
-        let mut mp3 = b"ID3\x04\x00\x00\x00\x00\x00\x00".to_vec();
-        assert!(!repair_streamed_wav(&mut mp3));
-        let mut tiny = b"RIFF".to_vec();
-        assert!(!repair_streamed_wav(&mut tiny));
-    }
-
-    /// `wav` with a `LIST` chunk of `payload` (plus its RIFF pad byte when odd) before `data`.
-    fn with_list_chunk(wav: &[u8], payload: &[u8]) -> Vec<u8> {
-        let d = data_chunk_pos(wav);
-        let mut out = wav[..d].to_vec();
-        out.extend_from_slice(b"LIST");
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(payload);
-        if payload.len() % 2 == 1 {
-            out.push(0);
-        }
-        out.extend_from_slice(&wav[d..]);
-        out
-    }
-
-    #[test]
-    fn skips_chunks_before_data() {
-        let samples = vec![100i16, 200, 300, 400];
-        let wav = wav_i16(&samples, 44_100);
-
-        let mut even = with_placeholder_sizes(with_list_chunk(&wav, b"abcd"), 0);
-        assert!(repair_streamed_wav(&mut even));
-        assert_eq!(decode(&even), samples);
-
-        // Odd-sized chunk: the pad byte must be skipped to find `data` (checked on the raw bytes,
-        // since hound itself ignores RIFF padding).
-        let mut odd = with_placeholder_sizes(with_list_chunk(&wav, b"abc"), 0);
-        assert!(repair_streamed_wav(&mut odd));
-        let d = data_chunk_pos(&odd);
-        assert_eq!(u32::from_le_bytes(odd[d + 4..d + 8].try_into().unwrap()), 8);
-    }
 
     #[test]
     fn model_header_validation() {
@@ -691,6 +522,35 @@ mod tests {
         let (base, _) = mock_server(vec![("/v1/references/list", "403 Forbidden", r#"{"detail":"bad key"}"#)]).await;
         let err = list_voices(&client(), &base, Some("test-key")).await.unwrap_err();
         assert!(err.contains("403") && err.contains("bad key"), "{err}");
+    }
+
+    #[test]
+    fn fish_spec_sends_key_model_and_reference() {
+        let spec = fish_spec("https://api.fish.audio/", "Hi.", Some(" alice "), Some("sk-1"), Some("s2.1-pro-free")).unwrap();
+        assert_eq!(spec.url().as_str(), "https://api.fish.audio/v1/tts");
+        assert_eq!(spec.body(), &serde_json::json!({"text": "Hi.", "reference_id": "alice", "normalize": true, "format": "wav"}));
+        let spec = fish_spec("http://localhost:8080", "Hi.", Some("default"), None, Some("  ")).unwrap();
+        assert!(spec.body().get("reference_id").is_none());
+        assert!(fish_spec("http://localhost:8080", "Hi.", None, None, Some("bad model")).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fish_streams_into_the_sink_with_its_headers() {
+        use crate::services::openai_speech::testing::*;
+        // The hosted API streams a WAV whose header declares placeholder sizes.
+        let values: Vec<i16> = (0..4410).map(|i| (i % 300) as i16 - 150).collect();
+        let mut wav = wav_header(44_100, 1, 1, 16, 0);
+        wav.extend_from_slice(&pcm16(&values));
+        let (base, server) = serve_once(full_response("200 OK", "audio/wav", &wav)).await;
+        let spec = fish_spec(&base, "Hello.", None, Some("test-key"), Some("s2.1-pro-free")).unwrap();
+        let (sink, pushes) = Recorder::new();
+        let report = speak(spec, "fish-test", Box::new(sink)).await.unwrap();
+        let seen = server.await.unwrap();
+        assert!(seen.head.starts_with("POST /v1/tts "), "{}", seen.head);
+        assert_eq!(seen.header("authorization").as_deref(), Some("Bearer test-key"));
+        assert_eq!(seen.header("model").as_deref(), Some("s2.1-pro-free"));
+        assert_eq!(report.frames, values.len() as u64);
+        assert_eq!(pushes.samples(), f(&values));
     }
 
     #[test]

@@ -1,0 +1,10 @@
+# Tauri IPC commands of the `local-tts` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P2-H (src-tauri/src/services/local_tts/commands.rs); scaffolded by P2-S0.
+list_local_tts_models
+load_local_tts
+speak_local_tts
+synthesize_local_tts
+cancel_local_tts
+unload_local_tts

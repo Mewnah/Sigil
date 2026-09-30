@@ -17,8 +17,8 @@ import styles from "./style.module.css";
 import produce from "immer";
 import { BackendState } from "../../../../schema";
 import Tooltip from "../../../dropdown/Tooltip";
-import { invoke } from "@tauri-apps/api/core";
 import { buildRustSourceOptions } from "@/utils/rustAudioInput";
+import { migrateOutputDeviceName } from "@/core/services/sound/devices";
 const cx = classNames.bind(styles);
 import { useTranslation } from 'react-i18next';
 
@@ -527,38 +527,43 @@ export const InputShortcut: FC<ShortuctProps> = ({ shortcut, label }) => {
     </InputContainer>
 }
 
-type WindowsToken = {
-    id: string;
-    label: string;
-}
-type WindowsConfig = { devices: WindowsToken[], voices: WindowsToken[] };
 interface AudioOutputProps extends InputBaseProps {
     value: string,
     onChange: (value: string) => void
 }
-/** Bumped by the audio devices service on every device change (0 outside the desktop host). */
-function useAudioDeviceRevision(): number {
-    const { revision } = useSnapshot(window.ApiServer.audioDevices.state);
-    return revision;
-}
 
+/**
+ * Output device picker (the app output device and every TTS backend that plays through the TTS sink): "" = system
+ * default, then the cpal output devices (the audio devices service follows plugs and default changes). A name
+ * saved from the old SAPI device list (truncated to 31 characters) or renumbered by Windows is migrated to the
+ * device it means once the list is known; a saved device that is not connected stays selectable and marked.
+ */
 export const InputNativeAudioOutput: FC<AudioOutputProps> = memo(({ label, value, onChange }) => {
-    const [config, setConfig] = useState<WindowsConfig>();
-    // Re-read the SAPI output list when devices change (headset plugged in, default switched).
-    const revision = useAudioDeviceRevision();
-    useEffect(() => {
-        let cancelled = false;
-        invoke<WindowsConfig>("plugin:windows-tts|get_voices")
-            .then((c) => { if (!cancelled) setConfig(c); })
-            .catch((e) => console.error("Failed to load output devices:", e));
-        return () => { cancelled = true; };
-    }, [revision]);
+    const { t } = useTranslation();
+    const devices = useSnapshot(window.ApiServer.audioDevices.state);
 
-    return <InputSelect
-        value={value}
-        onValueChange={onChange}
-        options={config?.devices.map(d => ({ ...d, value: d.label })) || []}
-        label={label} />
+    useEffect(() => {
+        void window.ApiServer.audioDevices.ensureLoaded();
+    }, []);
+
+    const names = useMemo(() => devices.outputs.map((d) => d.name), [devices.outputs]);
+    const current = (value ?? "").trim().toLowerCase() === "default" ? "" : (value ?? "");
+
+    useEffect(() => {
+        if (!devices.loaded || !current) return;
+        const migrated = migrateOutputDeviceName(current, names);
+        if (migrated !== current) onChange(migrated);
+    }, [devices.loaded, names, current]);
+
+    const options = useMemo(() => {
+        const list = [{ label: t("common.device_system_default"), value: "" }, ...names.map((n) => ({ label: n, value: n }))];
+        if (current && !names.includes(current)) {
+            list.push({ label: t("audio_devices.device_unavailable", { name: current }), value: current });
+        }
+        return list;
+    }, [names, current, t]);
+
+    return <InputSelect label={label} value={current} options={options} onValueChange={onChange} />;
 });
 
 

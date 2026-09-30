@@ -268,6 +268,11 @@ pub struct VcSessionOptions {
     /// the voice changer's diagnostics rows, firing its `diagnostics:ep_outcome` fallback toast, or
     /// being adopted by the worker's `run_ep_outcome`. `None` (or empty) records `<component>`.
     pub component_prefix: Option<&'static str>,
+    /// Use ONNX Runtime's CPU memory arena (CPU EP only). ort rc.13's `ep::CPU::default()` disables
+    /// it, so dynamic-shape graphs pay 20-35% extra for every input shape the session has not seen
+    /// yet (Kokoro TTS: RTF 0.29-0.40 on new sentence lengths vs 0.23-0.24 with the arena). Opt-in:
+    /// the voice changer keeps its benchmarked configuration until P3 measures the change.
+    pub cpu_arena: bool,
 }
 
 /// Canonical EP id for a UI / persisted hint (`gpu` is the legacy spelling of `cuda`).
@@ -564,7 +569,7 @@ pub(crate) fn builder_for_ep(ep: &str, device_id: i32, opts: &VcSessionOptions) 
             .with_device_id(device_id.max(0))
             .build()
             .error_on_failure()]),
-        _ => builder.with_execution_providers([CPU::default().build()]),
+        _ => builder.with_execution_providers([CPU::default().with_arena_allocator(opts.cpu_arena).build()]),
     };
     registered.map_err(|e| explain_ep_error(ep, &e.to_string()))
 }

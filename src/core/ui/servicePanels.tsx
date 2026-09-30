@@ -17,9 +17,9 @@ import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
 import { Services } from "@/services-registry";
 import { KickIcon } from "./icons/KickIcon";
 
-const Inspector_STT = lazy(() => import("./inspector/inspector_stt"));
+const Inspector_STT = lazy(() => import("./inspector/stt"));
 const Inspector_Translation = lazy(() => import("./inspector/inspector_translation"));
-const Inspector_TTS = lazy(() => import("./inspector/inspector_tts"));
+const Inspector_TTS = lazy(() => import("./inspector/tts"));
 const Inspector_VRC = lazy(() => import("./inspector/inspector_vrc"));
 const Inspector_Transform = lazy(() => import("./inspector/inspector_transform"));
 const Inspector_Twitch = lazy(() => import("./inspector/inspector_twitch"));

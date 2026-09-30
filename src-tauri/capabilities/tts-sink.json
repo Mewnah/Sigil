@@ -1,0 +1,11 @@
+{
+  "identifier": "tts-sink",
+  "description": "IPC for the tts-sink plugin (unified TTS audio sink: utterance queue, binary PCM push, cancel / flush, status) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "tts-sink:default"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "identifier": "local-tts",
+  "description": "IPC for the local-tts plugin (in-process Kokoro / Piper / Kitten TTS) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "local-tts:default"
+  ]
+}

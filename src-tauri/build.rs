@@ -21,6 +21,8 @@
 //! (`PROFILE=release`) also refuse `published` entries with a file that has neither `sha256` nor
 //! `git_oid`: release catalogs are fully pinned; trust-on-first-use is for development only.
 //! Adding or editing a fragment is a data-only change (no Rust edit, no hotspot).
+//! A fragment may also carry a top-level `routing` object (P2-S0: the STT routing table in
+//! `stt-routing.json`, read by `speech::router`); it is checked to be an object and not embedded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -425,7 +427,14 @@ fn build_model_catalog() {
         let obj = doc
             .as_object()
             .unwrap_or_else(|| panic!("{ctx}: a fragment must be a JSON object"));
-        check_keys(&ctx, obj, &["$schema", "$comment", "entries"], &["entries"]);
+        check_keys(&ctx, obj, &["$schema", "$comment", "entries", "routing"], &["entries"]);
+        // `routing` (P2-S0): a data table read by `speech::router` with `include_str!` (it is not
+        // part of the embedded catalog). Only its shape is checked here.
+        if let Some(routing) = obj.get("routing") {
+            if !routing.is_object() {
+                panic!("{ctx}: routing must be a JSON object");
+            }
+        }
         let entries = obj["entries"]
             .as_array()
             .unwrap_or_else(|| panic!("{ctx}: entries must be an array"));

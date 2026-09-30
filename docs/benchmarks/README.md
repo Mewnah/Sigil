@@ -27,7 +27,7 @@ src-tauri\target\release\sigil.exe --headless bench scripts\bench\specs\stub-smo
 
 Release builds give representative numbers. A debug build runs the harness unoptimized, adding
 about 2.5 ms per 10.7 ms block on the dev rig, so its numbers only compare with other debug runs.
-`bench-results/` is git-ignored. Curated scorecards go to `docs/benchmarks/*.md`.
+`bench-results/` is git-ignored. Curated scorecards go to `docs/benchmarks/*.md` (speech: [SPEECH_BENCHMARKS.md](SPEECH_BENCHMARKS.md)).
 
 ## What runs
 

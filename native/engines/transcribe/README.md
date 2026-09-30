@@ -102,6 +102,26 @@ canary and whisper-rs, so `load_delta` / `total_delta` are the engine's own) and
 transcript. With a runtime folder and no NVIDIA pack installed, `SIGIL_TRANSCRIBE_CUDA_BIN`
 (`;`-separated) may point at a CUDA 13 toolkit `bin` for development.
 
+## Used by the speech plugin (P2)
+
+The `local` STT backend's GPU tier runs these packs through `speech::engines::transcribe`
+(`src-tauri/src/services/speech/engines/transcribe.rs`): the models are the catalog entries in
+`src-tauri/model-catalog/stt-gguf.json` (Qwen3-ASR-1.7B Q8_0 / BF16, Cohere Transcribe Q4_K,
+Granite Speech 5.0 TurboCTC, Voxtral Mini 4B Realtime), the resource governor
+(`speech_rt::transcribe::governor`) decides whether a model may use the GPU and holds its VRAM
+claims, and `isolation: "worker"` (or `SIGIL_STT_ISOLATION=worker`) hosts the engine in a
+`Sigil.exe --headless stt-worker` child so a ggml abort ends the worker, not Sigil.
+
+Measured on the RTX 4090 dev rig with `0.2.4-s2` `cuda13` (process VRAM with the 20 s GPU warm-up):
+Qwen3-ASR-1.7B Q8_0 3470 MiB (8 s Japanese final 200 ms after the utterance closed), BF16 5914 MiB
+(11 s English in 226 ms), Cohere Q4_K_M 1950 MiB (11 s English in 293-306 ms), Granite TurboCTC Q8_0
+890 MiB (56-68 ms; lower-case, no punctuation), Voxtral Mini 4B Realtime Q4_K_M about 4100 MiB
+(streaming partials every 200 ms chunk). The CUDA context (about 380 MiB) stays for the process lifetime once a GPU model ran,
+because `native_runtime` pins GPU DLLs.
+
+Confucius4-R2T2 needs a transcribe.cpp release newer than the pinned 0.2.4 (no `r2t2`
+architecture here); upgrading follows "Upgrading transcribe.cpp" below.
+
 ## Fatal errors, VRAM headroom and one compute per model
 
 - ggml ends the process on errors it cannot return: `GGML_ABORT` / `GGML_ASSERT`, including

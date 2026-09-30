@@ -35,6 +35,7 @@ describe("diagnostics format helpers", () => {
   it("maps components to i18n keys", () => {
     expect(componentKey("vc.pitch")).toBe("vc_pitch");
     expect(componentKey("stt.vad")).toBe("stt_vad");
+    expect(componentKey("stt.turn")).toBe("stt_turn");
     expect(componentKey("future.thing")).toBeNull();
   });
 

@@ -2,20 +2,47 @@ import i18n from "i18next";
 import { isEmptyValue } from "@/utils";
 import { isTauri } from "@tauri-apps/api/core";
 import { STT_State } from "../schema";
+import { baseLanguageTag } from "../rustCapturePolling";
 import {
   ISTTReceiver,
-  ISTTService
+  ISTTService,
+  SttTextMeta
 } from "../types";
+
+/**
+ * Stop message for a Web Speech `error` event (`SpeechRecognitionErrorEvent.error`); `null` for errors that do not
+ * end the session (`no-speech`: a silent stretch). Pure.
+ */
+export function nativeErrorMessage(code: string | undefined, language: string, desktop: boolean): string | null {
+  switch (code) {
+    case "no-speech":
+      return null;
+    case "network":
+      // WebView2 has no speech service: the desktop app always ends up here.
+      return desktop ? i18n.t("stt.error_native_desktop") : i18n.t("stt.error_native_network");
+    case "not-allowed":
+    case "service-not-allowed":
+      return i18n.t("stt.error_native_not_allowed");
+    case "audio-capture":
+      return i18n.t("stt.error_native_mic");
+    case "language-not-supported":
+      return i18n.t("stt.error_native_language", { language });
+    default:
+      return i18n.t("stt.error_native_generic", { detail: code || "error" });
+  }
+}
 
 export class STT_NativeService implements ISTTService {
   constructor(private bindings: ISTTReceiver) {}
-  
+
   #instance?: SpeechRecognition;
   /** WebView2 often omits `onstart`; Tauri fallback clears STT connecting timeout. */
   #nativeStartFallback?: number;
   #nativeConnectSent = false;
   /** When false, `onend` must not call `start()` again (user stopped or is switching backend). */
   #shouldRestartAfterEnd = true;
+  #meta: SttTextMeta | undefined;
+  #onUnload?: () => void;
 
   dispose(): void {}
 
@@ -23,6 +50,13 @@ export class STT_NativeService implements ISTTService {
     if (this.#nativeStartFallback) {
       clearTimeout(this.#nativeStartFallback);
       this.#nativeStartFallback = undefined;
+    }
+  }
+
+  #clearUnload(): void {
+    if (this.#onUnload) {
+      window.removeEventListener("beforeunload", this.#onUnload);
+      this.#onUnload = undefined;
     }
   }
 
@@ -39,13 +73,13 @@ export class STT_NativeService implements ISTTService {
       }
     }
     if (final_transcript.trim()) {
-      this.bindings.onFinal(final_transcript);
+      this.bindings.onFinal(final_transcript, this.#meta);
     }
     if (interim_transcript.trim()) {
-      this.bindings.onInterim(interim_transcript);
+      this.bindings.onInterim(interim_transcript, this.#meta);
     }
   };
-  
+
   start(state: STT_State): void {
     this.#clearNativeStartFallback();
     this.#nativeConnectSent = false;
@@ -64,9 +98,14 @@ export class STT_NativeService implements ISTTService {
       return;
     }
 
+    const language = state.native.language;
+    const lang = baseLanguageTag(language);
+    this.#meta = lang ? { lang } : undefined;
+    this.bindings.onStatus(i18n.t("stt.status_native_starting"));
+
     try {
       this.#instance = new SpCtor();
-      this.#instance.lang = state.native.language;
+      this.#instance.lang = language;
       this.#instance.continuous = true;
       this.#instance.interimResults = true;
 
@@ -81,13 +120,9 @@ export class STT_NativeService implements ISTTService {
       this.#instance.onresult = (event: unknown) => this.#processResults(event);
 
       this.#instance.addEventListener("error", (error: unknown) => {
-        const err = error as { error?: string };
-        if (err.error === "no-speech") return;
-        if (err.error === "network" && isTauri()) {
-          this.stop(i18n.t("stt.error_native_desktop"));
-          return;
-        }
-        this.stop(err.error);
+        const message = nativeErrorMessage((error as { error?: string }).error, language, isTauri());
+        if (message === null) return;
+        this.stop(message);
       });
       this.#instance.onend = () => {
         if (!this.#shouldRestartAfterEnd || !this.#instance) return;
@@ -104,20 +139,28 @@ export class STT_NativeService implements ISTTService {
     } catch (e) {
       this.#clearNativeStartFallback();
       this.#instance = undefined;
-      this.bindings.onStop(e instanceof Error ? e.message : String(e));
+      this.bindings.onStatus("");
+      this.bindings.onStop(i18n.t("stt.error_native_generic", { detail: e instanceof Error ? e.message : String(e) }));
       return;
     }
 
-    window.onbeforeunload = () => this.#instance?.stop();
+    this.#clearUnload();
+    const instance = this.#instance;
+    this.#onUnload = () => instance?.stop();
+    window.addEventListener("beforeunload", this.#onUnload);
   }
 
   stop(error?: string): void {
     this.#clearNativeStartFallback();
+    this.#clearUnload();
     this.#shouldRestartAfterEnd = false;
-    if (!this.#instance)
+    const instance = this.#instance;
+    this.#instance = undefined;
+    if (!instance)
       return;
-    this.#instance.onend = null;
-    this.#instance.stop();
+    instance.onend = null;
+    instance.stop();
+    if (error) this.bindings.onStatus("");
     this.bindings.onStop(error);
   }
 }

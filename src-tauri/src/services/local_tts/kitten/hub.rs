@@ -9,14 +9,19 @@
 //! Replaces upstream's `download.rs`, which used the `hf-hub` crate (blocking `ureq`, a cache under
 //! `~/.cache/huggingface/hub`). [`ModelConfig`] is upstream's `config.json` schema, unchanged.
 //!
-//! [`load_from_hub`] is a stopgap until the model store owns Kitten downloads:
+//! [`load_from_hub`] serves the legacy `neuralOnnx` "Hugging Face repo" setting (the catalog Kitten
+//! models are official sherpa-onnx packages, `local_tts::catalog`):
 //! 1. A repo already in the legacy hf-hub cache (where kittentts 0.3 put it) is used in place, so
 //!    existing installs never download again ([`legacy_hf_snapshot`]).
 //! 2. Otherwise `config.json`, then the ONNX model, then the voices NPZ are fetched one file at a
-//!    time with [`http_download_get`] from `https://huggingface.co/<repo>/resolve/main/<file>` into
-//!    `<app_data>/models/kitten/<org>--<name>/` ([`repo_dir`]). Each file streams into its own
-//!    `.partial` file that is renamed only after it passes a sanity check (no HTML error pages,
-//!    not truncated, NPZ is a ZIP).
+//!    time from `https://huggingface.co/<repo>/resolve/main/<file>` into
+//!    `<app_data>/models/kitten/<org>--<name>/` ([`repo_dir`]) through the model store
+//!    (`Store::fetch_unpinned`: the store's one-download-at-a-time slot, HTTP Range resume, stall
+//!    timeout and HTML-page refusal). Each file is sanity-checked (no HTML error pages, not
+//!    truncated, NPZ is a ZIP) before it is moved into place.
+//!
+//! [`load_sherpa_kitten_package`] runs an official sherpa-onnx Kitten package (`model.onnx`,
+//! `voices.bin`) on the vendored engine: the fallback when the sherpa runtime cannot load.
 //!
 //! For Hub repos the file names come from a downloaded `config.json`, so they must be single plain
 //! path components ([`ModelConfig::check_plain_names`]) before anything is downloaded or a cached
@@ -25,17 +30,16 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
-use futures::StreamExt;
 use serde::Deserialize;
 
-use super::model::KittenTtsOnnx;
+use super::model::{KittenTtsOnnx, VoiceMatrix};
 use crate::services::diagnostics::app_data_dir;
-use crate::services::http_client::{describe_failed_response, http_download_get};
+use crate::services::model_store::{global_store, CancelToken, DownloadError, ExtractLimits};
 
 /// Hugging Face base URL for `resolve` downloads.
 pub const HF_BASE_URL: &str = "https://huggingface.co";
@@ -275,43 +279,98 @@ pub fn resolve_url(repo: &str, file: &str) -> String {
     format!("{HF_BASE_URL}/{repo}/resolve/main/{file}")
 }
 
+/// Style-vector width of every Kitten model.
+pub const KITTEN_STYLE_DIM: usize = 256;
+
+/// Load an official sherpa-onnx Kitten package on the vendored engine: `voices.bin` holds one
+/// row-major `[rows, 256]` f32 style matrix per speaker, in the order of `speakers` (the model's
+/// `speaker_names`); `aliases` maps friendly names onto them.
+pub fn load_sherpa_kitten_package(
+    model: &Path,
+    voices_bin: &Path,
+    speakers: &[String],
+    aliases: HashMap<String, String>,
+) -> Result<KittenTtsOnnx> {
+    let bytes = fs::read(voices_bin).with_context(|| format!("Cannot read {}", voices_bin.display()))?;
+    let voices = split_voices_bin(&bytes, speakers, KITTEN_STYLE_DIM)?;
+    KittenTtsOnnx::load_with_voices(model, voices, HashMap::new(), aliases)
+}
+
+/// Split a sherpa `voices.bin` into one `(name, rows, dim, data)` matrix per speaker (`dim` = the
+/// style width, [`KITTEN_STYLE_DIM`] for Kitten).
+pub fn split_voices_bin(bytes: &[u8], speakers: &[String], dim: usize) -> Result<Vec<VoiceMatrix>> {
+    if speakers.is_empty() {
+        bail!("the voice list is empty");
+    }
+    if bytes.len() % 4 != 0 {
+        bail!("voices.bin is not a whole number of f32 values ({} bytes)", bytes.len());
+    }
+    let floats: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    let per_voice = floats.len() / speakers.len();
+    if dim == 0 || per_voice == 0 || floats.len() % speakers.len() != 0 || per_voice % dim != 0 {
+        bail!(
+            "voices.bin has {} values, which is not {} voices of N x {dim}",
+            floats.len(),
+            speakers.len()
+        );
+    }
+    let rows = per_voice / dim;
+    Ok(speakers
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.clone(), rows, dim, floats[i * per_voice..(i + 1) * per_voice].to_vec()))
+        .collect())
+}
+
+/// Read a finished download's length and first bytes for [`check_download`].
+fn head_of(path: &Path) -> std::result::Result<(u64, Vec<u8>), String> {
+    let len = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let mut head = [0u8; 16];
+    let n = fs::File::open(path)
+        .and_then(|mut f| f.read(&mut head))
+        .map_err(|e| e.to_string())?;
+    Ok((len, head[..n].to_vec()))
+}
+
+fn check_file(kind: FileKind, path: &Path) -> std::result::Result<(), String> {
+    let (len, head) = head_of(path)?;
+    check_download(kind, len, &head).map_err(|e| format!("{e:#}"))
+}
+
+// `Store::fetch_unpinned` takes plain fn pointers.
+fn check_config_file(path: &Path, _limits: &ExtractLimits) -> std::result::Result<(), String> {
+    check_file(FileKind::Config, path)
+}
+
+fn check_onnx_file(path: &Path, _limits: &ExtractLimits) -> std::result::Result<(), String> {
+    check_file(FileKind::Onnx, path)
+}
+
+fn check_npz_file(path: &Path, _limits: &ExtractLimits) -> std::result::Result<(), String> {
+    check_file(FileKind::Npz, path)
+}
+
 fn download_file(repo: &str, file: &str, dir: &Path, kind: FileKind) -> Result<()> {
     let file = validate_file_name(file)?;
     let url = resolve_url(repo, file);
     let dest = dir.join(file);
-    let partial = dir.join(format!("{file}.{}.partial", std::process::id()));
+    let validate: fn(&Path, &ExtractLimits) -> std::result::Result<(), String> = match kind {
+        FileKind::Config => check_config_file,
+        FileKind::Onnx => check_onnx_file,
+        FileKind::Npz => check_npz_file,
+    };
     tracing::info!(target: "sigil::tts", "Kitten TTS: downloading {file} from {repo}");
-    let result = tauri::async_runtime::block_on(stream_to(&url, &partial)).and_then(|len| {
-        let mut head = [0u8; 16];
-        let n = fs::File::open(&partial).and_then(|mut f| f.read(&mut head))?;
-        check_download(kind, len, &head[..n])?;
-        fs::rename(&partial, &dest).with_context(|| format!("Cannot move the download to {}", dest.display()))
-    });
-    if result.is_err() {
-        let _ = fs::remove_file(&partial);
+    let store = global_store().map_err(anyhow::Error::msg)?;
+    let cancel = CancelToken::default();
+    let label = format!("kitten/{repo}");
+    match tauri::async_runtime::block_on(store.fetch_unpinned(&label, file, &url, &dest, validate, &cancel)) {
+        Ok(_) => Ok(()),
+        Err(DownloadError::Cancelled) => bail!("Download of '{file}' from '{repo}' was cancelled"),
+        Err(DownloadError::Failed(m)) => bail!("Failed to download '{file}' from '{repo}': {m}"),
     }
-    result.with_context(|| format!("Failed to download '{file}' from '{repo}'"))
-}
-
-async fn stream_to(url: &str, dest: &Path) -> Result<u64> {
-    let response = http_download_get(url).send().await.map_err(|e| anyhow::anyhow!("request failed: {e}"))?;
-    if !response.status().is_success() {
-        bail!("{}", describe_failed_response(response).await);
-    }
-    let expected = response.content_length();
-    let mut out = fs::File::create(dest).with_context(|| format!("Cannot create {}", dest.display()))?;
-    let mut written: u64 = 0;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| anyhow::anyhow!("download interrupted: {e}"))?;
-        out.write_all(&chunk)?;
-        written += chunk.len() as u64;
-    }
-    out.sync_all()?;
-    if let Some(total) = expected.filter(|&t| t != written) {
-        bail!("download truncated ({written} of {total} bytes)");
-    }
-    Ok(written)
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import type { ISTTReceiver, SttStatusLevel, SttStatusOptions } from "./types";
+import type { ISTTReceiver, SttStatusLevel, SttStatusOptions, SttTextMeta } from "./types";
 
 /**
  * STT status channel: engine status (connecting, download / load progress, transient errors, rate-limit waits) is
@@ -57,10 +57,10 @@ export interface ScopedReceiverSinks {
   isCurrent(): boolean;
   start(): void;
   stop(error?: string): void;
-  /** Transcript text only (published as an interim). */
-  interim(text: string): void;
-  /** Transcript text only (published as a final). */
-  final(text: string): void;
+  /** Transcript text only (published as an interim), with the engine's segment metadata when it has any. */
+  interim(text: string, meta?: SttTextMeta): void;
+  /** Transcript text only (published as a final), with the engine's segment metadata when it has any. */
+  final(text: string, meta?: SttTextMeta): void;
   /** UI status only (never published). */
   status(status: SttStatus): void;
   /** The engine reported something (status or speech): re-arms the connecting watchdog. */
@@ -80,14 +80,14 @@ export function createScopedReceiver(sinks: ScopedReceiverSinks): ISTTReceiver {
     onStop: (error) => {
       if (sinks.isCurrent()) sinks.stop(error);
     },
-    onInterim: (value) => {
+    onInterim: (value, meta) => {
       if (!sinks.isCurrent()) return;
       sinks.alive();
-      sinks.interim(typeof value === "string" ? value : String(value ?? ""));
+      sinks.interim(typeof value === "string" ? value : String(value ?? ""), meta);
     },
-    onFinal: (value) => {
+    onFinal: (value, meta) => {
       if (!sinks.isCurrent()) return;
-      sinks.final(typeof value === "string" ? value : String(value ?? ""));
+      sinks.final(typeof value === "string" ? value : String(value ?? ""), meta);
     },
     onStatus: (text, options) => {
       if (!sinks.isCurrent()) return;

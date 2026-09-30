@@ -35,18 +35,28 @@ Pick a **backend** in the inspector. Minimum requirements per engine are in [OPE
 
 | Engine class | Notes |
 |--------------|--------|
-| **Whisper (Rust)** | Local; model download on first use. The default on the desktop app. |
+| **On this PC (automatic)** | Recommended and the default for new desktop installs. Sigil picks the best speech models for your language and your PC (live captions while you speak, then a more accurate final line) and runs them on this PC. |
+| **Whisper (Rust)** | Local; model download on first use. |
 | **Vosk** | Local models via Tauri + browser loader |
-| **Moonshine** | HTTP server (e.g. container) |
-| **OpenAI-style HTTP** | Local sidecar `POST …/audio/transcriptions`, one request per sentence |
+| **OpenAI-style HTTP** | Your own server `POST …/audio/transcriptions` (on this PC or the LAN), one request per sentence |
 | **Groq Whisper (free cloud)** | Whisper large-v3 Turbo on Groq's free plan; needs a free API key and sends your speech to Groq. Sigil paces requests to stay inside the free limits. |
 | **Azure / Deepgram** | Cloud; keys in settings (Deepgram uses Nova-3 by default) |
-| **Native / Web Speech** | Browser speech APIs where available (does not work inside the desktop app; desktop users on it are switched to Whisper once) |
+| **Native / Web Speech** | Browser speech APIs where available (does not work inside the desktop app; desktop users on it are asked once to switch to the automatic backend, else they move to Whisper) |
 | **Chrome / Edge** | Optional path to open a **mic helper** page (`mic.html`) for browser-based capture |
+| **Moonshine server (legacy)** | An external Moonshine HTTP server; the automatic backend now runs Moonshine inside Sigil |
+
+### First start with "On this PC (automatic)"
+
+1. In the STT inspector, pick **On this PC (automatic)** and your **language** (an explicit language gives the best live captions; **Detect automatically** also works).
+2. The panel shows which models Sigil will use on this PC and why. Leave **Hardware** on **Best for my PC** unless you want to force the CPU or share the GPU with the voice changer.
+3. Press **Start**. Sigil asks once before downloading (for English about 1.1 GB; **Smaller setup** downloads less and uses one model). Progress shows under the Start button and in **Models & Runtimes**; you can stop and resume later.
+4. Speak: live words appear, then each sentence is replaced by its final, more accurate version on the same line.
+
+Models download once and stay on this PC; your voice never leaves it. If the microphone drops out or a model crashes, the session restarts by itself.
 
 ### Audio input
 
-- **Whisper, Vosk, Moonshine, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
+- **On this PC (automatic), Whisper, Vosk, Moonshine, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
 - **Azure and Deepgram** capture in the webview, so their device pickers list **browser** microphones. Leave the picker on the default to use the system microphone.
 - If a microphone is **unplugged** while STT runs, Sigil shows a toast and reconnects it by itself when it comes back; STT keeps running. With the system default selected, STT follows a change of the Windows default microphone. A saved microphone that is not plugged in is shown as **(not connected)**.
 
@@ -54,15 +64,15 @@ Details: [Input device resolution](../OPERATOR_REFERENCE.md#input-device-resolut
 
 ### Voice detection
 
-Whisper, Moonshine, local HTTP and Groq only hear you when the built-in voice detector (Silero VAD) decides you are speaking, so silence, keyboard noise and game audio are never transcribed. Adjust it under **Voice detection** in the STT inspector: **Speech sensitivity** (lower catches quiet speech), **Pause that ends speech** (shorter feels faster but can split sentences), audio kept before speech, shortest speech kept, and the longest sentence. **Reset to defaults** restores them.
+The automatic backend, Whisper, Moonshine, local HTTP and Groq only hear you when the built-in voice detector (Silero VAD) decides you are speaking, so silence, keyboard noise and game audio are never transcribed. Adjust it under **Voice detection** in the STT inspector: **Speech sensitivity** (lower catches quiet speech), **Pause that ends speech** (shorter feels faster but can split sentences), audio kept before speech, shortest speech kept, and the longest sentence. **Reset to defaults** restores them.
 
-Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait.
+Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait. The automatic backend has **Two passes** (the accurate final line), **Smart Turn** (lets translation, TTS and the chatbox react sooner when you finish talking; captions are unchanged), **hotwords** and the hallucination filter.
 
 ### Tips
 
-- Prefer **local** engines for latency-sensitive VRChat or game audio.
-- For **OpenAI-compatible** local servers, confirm they accept **non-streaming multipart** uploads; see [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md) “Upstream verification.”
-- Use **mute** (or its shortcut) to pause captions without stopping the service. The HTTP engines do not send muted speech at all.
+- Prefer **local** engines for latency-sensitive VRChat or game audio; **On this PC (automatic)** needs no server.
+- For **OpenAI-compatible** servers, confirm they accept **non-streaming multipart** uploads (one upload per sentence).
+- Use **mute** (or its shortcut) to pause captions without stopping the service. The Rust engines and Deepgram do not hear or send muted speech at all.
 
 For timeouts, wrong microphone, and “connected but no text” behavior, see [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#stt-reliability-and-troubleshooting).
 
@@ -78,7 +88,7 @@ For timeouts, wrong microphone, and “connected but no text” behavior, see [O
 
 ### Purpose
 
-Speak text aloud with **Windows SAPI**, **Azure**, **VOICEVOX**, **Uberduck**, **browser** voices, or other configured backends. Often used with chat, macros, or transformed captions.
+Speak text aloud with the built-in **Kokoro / Piper** voices, **VOICEVOX / AivisSpeech**, **Azure**, **Uberduck**, **Windows SAPI**, **browser** voices, any **OpenAI-compatible** speech server, or other configured backends. Often used with chat, macros, or transformed captions.
 
 ### Open the inspector
 
@@ -93,6 +103,11 @@ Sidebar → **Text to Speech**.
 
 Each backend needs different fields (voice, endpoint, API keys). See [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#text-to-speech).
 
+- **Kokoro / Piper (local)** is the default for new desktop installs: natural voices that run on this PC (Kokoro speaks English, Japanese, Chinese, Spanish, French, Hindi, Italian and Portuguese; Piper voices cover many more languages). Pick a voice model and a voice, agree to the one-time download in the panel (about 360 MB for Kokoro), and use **Preview** to listen. Existing users on browser or Windows voices are asked once whether to switch.
+- **Play speech on** chooses where speech goes: the **output device**, the **voice changer** (your converted voice speaks the text; while the voice changer is stopped it plays on the device), or **both**. The microphone can be lowered or muted while TTS plays (voice changer → **Microphone while TTS plays**). Web Speech and Windows voices always play by themselves on their device.
+- The **output device** lists your Windows audio devices; names saved by older versions are updated automatically.
+- **OpenAI-compatible (HTTP)** works with Kokoro-FastAPI, Chatterbox, vLLM (Voxtral-4B-TTS, IndexTTS-2.5, VoxCPM2) and Qwen3-TTS servers: pick a preset, check the voice with **Test voice**.
+
 Neural ONNX and local **speech package** layout are documented in [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#local-speech-package-onnx).
 
 ### In-app input
@@ -101,12 +116,13 @@ A **TTS input** bar can appear above the bottom of the canvas (host) so you can 
 
 ### Tips
 
-- **VOICEVOX / Kokoro / similar** usually expect a **local HTTP** engine; start the engine before starting Sigil’s TTS service.
+- Long text starts speaking after its first sentence; **Skip** (the current sentence) and **Stop speaking** (everything queued) are on the status bar's TTS card.
+- **VOICEVOX / Kokoro-FastAPI / similar servers** need their engine running; start it before starting Sigil’s TTS service. **Kokoro / Piper (local)** needs no server. For Japanese, VOICEVOX or AivisSpeech read kanji better than Kokoro.
 - **VOICEVOX / AivisSpeech:** pick the **Engine preset** (VOICEVOX on port 50021, AivisSpeech on port 10101, or a custom URL). AivisSpeech sets pitch to 0, because its voices sound worse with any other pitch; **Reset pitch** puts it back to 0.
 - **Fish Speech** also works with Fish Audio's hosted API: endpoint `https://api.fish.audio`, your API key and a model such as `s2.1-pro-free`.
-- **Stop** drops everything that is queued. A sentence that is already playing through the app's audio output may finish.
+- **Stop** drops everything that is queued and cuts the sentence that is playing (browser and Windows voices may finish their current line).
 - A line that fails to speak shows a short notice and is written to the **System log**; the service keeps running.
-- **Windows** backend uses native output device selection in the inspector.
+- **Windows** backend uses its own (SAPI) output device selection in the inspector.
 - On the **client mirror**, heavy TTS may be limited; prefer driving TTS from the **host**.
 
 ### Related

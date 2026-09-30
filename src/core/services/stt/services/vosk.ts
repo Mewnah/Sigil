@@ -6,12 +6,13 @@ import { appDataDir, join } from "@tauri-apps/api/path";
 import { devLog } from "@/utils/devLog";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "../abort";
-import { toMonoFloat32 } from "../audioConvert";
+import { resampleLinear, toMonoFloat32 } from "../audioConvert";
 import { SttDownloadProgressPayload } from "../downloadProgress";
 import { downloadStatus } from "../statusMessages";
 import i18n from "i18next";
 import { SttStartLifecycle } from "../localEngineLifecycle";
 import { loadVoskModel, VoskLoadedModel, VoskRecognizer } from "../loadVoskModel";
+import { errorText, shortDetail } from "../rustCapturePolling";
 
 /** Mirrors Rust `VoskModel` for `get_vosk_models`. */
 export type VoskCatalogModel = {
@@ -33,6 +34,39 @@ export const VOSK_MODELS_FALLBACK: VoskCatalogModel[] = [
     },
 ];
 
+/**
+ * Rate the recognizer runs at: `start_audio_capture({ sampleRate: 16000 })` makes the capture hub deliver 16 kHz mono
+ * (rubato, band-limited) on the shared device stream, so Vosk sees the same raw microphone as every other engine.
+ */
+export const VOSK_SAMPLE_RATE = 16_000;
+
+/**
+ * Vosk recognizer events → transcript calls. Vosk reports the current partial after every audio block, so an
+ * unchanged partial is published once instead of ~50 times a second (captions, interim translation and the VRChat
+ * typing indicator all follow interims). A result without words abandons the open partial instead of leaving it
+ * on screen. Pure.
+ */
+export class VoskTranscript {
+    #partial = "";
+
+    constructor(private readonly sink: { interim(text: string): void; final(text: string): void }) {}
+
+    partial(text: unknown): void {
+        const t = String(text ?? "").trim();
+        if (!t || t === this.#partial) return;
+        this.#partial = t;
+        this.sink.interim(t);
+    }
+
+    result(text: unknown): void {
+        const t = String(text ?? "").trim();
+        const open = this.#partial !== "";
+        this.#partial = "";
+        if (t) this.sink.final(t);
+        else if (open) this.sink.interim("");
+    }
+}
+
 export class STT_VoskService implements ISpeechRecognitionService {
     private model: VoskLoadedModel | null = null;
     private recognizer: VoskRecognizer | null = null;
@@ -47,28 +81,35 @@ export class STT_VoskService implements ISpeechRecognitionService {
         this.lifecycle = new SttStartLifecycle((error) => this.receiver.onStop(error));
     }
 
-    #ensureRecognizer(sampleRate: number) {
-        if (this.recognizer || !this.model) return;
-        const Rec = this.model.KaldiRecognizer;
-        this.recognizer = new Rec(sampleRate);
-
-        this.recognizer.on("result", (msg: unknown) => {
-            const message = msg as { result?: { text?: string } };
-            const text = message.result?.text || "";
-            if (text.trim()) {
+    #createRecognizer(model: VoskLoadedModel): VoskRecognizer {
+        const recognizer = new model.KaldiRecognizer(VOSK_SAMPLE_RATE);
+        const transcript = new VoskTranscript({
+            interim: (text) => {
+                if (text) devLog("[Vosk] Partial result:", text);
+                this.receiver.onInterim(text);
+            },
+            final: (text) => {
                 devLog("[Vosk] Final result:", text);
                 this.receiver.onFinal(text);
-            }
+            },
         });
+        recognizer.on("result", (msg: unknown) => {
+            transcript.result((msg as { result?: { text?: string } }).result?.text);
+        });
+        recognizer.on("partialresult", (msg: unknown) => {
+            transcript.partial((msg as { result?: { partial?: string } }).result?.partial);
+        });
+        return recognizer;
+    }
 
-        this.recognizer.on("partialresult", (msg: unknown) => {
-            const message = msg as { result?: { partial?: string } };
-            const partial = message.result?.partial || "";
-            if (partial.trim()) {
-                devLog("[Vosk] Partial result:", partial);
-                this.receiver.onInterim(partial);
-            }
-        });
+    /** One `audio:chunk`: downmix, and resample when the payload is not at the recognizer's rate. */
+    #accept(payload: RustAudioChunkPayload): void {
+        const recognizer = this.recognizer;
+        if (!this.isRunning || !recognizer) return;
+        const { samples, sample_rate, channels } = payload;
+        if (!(sample_rate > 0) || !samples?.length) return;
+        const mono = toMonoFloat32(samples, channels);
+        recognizer.acceptWaveformFloat(resampleLinear(mono, sample_rate, VOSK_SAMPLE_RATE), VOSK_SAMPLE_RATE);
     }
 
     #teardownModelAndRecognizer() {
@@ -156,23 +197,14 @@ export class STT_VoskService implements ISpeechRecognitionService {
             if (this.#abortStart()) return;
 
             devLog("[Vosk] Model loaded successfully");
+            this.recognizer = this.#createRecognizer(this.model);
 
             const deviceName = resolveRustInputDeviceForInvoke(params.vosk.device);
             devLog("[Vosk] Setting up Rust audio capture...");
 
             this.unlistenAudio = await listenWithAbort<RustAudioChunkPayload>(
                 "audio:chunk",
-                (event) => {
-                    if (!this.isRunning || !this.model) return;
-
-                    // Device rate/channels: Vosk resamples internally, so only downmix here.
-                    const { samples, sample_rate, channels } = event.payload;
-                    this.#ensureRecognizer(sample_rate);
-                    if (!this.recognizer) return;
-
-                    const floats = toMonoFloat32(samples, channels);
-                    this.recognizer.acceptWaveformFloat(floats, sample_rate);
-                },
+                (event) => this.#accept(event.payload),
                 this.startAbortSignal,
             );
 
@@ -182,10 +214,11 @@ export class STT_VoskService implements ISpeechRecognitionService {
 
             this.isRunning = true;
 
+            // The capture hub serves 16 kHz mono from the shared device stream (mute-gated like every STT consumer).
             await raceWithAbort(
                 invoke("plugin:audio|start_audio_capture", {
                     deviceName,
-                    sampleRate: 16000,
+                    sampleRate: VOSK_SAMPLE_RATE,
                 }),
                 this.startAbortSignal,
             );
@@ -218,7 +251,7 @@ export class STT_VoskService implements ISpeechRecognitionService {
             this.isRunning = false;
             this.#clearAudioListener();
             this.#teardownModelAndRecognizer();
-            this.lifecycle.notifyStopOnce(String(error));
+            this.lifecycle.notifyStopOnce(i18n.t("stt.error_engine_start", { engine: "Vosk", detail: shortDetail(errorText(error)) }));
         } finally {
             this.lifecycle.finishStart();
         }

@@ -59,8 +59,6 @@ import { CancellationErrorCode, ResultReason } from "microsoft-cognitiveservices
 import { TTS_BACKENDS } from "../index";
 import { Service_TTS_Schema, TTS_Backends, TTS_State } from "../schema";
 import { AZURE_CONNECT_TIMEOUT_MS, TTS_AzureService } from "../services/azure";
-import { TTS_FishSpeechService } from "../services/fishspeech";
-import { TTS_KokoroService } from "../services/kokoro";
 import { TTS_NativeService } from "../services/native";
 import { TTS_UberduckService } from "../services/uberduck";
 import { TTS_VoicevoxService, fetchVoicevoxSpeakers } from "../services/voicevox";
@@ -103,11 +101,15 @@ class FakeAudioContext {
 }
 
 let data: TTS_State;
-let sound: { enqueueVoiceClip: ReturnType<typeof vi.fn>; clearVoiceClips: ReturnType<typeof vi.fn> };
+let sound: {
+  enqueueVoiceClip: ReturnType<typeof vi.fn>;
+  enqueuePcm: ReturnType<typeof vi.fn>;
+  clearVoiceClips: ReturnType<typeof vi.fn>;
+};
 
 function installWindow(extra: Record<string, unknown> = {}) {
   data = proxy(Service_TTS_Schema.parse({}));
-  sound = { enqueueVoiceClip: vi.fn(async () => {}), clearVoiceClips: vi.fn() };
+  sound = { enqueueVoiceClip: vi.fn(async () => {}), enqueuePcm: vi.fn(async () => {}), clearVoiceClips: vi.fn() };
   vi.stubGlobal("window", {
     ApiServer: {
       state: { services: { tts: { data } }, audioOutputDevice: "Speakers (App default)" },
@@ -151,133 +153,8 @@ describe("every backend", () => {
   });
 });
 
-describe("HTTP clip backends (Kokoro as representative)", () => {
-  it("passes the endpoint per call and plays clips in order", async () => {
-    data.kokoro.endpoint = " http://localhost:8880 ";
-    data.kokoro.speed = "abc";
-    invokeMock.mockImplementation(async (cmd, args) => {
-      if (cmd.endsWith("check_kokoro_availability")) return true;
-      if (cmd.endsWith("kokoro_speak")) return Array.from({ length: (args as { text: string }).text.length * 100 }, () => 0);
-      return undefined;
-    });
-    const r = receiver();
-    const kokoro = new TTS_KokoroService(r);
-    await kokoro.start(data);
-    expect(r.onStart).toHaveBeenCalledTimes(1);
-    expect(invokeMock).toHaveBeenCalledWith("plugin:kokoro-tts|check_kokoro_availability", { endpoint: "http://localhost:8880" });
-
-    kokoro.play("four");
-    kokoro.play("two");
-    await flush(30);
-    expect(invokeMock).toHaveBeenCalledWith("plugin:kokoro-tts|kokoro_speak", {
-      text: "four",
-      voice: "af_bella",
-      speed: 1, // junk speed falls back instead of NaN
-      endpoint: "http://localhost:8880",
-    });
-    // 0.4 s clip, then the next clip right after it: no overlap.
-    expect(FakeAudioContext.started).toEqual([0, 0.4]);
-  });
-
-  it("stop during connect wins over the late result", async () => {
-    let answer!: (v: boolean) => void;
-    invokeMock.mockImplementation(async (cmd) => {
-      if (cmd.endsWith("check_kokoro_availability")) return new Promise<boolean>((res) => (answer = res));
-      return undefined;
-    });
-    const r = receiver();
-    const kokoro = new TTS_KokoroService(r);
-    const starting = kokoro.start(data);
-    await flush();
-    kokoro.stop();
-    answer(true);
-    await starting;
-    expect(r.onStart).not.toHaveBeenCalled();
-    expect(r.onStop).toHaveBeenCalledTimes(1);
-  });
-
-  it("a failed line is reported with onError and the backend keeps running", async () => {
-    invokeMock.mockImplementation(async (cmd) => {
-      if (cmd.endsWith("check_kokoro_availability")) return true;
-      if (cmd.endsWith("kokoro_speak")) throw "Kokoro synthesis: HTTP 500";
-      return undefined;
-    });
-    const r = receiver();
-    const kokoro = new TTS_KokoroService(r);
-    await kokoro.start(data);
-    kokoro.play("hello");
-    await flush(30);
-    expect(r.onError).toHaveBeenCalledWith("Kokoro: Kokoro synthesis: HTTP 500");
-    expect(r.onStop).not.toHaveBeenCalled();
-    expect(kokoro.running).toBe(true);
-  });
-
-  it("audio synthesized after Stop is never played", async () => {
-    let finish!: (v: number[]) => void;
-    invokeMock.mockImplementation(async (cmd) => {
-      if (cmd.endsWith("check_kokoro_availability")) return true;
-      if (cmd.endsWith("kokoro_speak")) return new Promise<number[]>((res) => (finish = res));
-      return undefined;
-    });
-    const r = receiver();
-    const kokoro = new TTS_KokoroService(r);
-    await kokoro.start(data);
-    kokoro.play("hello");
-    await flush(30);
-    kokoro.stop();
-    finish(new Array(500).fill(0));
-    await flush(30);
-    expect(FakeAudioContext.started).toEqual([]);
-    expect(r.onError).not.toHaveBeenCalled();
-  });
-
-  it("getVoices rejects instead of hiding a failure behind an empty list", async () => {
-    invokeMock.mockRejectedValue("Kokoro voice list: connection refused");
-    await expect(TTS_KokoroService.getVoices("http://localhost:8880")).rejects.toBe("Kokoro voice list: connection refused");
-  });
-});
-
-describe("Fish Speech", () => {
-  it("passes the API key and model through, and blanks as null", async () => {
-    invokeMock.mockImplementation(async (cmd) => (cmd.endsWith("check_fish_availability") ? true : [1, 2, 3]));
-    data.fishSpeech.endpoint = "https://api.fish.audio";
-    data.fishSpeech.apiKey = " sk-test ";
-    data.fishSpeech.model = "s2.1-pro-free";
-    data.fishSpeech.referenceId = "default";
-    const r = receiver();
-    const fish = new TTS_FishSpeechService(r);
-    await fish.start(data);
-    expect(invokeMock).toHaveBeenCalledWith("plugin:fish-speech|check_fish_availability", {
-      endpoint: "https://api.fish.audio",
-      apiKey: "sk-test",
-    });
-    fish.play("hello");
-    await flush(30);
-    expect(invokeMock).toHaveBeenCalledWith("plugin:fish-speech|fish_speak", {
-      text: "hello",
-      referenceId: "default",
-      endpoint: "https://api.fish.audio",
-      apiKey: "sk-test",
-      model: "s2.1-pro-free",
-    });
-
-    await TTS_FishSpeechService.getVoices("http://localhost:8080", "  ");
-    expect(invokeMock).toHaveBeenLastCalledWith("plugin:fish-speech|get_fish_voices", {
-      endpoint: "http://localhost:8080",
-      apiKey: null,
-    });
-  });
-
-  it("a rejected key stops the backend with the server's reason", async () => {
-    invokeMock.mockImplementation(async (cmd) => {
-      if (cmd.endsWith("check_fish_availability")) throw "Fish Speech rejected the API key (HTTP 401 Unauthorized).";
-      return undefined;
-    });
-    const r = receiver();
-    await new TTS_FishSpeechService(r).start(data);
-    expect(r.onStop).toHaveBeenCalledWith("Fish Speech rejected the API key (HTTP 401 Unauthorized).");
-  });
-});
+// Kokoro, Chatterbox, MeloTTS, Fish Speech, the HTTP speech server and OpenAI-compatible servers speak through the
+// TTS sink (P2-I): see openaiSpeech.test.ts.
 
 describe("Azure", () => {
   /** What SDK 1.48 reports in the webview for a rejected key or an unknown region (see SynthesisAdapterBase). */
@@ -370,27 +247,38 @@ describe("Azure", () => {
   it("speaks text containing '&' with escaped SSML in the voice's language", async () => {
     const { service, synth } = await startAzure();
     service.play("Tom & Jerry <3");
+    await flush();
     expect(synth.ssml[0]).toContain("Tom &amp; Jerry &lt;3");
     expect(synth.ssml[0]).toContain('xml:lang="zh-CN"');
     expect(synth.ssml[0]).toContain('<voice name="zh-CN-XiaoyiNeural">');
   });
 
-  it("plays completed audio through Service_Sound with sane options", async () => {
+  it("plays completed audio (raw 48 kHz PCM) through Service_Sound with sane options", async () => {
     const { service, synth } = await startAzure();
     data.azure.volume = "NaN";
     service.play("hi");
-    const audio = new ArrayBuffer(8);
+    await flush();
+    const audio = new Int16Array([16_384, -16_384]).buffer;
     synth.cb[0]({ reason: ResultReason.SynthesizingAudioCompleted, audioData: audio });
-    expect(sound.enqueueVoiceClip).toHaveBeenCalledWith(audio, { volume: 1, rate: 1, device_name: "" });
+    await flush();
+    expect(sound.enqueuePcm).toHaveBeenCalledWith(
+      { samples: new Float32Array([0.5, -0.5]), sampleRate: 48_000, channels: 1 },
+      { volume: 1, rate: 1, device_name: "" },
+    );
   });
 
   it("after a verified connection, a failed line (dropped connection, throttling) only fails that line", async () => {
     const { r, service, synth } = await startAzure();
     service.play("one");
     service.play("two");
+    await flush();
+    // One request at a time: "two" goes out once "one" settled.
+    expect(synth.cb).toHaveLength(1);
     synth.cb[0]({ reason: ResultReason.Canceled, errorDetails: HANDSHAKE_1006, code: CancellationErrorCode.ConnectionFailure });
+    await flush();
     expect(r.onError).toHaveBeenCalledWith(expect.stringContaining("Azure: Unable to contact server. StatusCode: 1006"));
     synth.cb[1]({ reason: ResultReason.Canceled, errorDetails: "Too many requests", code: CancellationErrorCode.TooManyRequests });
+    await flush();
     expect(r.onError).toHaveBeenCalledWith("Azure: Too many requests");
     expect(r.onStop).not.toHaveBeenCalled();
     expect(synth.closed).toBe(false);
@@ -400,19 +288,24 @@ describe("Azure", () => {
     // SDK 1.48 raises this only for recognition; kept in case synthesis starts reporting it.
     const { r, service, synth } = await startAzure();
     service.play("one");
+    await flush();
     synth.cb[0]({ reason: ResultReason.Canceled, errorDetails: "", code: CancellationErrorCode.AuthenticationFailure });
+    await flush();
     expect(r.onStop).toHaveBeenCalledWith("Azure: AuthenticationFailure");
+    expect(r.onError).not.toHaveBeenCalled();
     expect(synth.closed).toBe(true);
   });
 
   it("stop closes the synthesizer, drops queued clips and ignores late results", async () => {
     const { r, service, synth } = await startAzure();
     service.play("late");
+    await flush();
     service.stop();
     expect(synth.closed).toBe(true);
     expect(sound.clearVoiceClips).toHaveBeenCalled();
     synth.cb[0]({ reason: ResultReason.SynthesizingAudioCompleted, audioData: new ArrayBuffer(8) });
-    expect(sound.enqueueVoiceClip).not.toHaveBeenCalled();
+    await flush();
+    expect(sound.enqueuePcm).not.toHaveBeenCalled();
     expect(r.onStop).toHaveBeenCalledTimes(1);
   });
 });

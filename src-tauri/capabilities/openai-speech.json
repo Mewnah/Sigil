@@ -1,0 +1,11 @@
+{
+  "identifier": "openai-speech",
+  "description": "IPC for the openai-speech plugin (OpenAI-compatible streaming TTS client) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "openai-speech:default"
+  ]
+}

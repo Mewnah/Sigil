@@ -1,0 +1,8 @@
+# Tauri IPC commands of the `openai-speech` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P2-I (src-tauri/src/services/openai_speech.rs); scaffolded by P2-S0.
+openai_speech_speak
+openai_speech_cancel
+openai_speech_check
+openai_speech_list_voices

@@ -4,8 +4,15 @@ import { clampedOr } from "../num";
 import { TTS_State } from "../schema";
 import { ITTSReceiver, ITTSService, TTS_OPTIONS_MISSING, errorMessage } from "../types";
 
-/** Windows SAPI voices (`windows-tts` plugin), spoken directly to the chosen SAPI output device. */
+/**
+ * Windows SAPI voices (`windows-tts` plugin), spoken directly to the chosen SAPI output device. Self-playing
+ * (ITTSService v2) until SAPI renders into the TTS sink (P6-J): whole finals, no voice-changer routing.
+ */
 export class TTS_WindowsService implements ITTSService {
+  get selfPlaying(): boolean {
+    return true;
+  }
+
   #running = false;
 
   constructor(private bindings: ITTSReceiver) {}

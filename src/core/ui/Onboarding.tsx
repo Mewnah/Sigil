@@ -13,6 +13,7 @@ import {
 } from "react-icons/ri";
 import { SiTwitch, SiDiscord } from "react-icons/si";
 import classNames from "classnames";
+import { useTranslation } from "react-i18next";
 import { STT_Backends } from "@/core/services/stt/schema";
 
 // Kick logo
@@ -131,10 +132,15 @@ const AudioStep: FC<StepProps> = ({ onNext, onBack }) => {
 };
 
 // Step 3: STT Selection
-const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
-    const [selected, setSelected] = useState<"whisper" | "vosk" | "">("");
+type SttChoice = "local" | "whisper" | "vosk";
 
-    const options = [
+const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
+    const { t } = useTranslation();
+    // New desktop installs default to "On this PC (automatic)" (the P2 desktop default in stt/migrate.ts).
+    const [selected, setSelected] = useState<SttChoice | "">("local");
+
+    const options: { id: SttChoice; name: string; desc: string; icon: JSX.Element }[] = [
+        { id: "local", name: t("stt.provider_local"), desc: t("stt.local_onboarding_desc"), icon: <RiRocketFill /> },
         { id: "whisper", name: "Whisper", desc: "Highly accurate, runs locally via Rust", icon: <RiUserVoiceFill /> },
         { id: "vosk", name: "Vosk", desc: "Fast offline recognition, lightweight", icon: <RiVolumeUpFill /> },
     ];
@@ -143,7 +149,9 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
         // Keep the choice; marking the desktop default migration done stops it from overriding this pick.
         if (selected) {
             window.ApiServer.patchService("stt", s => {
-                s.data.backend = selected === "vosk" ? STT_Backends.vosk : STT_Backends.whisper;
+                s.data.backend = selected === "vosk" ? STT_Backends.vosk
+                    : selected === "whisper" ? STT_Backends.whisper
+                    : STT_Backends.local;
                 s.data.desktopDefaultMigrated = true;
             });
         }
@@ -155,14 +163,14 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
             <div className="text-5xl text-primary"><RiUserVoiceFill /></div>
             <h2 className="text-2xl font-bold font-header">Speech Recognition</h2>
             <p className="text-base-content/70 text-center">
-                Choose your speech-to-text engine. Both run locally for privacy.
+                Choose your speech-to-text engine. All of them run locally for privacy.
             </p>
 
             <div className="w-full space-y-3">
                 {options.map((opt) => (
                     <button
                         key={opt.id}
-                        onClick={() => setSelected(opt.id as "whisper" | "vosk")}
+                        onClick={() => setSelected(opt.id)}
                         className={classNames(
                             "w-full p-4 rounded-xl border-2 flex items-center gap-4 transition-all",
                             selected === opt.id

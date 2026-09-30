@@ -23,6 +23,29 @@ ONNX Runtime CUDA provider pack and the echo test engine), `runtime-sherpa.json`
 (`runtime/sherpa-onnx`), `runtime-transcribe.json` (`runtime/sigil-transcribe-*` and two bench
 models) and `runtime-llama.json` (`runtime/llama-server-*`).
 
+P2 fragments:
+
+- `stt-sherpa.json` (P2-B): the sherpa-onnx CPU speech models, all published and hash-pinned, each
+  requiring `runtime/sherpa-onnx`: `stt/nemotron-3.5-streaming-560ms-int8` (the default streaming
+  model), `stt/nemotron-3.5-streaming-160ms-int8`, `stt/parakeet-ultra-int8`,
+  `stt/parakeet-tdt-0.6b-v3-int8`, `stt/qwen3-asr-0.6b-int8`, `stt/sense-voice-small-int8`,
+  `stt/moonshine-base-en-int8` and `stt/lid-whisper-base-int8` (spoken-language ID). How each one
+  runs (family, languages, capabilities) is `speech_rt::sherpa::catalog`; a unit test keeps the two
+  in step.
+- `stt-gguf.json` (P2-D): the transcribe.cpp GPU-tier GGUF models, pinned to Hugging Face commits
+  with LFS sha256 (`stt/qwen3-asr-1.7b-q8_0`, `-bf16`, `stt/cohere-transcribe-q4_k`,
+  `stt/granite-speech-5.0-turboctc-q8_0`, `stt/voxtral-mini-4b-realtime-q4_k_m`), `min_vram_mb`
+  from measurements.
+- `stt-routing.json` (P2-C): no entries; its top-level `routing` object is the STT routing table,
+  read by `speech::router` (and the TS mirror `src/core/services/stt/router.ts`) with
+  `include_str!`. `build.rs` only checks that it is an object; it is not part of the embedded
+  catalog. Keep `vramMb` in step with `resources::policy`.
+- `smart-turn.json` (P2-C): `vad/smart-turn-v3.2` (Smart Turn v3.2 int8, 8.7 MB).
+- `tts-local.json` (P2-H): the in-process TTS voices (Kokoro v1.0 and v1.1-zh, Kitten 0.8
+  mini / micro / nano, 36 Piper voices), each requiring `runtime/sherpa-onnx`.
+- `stt-whisper.json` (P2-A): empty; the `whisper/*` and `vosk/*` entries stay in `stt-legacy.json`
+  (ids are forever, so they do not move).
+
 ## Fragment format
 
 ```json

@@ -6,7 +6,7 @@ Detailed reference for **STT/TTS backends**, **reliability**, **voice changer** 
 
 - [STT / TTS backend minimum configuration](#stt--tts-backend-minimum-configuration)
 - [Remote client](#remote-client)
-- [Upstream verification (Parakeet, speaches, sherpa-onnx)](#upstream-verification-parakeet-speaches-sherpa-onnx)
+- [Speech on this PC (automatic STT and local voices)](#speech-on-this-pc-automatic-stt-and-local-voices)
 - [Models & Runtimes](#models--runtimes)
 - [STT reliability and troubleshooting](#stt-reliability-and-troubleshooting)
 - [Voice changer](#voice-changer)
@@ -29,22 +29,26 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 
 | Backend | Minimum required |
 |--------|-------------------|
+| **Kokoro / Piper (local)** | Nothing to run: pick a voice model and voice, then agree to its one-time download in the panel (Kokoro v1.0 with the runtime: about 360 MB). The default for new desktop installs. See [Speech on this PC](#local-voices-kokoro--piper-local). |
+| **OpenAI-compatible (HTTP)** | A server exposing `POST /v1/audio/speech`: pick a **preset** (Kokoro-FastAPI, Chatterbox, Voxtral-4B-TTS / IndexTTS-2.5 / VoxCPM2 on vLLM-Omni, qwentts `tts-server`) or a custom **base URL**, a **model** and a **voice**; the key is optional and goes only in the `Authorization` header. |
 | **Native (browser)** | Select a **voice** in Text to Speech settings. |
 | **Windows** | **Output device** and **voice** (native Windows SAPI). |
 | **Azure** | Speech **key**, **region/location**, **voice**. The output device is optional (empty uses the app's output device). |
 | **Uberduck** | **API key** and **voice** (v1 API; the old secret is no longer used). |
 | **VOICEVOX / AivisSpeech** | **Engine preset**: VOICEVOX (`http://localhost:50021`), AivisSpeech (`http://localhost:10101`) or a custom URL, plus a speaker. Plain `http` works only for an engine on this PC. |
 | **Fish Speech** | **Endpoint**. Self-hosted fish-speech needs an **API key** only when started with `--api-key`. For Fish Audio's hosted API use `https://api.fish.audio`, your key and a **model** such as `s2.1-pro-free`. |
-| **Kokoro / Melo / Chatterbox** | **Endpoint** (and voice/speaker where applicable), often localhost for self-hosted stacks. |
+| **Kokoro / Melo / Chatterbox (server)** | **Endpoint** (and voice/speaker where applicable), often localhost for self-hosted stacks. Kokoro-FastAPI and Chatterbox settings run through the OpenAI-compatible client (Kokoro: `{endpoint}/v1`, model `kokoro`); for Kokoro without a server use **Kokoro / Piper (local)**. |
+| **ONNX (local)** | A Hugging Face repo (KittenML 0.8 repos install as verified catalog packages) or a voice folder on this PC; runs on the same in-process engine as Kokoro / Piper (local). |
 
 ### Speech-to-text
 
 | Backend | Minimum required |
 |--------|-------------------|
-| **Whisper (Rust)** | First run downloads the chosen GGML **`.bin`** from Hugging Face (`ggerganov/whisper.cpp`) into **`app_data/whisper/`** (the same models can also be installed from [Models & Runtimes](#models--runtimes) or with `Sigil.exe --headless fetch whisper/<id>`, pinned to a fixed revision and checksum; files already in `whisper/` are adopted without downloading again). Each download run writes its own **`.partial`** file and **renames** it on success; failed/incomplete/cancelled downloads remove only that run’s partial file, never a completed model. Very small or HTML-looking payloads are rejected. You can also drop a matching `.bin` into that folder manually. Model ids: `tiny`, `base`, `small`, `medium` (each also `.en`), their `-q5_1` / `-q8_0` builds (`medium` uses `-q5_0`), `large-v3-turbo` (plus `-q5_0` / `-q8_0`) and `large-v3` (plus `-q5_0`). The old `medium-q5_1` ids never existed upstream and load `-q5_0`; an unknown id is an error instead of silently loading `base.en`. **Anime-Whisper** is bring-your-own: convert `litagin/anime-whisper` with whisper.cpp's `models/convert-h5-to-ggml.py` and select the `.bin` as a local model (Japanese is forced and no prompt is used). |
+| **On this PC (automatic)** | Nothing to set up: pick the spoken **language** (or **Detect automatically**) and press **Start**; Sigil shows which models it will use and asks once before downloading them. The default for new desktop installs. See [Speech on this PC](#speech-on-this-pc-automatic-stt-and-local-voices). |
+| **Whisper (Rust)** | First run downloads the chosen GGML **`.bin`** into **`app_data/whisper/`** through Sigil's model store: pinned to a fixed revision and checksum, resumable (a cancelled download resumes next time), with mirror fallback, and listed in [Models & Runtimes](#models--runtimes) (also `Sigil.exe --headless fetch whisper/<id>`). Files already in `whisper/` are adopted without downloading again; a local `.bin` you pick is hashed while it is copied in. You can also drop a matching `.bin` into that folder manually. Model ids: `tiny`, `base`, `small`, `medium` (each also `.en`), their `-q5_1` / `-q8_0` builds (`medium` uses `-q5_0`), `large-v3-turbo` (plus `-q5_0` / `-q8_0`) and `large-v3` (plus `-q5_0`). The old `medium-q5_1` ids never existed upstream and load `-q5_0`; an unknown id is an error instead of silently loading `base.en`. **Anime-Whisper** is bring-your-own: convert `litagin/anime-whisper` with whisper.cpp's `models/convert-h5-to-ggml.py` and select the `.bin` as a local model (Japanese is forced and no prompt is used). |
 | **Vosk** | The catalog is served from the **Rust** plugin (`get_vosk_models`). The app downloads **`{app_data}/vosk-models/{model_id}.zip`** through Sigil's model store (official Alpha Cephei URLs unless you set **Custom model URL**): one download at a time, resumed after a break (Stop keeps the partial file), a 30 s no-data limit, HTML pages rejected, and a full zip check before an existing model is replaced. The default `small-en-us-0.15` is pinned to a checksum; importing a local zip is checked the same way. **vosk-browser** loads the zip from AppData via Tauri **`convertFileSrc`** (asset protocol, scoped to **`$APPDATA/vosk-models/**`** only); repeat use does not re-fetch the CDN. Custom URL must point to a full **`.zip`**; it overrides the catalog URL but the on-disk name still follows the selected **model id**. |
-| **Moonshine** | **Moonshine server** reachable at the configured URL (default `http://localhost:8090`). Must expose `GET /health` and `POST /transcribe` (JSON body with base64 WAV), as in Useful Sensors’ published container (`moonshine-onnx-server`). Example: `docker run -p 8090:8090 useful-sensors/moonshine-onnx-server` (or `:tiny` for a smaller model). Set **language** to what the server expects (e.g. `en`). |
-| **Local HTTP API (OpenAI-style)** | **Base URL** including `/v1` (e.g. `http://127.0.0.1:8000/v1`). Sigil sends one `POST …/audio/transcriptions` per spoken sentence (multipart `file` as 16 kHz mono WAV, `model`, optional `language`, `prompt`, `temperature=0`, `response_format=json`), matching the [OpenAI transcription API](https://platform.openai.com/docs/api-reference/audio/createTranscription) shape. You must set **model id** in the inspector to whatever your **local** server expects (field defaults empty). **API key** is optional for localhost; it is sent only in the `Authorization` header. |
+| **Moonshine server (legacy)** | **Moonshine server** reachable at the configured URL (default `http://localhost:8090`). Must expose `GET /health` and `POST /transcribe` (JSON body with base64 WAV), as in Useful Sensors’ published container (`moonshine-onnx-server`). Set **language** to what the server expects (e.g. `en`). Moonshine now also runs inside Sigil (the **On this PC (automatic)** backend can use Moonshine base for English), so a server is no longer needed. |
+| **Local HTTP API (OpenAI-style)** | **Base URL** including `/v1` (e.g. `http://127.0.0.1:8000/v1`). Sigil sends one `POST …/audio/transcriptions` per spoken sentence (multipart `file` as 16 kHz mono WAV, `model`, optional `language`, `prompt`, `temperature=0`, `response_format=json`), matching the [OpenAI transcription API](https://platform.openai.com/docs/api-reference/audio/createTranscription) shape. You must set **model id** in the inspector to whatever your **local** server expects (field defaults empty). **API key** is optional for localhost; it is sent only in the `Authorization` header. The request is sent by Sigil's Rust side, so servers elsewhere on the LAN work too. |
 | **Groq Whisper (free cloud)** | A free API key from [console.groq.com/keys](https://console.groq.com/keys). Model `whisper-large-v3-turbo` (default) or `whisper-large-v3`. Speech is sent to Groq. See [Groq preset](#groq-whisper-preset). |
 | **Deepgram** | **API key** and **language**. Model: Nova-3 (default) or Nova-2. |
 | **Azure** | **Key**, **location**, **language**. Optional **phrase end silence** (100–5000 ms, default 500). |
@@ -54,15 +58,67 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 
 The `/client` page does not run Tauri plugins; it syncs with the **host** over PeerJS. Configure STT/TTS on the **desktop host**, not in the browser client.
 
-## Upstream verification (Parakeet, speaches, sherpa-onnx)
+## Speech on this PC (automatic STT and local voices)
 
-Before relying on a local stack for **NVIDIA Parakeet** or **sherpa-onnx**, confirm on the **exact** project version you deploy:
+Sigil runs its recommended speech models **inside the app**: Parakeet, Nemotron, Qwen3-ASR, SenseVoice, Moonshine and Whisper for speech-to-text, Kokoro, Piper and Kitten for text-to-speech. No Python, Docker or sidecar server is needed, and your voice never leaves the PC. Servers (speaches, vLLM, Kokoro-FastAPI, a Moonshine container) still work through the **Local HTTP API**, **OpenAI-compatible (HTTP)** and **Moonshine server (legacy)** backends, but they are optional.
 
-- **[speaches](https://github.com/speaches-ai/speaches)** (evolution of faster-whisper–style OpenAI-compatible servers): check the current README and Docker tags for which **engines** and **model IDs** are supported, whether **Windows** is first-class or Docker/WSL-only, and whether streaming uses **SSE/WebSocket** vs single **multipart** file upload. Sigil’s **OpenAI-compatible** backend sends **one non-streaming multipart upload per spoken sentence** (cut by the Silero voice detector); servers that only expose streaming may need a different client or proxy.
-- **sherpa-onnx**: model artifacts (ONNX, tokens, config) are engine-specific; Parakeet TDT support depends on upstream recipes and export pipelines—not assumed here.
-- **Moonshine**: the official **Docker** flow is the supported integration path; custom builds should keep the same HTTP contract as [moonshine-onnx-server](https://github.com/usefulsensors/moonshine).
+### Automatic speech-to-text ("On this PC (automatic)")
 
-Re-run a quick **latency and WER** check on your own machine (VRChat + OBS load) after any engine change; published benchmarks do not replace on-device measurement.
+Pick the spoken **language** and press **Start**. Sigil plans which models to use for that language and this PC (the panel's route preview shows them, with CPU / GPU and notes), asks once before downloading anything, and then runs:
+
+- **live partials** from a streaming model while you speak, and
+- **a more accurate final** for each sentence: the second pass re-decodes the whole sentence and replaces the partial on the same caption line.
+
+| Language | CPU (every PC) | NVIDIA GPU tier |
+|---|---|---|
+| English | Nemotron 3.5 partials + Parakeet Ultra final | Cohere Transcribe final |
+| German, Spanish, French, Italian, Portuguese, Dutch | Parakeet Ultra finals | Cohere or Qwen3-ASR 1.7B final |
+| Polish, Greek and other European languages | Parakeet Ultra finals | Cohere final (pl, el) |
+| Chinese, Cantonese | SenseVoice finals (no live partials) | Qwen3-ASR 1.7B final |
+| Japanese, Korean, Russian | Nemotron partials + Qwen3-ASR 0.6B final | Qwen3-ASR 1.7B final |
+| Arabic, Hindi, Turkish | Nemotron (its own finals) | — |
+| Detect automatically | Qwen3-ASR detects the language, Nemotron follows it | Qwen3-ASR 1.7B |
+| Other languages | Whisper | — |
+
+| Model | Download | Languages | Speed on a Ryzen 7 7800X3D (RTF, lower is faster) |
+|---|---|---|---|
+| Nemotron 3.5 streaming 560 ms (default live model) | 475 MB | 19 locales | 0.30–0.35 on 1 thread; first partial 1.1–1.7 s into speech |
+| Nemotron 3.5 streaming 160 ms (low latency) | 475 MB | same | 0.80–0.87 on 1 thread (too heavy for 6-core PCs) |
+| Parakeet Ultra (Parakeet TDT v3 as fallback) | 630 MB (487 MB) | 25 European languages | 0.063–0.075 on 2 threads |
+| Qwen3-ASR 0.6B | 879 MB | 30 languages + dialects | 0.16–0.27 on 2 threads |
+| SenseVoice | 163 MB | zh, yue, en, ja, ko (+ emotion and sound-event tags) | 0.03–0.04 |
+| Moonshine base | 111 MB | English | 0.017 |
+| Spoken-language ID (Whisper base) | 160 MB | 99 languages | 0.03 |
+| CPU speech runtime (sherpa-onnx) | 8 MB | — | installed automatically with the first model |
+
+On the dev PC, finals arrived 130–300 ms after the end of speech (Qwen3-ASR about 1.2 s). The first download for English with two passes is about 1.1 GB (Nemotron plus Parakeet Ultra); the consent dialog shows the exact size and offers a **smaller setup** (one pass) when it saves at least a fifth.
+
+- **Language:** an explicit language gives the best live captions. Nemotron always needs one: with **Detect automatically** it runs only next to a model that detects the language.
+- **Hardware → Best for my PC** (default) uses the GPU tier only when a GPU model fits next to everything else, and keeps 8–12 GB cards for the voice changer while it runs on the GPU; **GPU** shares the card anyway; **CPU only** never uses the GPU. Fewer than 6 physical cores, or the voice changer running on the CPU, means one pass. The GPU tier needs the transcribe.cpp runtime pack (imported locally until it is published) and, on NVIDIA, the NVIDIA GPU runtime pack; without them, or when the GPU is busy, Sigil uses the CPU route and says why.
+- **GPU tier models:** Qwen3-ASR 1.7B Q8_0 (2.2 GB download, about 3.5 GB of video memory), Qwen3-ASR 1.7B BF16 (4.1 GB, about 6 GB, cards with 16 GB or more), Cohere Transcribe Q4_K (1.6 GB, about 2 GB; English and European languages only, never Chinese, Japanese, Korean or Russian), Voxtral Mini 4B Realtime (2.8 GB, about 4.1 GB, streaming). Granite Speech TurboCTC is available as a model but writes lower-case text without punctuation, so it is never picked for captions.
+- **Two passes** (default on): the live partial is replaced by the final under the same caption line (on the dev GPU about 0.2 s after the end of an 8 s sentence). With two passes off Sigil runs one model.
+- **Smart Turn** (off by default, 9 MB): detects when you finished your turn. It only lets translation, TTS and the VRChat chatbox commit sooner; it never changes captions.
+- **Hotwords:** names and terms to recognize reliably. Qwen3-ASR and Parakeet use them (modestly); Nemotron cannot.
+- **Hallucination filter** and **Voice detection** work as for Whisper.
+- After a microphone loss or an engine crash the session restarts by itself (1, 2, 5, 10 and 20 s apart, at most 5 times in a row); a missing model never restarts.
+- Existing desktop users on the browser default are asked once whether to switch to it (answer no and Sigil uses Whisper, because Web Speech cannot work in the desktop app); users of any other backend are never switched.
+
+### Local voices ("Kokoro / Piper (local)")
+
+| Voice model | Download | Languages |
+|---|---|---|
+| Kokoro v1.0 (default) | 350 MB (+ 8 MB runtime) | English, Japanese, Chinese, Spanish, French, Hindi, Italian, Brazilian Portuguese (54 voices) |
+| Kokoro v1.1-zh | 365 MB | Mandarin (103 voices, with English) |
+| Piper | 20–120 MB per voice | 36 voices, including Russian and Arabic and many more languages |
+| Kitten 0.8 mini / micro / nano | 44–68 MB | English |
+
+- Everything runs on the CPU (the UI never waits for it). **Threads**: automatic (half the physical cores, 2–4) or 2–4. Kokoro on 4 threads speaks about 3.4× faster than real time (RTF 0.29 on a Ryzen 7 7800X3D); the first clause of a long first sentence is synthesized on its own so speech starts sooner (0.65 s for a two-second opening clause; shorter clauses start faster). Piper runs at RTF 0.04–0.16.
+- **Preview** plays the chosen voice; **Voice folder on this PC** accepts an official sherpa-onnx Kokoro / Kitten / Piper package or a `speech_package_v1` folder (its voices appear after the first start).
+- **Japanese:** Kokoro reads kana correctly but reads kanji with Chinese readings; for Japanese use VOICEVOX or AivisSpeech (the panel says so).
+- New desktop installs start on this backend; existing users on Web Speech or Windows voices are asked once whether to switch (no keeps their voice).
+- `SIGIL_LOCAL_TTS_KOKORO=sherpa` runs Kokoro entirely inside sherpa-onnx (diagnostics only; the default runs its model on Sigil's own ONNX Runtime, which is faster and uses less CPU).
+
+Re-run a quick latency and accuracy check on your own machine (VRChat + OBS load) after changing engines; published benchmarks do not replace on-device measurement.
 
 ## Models & Runtimes
 
@@ -90,11 +146,11 @@ Sigil.exe --headless engine-probe <sherpa|transcribe|echo> [model] [wav]   # loa
 
 ### CPU speech runtime pack (sherpa-onnx)
 
-`runtime/sherpa-onnx` (sherpa-onnx 1.13.8, CPU only; 8 MB download, 22 MB installed) is the CPU runtime for the upcoming local speech engines (SenseVoice, Nemotron streaming, Qwen3-ASR 0.6B, Kokoro, Piper). It is optional: Sigil starts and every existing feature works without it. Install it from Models & Runtimes or with `Sigil.exe --headless fetch runtime/sherpa-onnx`; check it with `Sigil.exe --headless engine-probe sherpa [model folder] [wav]`. The error **"another ONNX Runtime is already loaded"** means some other `onnxruntime.dll` (for example Windows ML's copy in System32) was loaded into Sigil before the pack; restart Sigil so the pack loads first. Models that are not from the catalog are test-loaded in a separate process first, so a damaged model folder cannot crash Sigil.
+`runtime/sherpa-onnx` (sherpa-onnx 1.13.8, CPU only; 8 MB download, 22 MB installed) is the CPU runtime of the automatic speech-to-text models (Nemotron, Parakeet, Qwen3-ASR 0.6B, SenseVoice, Moonshine, language ID) and the local voices (Kokoro, Piper, Kitten). It installs automatically with the first model that needs it; Sigil starts and every other feature works without it. Install it from Models & Runtimes or with `Sigil.exe --headless fetch runtime/sherpa-onnx`; check it with `Sigil.exe --headless engine-probe sherpa [catalog id or model folder] [wav] [-- lang=en]`. When it is installed it loads at startup (`SIGIL_SHERPA_PRELOAD=0` turns that off). The error **"another ONNX Runtime is already loaded"** means some other `onnxruntime.dll` (for example Windows ML's copy in System32) was loaded into Sigil before the pack; restart Sigil so the pack loads first. Models that are not from the catalog are test-loaded in a separate process first, so a damaged model folder cannot crash Sigil.
 
 ### GPU speech runtime packs (transcribe.cpp)
 
-`runtime/sigil-transcribe-<variant>` (`cuda13`, `vulkan`, `cpu-avx512`, `cpu-avx2`, `cpu`) run GGUF speech models such as Qwen3-ASR 1.7B. They are built locally and installed by **Import…** or `SIGIL_LOCAL_ASSETS` until they are published. The best variant for the PC is picked automatically; `cuda13` needs driver R580 or newer, a GeForce 16/20 series or newer GPU and the NVIDIA GPU runtime pack (only its cuBLAS is used); GPU variants need an AVX2 CPU. Budget about 3.5 GB of video memory for Qwen3-ASR 1.7B Q8_0. The speech-to-text backend that uses them arrives with the P2 speech engine.
+`runtime/sigil-transcribe-<variant>` (`cuda13`, `vulkan`, `cpu-avx512`, `cpu-avx2`, `cpu`) run GGUF speech models such as Qwen3-ASR 1.7B. They are built locally and installed by **Import…** or `SIGIL_LOCAL_ASSETS` until they are published. The best variant for the PC is picked automatically; `cuda13` needs driver R580 or newer, a GeForce 16/20 series or newer GPU and the NVIDIA GPU runtime pack (only its cuBLAS is used); GPU variants need an AVX2 CPU. Budget about 3.5 GB of video memory for Qwen3-ASR 1.7B Q8_0. The GPU tier of **On this PC (automatic)** uses them, and only when the resource governor allows it (enough free video memory; not next to a GPU voice changer on a card under 16 GB in the **Best for my PC** tier); otherwise the model runs on the CPU pack with the reason shown. `SIGIL_STT_ISOLATION=worker` runs the engine in a separate `Sigil.exe --headless stt-worker` process (a crash then restarts it and, after repeated GPU crashes, moves it to the CPU).
 
 ### Local LLM runtime packs (llama-server)
 
@@ -124,23 +180,23 @@ All backends implement the same contract toward `Service_STT`:
 
 | Backend group | Timeout without progress |
 |---------------|---------|
-| Default (e.g. Azure, Deepgram, native, OpenAI-audio promise path) | 45s |
-| Whisper, Vosk, Moonshine | 300s |
+| Default (e.g. Azure, Deepgram, native, local HTTP / Groq, Moonshine server) | 45s |
+| On this PC (automatic), Whisper, Vosk | 300s |
 | Chrome / Edge external mic | 6s (mic page must signal start) |
 
 **Session epoch:** `#sessionEpoch` ignores stale callbacks after stop or backend switch.
 
 **Auto-start:** `native` is excluded from `autoStart` in `init()` (known Web Speech quirks in the shell).
 
-**Desktop default (one-time switch):** Web Speech (`native`) cannot work in the desktop webview. On the first desktop launch after this change, users still on `native` (or the legacy `browser` value) are switched once to **Whisper**: `small` with 6 or more estimated physical cores, otherwise `base`, as the Q5_1 build (`.en` when the language is English). Existing Whisper choices are kept, nothing starts automatically (one click on **Start** downloads the model), and a toast explains the switch. A later deliberate choice of `native`, or the engine picked during onboarding, is never overridden (`stt.desktopDefaultMigrated`).
+**Desktop default (one-time):** Web Speech (`native`) cannot work in the desktop webview. New desktop installs start on **On this PC (automatic)** (onboarding offers it first). Existing profiles still on `native` (or the legacy `browser` value) are **asked once** whether to switch to it; if they answer no (or were already asked) they are switched to **Whisper**: `small` with 6 or more estimated physical cores, otherwise `base`, as the Q5_1 build (`.en` when the language is English), with a toast. Existing Whisper choices are kept, nothing starts automatically (the first **Start** asks before downloading), and a later deliberate choice of `native`, or the engine picked during onboarding, is never overridden (`stt.desktopDefaultMigrated`, `stt.localOfferShown`). Profiles on any other backend are never switched.
 
-**Mute and shortcuts:** Muting stops publishing text (Whisper keeps transcribing in Rust while muted; the HTTP engines do not send muted speech at all). **STT → Shortcuts** sets global **start/stop** and **mute** shortcuts that work while Sigil is in the background (for example in VRChat). Recording finishes on the first full combination, **Esc** cancels, and a bare letter needs a modifier. The sound-effects mute shortcut is under **Settings → Shortcuts**. Stored shortcuts that can never register are cleared once with a toast; a shortcut held by another app is kept with a warning.
+**Mute and shortcuts:** Muting stops audio at the source for every Rust-captured engine (the open sentence is dropped, never decoded or sent) and Deepgram pauses its stream (nothing sent or billed); Azure and Web Speech keep listening but publish nothing. **STT → Shortcuts** sets global **start/stop** and **mute** shortcuts that work while Sigil is in the background (for example in VRChat). Recording finishes on the first full combination, **Esc** cancels, and a bare letter needs a modifier. The sound-effects mute shortcut is under **Settings → Shortcuts**. Stored shortcuts that can never register are cleared once with a toast; a shortcut held by another app is kept with a warning.
 
 **Start chain:** If `#runStartAsync` throws outside the inner `try`, the promise rejection is caught on `#startChain` and surfaces a toast (`toasts.stt_start_failed`).
 
 ### Input device resolution ([`src/utils/rustAudioInput.ts`](../src/utils/rustAudioInput.ts))
 
-Backends that use **Rust capture** (Whisper, Vosk, Moonshine, local HTTP STT, Groq) call `resolveRustInputDeviceForInvoke(perServiceDevice)`, which uses the first of these that is set:
+Backends that use **Rust capture** (On this PC (automatic), Whisper, Vosk, Moonshine, local HTTP STT, Groq) call `resolveRustInputDeviceForInvoke(perServiceDevice)`, which uses the first of these that is set:
 
 1. The STT inspector’s per-engine **input device** (a cpal device name).
 2. **Settings → Audio → Default input device** — on the desktop app this is the **native (cpal)** device, persisted as `audioInputDeviceNative`.
@@ -154,7 +210,7 @@ A per-engine value of `default` / `communications` means “system default” an
 
 ### Voice detection (Silero VAD)
 
-Whisper and the utterance engines (Moonshine, local HTTP, Groq) are gated by the bundled **Silero VAD v6.2** model, running on the CPU inside Sigil (about 0.3% of one core, including resampling to 16 kHz with rubato). **Silence never reaches the recognizer:** a request or a Whisper decode happens only for audio the detector classified as speech.
+Every Rust speech engine (On this PC (automatic), Whisper, Moonshine, local HTTP, Groq) runs behind the bundled **Silero VAD v6.2** model, on the CPU inside Sigil (about 0.3% of one core, including resampling to 16 kHz with rubato). **Silence never reaches the recognizer:** a request or a decode happens only for audio the detector classified as speech (streaming models see only speech segments too).
 
 | Setting (STT inspector → Voice detection) | Default | Meaning |
 |---------|---------|---------|
@@ -174,11 +230,12 @@ The old volume-gate fields (silence threshold dB, silence duration, minimum chun
 - Tauri event **`whisper:load_status`**: interim text while a local model file is copied in (“Copying local Whisper model...”) and while the GGML model loads into memory (offloaded to a blocking thread).
 - Tauri event **`whisper:segment_transcript`** (formerly `whisper:partial_result`): one payload per **completed VAD utterance**, not a streaming partial inside one utterance.
 - The TS layer maps each payload to **`onFinal`**. Expect **multiple finals** per session (one per sentence), not one long partial stream.
-- **Ordered, bounded backlog:** utterances are transcribed in order by one worker per recording. At most **3** wait (setting "Waiting sentences", 1–10); when the model is slower than real time the oldest waiting one is dropped, logged, and reported as `whisper:utterance_dropped` `{seq, audio_ms, reason}`.
+- **Ordered, bounded backlog:** utterances are transcribed in order. At most **3** wait (setting "Waiting sentences", 1–10); when the model is slower than real time the waiting sentences are **merged into one decode** (one caption line for several sentences), the oldest is dropped past the cap, and a sentence that waited more than **20 s** is dropped instead of shown late. Drops are logged and reported as `whisper:utterance_dropped` `{seq, audio_ms, reason}` (`backlog` or `latency_budget`).
+- Whisper now runs on the same speech pipeline as the automatic backend; its IPC and events are unchanged. Model downloads go through the model store: pinned, resumable (a cancelled download resumes), with mirrors, and shown in Models & Runtimes.
 - **No-speech drop:** each utterance's no-speech probability is computed the way OpenAI defines it (P(`<|nospeech|>`) at the start of the transcript). Above **0.6** (setting "No-speech cutoff"; 1 disables) the utterance is dropped. This replaces whisper.cpp's own value, which is stale for multilingual models and prompts (they used to print "you" / "Thank you." on silence).
 - **Hallucination filter** (default on): drops curated stock phrases ("Thanks for watching", per-language lists) only when they are the whole sentence, collapses repeat loops (3 or more; CJK uses character n-grams) and strips markers such as `[MUSIC]` or `(laughs)`.
 - **Hotwords** and the **context prompt** are passed to Whisper as its initial prompt. **CPU threads** default to about half the logical CPUs (at most 4). Stopping cancels a running decode promptly.
-- Other events: `whisper:speech_start` `{seq, start_ms}` and `whisper:capture_error` `{message}` (voice detection failed and the recording ended). A lost microphone is not an error any more: it is reported as `audio:stream_error` / `audio:stream_recovered` and the recording continues.
+- Other events: `whisper:speech_start` `{seq, start_ms}` and `whisper:capture_error` `{message}` (the recording ended: voice detection failed, or the engine failed 5 times in a row or fatally). A lost microphone is not an error any more: it is reported as `audio:stream_error` / `audio:stream_recovered` and the recording continues.
 - **Silence check:** every decode logs `transcribe utterance seq=… audio_ms=…` at info level under the log target `sigil::stt::whisper` in the [log file](#gpu-acceleration-diagnostics-and-logs). Ten minutes of silence and keyboard noise should add no such line.
 
 #### Vosk ([`vosk.ts`](../src/core/services/stt/services/vosk.ts))
@@ -188,23 +245,30 @@ The old volume-gate fields (silence threshold dB, silence duration, minimum chun
 - Model WASM load has a **120s** timeout.
 - Capture via `plugin:audio|start_audio_capture` from the shared capture hub. With `sampleRate: 16000` the `audio:chunk` payloads are 16 kHz mono (about a sixth of the old 48 kHz stereo traffic); every payload states its own sample rate and channel count, and `vosk.ts` downmixes when needed and passes that rate to the recognizer.
 
-#### Utterance engines: Moonshine, local HTTP, Groq ([`rustCapturePolling.ts`](../src/core/services/stt/rustCapturePolling.ts), [`utterancePipeline.ts`](../src/core/services/stt/utterancePipeline.ts))
+#### On this PC (automatic) ([`local.ts`](../src/core/services/stt/services/local.ts))
 
-These engines use Rust **utterance capture** (`plugin:audio|start_utterance_capture` → `audio:utterance` events → `take_utterance` binary 16 kHz mono PCM), so they send **one request per spoken sentence** and nothing for silence.
+- **Start** plans the models (`plugin:speech|preview_route`), asks before downloading any that are missing (three buttons: the full download, a smaller single-pass setup when it saves at least a fifth, or not now), downloads them through the model store with overall progress under the Start button (Stop cancels the downloads this start queued; partial files are kept for resume), then starts the pipeline. An automatic start at launch never asks: it stops with a "press Start to download" message.
+- Status codes under the Start button: loading the model or runtime, "Speech recognition: …" warnings, a microphone gap, a backup model taking over (for example a GPU model replaced by its CPU fallback), and "the live model is guessing the spoken language" (choose a language).
+- Captions: live partials, then one final per sentence; with two passes the first-pass final waits (as a partial) for its replacement for at most the two-pass budget plus 1 s.
+- **Route preview** in the panel: each role's model and CPU / GPU, the video memory, and notes (why a model was chosen or skipped); **Models in use** and the restart count while running.
+
+#### Utterance engines: Moonshine, local HTTP, Groq ([`rustCapturePolling.ts`](../src/core/services/stt/rustCapturePolling.ts))
+
+These engines run inside Sigil's Rust speech pipeline (voice detection, request pacing, merging and retries in Rust), so they send **one request per spoken sentence** and nothing for silence. The request is sent by Rust, not the webview, so servers on the LAN work.
 
 - Requests go out **one at a time, in order**. Sentences that pile up while a request is in flight (or rate-limited) are **merged** into the next request, up to 28 s with 0.2 s of silence between them.
-- **429** waits for `Retry-After` (or 5 s when the header is unreadable) and does not count as a failure. **Other 4xx** stop the session at once (bad key, bad model). **Network errors, timeouts and 5xx** are retried with backoff 4 times, then the session stops with a clear message.
-- The session also stops when 300 s of speech is waiting, or when the server asks to wait more than 10 minutes (for example Groq's daily cap).
-- Timeouts: local HTTP **120 s**, cloud (Groq) **60 s** per request; Moonshine's Rust request allows 30 s plus the clip length (at most 120 s). An in-flight request is aborted when STT stops. Settings are read at start, so edits apply on the next start.
+- **429** waits for `Retry-After` (or 5 s when the header is unreadable) and does not count as a failure. **Other 4xx** stop the session at once with a readable message (bad key, bad model). **Network errors, timeouts and 5xx** are retried 4 times (1, 2, 4 s apart); 5 failed sentences in a row stop the session.
+- A sentence that waited more than **20 s** (for example while Groq's limit is exhausted) is dropped with a warning on the status line instead of being sent late.
+- In-flight requests are cancelled when STT stops. Settings are read at start, so edits apply on the next start.
 
-#### Moonshine ([`moonshine.ts`](../src/core/services/stt/services/moonshine.ts))
+#### Moonshine server (legacy) ([`moonshine.ts`](../src/core/services/stt/services/moonshine.ts))
 
-- Server down: **`onStop`** with setup instructions (good failure mode).
+- Server down: the start fails with a message naming the endpoint and the reason. Prefer **On this PC (automatic)**, which runs Moonshine and better models inside Sigil.
 - Transcribe failures follow the utterance-engine retry rules above.
 
 #### Groq Whisper preset
 
-Stored as the `openai_audio` backend with preset `groq` (shown as **Groq Whisper (free cloud)**). The key goes only in the `Authorization` header. One shared limiter paces every session (a quick stop/start cannot reset it) inside Groq's free plan: **20 requests per minute** (a burst of 5, then an even pace), **2,000 per day**, and **7,200 audio seconds per hour** (kept under 97%, counting Groq's 10 s minimum billing per request). A custom URL pointing at `api.groq.com` gets the same limits. Rate-limit waits appear as status under the Start button.
+Stored as the `openai_audio` backend with preset `groq` (shown as **Groq Whisper (free cloud)**). The key goes only in the `Authorization` header. One shared limiter in Rust paces every session of the app run (a quick stop/start cannot reset it) inside Groq's free plan: **20 requests per minute**, **2,000 per day**, and **7,200 audio seconds per hour** (counting Groq's 10 s minimum billing per request; short sentences are held up to 3.5 s, or 8 s while you keep speaking, and merged, so fewer requests are billed). A custom URL pointing at `api.groq.com` gets the same limits. Rate-limit waits appear as status under the Start button.
 
 #### Local HTTP OpenAI-style API ([`openaiAudio.ts`](../src/core/services/stt/services/openaiAudio.ts))
 
@@ -213,14 +277,15 @@ Stored as the `openai_audio` backend with preset `groq` (shown as **Groq Whisper
 #### Deepgram ([`deepgram.ts`](../src/core/services/stt/services/deepgram.ts))
 
 - The inspector’s **device** picker lists **browser (Web Audio)** microphones. An empty Deepgram device falls back to the Web Audio default input in `audioInputDevice` (picked under **Settings → Audio** in the web build; the desktop app’s Settings picker sets the native device instead, so there it is normally empty). If the resulting id is empty or `default` → `getUserMedia({ audio: true })`; a stored id is used as an exact `deviceId` only if it still exists, otherwise Deepgram falls back to the default mic and logs a warning (covers cpal device names saved by older builds).
-- **`getUserMedia`** rejection (permission, no device) → immediate **`onStop`** with a clear message (avoids waiting for the 45s orchestrator timeout).
+- **`getUserMedia`** rejection (permission, no device) → immediate **`onStop`** with a clear message (avoids waiting for the 45s orchestrator timeout). A connection refused before it opened and a lost connection (with its close code) have their own messages.
+- While STT is muted the recorder pauses and Sigil sends Deepgram KeepAlive messages every 4 s, so muted speech is neither sent nor billed.
 - **Stop** before `getUserMedia` resolves: the late stream’s tracks are stopped and the WebSocket is never opened (no hot mic, no billed audio).
 - WebSocket **error** → **`onStop`**; **`onclose`** is guarded so **`onStop`** is not duplicated.
 - The listen URL sends `model` (Nova-3 by default, or Nova-2), `language`, `punctuate`, `interim_results` and `profanity_filter`. Only a key and a language are required to start.
 
 #### Azure ([`azure.ts`](../src/core/services/stt/services/azure.ts))
 
-- Validates **key, location, language** (device is optional).
+- Validates **key, location, language** (device is optional). The Azure Speech SDK loads only when an Azure session starts; cancellations (bad key, connection, quota, bad request) show translated messages, and results carry the detected language.
 - **Empty device** → `AudioConfig.fromDefaultMicrophoneInput()`; non-empty → `fromMicrophoneInput(deviceId)`.
 - **Phrase end silence** sets `Speech_SegmentationSilenceTimeoutMs` (100–5000 ms, default 500), so captions finalize quickly after a pause.
 
@@ -240,7 +305,8 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 
 ### Implementation hardening (recent)
 
-- **Moonshine / local HTTP / Groq:** one request per VAD utterance through an ordered pipeline (replaces the 500 ms polling loop and its `transcribeInFlight` lock).
+- **Moonshine / local HTTP / Groq:** one request per VAD utterance through the Rust speech pipeline (P2; replaces the P0 TypeScript utterance pipeline and the 500 ms polling loop before it).
+- **Segment metadata:** engines with segments (the automatic backend, the HTTP engines) publish `segmentId`, `revision` and `lang` with their text, so consumers can replace a caption line instead of appending.
 - **Audio format:** Rust resamples the device audio to **mono 16 kHz** with rubato (band-limited, exact length) before the VAD, so the WAV sent to servers is true 16 kHz mono.
 - **Status vs text:** engine status (downloads, retries, waits) goes through `onStatus` and is never published as caption text.
 - **Native Web Speech:** one **`onFinal` / `onInterim` per `onresult` event**; **`#shouldRestartAfterEnd`** blocks `onend` → `start()` after explicit `stop()`.
@@ -252,7 +318,9 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 |---------|----------------|
 | STT “on” but no text (Whisper) | Voice detection too strict (lower **Speech sensitivity**), no-speech cutoff too low, or the wrong physical mic (check **Settings → Audio → Default input device** and the inspector’s input device). |
 | Many short “final” lines | One final per sentence by design; raise **Pause that ends speech** to join sentences. |
-| Sentences skipped under load (Whisper) | The model is slower than real time and the backlog dropped the oldest waiting sentence (`whisper:utterance_dropped` in the log). Pick a smaller or quantized model, or more CPU threads. |
+| Sentences skipped under load (Whisper) | The model is slower than real time and the backlog dropped the oldest waiting sentence, or one waited more than 20 s (`whisper:utterance_dropped` in the log). Pick a smaller or quantized model, or more CPU threads. |
+| Automatic backend: "The live model is guessing the spoken language" | Nemotron needs the spoken language: choose it instead of **Detect automatically**. |
+| Automatic backend uses the CPU although there is a GPU | The route preview notes say why: the voice changer runs on a card under 16 GB (choose **GPU** to share it), the card is full, no runtime pack, or no GPU model for the language. |
 | Groq session stopped | Daily cap reached, or a rejected key (4xx). The status line and toast say which. |
 | Stuck “connecting” ~45s | Backend never called `onStart` (e.g. Deepgram before `getUserMedia` catch; reduced after fix). |
 | Wrong microphone | Rust engines: per-engine **Input device**, else the native **Settings → Audio** default (see [Input device resolution](#input-device-resolution-srcutilsrustaudioinputts)). Azure / Deepgram: their own browser-device picker. |
@@ -260,8 +328,9 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 
 ### Related files
 
-- Schema / persisted options: [`src/core/services/stt/schema.ts`](../src/core/services/stt/schema.ts)
-- Inspector UI: [`src/core/ui/inspector/inspector_stt.tsx`](../src/core/ui/inspector/inspector_stt.tsx)
+- Schema / persisted options: [`src/core/services/stt/schema/`](../src/core/services/stt/schema/index.ts) (one slice per backend)
+- Inspector UI: [`src/core/ui/inspector/stt/`](../src/core/ui/inspector/stt/index.tsx)
+- Speech pipeline and engines: [DEVELOPER_GUIDE.md → Speech pipeline](DEVELOPER_GUIDE.md#speech-pipeline-speech)
 - Feature matrix: [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#service-and-feature-connectivity-audit)
 - Performance / timeouts: [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md#performance-and-connection-timeout-audit)
 
@@ -334,7 +403,7 @@ The audio callback threads (capture, output, monitor) register with MMCSS **Pro 
 
 ### TTS through the voice changer
 
-TTS clips sent through the voice changer are queued **whole and never truncated**: the queue accepts clips while less than 60 s is waiting, and a single clip can be up to 10 minutes. **Microphone while TTS plays**: **Mix with TTS** (default), **Lower the microphone** (about −12 dB) or **Mute the microphone**, with a 250 ms hold between sentences.
+Text-to-speech reaches the voice changer through the TTS panel's **Play speech on** setting (**Output device**, **Voice changer** or **Both**), which applies to every backend that plays through Sigil's TTS output (all except Web Speech and Windows SAPI). While the voice changer is stopped, speech routed to it plays on the output device instead. Speech is queued sentence by sentence **and never truncated**: the queue accepts audio while less than 60 s is waiting, and a single clip can be up to 10 minutes; **Skip** and **Stop speaking** also cut speech already queued in the voice changer (with a 5 ms fade). **Microphone while TTS plays**: **Mix with TTS** (default), **Lower the microphone** (about −12 dB) or **Mute the microphone**, with a 250 ms hold between sentences.
 
 ### Settings persistence
 
@@ -352,7 +421,7 @@ Rust is authoritative. Every voice-changer setting, including the **input, outpu
 
 A GPU request never falls back silently: sessions try **CUDA → DirectML → CPU** (a DirectML request tries DirectML → CPU), each GPU step is checked with a tiny test model before the real one loads, and the provider actually in use plus the reason for any fallback appear in the voice-changer status panel, a toast, the System log and **Settings → GPU & diagnostics**. See [GPU acceleration, diagnostics and logs](#gpu-acceleration-diagnostics-and-logs).
 
-Neural ONNX TTS (Kitten, local speech package) always runs on the **CPU**: the KittenTTS code (now part of Sigil) builds its session on the CPU provider, so the TTS inspector’s execution provider choice is only stored. The real outcome is recorded under **Local TTS** in the diagnostics panel. Loading and synthesis run on a background thread, so the UI stays responsive. Hub models are downloaded one file at a time into `%APPDATA%\com.sigil.app\models\kitten\` (an existing Hugging Face cache copy is reused).
+Local text-to-speech (Kokoro / Piper (local) and ONNX (local)) always runs on the **CPU**, on a background thread, so the UI stays responsive; the old execution-provider choice of the ONNX panel is gone. Kokoro's model runs on Sigil's ONNX Runtime, recorded under **Local TTS** in the diagnostics panel. KittenML Hub repos install as verified catalog packages through the model store; a copy downloaded by an earlier Sigil into `%APPDATA%\com.sigil.app\models\kitten\` keeps working without a new download.
 
 ### ONNX chunk shape
 
@@ -367,7 +436,7 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## GPU acceleration, diagnostics and logs
 
-**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**. The **Models & Runtimes** tab's **GPU and runtimes** card shows which acceleration options this PC supports and why not.
+**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection, end-of-turn detection), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**. The **Models & Runtimes** tab's **GPU and runtimes** card shows which acceleration options this PC supports and why not.
 
 - **What the installer contains:** the installers (NSIS per-user, recommended, and MSI) put `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll` (ONNX Runtime 1.28) and `DirectML.dll` next to `Sigil.exe`. **They do not contain NVIDIA's CUDA runtime**, so no installer runs CUDA out of the box: CUDA needs the NVIDIA GPU runtime pack below, and without it NVIDIA GPUs use DirectML. Nothing GPU-related is load-time linked: Sigil starts on every PC.
 - **CUDA requirements:** an NVIDIA GeForce 16/20 series (Turing) or newer GPU, driver **R580 or newer** (CUDA 13), and the NVIDIA GPU runtime pack. Older GPUs and drivers use DirectML automatically, with the reason shown.
@@ -382,14 +451,17 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## Text-to-speech behaviour
 
-- **Stop** always ends the service: queued and in-flight speech is dropped, a start that is still connecting is cancelled (status bar card or the inspector's **Connecting** button), and late callbacks from a replaced backend are ignored. A clip already handed to Rust (Azure, VOICEVOX, Uberduck) or speech SAPI is already saying finishes.
-- A single failed line goes to the **System log** and a rate-limited toast; the service keeps running.
-- **Kokoro, Melo, Chatterbox, Fish, ONNX (local) and HTTP server** play clips in order without overlapping. Their voice lists show an error toast instead of an empty list when the server is down. These Web Audio backends still ignore the output device field.
+- **Sentence by sentence:** every backend except Web Speech and Windows SAPI splits text into sentences (Latin, Japanese, Chinese, Hindi, Arabic and other punctuation, line breaks; abbreviations and decimals never split) and plays them through Sigil's TTS output, so a long text starts speaking after its first sentence and later sentences are synthesized while earlier ones play. Server backends (Kokoro, Melo, Chatterbox, Fish, HTTP server, OpenAI-compatible) stream: speech starts before the server finishes.
+- **Output:** the backend's **output device** (Windows device names; old saved names from the SAPI list are migrated automatically; empty uses **Settings → Audio → Default output device**, then the system default), its **volume**, and **Play speech on** (output device / voice changer / both, see [TTS through the voice changer](#tts-through-the-voice-changer)). Unplugging the output device fails the playing sentence once; the next one reopens the device.
+- **Skip** (the current sentence) and **Stop speaking** (everything queued) are on the status bar's TTS card while sentences are queued; the service keeps running. **Stop** ends the service: queued and in-flight speech is dropped, a start that is still connecting is cancelled, and late callbacks from a replaced backend are ignored. Web Speech and SAPI finish what they are already saying.
+- A single failed sentence goes to the **System log** and a rate-limited toast and is skipped; the service keeps running.
+- **OpenAI-compatible (HTTP):** presets Kokoro-FastAPI (port 8880), Chatterbox (5555), Voxtral-4B-TTS / IndexTTS-2.5 / VoxCPM2 through `vllm serve <model> --omni` (8000), qwentts `tts-server` (8080). PCM is the lowest-latency format and its sample rate must match the server (24 kHz for Kokoro, Voxtral and qwentts; 48 kHz for VoxCPM2). A URL without a path gets `/v1`. **Extra fields** (JSON) are added to every request; **Timeout** 0 = automatic (local servers get longer). **Test voice** plays a sample; the voice list comes from the server when it offers one. Voice and speed changes apply from the next sentence. Kokoro-FastAPI and Chatterbox settings of the older backends run through this client too. Server voice lists show an error toast instead of an empty list when the server is down.
+- **Azure** streams raw 48 kHz PCM (no MP3 artifacts; about 96 KB/s).
 - **VOICEVOX / AivisSpeech:** choose the **Engine preset**. Choosing AivisSpeech resets **pitch to 0** (its voices degrade otherwise) and a **Reset pitch** button is available; the pitch slider steps by 0.01, and 0 intonation/volume values are kept. Speaker ids differ per engine; the first style is picked when the engine changes. Lines are synthesized one at a time, in order. A VOICEVOX-compatible engine on **another PC** must use `https` (the app only allows plain `http` to this PC).
 - **Azure:** text with `&` or `<` is spoken (the SSML is escaped), **style** and **role** take effect (`mstts:express-as`), `xml:lang` follows the voice, and prosody left at default is omitted. A bad key stops the service; other failures only skip that line.
 - **Uberduck:** v1 API with a Bearer key; lines are spoken one after another; text is limited to 10,000 characters.
 - **Windows SAPI:** rates below 1.0 work (0.1 is the slowest, SAPI −10); rates from 1 to 5 map as before.
-- **Timeouts** (Rust HTTP backends): health checks 10 s, voice and language lists 20 s, TTS 30 s plus 100 ms per character (at most 120 s), plus a 120 s no-data limit on every connection, model downloads included. Error messages include the server's own message (JSON error field or HTML page title), with keys and credentials removed from URLs.
+- **Timeouts** (Rust HTTP backends): health checks 10 s, voice and language lists 20 s; streamed speech waits up to 60 s plus 1 s per character (at most 10 min) for the first audio from a local or LAN server (60–120 s for a remote one) and 60 s (remote 30 s) between chunks, while waiting for playback never counts; plus a 120 s no-data limit on every connection, model downloads included. Error messages include the server's own message (JSON error field or HTML page title), with keys and credentials removed from URLs.
 
 ---
 
@@ -417,7 +489,7 @@ The embedded web server (default port **3030**) serves `/client`, the OBS pages,
 
 ## Local speech package (ONNX)
 
-When you use **ONNX (local)** text-to-speech and choose **Folder on this PC**, Sigil loads a **speech package**: a directory that contains everything the in-process engine needs, not a single arbitrary `.onnx` file.
+When you use **ONNX (local)** or **Kokoro / Piper (local)** text-to-speech and choose a folder on this PC, Sigil loads a voice package: a directory that contains everything the in-process engine needs, not a single arbitrary `.onnx` file. Both backends run on the same engine (sherpa-onnx with espeak-ng; Kitten also on Sigil's own copy). The folder is test-loaded in a separate process first, so a damaged package cannot crash Sigil.
 
 ### Format: `speech_package_v1` (current)
 
@@ -433,11 +505,11 @@ Hub download and a local folder use the **same** layout, so you can copy an extr
 
 ### Hub download
 
-With **Model from → Hugging Face repo**, the first run may download and cache that same package automatically.
+With **Model from → Hugging Face repo**, a KittenML 0.8 repo installs as its verified catalog package (Models & Runtimes); a copy downloaded by an earlier Sigil keeps working. Any other repo is downloaded on **Start** (pinned to what the Hub reports, one file at a time).
 
-### Other formats
+### Official sherpa-onnx packages
 
-Support for additional on-disk layouts (for example lighter single-file or two-file voice kits) may be added later. Unsupported formats will be rejected with a clear error.
+An extracted official sherpa-onnx **Kokoro**, **Kitten** or **Piper** (VITS) package folder also works: the model family is detected from the ONNX metadata, and its voices appear after the first start. Other layouts are rejected with a clear error.
 
 ---
 
@@ -445,7 +517,7 @@ Support for additional on-disk layouts (for example lighter single-file or two-f
 
 Example HTTP/WebSocket servers for local development and testing (not shipped with the app):
 
-- **[`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md)** — WebSocket voice-changer echo, identity ONNX helper, optional TTS HTTP sidecar defaults (`POST /speech`, `GET /health`).
+- **[`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md)** — WebSocket voice-changer echo, identity ONNX helper, and the reference TTS HTTP server `tts_sidecar.py` (standard library only; `POST /speech`, `GET /health`, a streaming mode that sends a chunked WAV word by word, and OpenAI-compatible `/v1/models`, `/v1/audio/voices`, `/v1/audio/speech`; binds `127.0.0.1` by default and warns otherwise; `--port`, `--rate`, `--chunk-delay`, `--host`).
 - **[`scripts/translation-sidecar/README.md`](../scripts/translation-sidecar/README.md)** — Docker-oriented LibreTranslate-compatible sidecar for the `translate` plugin.
 
 Full request/response shapes and ports live in those READMEs. The [connectivity audit](DEVELOPER_GUIDE.md#service-and-feature-connectivity-audit) describes how Sigil wires Tauri plugins to these patterns. Neural TTS HTTP, voice-changer WebSocket binary PCM, and LibreTranslate-style translation HTTP contracts are maintained in the script folders above; use them for copy-paste Docker commands and API shapes—this document focuses on inspector fields and backend behavior in the app.

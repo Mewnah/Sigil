@@ -40,7 +40,7 @@ use crate::services::speech_rt::EngineProbeArgs;
 
 /// Tests that load DLLs (fake or real) run one at a time: a fake `onnxruntime.dll` loaded by one
 /// test must never be visible to another test's real load.
-fn dll_lock() -> MutexGuard<'static, ()> {
+pub(crate) fn dll_lock() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -584,7 +584,8 @@ fn beam_search_and_hotwords_need_a_transducer_offline() {
         .unwrap_err()
         .contains("needs modified beam search"));
 
-    // Qwen3-ASR: hotwords go through its model config only.
+    // Qwen3-ASR: hotwords are prompt context (model config or the stream's `hotwords` option),
+    // never a hotwords stream, file or beam search.
     let q3 = OfflineRecognizerConfig::new(
         OfflineModel::Qwen3Asr {
             conv_frontend: touch(&root, "conv_frontend.onnx"),
@@ -598,10 +599,12 @@ fn beam_search_and_hotwords_need_a_transducer_offline() {
         None,
     );
     q3.validate().unwrap();
-    assert!(q3
-        .require_hotwords_support()
-        .unwrap_err()
-        .contains("model config"));
+    assert_eq!(q3.hotwords_mode(), super::offline::HotwordsMode::PromptContext);
+    q3.require_hotwords_support().unwrap();
+    assert_eq!(sv.hotwords_mode(), super::offline::HotwordsMode::None);
+    let mut q3_file = q3.clone();
+    q3_file.hotwords_file = Some(touch(&root, "q3-hotwords.txt"));
+    assert!(q3_file.validate().unwrap_err().contains("prompt context"));
     let mut q3_beam = q3.clone();
     q3_beam.decoding = Decoding::ModifiedBeamSearch { max_active_paths: 4 };
     assert!(q3_beam.validate().unwrap_err().contains("Qwen3-ASR"));
@@ -900,6 +903,14 @@ fn detects_qwen3_whisper_moonshine_and_language_id() {
         panic!()
     };
     assert!(matches!(&c.model, OfflineModel::Qwen3Asr { tokenizer, .. } if file_name(tokenizer) == "tokenizer"));
+    assert!(matches!(
+        c.model,
+        OfflineModel::Qwen3Asr {
+            max_total_len: Some(super::catalog::QWEN3_MAX_TOTAL_LEN),
+            max_new_tokens: Some(super::catalog::QWEN3_MAX_NEW_TOKENS),
+            ..
+        }
+    ));
     assert!(c.tokens.is_none());
     c.validate().unwrap();
 
@@ -1137,6 +1148,93 @@ fn wav_reader_downmixes_and_scales() {
     let (mono, rate) = read_wav(&float_path).unwrap();
     assert_eq!((mono, rate), (vec![0.5, -0.5], 24_000));
     assert!(read_wav(&dir.join("missing.wav")).is_err());
+}
+
+// ---------------------------------------------------------------------------------------------
+// ONNX summary and stream padding (P2-B)
+// ---------------------------------------------------------------------------------------------
+
+/// `graph` serialized with `metadata_props` appended (field 14, as exporters write it).
+fn model_with_metadata(graph: &Graph, metadata: &[(&str, &str)]) -> Vec<u8> {
+    fn varint(out: &mut Vec<u8>, mut v: u64) {
+        while v >= 0x80 {
+            out.push((v as u8) | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+    let mut bytes = graph.model_bytes(17);
+    for (k, v) in metadata {
+        let mut entry = vec![0x0a];
+        varint(&mut entry, k.len() as u64);
+        entry.extend_from_slice(k.as_bytes());
+        entry.push(0x12);
+        varint(&mut entry, v.len() as u64);
+        entry.extend_from_slice(v.as_bytes());
+        bytes.push(0x72);
+        varint(&mut bytes, entry.len() as u64);
+        bytes.extend_from_slice(&entry);
+    }
+    bytes
+}
+
+#[test]
+fn onnx_summary_reads_inputs_outputs_and_metadata() {
+    use super::onnx_info::summary;
+    let dir = tmp_dir("onnx-summary");
+    let mut g = Graph::new();
+    g.input("audio_signal", FLOAT, &[Dim::Named("N"), Dim::Fixed(128), Dim::Named("T")])
+        .input("length", INT64, &[Dim::Named("N")])
+        .input("prompt_index", INT64, &[Dim::Named("N")])
+        .output("outputs", FLOAT, &[Dim::Named("N")])
+        .output("encoded_lengths", INT64, &[Dim::Named("N")]);
+    let long = "x".repeat(300_000);
+    let p = dir.join("encoder.onnx");
+    std::fs::write(
+        &p,
+        model_with_metadata(&g, &[("window_size", "65"), ("prompt_dictionary", r#"{"en": 0}"#), ("big", &long)]),
+    )
+    .unwrap();
+    let s = summary(&p).unwrap();
+    assert_eq!(s.inputs, vec!["audio_signal", "length", "prompt_index"]);
+    assert_eq!(s.outputs, 2);
+    assert!(s.has_input("prompt_index") && !s.has_input("x"));
+    assert_eq!(s.meta("window_size"), Some("65"));
+    assert_eq!(s.meta("prompt_dictionary"), Some(r#"{"en": 0}"#));
+    assert_eq!(s.meta("big").map(str::len), Some(300_000), "values up to 1 MiB are read");
+    assert_eq!(s.meta("missing"), None);
+    // A graph without metadata; a truncated file is an error, not a panic.
+    let plain = dir.join("plain.onnx");
+    std::fs::write(&plain, g.model_bytes(17)).unwrap();
+    assert!(summary(&plain).unwrap().metadata.is_empty());
+    let full = std::fs::read(&p).unwrap();
+    std::fs::write(dir.join("cut.onnx"), &full[..full.len() - 10]).unwrap();
+    assert!(summary(&dir.join("cut.onnx")).is_err());
+}
+
+#[test]
+fn stream_padding_follows_the_nemo_decode_window() {
+    use super::online::{window_padding_ms, StreamPadding, DEFAULT_TAIL_PADDING_MS, NEMO_HEAD_PADDING_MS};
+    use super::onnx_info::OnnxSummary;
+    // Nemotron 3.5: 160 ms chunks decode 25-frame windows, 560 ms chunks 65-frame windows.
+    assert_eq!(window_padding_ms(25), 280);
+    assert_eq!(window_padding_ms(65), 680);
+    let nemo = OnnxSummary {
+        metadata: vec![("window_size".into(), "65".into())],
+        ..OnnxSummary::default()
+    };
+    let p = StreamPadding::for_encoder(Some(&nemo));
+    assert_eq!(p.head_ms, NEMO_HEAD_PADDING_MS);
+    assert!(p.tail_ms > 560, "a whole chunk plus its lookahead");
+    for other in [None, Some(&OnnxSummary::default())] {
+        let p = StreamPadding::for_encoder(other);
+        assert_eq!((p.head_ms, p.tail_ms), (0, DEFAULT_TAIL_PADDING_MS));
+    }
+    let bogus = OnnxSummary {
+        metadata: vec![("window_size".into(), "0".into())],
+        ..OnnxSummary::default()
+    };
+    assert_eq!(StreamPadding::for_encoder(Some(&bogus)).tail_ms, DEFAULT_TAIL_PADDING_MS);
 }
 
 // ---------------------------------------------------------------------------------------------

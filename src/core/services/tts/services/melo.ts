@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { RustTtsSpeakReport } from "@/types";
 import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
-import { ClipTtsBackend } from "../clipBackend";
 import { positiveOr } from "../num";
+import { HttpSinkBackend } from "./openaiSpeech";
 
 interface MeloSpeaker {
     id: string;
@@ -11,8 +12,11 @@ interface MeloSpeaker {
     language: string;
 }
 
-/** MeloTTS HTTP API through the `melo-tts` plugin (WAV clips). */
-export class TTS_MeloService extends ClipTtsBackend {
+/**
+ * MeloTTS HTTP API through the `melo-tts` plugin: each sentence's WAV streams into the TTS sink
+ * (`melo_speak_to_sink`), so the output device, the route and stop / skip apply.
+ */
+export class TTS_MeloService extends HttpSinkBackend {
     #endpoint = "http://localhost:8888";
     #speakerId = "";
     #speed = 1.0;
@@ -24,7 +28,7 @@ export class TTS_MeloService extends ClipTtsBackend {
     protected async connect(data: TTS_State): Promise<string | null> {
         const config = data.melo;
         this.#endpoint = config.endpoint.trim();
-        this.#speakerId = config.speaker;
+        this.#speakerId = config.speaker.trim();
         this.#speed = positiveOr(config.speed, 1);
 
         await invoke("plugin:melo-tts|set_melo_endpoint", { endpoint: this.#endpoint });
@@ -38,12 +42,13 @@ export class TTS_MeloService extends ClipTtsBackend {
         return null;
     }
 
-    protected synthesize(text: string) {
-        return invoke<number[]>("plugin:melo-tts|melo_speak", {
+    protected speak(text: string, utteranceId: string) {
+        return invoke<RustTtsSpeakReport>("plugin:melo-tts|melo_speak_to_sink", {
             text,
             speakerId: this.#speakerId || null,
             speed: this.#speed,
             endpoint: this.#endpoint,
+            utteranceId,
         });
     }
 

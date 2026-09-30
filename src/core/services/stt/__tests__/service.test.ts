@@ -17,6 +17,7 @@ vi.mock("react-toastify", () => ({
 vi.mock("@/core/services/systemLog", () => ({ pushSystemLog: vi.fn() }));
 vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
 vi.mock("@/utils/rustAudioInput", () => ({ migrateLegacyNativeInputDevice: vi.fn(async () => {}) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => false), confirm: vi.fn(async () => false), message: vi.fn(async () => "Cancel") }));
 vi.mock("@/shared/services/pubsub", () => ({ PUBSUB_STT_EXTERNAL_COMMAND: "stt.external.command" }));
 // Real engines pull in SDKs and Tauri APIs; the service is tested against a fake engine.
 vi.mock("../services/azure", () => ({ STT_AzureService: class {} }));
@@ -28,6 +29,7 @@ vi.mock("../services/moonshine", () => ({ STT_MoonshineService: class {} }));
 vi.mock("../services/openaiAudio", () => ({ STT_OpenAI_AudioService: class {} }));
 vi.mock("../services/externalMic", () => ({ STT_ExternalMicService: class {} }));
 
+import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
 import { useAppUIStore } from "@/core/ui/store";
 import { Services } from "@/services-registry";
@@ -377,12 +379,20 @@ describe("Service_STT mute", () => {
 });
 
 describe("Service_STT desktop default migration", () => {
-  it("moves a desktop profile off native once, without auto-starting a download", async () => {
+  it("offers local to an existing profile on native once; no moves it to Whisper without auto-starting", async () => {
     isApp = true;
     const { service, data } = makeService({ autoStart: true });
     expect(data.backend).toBe(STT_Backends.native);
     await service.init();
     await flush();
+    // The offer is pending until the startup offers run (after i18n); nothing starts meanwhile.
+    expect(data.backend).toBe(STT_Backends.native);
+    expect(FakeEngine.instances).toHaveLength(0);
+    vi.mocked(ask).mockResolvedValueOnce(false);
+    await service.runStartupOffer();
+    await flush();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(data.localOfferShown).toBe(true);
     expect(data.backend).toBe(STT_Backends.whisper);
     expect(data.whisper.model).toBe("small.en-q5_1");
     expect(data.desktopDefaultMigrated).toBe(true);
@@ -411,12 +421,44 @@ describe("Service_STT desktop default migration", () => {
     expect(data.desktopDefaultMigrated).toBe(false);
   });
 
-  it("does not toast during onboarding of a fresh install", async () => {
+  it("switches an existing profile that accepts the offer to local, carrying its language over", async () => {
+    isApp = true;
+    const { service, data } = makeService({ native: { ...Service_STT_Schema.parse({}).native, language: "ja-JP" } });
+    await service.init();
+    await flush();
+    vi.mocked(ask).mockResolvedValueOnce(true);
+    await service.runStartupOffer();
+    await flush();
+    expect(data.backend).toBe(STT_Backends.local);
+    expect(data.local.language).toBe("ja");
+    expect(data.desktopDefaultMigrated).toBe(true);
+    expect(toast.info).not.toHaveBeenCalled();
+    // Runs once per launch.
+    await service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes straight to Whisper when the offer was already shown", async () => {
+    isApp = true;
+    const { service, data } = makeService({ localOfferShown: true });
+    await service.init();
+    await flush();
+    expect(data.backend).toBe(STT_Backends.whisper);
+    await service.runStartupOffer();
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh install on local, silently (onboarding shows the choice)", async () => {
     isApp = true;
     const { service, data } = makeService({}, { onboardingComplete: false });
     await service.init();
     await flush();
-    expect(data.backend).toBe(STT_Backends.whisper);
+    expect(data.backend).toBe(STT_Backends.local);
+    expect(data.local.language).toBe("auto");
+    expect(data.desktopDefaultMigrated).toBe(true);
+    await service.runStartupOffer();
+    expect(ask).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(0);
   });
 });

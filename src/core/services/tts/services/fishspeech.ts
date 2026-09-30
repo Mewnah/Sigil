@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { RustTtsSpeakReport } from "@/types";
 import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
-import { ClipTtsBackend } from "../clipBackend";
+import { HttpSinkBackend } from "./openaiSpeech";
 
 /** Optional per-call credentials; blank values are sent as `null` (not sent to the server). */
 function orNull(value: string): string | null {
@@ -12,9 +13,10 @@ function orNull(value: string): string | null {
 
 /**
  * Fish Speech through the `fish-speech` plugin: a self-hosted fish-speech server, or Fish Audio's
- * hosted API (`https://api.fish.audio`) with an API key and a `model` such as `s2.1-pro-free`.
+ * hosted API (`https://api.fish.audio`) with an API key and a `model` such as `s2.1-pro-free`. Each
+ * sentence's WAV streams into the TTS sink (`fish_speak_to_sink`).
  */
-export class TTS_FishSpeechService extends ClipTtsBackend {
+export class TTS_FishSpeechService extends HttpSinkBackend {
     #endpoint = "http://localhost:8080";
     #referenceId = "";
     #apiKey: string | null = null;
@@ -44,13 +46,14 @@ export class TTS_FishSpeechService extends ClipTtsBackend {
         return null;
     }
 
-    protected synthesize(text: string) {
-        return invoke<number[]>("plugin:fish-speech|fish_speak", {
+    protected speak(text: string, utteranceId: string) {
+        return invoke<RustTtsSpeakReport>("plugin:fish-speech|fish_speak_to_sink", {
             text,
             referenceId: this.#referenceId || null,
             endpoint: this.#endpoint,
             apiKey: this.#apiKey,
             model: this.#model,
+            utteranceId,
         });
     }
 

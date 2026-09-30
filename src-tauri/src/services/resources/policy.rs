@@ -159,19 +159,21 @@ const QWEN3_TTS_0_6B: Model = Model {
     label: "Qwen3-TTS 0.6B",
 };
 
+// STT finals: measured by P2-D on the RTX 4090 dev rig (transcribe.cpp 0.2.4, process VRAM including
+// the ~0.38 GB CUDA context): Qwen3-ASR 1.7B BF16 5914 MiB, Q8_0 3470-3494 MiB, Cohere Q4_K_M 1950 MiB.
 const ASR_BF16: Model = Model {
     id: ids::STT_QWEN3_ASR_1_7B_BF16,
-    vram_mb: 4600,
+    vram_mb: 6000,
     label: "Qwen3-ASR 1.7B (BF16)",
 };
 const ASR_Q8: Model = Model {
     id: ids::STT_QWEN3_ASR_1_7B_Q8,
-    vram_mb: 2700,
+    vram_mb: 3500,
     label: "Qwen3-ASR 1.7B (Q8_0)",
 };
 const ASR_COHERE: Model = Model {
     id: ids::STT_COHERE_Q4K,
-    vram_mb: 1900,
+    vram_mb: 2000,
     label: "Cohere Transcribe (Q4_K)",
 };
 const ASR_0_6B: Model = Model {
@@ -982,31 +984,35 @@ mod tests {
                 Reason::Fits,
             ),
             row(
-                "16 GB, VC + 7B LLM: BF16 still fits",
+                // BF16 measured 6 GB (P2-D): next to the voice changer and a 7B LLM only Q8_0 fits.
+                "16 GB, VC + 7B LLM: Q8_0 (BF16 does not fit)",
                 pc(GB16),
                 snap(true, vec![claim(8, Subsystem::Llm, 5300)]),
-                SttFinal,
-                ids::STT_QWEN3_ASR_1_7B_BF16,
-                "gpu",
-                Reason::Fits,
-            ),
-            row(
-                "16 GB, 7B LLM + Qwen3-TTS 1.7B: Q8_0",
-                pc(GB16),
-                snap(false, vec![claim(8, Subsystem::Llm, 5300), claim(10, Subsystem::Tts, 3200)]),
-                SttFinal,
-                ids::STT_QWEN3_ASR_1_7B_Q8,
-                "gpu",
-                Reason::SharedGpu,
-            ),
-            row(
-                "16 GB, VC + 7B LLM + Qwen3-TTS 0.6B: Q8_0 for the VC",
-                pc(GB16),
-                snap(true, vec![claim(8, Subsystem::Llm, 5300), claim(10, Subsystem::Tts, 1500)]),
                 SttFinal,
                 ids::STT_QWEN3_ASR_1_7B_Q8,
                 "gpu",
                 Reason::VcRunning,
+            ),
+            // Q8_0 measured 3.5 GB (P2-D): with 8.5 GB of other Sigil models on a 16 GB card it no
+            // longer fits (2.9 GB left), so the final runs on the CPU.
+            row(
+                "16 GB, 7B LLM + Qwen3-TTS 1.7B: CPU (Q8_0 needs 3.5 GB)",
+                pc(GB16),
+                snap(false, vec![claim(8, Subsystem::Llm, 5300), claim(10, Subsystem::Tts, 3200)]),
+                SttFinal,
+                ids::STT_QWEN3_ASR_0_6B,
+                "cpu",
+                Reason::GpuFull,
+            ),
+            // 16 GB − 4.8 GB reserve − 1.2 GB VC − 5.3 GB LLM − 1.5 GB TTS = 3.47 GB < 3.5 GB.
+            row(
+                "16 GB, VC + 7B LLM + Qwen3-TTS 0.6B: CPU (Q8_0 misses by 30 MB)",
+                pc(GB16),
+                snap(true, vec![claim(8, Subsystem::Llm, 5300), claim(10, Subsystem::Tts, 1500)]),
+                SttFinal,
+                ids::STT_QWEN3_ASR_0_6B,
+                "cpu",
+                Reason::GpuFull,
             ),
             row(
                 "8 GB, VC off, 7B LLM: CPU",

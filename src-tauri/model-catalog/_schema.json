@@ -12,6 +12,10 @@
     "entries": {
       "type": "array",
       "items": { "$ref": "#/$defs/entry" }
+    },
+    "routing": {
+      "type": "object",
+      "description": "Optional data table read by a subsystem with include_str! (P2-S0: the STT routing table in stt-routing.json, read by speech::router). Not part of the embedded catalog; build.rs checks only that it is an object."
     }
   },
   "$defs": {

@@ -19,6 +19,11 @@
 //!   the voice changer; the queue's bookkeeping is repaired on recovery.
 //! - [`AuxMixer`] mixes the queue into each block and applies the aux mic gate (none / duck /
 //!   mute) with smooth attack, hold and release so the mic never clicks.
+//! - Clips carry a tag (0 = untagged IPC pushes). The unified TTS sink (`tts_sink`, P2-G) tags
+//!   each utterance's audio, so it can count what of an utterance is still queued
+//!   ([`VoiceChangerState::tts_aux_pending`]) and cancel it (stop / skip,
+//!   [`VoiceChangerState::tts_aux_cancel`]): a clip that already started playing ends with a short
+//!   fade instead of a click, clips that did not start are dropped.
 
 use super::params::AuxMicGate;
 use super::playback::adapt_channels_interleaved_into;
@@ -43,6 +48,9 @@ pub(super) const AUX_PUSH_WAIT: Duration = Duration::from_secs(30);
 /// conversion).
 pub(super) const AUX_MIN_SAMPLE_RATE: u32 = 4_000;
 pub(super) const AUX_MAX_SAMPLE_RATE: u32 = 384_000;
+
+/// Fade applied to a tagged clip that is cancelled while it plays (ms), so stop / skip never clicks.
+const CANCEL_FADE_MS: u32 = 5;
 
 /// Mic gain while ducked (about -12 dB).
 const DUCK_GAIN: f32 = 0.25;
@@ -76,11 +84,17 @@ impl AuxPushError {
     }
 }
 
-/// Queued aux clips (interleaved f32 at the capture rate / channels) with a read offset into the
-/// front clip.
+/// One queued clip (interleaved f32 at the capture rate / channels) and its owner tag.
+struct AuxClip {
+    samples: Vec<f32>,
+    /// 0 = untagged (IPC pushes); otherwise the TTS sink utterance that owns it.
+    tag: u64,
+}
+
+/// Queued aux clips with a read offset into the front clip.
 #[derive(Default)]
 pub(super) struct AuxQueue {
-    clips: VecDeque<Vec<f32>>,
+    clips: VecDeque<AuxClip>,
     /// Samples of the front clip already mixed.
     head: usize,
     /// Samples not yet mixed, over all clips.
@@ -93,6 +107,10 @@ pub(super) struct AuxQueue {
     /// order they were pushed). The mixer only signals while someone waits.
     waiting: VecDeque<u64>,
     next_ticket: u64,
+    /// Tag of the clip the last mix ended in while aux audio flowed without a gap (0: none, or
+    /// the queue ran dry, so whatever comes next starts from silence). A tag's next clip at read
+    /// offset 0 continues audio that is playing right now when this is its tag.
+    last_tag: u64,
 }
 
 impl AuxQueue {
@@ -119,12 +137,17 @@ impl AuxQueue {
     /// Queue a whole clip already in the capture format, or refuse it whole (never overtakes a
     /// waiting push).
     pub(super) fn try_push(&mut self, clip: Vec<f32>) -> Result<(), AuxPushError> {
+        self.try_push_tagged(clip, 0)
+    }
+
+    /// [`Self::try_push`] for a clip owned by `tag`.
+    fn try_push_tagged(&mut self, clip: Vec<f32>, tag: u64) -> Result<(), AuxPushError> {
         let admitted = self.admits_new();
-        self.push_checked(clip, admitted)
+        self.push_checked(clip, admitted, tag)
     }
 
     /// Queue `clip` if `admitted` (the caller's turn and room), refusing it whole otherwise.
-    fn push_checked(&mut self, clip: Vec<f32>, admitted: bool) -> Result<(), AuxPushError> {
+    fn push_checked(&mut self, clip: Vec<f32>, admitted: bool, tag: u64) -> Result<(), AuxPushError> {
         if self.rate == 0 {
             return Err(AuxPushError::NotRunning);
         }
@@ -142,8 +165,61 @@ impl AuxQueue {
         let mut clip = clip;
         clip.truncate(n);
         self.queued += n;
-        self.clips.push_back(clip);
+        self.clips.push_back(AuxClip { samples: clip, tag });
         Ok(())
+    }
+
+    /// Samples of `tag`'s clips not yet mixed.
+    fn pending_tagged(&self, tag: u64) -> usize {
+        self.clips
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.tag == tag)
+            .map(|(i, c)| if i == 0 { c.samples.len().saturating_sub(self.head) } else { c.samples.len() })
+            .sum()
+    }
+
+    /// Drop `tag`'s clips (tag 0 is never cancelled this way). When the tag's audio is playing
+    /// (its front clip is partly mixed, or the last mix ended exactly on the boundary to it), only a
+    /// `fade_frames` fade-out from the read position is kept, so the mix never clicks.
+    fn cancel_tagged(&mut self, tag: u64, fade_frames: usize) {
+        if tag == 0 {
+            return;
+        }
+        let ch = self.ch.max(1);
+        let mut keep_front: Option<AuxClip> = None;
+        if self.head > 0 || self.last_tag == tag {
+            if let Some(front) = self.clips.front() {
+                if front.tag == tag {
+                    let start = self.head.min(front.samples.len()) / ch * ch;
+                    let n = (fade_frames * ch).min(front.samples.len() - start) / ch * ch;
+                    let frames = n / ch;
+                    let mut tail = front.samples[start..start + n].to_vec();
+                    for (f, frame) in tail.chunks_exact_mut(ch).enumerate() {
+                        let g = 1.0 - (f + 1) as f32 / (frames + 1) as f32;
+                        frame.iter_mut().for_each(|s| *s *= g);
+                    }
+                    keep_front = Some(AuxClip { samples: tail, tag });
+                }
+            }
+        }
+        if let Some(fade) = keep_front {
+            self.clips.pop_front();
+            self.head = 0;
+            self.clips.retain(|c| c.tag != tag);
+            if !fade.samples.is_empty() {
+                self.clips.push_front(fade);
+            }
+        } else {
+            // The front clip is another owner's (its read offset stays valid), or it is this tag's
+            // but has not started playing (nothing of it mixed, and the mix is not running into
+            // it from an earlier clip of the tag): drop every clip of the tag.
+            if self.clips.front().is_some_and(|c| c.tag == tag) {
+                self.head = 0;
+            }
+            self.clips.retain(|c| c.tag != tag);
+        }
+        self.repair();
     }
 
     /// Copy up to `max` queued samples into `out` (cleared first), oldest first; returns how many.
@@ -151,6 +227,8 @@ impl AuxQueue {
         out.clear();
         while out.len() < max {
             let Some(front) = self.clips.front() else { break };
+            self.last_tag = front.tag;
+            let front = &front.samples;
             let avail = front.len().saturating_sub(self.head);
             let n = avail.min(max - out.len());
             out.extend_from_slice(&front[self.head..self.head + n]);
@@ -159,6 +237,10 @@ impl AuxQueue {
                 self.clips.pop_front();
                 self.head = 0;
             }
+        }
+        if out.len() < max {
+            // Ran dry inside this block: the next clip starts from silence.
+            self.last_tag = 0;
         }
         self.queued = self.queued.saturating_sub(out.len());
         out.len()
@@ -169,20 +251,21 @@ impl AuxQueue {
         self.clips.clear();
         self.head = 0;
         self.queued = 0;
+        self.last_tag = 0;
         self.rate = rate;
         self.ch = ch.max(1);
     }
 
     /// Restore the bookkeeping invariants after a panic interrupted an update (poisoned lock).
     fn repair(&mut self) {
-        while self.clips.front().is_some_and(|c| self.head >= c.len()) {
+        while self.clips.front().is_some_and(|c| self.head >= c.samples.len()) {
             self.clips.pop_front();
             self.head = 0;
         }
         if self.clips.is_empty() {
             self.head = 0;
         }
-        let total: usize = self.clips.iter().map(Vec::len).sum();
+        let total: usize = self.clips.iter().map(|c| c.samples.len()).sum();
         self.queued = total.saturating_sub(self.head);
     }
 }
@@ -248,7 +331,7 @@ impl AuxFeed {
             return Err(AuxPushError::NotRunning);
         }
         if q.admits_new() {
-            return q.push_checked(clip, true);
+            return q.push_checked(clip, true, 0);
         }
         let ticket = q.next_ticket;
         q.next_ticket = q.next_ticket.wrapping_add(1);
@@ -259,7 +342,7 @@ impl AuxFeed {
             }
             if q.waiting.front() == Some(&ticket) && q.has_room() {
                 q.waiting.pop_front();
-                break q.push_checked(clip, true);
+                break q.push_checked(clip, true, 0);
             }
             let now = Instant::now();
             if now >= deadline {
@@ -533,6 +616,48 @@ pub fn push_aux_wav_bytes(state: &VoiceChangerState, raw: Vec<u8>) -> Result<(),
     push_pcm(state, samples, sr, ch, None)
 }
 
+/// The unified TTS sink's route into the voice changer (`tts_sink`, P2-G). The sink converts each
+/// utterance to the capture format itself (a stateful resampler, so streamed audio has no seams)
+/// and feeds it in small tagged blocks, one utterance after another, so these never wait: a full
+/// queue hands the block back and the sink retries it on its next tick (back-pressure).
+impl VoiceChangerState {
+    /// Capture format `(sample rate, channels)` TTS audio must be converted to; `None` while the
+    /// voice changer is not running.
+    pub(crate) fn tts_aux_format(&self) -> Option<(u32, usize)> {
+        self.aux_feed.format()
+    }
+
+    /// Queue one block of `tag`'s audio (interleaved, already in `format`) without waiting.
+    /// `Err(Some(block))`: the queue is full (or older pushes are waiting); retry the same block
+    /// later. `Err(None)`: not running, or restarted in another capture format (re-read
+    /// [`Self::tts_aux_format`]).
+    pub(crate) fn tts_aux_try_push(&self, tag: u64, block: Vec<f32>, format: (u32, usize)) -> Result<(), Option<Vec<f32>>> {
+        let mut q = self.aux_feed.lock();
+        if q.rate == 0 || (q.rate, q.ch) != format {
+            return Err(None);
+        }
+        if !q.admits_new() {
+            return Err(Some(block));
+        }
+        q.push_checked(block, true, tag).map_err(|_| None)
+    }
+
+    /// Samples (interleaved, capture format) of `tag`'s audio not yet mixed into the voice.
+    pub(crate) fn tts_aux_pending(&self, tag: u64) -> usize {
+        self.aux_feed.lock().pending_tagged(tag)
+    }
+
+    /// Drop `tag`'s queued audio (stop / skip); a block already playing fades out over a few ms.
+    pub(crate) fn tts_aux_cancel(&self, tag: u64) {
+        {
+            let mut q = self.aux_feed.lock();
+            let fade = (u64::from(q.rate) * u64::from(CANCEL_FADE_MS) / 1000) as usize;
+            q.cancel_tagged(tag, fade);
+        }
+        self.aux_feed.space.notify_all();
+    }
+}
+
 /// Push decoded f32 PCM (interleaved) to be mixed into the live capture stream at `sample_rate` Hz.
 /// Waits (up to 30 s) for room when the queue is full.
 #[command]
@@ -700,7 +825,7 @@ mod tests {
         }
         // Play everything: the three clips come out in arrival order, after the backlog.
         let q = feed.lock();
-        let tail: Vec<f32> = q.clips.iter().skip(1).map(|c| c[0]).collect();
+        let tail: Vec<f32> = q.clips.iter().skip(1).map(|c| c.samples[0]).collect();
         assert_eq!(tail, vec![12.0, 13.0, 14.0]);
         assert!(q.waiting.is_empty());
     }
@@ -856,5 +981,128 @@ mod tests {
         }
         let (s32, _, _) = decode_wav(cur.into_inner()).unwrap();
         assert_eq!(s32, vec![-1.0, 0.5]);
+    }
+
+    /// TTS sink route: tagged blocks are counted per tag, a cancelled tag that did not start is
+    /// dropped whole, one that is playing ends with a short monotonic fade (no click), and other
+    /// owners' audio (and the untagged tag 0) is never touched.
+    #[test]
+    fn tagged_clips_count_and_cancel_with_a_fade() {
+        let (rate, ch) = (16_000u32, 2usize);
+        let feed = running_feed(rate, ch);
+        {
+            let mut q = feed.lock();
+            q.try_push_tagged(vec![0.5; 1_000], 7).unwrap();
+            q.try_push_tagged(vec![0.25; 400], 8).unwrap();
+            q.try_push_tagged(vec![0.5; 600], 7).unwrap();
+            q.try_push(vec![0.1; 200]).unwrap();
+            assert_eq!(q.pending_tagged(7), 1_600);
+            assert_eq!(q.pending_tagged(8), 400);
+            assert_eq!(q.pending_tagged(0), 200);
+        }
+        // Play 100 frames of tag 7's first clip, then cancel tag 7.
+        let mut mixer = AuxMixer::new(rate, ch);
+        let mut block = vec![0.0f32; 200];
+        feed.mix_into(&mut block, &mut mixer, AuxMicGate::None);
+        assert!(block.iter().all(|&s| s == 0.5));
+        let fade_frames = 80usize; // 5 ms at 16 kHz
+        feed.lock().cancel_tagged(7, fade_frames);
+        {
+            let q = feed.lock();
+            assert_eq!(q.pending_tagged(7), fade_frames * ch, "only the fade tail is left");
+            assert_eq!(q.pending_tagged(8), 400);
+            assert_eq!(q.pending_tagged(0), 200);
+            assert_eq!(q.queued_samples(), fade_frames * ch + 600);
+        }
+        let mut tail = vec![0.0f32; fade_frames * ch];
+        feed.mix_into(&mut tail, &mut mixer, AuxMicGate::None);
+        let left: Vec<f32> = tail.iter().step_by(ch).copied().collect();
+        assert!(left[0] < 0.5 && left[0] > 0.45, "fade starts near the playing level: {}", left[0]);
+        assert!(left.windows(2).all(|w| w[1] <= w[0]), "fade is monotonic");
+        assert!(*left.last().unwrap() < 0.01);
+        // Then tag 8 and the untagged clip follow, intact.
+        let mut rest = vec![0.0f32; 600];
+        feed.mix_into(&mut rest, &mut mixer, AuxMicGate::None);
+        assert!(rest[..400].iter().all(|&s| s == 0.25) && rest[400..].iter().all(|&s| s == 0.1));
+        // Cancelling a tag whose clips did not start drops them whole; tag 0 cannot be cancelled.
+        let mut q = feed.lock();
+        q.try_push_tagged(vec![0.3; 10], 9).unwrap();
+        q.try_push(vec![0.3; 10]).unwrap();
+        q.cancel_tagged(9, fade_frames);
+        q.cancel_tagged(0, fade_frames);
+        assert_eq!((q.pending_tagged(9), q.pending_tagged(0), q.queued_samples()), (0, 10, 10));
+    }
+
+    /// Review finding: the sink feeds an utterance as many small clips, so a mix can end exactly on
+    /// the boundary between two of them (read offset 0 on the next one). A cancel at that moment
+    /// still fades out instead of cutting the voice from full level to silence; after a gap (the
+    /// queue ran dry) the tag's next clip has not started and is dropped whole.
+    #[test]
+    fn cancel_on_a_clip_boundary_still_fades() {
+        let (rate, ch) = (48_000u32, 1usize);
+        let fade_frames = 240usize; // 5 ms
+        let feed = running_feed(rate, ch);
+        {
+            let mut q = feed.lock();
+            for _ in 0..3 {
+                q.try_push_tagged(vec![0.5; 4_800], 7).unwrap();
+            }
+            q.try_push_tagged(vec![0.25; 480], 8).unwrap();
+        }
+        // 30 capture chunks of 160 frames end exactly on the first clip's last sample.
+        let mut mixer = AuxMixer::new(rate, ch);
+        let mut block = vec![0.0f32; 160];
+        for _ in 0..30 {
+            block.fill(0.0);
+            feed.mix_into(&mut block, &mut mixer, AuxMicGate::None);
+        }
+        assert_eq!(feed.lock().head, 0, "the mix ended on the boundary");
+        feed.lock().cancel_tagged(7, fade_frames);
+        assert_eq!(feed.lock().pending_tagged(7), fade_frames, "a fade tail is kept");
+        let mut tail = vec![0.0f32; fade_frames];
+        feed.mix_into(&mut tail, &mut mixer, AuxMicGate::None);
+        assert!(tail[0] > 0.45, "the fade continues from the playing level: {}", tail[0]);
+        assert!(tail.windows(2).all(|w| w[1] <= w[0]), "fade is monotonic");
+        assert!(*tail.last().unwrap() < 0.01);
+        // Tag 8 follows intact.
+        let mut rest = vec![0.0f32; 480];
+        feed.mix_into(&mut rest, &mut mixer, AuxMicGate::None);
+        assert!(rest.iter().all(|&s| s == 0.25));
+
+        // A gap: the queue ran dry, so the tag's next clip starts from silence and a cancel
+        // before it plays drops it whole.
+        let mut silence = vec![0.0f32; 160];
+        feed.mix_into(&mut silence, &mut mixer, AuxMicGate::None);
+        let mut q = feed.lock();
+        q.try_push_tagged(vec![0.5; 4_800], 9).unwrap();
+        q.cancel_tagged(9, fade_frames);
+        assert_eq!(q.queued_samples(), 0);
+        // Not the tag that was playing: dropped whole as well.
+        q.try_push_tagged(vec![0.5; 480], 10).unwrap();
+        q.try_push_tagged(vec![0.5; 480], 11).unwrap();
+        let mut scratch = Vec::new();
+        assert_eq!(q.take_into(&mut scratch, 480), 480);
+        q.cancel_tagged(11, fade_frames);
+        assert_eq!(q.queued_samples(), 0, "tag 10 ended on the boundary; tag 11 never started");
+    }
+
+    /// The sink's non-blocking push: refused as not running (or after a format change), handed back
+    /// whole while the queue is full, accepted and counted otherwise; cancel wakes waiters.
+    #[test]
+    fn tts_route_push_hands_back_blocks_when_full() {
+        let st = VoiceChangerState::new();
+        assert_eq!(st.tts_aux_format(), None);
+        assert_eq!(st.tts_aux_try_push(3, vec![0.1; 10], (48_000, 1)), Err(None));
+        st.aux_feed.reset(8_000, 1);
+        assert_eq!(st.tts_aux_format(), Some((8_000, 1)));
+        assert_eq!(st.tts_aux_try_push(3, vec![0.1; 10], (48_000, 1)), Err(None), "stale format");
+        let cap = AUX_QUEUE_CAP_SECS as usize * 8_000;
+        st.tts_aux_try_push(3, vec![0.1; cap], (8_000, 1)).unwrap();
+        assert_eq!(st.tts_aux_try_push(4, vec![0.2; 5], (8_000, 1)), Err(Some(vec![0.2; 5])));
+        assert_eq!(st.tts_aux_pending(3), cap);
+        st.tts_aux_cancel(3);
+        assert_eq!(st.tts_aux_pending(3), 0);
+        st.tts_aux_try_push(4, vec![0.2; 5], (8_000, 1)).unwrap();
+        assert_eq!(st.tts_aux_pending(4), 5);
     }
 }

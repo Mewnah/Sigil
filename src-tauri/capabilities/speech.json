@@ -1,0 +1,11 @@
+{
+  "identifier": "speech",
+  "description": "IPC for the speech plugin (STT pipelines: start / stop / status, retained utterance audio, route preview) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "speech:default"
+  ]
+}

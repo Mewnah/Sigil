@@ -45,6 +45,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite's empty stand-ins for Node built-ins (e.g. `crypto`, required by a crypto-js-style fallback) get
+          // their own chunk. Otherwise Rollup folds them into the first manual chunk that imports them (speech-sdk),
+          // and the host bundle statically imports the Azure SDK's CommonJS setup code at boot.
+          if (id.includes("__vite-browser-external")) return "browser-external";
           if (!id.includes("node_modules")) return;
           if (id.includes("@twurple")) return "twurple";
           if (id.includes("microsoft-cognitiveservices-speech")) return "speech-sdk";

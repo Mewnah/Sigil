@@ -23,7 +23,8 @@ const ONES: &[&str] = &[
     "seventeen", "eighteen", "nineteen",
 ];
 const TENS: &[&str] = &["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
-const SCALE: &[&str] = &["", "thousand", "million", "billion", "trillion"];
+// Sigil: up to "quintillion", so every u64 is read in full.
+const SCALE: &[&str] = &["", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion"];
 
 fn three_digits_to_words(n: u64) -> String {
     if n == 0 {
@@ -51,12 +52,45 @@ fn three_digits_to_words(n: u64) -> String {
     parts.join(" ")
 }
 
-/// Convert a non-negative integer to English words.
+/// Convert an integer to English words.
 pub fn number_to_words(n: i64) -> String {
+    // Sigil: `unsigned_abs`, not `-n`: `-i64::MIN` overflows (a panic in debug builds, endless
+    // recursion and a stack overflow in release builds).
     if n < 0 {
-        return format!("negative {}", number_to_words(-n));
+        return format!("negative {}", cardinal_to_words(n.unsigned_abs()));
     }
-    let n = n as u64;
+    cardinal_to_words(n as u64)
+}
+
+/// Sigil: words for an integer string (`-?\d+`) of any length: as a number up to `u64::MAX`,
+/// digit by digit beyond. Anything else reads as zero, like upstream's `parse().unwrap_or(0)`.
+fn integer_words(raw: &str) -> String {
+    let (negative, digits) = match raw.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, raw),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return "zero".to_string();
+    }
+    let (words, zero) = match digits.parse::<u64>() {
+        Ok(n) => (cardinal_to_words(n), n == 0),
+        Err(_) => (digits_to_words(digits), false),
+    };
+    if negative && !zero {
+        format!("negative {}", words)
+    } else {
+        words
+    }
+}
+
+/// Sigil: whether `raw` is an integer string (`-?\d+`).
+fn is_integer(raw: &str) -> bool {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Convert a non-negative integer to English words.
+fn cardinal_to_words(n: u64) -> String {
     if n == 0 {
         return "zero".to_string();
     }
@@ -114,12 +148,12 @@ pub fn float_to_words(value: &str) -> String {
         let int_words = if int_part.is_empty() {
             "zero".to_string()
         } else {
-            number_to_words(int_part.parse::<i64>().unwrap_or(0))
+            integer_words(int_part)
         };
         let dec_words: Vec<&str> = dec_part.chars().map(digit_words).collect();
         format!("{} point {}", int_words, dec_words.join(" "))
     } else {
-        number_to_words(value.parse::<i64>().unwrap_or(0))
+        integer_words(value)
     };
 
     if negative {
@@ -319,7 +353,7 @@ pub fn expand_percentages(text: &str) -> String {
             let words = if raw.contains('.') {
                 float_to_words(&raw)
             } else {
-                number_to_words(raw.parse::<i64>().unwrap_or(0))
+                integer_words(&raw)
             };
             format!("{} percent", words)
         })
@@ -339,7 +373,7 @@ pub fn expand_currency(text: &str) -> String {
                 let num = if raw.contains('.') {
                     float_to_words(&raw)
                 } else {
-                    number_to_words(raw.parse::<i64>().unwrap_or(0))
+                    integer_words(&raw)
                 };
                 return format!("{} {} {}s", num, scale_word, unit);
             }
@@ -434,7 +468,7 @@ pub fn expand_units(text: &str) -> String {
             let num = if raw.contains('.') {
                 float_to_words(raw)
             } else {
-                number_to_words(raw.parse::<i64>().unwrap_or(0))
+                integer_words(raw)
             };
             format!("{} {}", num, expanded)
         })
@@ -450,7 +484,7 @@ pub fn expand_scale_suffixes(text: &str) -> String {
             let num = if raw.contains('.') {
                 float_to_words(raw)
             } else {
-                number_to_words(raw.parse::<i64>().unwrap_or(0))
+                integer_words(raw)
             };
             format!("{} {}", num, scale_word)
         })
@@ -461,14 +495,16 @@ pub fn expand_scientific_notation(text: &str) -> String {
     RE_SCI
         .replace_all(text, |caps: &Captures| {
             let coeff = &caps[1];
-            let exp: i64 = caps[2].parse().unwrap_or(0);
+            let exp = &caps[2];
             let coeff_words = if coeff.contains('.') {
                 float_to_words(coeff)
             } else {
-                number_to_words(coeff.parse::<i64>().unwrap_or(0))
+                integer_words(coeff)
             };
-            let exp_words = number_to_words(exp.abs());
-            let sign = if exp < 0 { "negative " } else { "" };
+            // Sigil: the exponent's digits as text, not `exp.abs()` of an i64 (which overflows on
+            // "1e-9223372036854775808").
+            let exp_words = integer_words(exp.trim_start_matches(['+', '-']));
+            let sign = if exp.starts_with('-') && exp_words != "zero" { "negative " } else { "" };
             format!("{} times ten to the {}{}", coeff_words, sign, exp_words)
         })
         .into_owned()
@@ -586,8 +622,8 @@ pub fn replace_numbers(text: &str) -> String {
             let raw = caps[0].replace(',', "");
             if raw.contains('.') {
                 float_to_words(&raw)
-            } else if let Ok(n) = raw.parse::<i64>() {
-                number_to_words(n)
+            } else if is_integer(&raw) {
+                integer_words(&raw)
             } else {
                 caps[0].to_string()
             }
@@ -802,6 +838,44 @@ mod tests {
         assert_eq!(number_to_words(1000), "one thousand");
         assert_eq!(number_to_words(-42), "negative forty-two");
         assert_eq!(number_to_words(1_000_000), "one million");
+    }
+
+    // Sigil: i64::MIN used to overflow `-n` (a panic in debug builds, endless recursion and a stack
+    // overflow in release builds); every u64 is now read in full.
+    #[test]
+    fn extreme_integers_are_read_without_overflow() {
+        let min = "negative nine quintillion two hundred twenty-three quadrillion three hundred \
+                   seventy-two trillion thirty-six billion eight hundred fifty-four million seven \
+                   hundred seventy-five thousand eight hundred eight";
+        assert_eq!(number_to_words(i64::MIN), min);
+        assert!(number_to_words(i64::MAX).starts_with("nine quintillion"));
+        assert!(cardinal_to_words(u64::MAX).starts_with("eighteen quintillion"));
+        assert_eq!(integer_words("-9223372036854775808"), min);
+        assert_eq!(integer_words("-0"), "zero");
+        assert_eq!(integer_words("123456789012345678901"), "one two three four five six seven eight nine zero one two three four five six seven eight nine zero one");
+        assert_eq!(integer_words(""), "zero");
+        assert!(is_integer("-12") && !is_integer("-") && !is_integer("1.5"));
+
+        let pp = TextPreprocessor::new();
+        let spoken = |s: &str| pp.process(s);
+        let min_spoken = min.replace('-', " ");
+        assert_eq!(replace_numbers("-9223372036854775808"), min);
+        assert_eq!(replace_numbers("-9,223,372,036,854,775,808"), min);
+        assert_eq!(spoken("-9223372036854775808"), min_spoken);
+        assert_eq!(expand_percentages("-9223372036854775808%"), format!("{min} percent"));
+        assert_eq!(
+            expand_scientific_notation("1e-9223372036854775808"),
+            format!("one times ten to the {min}")
+        );
+        assert_eq!(
+            expand_scientific_notation("-9223372036854775808e2"),
+            format!("{min} times ten to the two")
+        );
+        assert_eq!(expand_scientific_notation("2e-0"), "two times ten to the zero");
+        assert_eq!(expand_scientific_notation("2e-3"), "two times ten to the negative three");
+        assert!(spoken("1e-9223372036854775808").contains("ten to the negative nine quintillion"));
+        assert!(spoken("-9223372036854775808.5").starts_with("negative nine quintillion"));
+        assert!(spoken("99999999999999999999999 apples").starts_with("nine nine nine"));
     }
 
     #[test]

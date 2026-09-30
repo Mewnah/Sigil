@@ -1,8 +1,9 @@
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { devLog } from "@/utils/devLog";
 import i18n from "i18next";
+import { decodeWav } from "../../sound/pcm";
 import { TTS_State } from "../schema";
-import { ITTSReceiver, ITTSService, errorMessage, isAbortError } from "../types";
+import { ITTSReceiver, ITTSService, PcmChunk, errorMessage, isAbortError } from "../types";
 import { normalizeVoicevoxHost, voicevoxHostProblem, voicevoxScales } from "../voicevoxPresets";
 
 interface VoicevoxSpeaker {
@@ -36,11 +37,14 @@ export function voicevoxHostError(host: string): string | null {
 
 /**
  * VOICEVOX-compatible engines (VOICEVOX, AivisSpeech, or a custom host) over their HTTP API:
- * `POST /audio_query`, then `POST /synthesis` (WAV), played through Service_Sound on the chosen device.
+ * `POST /audio_query`, then `POST /synthesis` (WAV).
  *
- * Lines are synthesized one at a time in arrival order, while the previous clip plays, so they
- * cannot be enqueued out of order. Stop aborts every request in flight and drops clips that have
- * not started playing.
+ * - PCM contract (ITTSService v2): {@link synthesizePcm} synthesizes one sentence and yields it as
+ *   PCM; the sentence pipeline plays it through the TTS sink (device / voice changer), so a long text
+ *   starts speaking after its first sentence.
+ * - Legacy {@link play}: whole lines, one at a time in arrival order while the previous clip plays,
+ *   played through Service_Sound (itself on the sink).
+ * - Stop aborts every request in flight and drops clips that have not started playing.
  */
 export class TTS_VoicevoxService implements ITTSService {
   #controllers = new Set<AbortController>();
@@ -101,6 +105,26 @@ export class TTS_VoicevoxService implements ITTSService {
     }
   }
 
+  /** v2: one sentence as PCM (the engine's WAV, decoded). Aborting `signal` cancels the requests. */
+  async *synthesizePcm(text: string, signal: AbortSignal): AsyncIterable<PcmChunk> {
+    if (!this.#running || !text.trim() || signal.aborted) return;
+    let wav: ArrayBuffer | null;
+    try {
+      wav = await this.#synthesizeWav(text, signal);
+    } catch (error) {
+      if (signal.aborted || !this.#running) return;
+      throw new Error(`VOICEVOX: ${this.#describe(error)}`);
+    }
+    if (!wav || signal.aborted) return;
+    let pcm;
+    try {
+      pcm = decodeWav(wav);
+    } catch (error) {
+      throw new Error(`VOICEVOX: ${errorMessage(error)}`);
+    }
+    yield { samples: pcm.samples, sampleRate: pcm.sampleRate, channels: pcm.channels };
+  }
+
   play(text: string): void {
     if (!this.#running || !text.trim()) return;
     const generation = this.#generation;
@@ -111,19 +135,46 @@ export class TTS_VoicevoxService implements ITTSService {
         // is fetchWithTimeout's per-request limit firing, not a Stop.
         if (generation !== this.#generation) return;
         console.error("[VoiceVox] Synthesis error:", error);
-        const message = isAbortError(error)
-          ? i18n.t("tts.voicevox_timeout", { host: this.#host })
-          : errorMessage(error);
-        this.bindings.onError(`VOICEVOX: ${message}`);
+        this.bindings.onError(`VOICEVOX: ${this.#describe(error)}`);
       });
+  }
+
+  /** Readable message for a failed request (an abort here is the per-request time limit). */
+  #describe(error: unknown): string {
+    return isAbortError(error) ? i18n.t("tts.voicevox_timeout", { host: this.#host }) : errorMessage(error);
   }
 
   async #speak(text: string, generation: number): Promise<void> {
     if (generation !== this.#generation) return;
-    const { speaker, device } = this.state;
+    const { device } = this.state;
+    const audioData = await this.#synthesizeWav(text);
+    if (!audioData || generation !== this.#generation) return;
+
+    // Playback runs on its own queue so the next line can synthesize meanwhile.
+    window.ApiServer.sound
+      .enqueueVoiceClip(audioData, {
+        volume: 1, // volumeScale is already applied by the engine
+        rate: 1, // speedScale is already applied by the engine
+        device_name: device,
+      })
+      .catch((error) => {
+        if (generation === this.#generation) this.bindings.onError(errorMessage(error));
+      });
+  }
+
+  /**
+   * `/audio_query` then `/synthesis` for `text`: the WAV, or `null` when stopped meanwhile. Rejects with an
+   * AbortError when the per-request limit fired (or `outer` aborted), else a readable error.
+   */
+  async #synthesizeWav(text: string, outer?: AbortSignal): Promise<ArrayBuffer | null> {
+    const generation = this.#generation;
+    const { speaker } = this.state;
     const host = this.#host;
     const speakerId = encodeURIComponent(speaker.trim());
     const controller = this.#track(new AbortController());
+    const onOuterAbort = () => controller.abort();
+    if (outer?.aborted) controller.abort();
+    outer?.addEventListener("abort", onOuterAbort, { once: true });
     try {
       // Step 1: audio query (accent phrases and default prosody for this speaker)
       const queryResponse = await fetchWithTimeout(
@@ -134,7 +185,7 @@ export class TTS_VoicevoxService implements ITTSService {
         throw new Error(i18n.t("tts.voicevox_query_failed", { status: queryResponse.status }));
       }
       const audioQuery: AudioQuery = await queryResponse.json();
-      if (generation !== this.#generation) return;
+      if (generation !== this.#generation) return null;
 
       // User settings; 0 is a valid pitch/intonation/volume and survives.
       Object.assign(audioQuery, voicevoxScales(this.state));
@@ -151,26 +202,17 @@ export class TTS_VoicevoxService implements ITTSService {
         throw new Error(i18n.t("tts.voicevox_synthesis_failed", { status: synthesisResponse.status }));
       }
       const audioData = await synthesisResponse.arrayBuffer();
-      if (generation !== this.#generation) return;
-
-      // Playback runs on its own queue so the next line can synthesize meanwhile.
-      window.ApiServer.sound
-        .enqueueVoiceClip(audioData, {
-          volume: 1, // volumeScale is already applied by the engine
-          rate: 1, // speedScale is already applied by the engine
-          device_name: device,
-        })
-        .catch((error) => {
-          if (generation === this.#generation) this.bindings.onError(errorMessage(error));
-        });
+      if (generation !== this.#generation) return null;
+      return audioData;
     } finally {
       this.#controllers.delete(controller);
+      outer?.removeEventListener("abort", onOuterAbort);
     }
   }
 
   stop(): void {
     this.#halt();
-    // Clips already synthesized but not yet playing are dropped; the one playing finishes.
+    // Clips queued or playing through Service_Sound stop too.
     window.ApiServer.sound.clearVoiceClips();
     this.bindings.onStop();
   }

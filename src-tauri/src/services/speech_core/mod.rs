@@ -1,7 +1,7 @@
 //! Speech core: the shared 16 kHz mono speech front end (Silero VAD v6.2 segmenter, streaming
 //! rubato resampling, hallucination filter) used by Whisper and by VAD-closed utterance capture.
 //!
-//! Owned by P0-C; scaffolded by P0-S0. Submodules:
+//! Owned by P0-C (P2-A since P2: the speech pipeline drives it); scaffolded by P0-S0. Submodules:
 //! - [`silero`]: Silero VAD v6.2 (embedded ONNX, MIT) on Sigil's ORT, CPU, 1 thread, stateful.
 //! - [`segmenter`]: the segmentation state machine behind [`Segmenter`] (hysteresis, pre-roll,
 //!   min speech/silence, forced split at the lowest-probability frame).
@@ -9,6 +9,8 @@
 //! - [`hallucination`]: Whisper post-filter (markers, repeat loops, whole-utterance phrases).
 //! - [`utterance`]: [`utterance::SpeechFrontEnd`] (resample + segment), the drop-oldest
 //!   [`utterance::BoundedQueue`] and the take-once [`utterance::UtteranceStore`].
+//! - [`SpeechSegmenter`]: the segmenter interface the P2 speech pipeline (`speech::pipeline`)
+//!   drives, so its tests can run on a synthetic classifier.
 //!
 //! # Frozen contract (P0-S0; change only through an INTEGRATE step)
 //!
@@ -153,9 +155,45 @@ impl Segmenter {
     }
 
     /// Drop all state (model state, pre-roll, open segment); `seq` keeps counting.
-    #[allow(dead_code)] // Frozen P0-S0 API; used by the P2 speech engines.
     pub fn reset(&mut self) {
         self.engine.reset();
+    }
+}
+
+/// The segmentation interface the speech pipeline (`speech::pipeline`) drives: [`Segmenter`] in
+/// production, a [`segmenter::SegmenterEngine`] over a synthetic classifier in tests. Same
+/// semantics as the inherent methods of [`Segmenter`].
+pub trait SpeechSegmenter {
+    /// Feed 16 kHz mono samples (any length); appends zero or more events to `out`.
+    fn push(&mut self, samples: &[f32], out: &mut Vec<SegmenterEvent>) -> Result<(), String>;
+    /// Close any open segment (as `forced`) if it holds enough speech, else discard it.
+    fn flush(&mut self, out: &mut Vec<SegmenterEvent>) -> Result<(), String>;
+    /// Drop the open segment, pre-roll and model state (`seq` and the stream position keep counting).
+    fn reset(&mut self);
+}
+
+impl SpeechSegmenter for Segmenter {
+    fn push(&mut self, samples: &[f32], out: &mut Vec<SegmenterEvent>) -> Result<(), String> {
+        Segmenter::push(self, samples, out)
+    }
+    fn flush(&mut self, out: &mut Vec<SegmenterEvent>) -> Result<(), String> {
+        Segmenter::flush(self, out)
+    }
+    fn reset(&mut self) {
+        Segmenter::reset(self);
+    }
+}
+
+impl<C: segmenter::FrameClassifier> SpeechSegmenter for segmenter::SegmenterEngine<C> {
+    fn push(&mut self, samples: &[f32], out: &mut Vec<SegmenterEvent>) -> Result<(), String> {
+        segmenter::SegmenterEngine::push(self, samples, out)
+    }
+    fn flush(&mut self, out: &mut Vec<SegmenterEvent>) -> Result<(), String> {
+        segmenter::SegmenterEngine::flush(self, out);
+        Ok(())
+    }
+    fn reset(&mut self) {
+        segmenter::SegmenterEngine::reset(self);
     }
 }
 

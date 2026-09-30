@@ -10,6 +10,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use super::resample::StreamResampler;
 use super::{Segmenter, SegmenterEvent, VadConfig, SAMPLE_RATE};
@@ -53,6 +54,15 @@ pub fn samples_to_ms(samples: u64) -> u64 {
     samples * 1000 / u64::from(SAMPLE_RATE)
 }
 
+/// Result of [`BoundedQueue::pop_timeout`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Pop<T> {
+    Item(T),
+    /// The queue was closed (pending entries were discarded).
+    Closed,
+    TimedOut,
+}
+
 /// Bounded FIFO that drops the oldest entry when full. Many producers, one blocking consumer.
 pub struct BoundedQueue<T> {
     inner: Mutex<QueueInner<T>>,
@@ -86,7 +96,6 @@ impl<T> BoundedQueue<T> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner).items.len()
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -125,6 +134,39 @@ impl<T> BoundedQueue<T> {
             }
             inner = self.ready.wait(inner).unwrap_or_else(PoisonError::into_inner);
         }
+    }
+
+    /// Like [`pop`](BoundedQueue::pop), but gives up after `timeout`.
+    pub fn pop_timeout(&self, timeout: Duration) -> Pop<T> {
+        let deadline = Instant::now() + timeout;
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if inner.closed {
+                return Pop::Closed;
+            }
+            if let Some(item) = inner.items.pop_front() {
+                return Pop::Item(item);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Pop::TimedOut;
+            }
+            inner = self
+                .ready
+                .wait_timeout(inner, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// Remove and return the oldest entry when `take(&entry)` says so; never blocks. `None` when
+    /// the queue is empty or closed, or `take` declined.
+    pub fn pop_front_if(&self, take: impl FnOnce(&T) -> bool) -> Option<T> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if inner.closed || !inner.items.front().is_some_and(take) {
+            return None;
+        }
+        inner.items.pop_front()
     }
 
     /// Discard pending entries and wake the consumer; later pushes are rejected.
@@ -199,6 +241,29 @@ impl UtteranceStore {
         let entry = self.entries.remove(idx)?;
         self.total_samples -= entry.samples.len();
         Some(entry.samples)
+    }
+
+    /// Remove and return the utterance `seq` of whichever capture holds it (for stores whose
+    /// `seq`s are unique across captures, such as the speech pipeline's segment ids).
+    pub fn take_seq(&mut self, seq: u64) -> Option<Vec<f32>> {
+        let idx = self.entries.iter().position(|e| e.seq == seq)?;
+        let entry = self.entries.remove(idx)?;
+        self.total_samples -= entry.samples.len();
+        Some(entry.samples)
+    }
+
+    /// Drop the utterances of every capture id below `capture_id` (the captures that ended),
+    /// keeping those of newer captures.
+    pub fn clear_before(&mut self, capture_id: u64) {
+        let mut removed = 0;
+        self.entries.retain(|e| {
+            let keep = e.capture_id >= capture_id;
+            if !keep {
+                removed += e.samples.len();
+            }
+            keep
+        });
+        self.total_samples -= removed;
     }
 
     /// Drop everything (capture stopped or replaced).
@@ -281,6 +346,38 @@ mod tests {
     }
 
     #[test]
+    fn pop_timeout_and_conditional_pop() {
+        let q = Arc::new(BoundedQueue::new(4));
+        assert_eq!(q.pop_timeout(Duration::from_millis(10)), Pop::TimedOut);
+        q.push(1);
+        q.push(2);
+        assert_eq!(q.pop_front_if(|&v| v == 2), None, "front is 1");
+        assert_eq!(q.pop_front_if(|&v| v == 1), Some(1));
+        assert_eq!(q.pop_timeout(Duration::from_millis(10)), Pop::Item(2));
+        assert_eq!(q.pop_front_if(|_| true), None, "empty");
+        // A waiting pop_timeout wakes for a push and for close.
+        let producer = {
+            let q = Arc::clone(&q);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                q.push(3);
+            })
+        };
+        assert_eq!(q.pop_timeout(Duration::from_secs(5)), Pop::Item(3));
+        producer.join().unwrap();
+        let closer = {
+            let q = Arc::clone(&q);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                q.close();
+            })
+        };
+        assert_eq!(q.pop_timeout(Duration::from_secs(5)), Pop::Closed);
+        closer.join().unwrap();
+        assert_eq!(q.pop_front_if(|_| true), None, "closed");
+    }
+
+    #[test]
     fn utterance_store_is_take_once_and_bounded() {
         let mut s = UtteranceStore::new(3, 100);
         assert!(s.insert(1, 0, vec![0.0; 10]).is_empty());
@@ -294,6 +391,24 @@ mod tests {
         assert_eq!(s.insert(1, 4, vec![0.0; 150]), vec![(1, 1), (1, 3)]);
         assert_eq!(s.len(), 1);
         assert_eq!(s.take(1, 4).map(|v| v.len()), Some(150));
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn utterance_store_clears_only_ended_captures() {
+        let mut s = UtteranceStore::new(8, 100);
+        s.insert(1, 10, vec![0.0; 30]);
+        s.insert(2, 11, vec![0.0; 30]);
+        s.insert(3, 12, vec![0.0; 30]);
+        // A stop that ended epochs below 3 keeps the newer session's utterance.
+        s.clear_before(3);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.take_seq(10), None);
+        // The sample total follows the removals: 70 more samples fit without an eviction.
+        assert!(s.insert(3, 13, vec![0.0; 70]).is_empty());
+        assert_eq!(s.take_seq(12).map(|v| v.len()), Some(30), "found by seq whatever the capture");
+        assert_eq!(s.take_seq(12), None, "taken once");
+        assert_eq!(s.take_seq(13).map(|v| v.len()), Some(70));
         assert!(s.is_empty());
     }
 

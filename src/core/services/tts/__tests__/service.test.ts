@@ -9,7 +9,9 @@ vi.mock("react-toastify", () => ({
 }));
 vi.mock("../../systemLog", () => ({ pushSystemLog: vi.fn() }));
 vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => false) }));
 
+import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
 import { pushSystemLog } from "../../systemLog";
 import Service_TTS, { TTSBackendMap } from "../index";
@@ -271,6 +273,86 @@ describe("Service_TTS keyboard input dedupe", () => {
     const { service } = makeService({ source: TextEventSource.stt, inputField: false });
     await service.init();
     expect(textfieldSubs()).toHaveLength(0);
+    service.dispose();
+  });
+});
+
+describe("Service_TTS desktop default (P2)", () => {
+  function makeDesktop(overrides: Partial<TTS_State> = {}, root: { onboardingComplete: boolean; isApp?: boolean } = { onboardingComplete: true }) {
+    const { service, data } = makeService(overrides);
+    const w = window as unknown as { Config: unknown; ApiServer: Record<string, unknown> };
+    w.Config = { isApp: () => root.isApp !== false };
+    const state = w.ApiServer.state as Record<string, unknown>;
+    state.onboardingComplete = root.onboardingComplete;
+    w.ApiServer.patchService = (_key: "tts", fn: (s: { data: TTS_State }) => void) => fn({ data });
+    w.ApiServer.changeTab = vi.fn();
+    return { service, data, changeTab: w.ApiServer.changeTab as ReturnType<typeof vi.fn> };
+  }
+
+  beforeEach(() => {
+    vi.mocked(ask).mockClear();
+  });
+
+  it("starts a new install on the local Kokoro voice without asking", async () => {
+    const { service, data } = makeDesktop({}, { onboardingComplete: false });
+    await service.init();
+    expect(data.backend).toBe(TTS_Backends.localNeural);
+    expect(data.desktopDefaultMigrated).toBe(true);
+    await service.runStartupOffer();
+    expect(ask).not.toHaveBeenCalled();
+    expect(FakeBackend.instances).toHaveLength(0);
+    service.dispose();
+  });
+
+  it("offers Kokoro once to an existing Web Speech profile and switches on yes", async () => {
+    const { service, data, changeTab } = makeDesktop();
+    await service.init();
+    expect(data.backend).toBe(TTS_Backends.native);
+    expect(data.desktopDefaultMigrated).toBe(true);
+    vi.mocked(ask).mockResolvedValueOnce(true);
+    await service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(data.localOfferShown).toBe(true);
+    expect(data.backend).toBe(TTS_Backends.localNeural);
+    expect(changeTab).toHaveBeenCalledWith({ tab: "tts" });
+    // Once per launch, and never again on later launches.
+    await service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  it("keeps the backend when the offer is declined, and never asks again", async () => {
+    const { service, data } = makeDesktop({ backend: TTS_Backends.windows });
+    await service.init();
+    await service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(data.backend).toBe(TTS_Backends.windows);
+    expect(data.localOfferShown).toBe(true);
+    const again = makeDesktop({ ...data });
+    await again.service.init();
+    await again.service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+    service.dispose();
+    again.service.dispose();
+  });
+
+  it("stops a running session before switching", async () => {
+    const { service, data } = makeDesktop();
+    await service.init();
+    service.start();
+    last().receiver.onStart();
+    vi.mocked(ask).mockResolvedValueOnce(true);
+    await service.runStartupOffer();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(data.backend).toBe(TTS_Backends.localNeural);
+    service.dispose();
+  });
+
+  it("does nothing in the web build", async () => {
+    const { service, data } = makeDesktop({}, { onboardingComplete: false, isApp: false });
+    await service.init();
+    expect(data.backend).toBe(TTS_Backends.native);
+    expect(data.desktopDefaultMigrated).toBe(false);
     service.dispose();
   });
 });

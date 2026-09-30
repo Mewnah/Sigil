@@ -30,3 +30,13 @@ Changes made for Sigil (2026-09-28, P1-S0a):
   downloads one file at a time with Sigil's HTTP client into the app-data folder.
 - The `ort` dependency follows Sigil's own version instead of kittentts' `=2.0.0-rc.11` pin, and
   `hf-hub` is no longer a dependency.
+
+Changes made for Sigil (2026-09-29, P2-H):
+- model.rs: `load_with_voices` loads the model with voices given as style matrices (a sherpa-onnx
+  Kitten package's `voices.bin`) instead of an NPZ file; `resolves_voice` and `voice_names` list
+  the names a user can pick.
+- hub.rs: Hub files are fetched through Sigil's model store.
+- preprocess.rs: negative numbers use `unsigned_abs` (`-i64::MIN` overflowed: a panic in debug
+  builds, endless recursion in release builds), the scale words go up to "quintillion" so every
+  u64 is read in full, longer integers are read digit by digit, and a scientific-notation exponent
+  is read from its digits instead of `i64::abs`.

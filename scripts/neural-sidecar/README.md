@@ -19,11 +19,28 @@ In Sigil, set voice changer to **Another program over WebSocket** and use `ws://
 
 ## TTS — HTTP (`tts_sidecar.py`)
 
-- **Default URL:** `http://127.0.0.1:8766` (Sigil default endpoint matches this)
-- **Run:** `python tts_sidecar.py` — **Python stdlib only** (no `pip install` needed)
-- **POST** `/speech` with JSON `{"text":"Hello","voice":"default"}` returns a short WAV tone for pipeline testing.
+A stand-in speech server for testing Sigil's TTS pipeline without any ML dependencies: it answers
+with a tone per word, generated word by word so streaming, stop / skip and routing can be heard.
 
-In Sigil, choose TTS **Speech from your HTTP server** and set the endpoint if needed.
+- **Run:** `python tts_sidecar.py` — **Python stdlib only** (no `pip install` needed).
+  Options: `--port 8766`, `--rate 24000` (sample rate), `--chunk-delay 0.05` (simulated generation
+  time per word; try `0.2` to hear streaming), `--host 127.0.0.1`.
+- **Binds `127.0.0.1` by default** (this PC only). It has no authentication, so binding another
+  address (for example `--host 0.0.0.0`) prints a warning; only do that on a network you trust.
+- **Sigil "HTTP server" backend** (default URL `http://127.0.0.1:8766`):
+  `GET /health`, and `POST /speech` with JSON `{"text":"Hello","voice":"default","stream":true}`.
+  Sigil always asks for `"stream": true`: the answer is a chunked WAV whose header declares
+  placeholder sizes (`0xFFFFFFFF`), followed by the audio as it is generated, so playback starts
+  after the first word. Without `stream` the server sends one complete WAV.
+- **Sigil "OpenAI-compatible (HTTP)" backend** (Custom preset, base URL `http://127.0.0.1:8766/v1`):
+  `GET /v1/models`, `GET /v1/audio/voices` (`default`, `low`, `high`), and
+  `POST /v1/audio/speech` with `{"input","voice","response_format":"pcm"|"wav","speed","stream"}`.
+  PCM is raw 16-bit little-endian mono at `--rate` (`Content-Type: audio/pcm;rate=<rate>`), so set
+  the backend's PCM sample rate to the same value.
+- Replace `synthesize_words` with your model (yield 16-bit PCM pieces as they are ready).
+- Rust check against a running server:
+  `SIGIL_TEST_OPENAI_SPEECH_URL=http://127.0.0.1:8766/v1 cargo test --manifest-path src-tauri/Cargo.toml openai_speech_live -- --ignored --nocapture`
+  (reports the time to the first audio and to the end).
 
 ## Notes
 

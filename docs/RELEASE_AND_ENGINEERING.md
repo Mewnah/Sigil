@@ -9,6 +9,7 @@ Release QA checklists, **network threat model**, **dependency audits**, **perfor
 - [Local packaged smoke (manual)](#local-packaged-smoke-manual)
 - [P0 exit matrix (speech stack stabilization)](#p0-exit-matrix-speech-stack-stabilization)
 - [P1 exit matrix (platform foundations)](#p1-exit-matrix-platform-foundations)
+- [P2 exit matrix (speech engine)](#p2-exit-matrix-speech-engine)
 - [Research §6 bug verification](#research-6-bug-verification)
 - [Network security and threat model](#network-security-and-threat-model)
 - [Dependency audit notes](#dependency-audit-notes)
@@ -53,7 +54,7 @@ Run before you cut a release candidate; update [Dependency audit notes](#depende
 3. **External STT / mic.html** — From STT inspector, open Chrome or Edge (or default browser on Linux/macOS); WebSocket pubsub connects; speech reaches the host.
 4. **Client mirror** — Open `/client` with `host`, `port`, `id` query params against the running host; canvas loads; disconnect shows a clear error.
 5. **i18n** — Switch languages; translations load from `/i18n/...` without JSON parse errors.
-6. **Neural** — ONNX TTS load path and optional sidecar (`http://127.0.0.1:8766`) if you ship those features.
+6. **Local speech** — STT **On this PC (automatic)**: Start asks before downloading, then captions arrive; TTS **Kokoro / Piper (local)**: the panel's download, **Preview**, then speech through the chosen device; optional HTTP sidecar (`scripts/neural-sidecar/tts_sidecar.py`) through **OpenAI-compatible (HTTP)**.
 7. **Second instance** — Launch a second Sigil while the first holds the port; expect the native port-unavailable dialog.
 
 See also [Manual Tauri checklist](#manual-tauri-checklist) for a broader feature pass.
@@ -68,9 +69,10 @@ Automated Playwright tests use Vite preview only; native Tauri behavior requires
 
 - [ ] `npm run tauri dev` — app window opens, no startup error overlay in `#root`.
 - [ ] **Config / network** — `plugin:web|config` loads; status/footer shows expected host/port.
-- [ ] **Whisper** — download or load model path (progress shows under the Start button, never in captions); start recording; one **final** per spoken sentence (`whisper:segment_transcript`); silence produces nothing.
+- [ ] **Whisper** — download or load model path (progress shows under the Start button and in Models & Runtimes, never in captions); start recording; one **final** per spoken sentence (`whisper:segment_transcript`); silence produces nothing.
+- [ ] **On this PC (automatic)** — fresh profile: Start asks before downloading (sizes match the route preview); downloads show progress; live partials, then one final per sentence; STT mute drops the open sentence.
 - [ ] **One STT path** — e.g. native or engine you ship; Start/Stop from bottom bar or inspector.
-- [ ] **One TTS path** — voice selected; Start; speak or trigger text event.
+- [ ] **One TTS path** — voice selected; Start; speak or trigger text event. Long text starts after its first sentence; **Skip** / **Stop speaking** on the status bar.
 - [ ] **Twitch** — `SIGIL_TWITCH_CLIENT_ID` set; Twitch console lists **loopback** URLs: **Public** → `http://localhost:17890/oauth/twitch/implicit`; **Confidential** → `http://localhost:17890/oauth/twitch/callback`; plus **Vite** `http://localhost:1420/oauth/...` if you use `pnpm dev`, and the **packaged app** `https` origin + path if flows hit the webview (see [manual/03-integrations.md](manual/03-integrations.md#oauth-redirects-and-ports)); OAuth completes; optional: IRC chat + post/receive.
 - [ ] **Discord** — webhook URL; one post with “post only when live” on and off if you use that gate.
 - [ ] **OBS** — WebSocket connect; captions only send when “Enable” is on under native captions.
@@ -112,6 +114,12 @@ Run on the **installed** or freshly built exe (`pnpm tauri build` → `src-tauri
 | Speak | One **final** per sentence after the pause that ends speech | Partials + finals |
 | Stop during load | Stop → restart immediately; no ghost status / stale events | Stop during download → restart |
 | DevTools | No CSP `worker-src` / `connect-src` (`https://asset.localhost`) errors | same |
+
+Also on the same build:
+
+- **On this PC (automatic)** — English and Japanese: consent dialog, downloads, live partials replaced by one final per sentence; Stop during a download cancels it (the next Start resumes).
+- **Groq** (real key) — captions arrive; the status line shows a rate-limit wait when you talk continuously; a bad key stops with a readable message; nothing is sent while muted.
+- **Local HTTP server on the LAN** (OpenAI-compatible, for example speaches on another PC) — transcribes (the request is sent by Rust, so the webview CSP does not apply).
 
 Optional helper: `scripts/packaged-smoke-stt.ps1` prints this checklist and launches the release exe if present.
 
@@ -185,6 +193,31 @@ Also verified at integration: `Sigil.exe --headless sysinfo` (RTX 4090 Ada 8.9, 
 6. **transcribe `vulkan` variant:** build with the Vulkan SDK and measure on an AMD/Intel GPU.
 
 **Voice-changer change checklist (from P1):** record `Sigil.exe --headless bench <spec>` before and after, and run `pwsh scripts/bench/run-perf-gate.ps1 -Baseline <dir>` on a release build: a p95 regression over 5 % blocks acceptance ([docs/benchmarks/README.md](benchmarks/README.md)).
+
+## P2 exit matrix (speech engine)
+
+Automated gates at P2 integration (2026-09-29, same dev rig): `pnpm typecheck` clean, `pnpm i18n:check` OK (227 staged keys merged, 9 removed), `pnpm test:unit` 58 files / 806 tests, `pnpm build` OK (the Azure speech SDK chunk is now only loaded on demand: no chunk imports it statically), `cargo clippy --all-targets` 0 warnings, `cargo test` 1047 passed / 0 failed / 52 ignored. Real-model and GPU runs (ignored tests, run with the dev caches): sherpa 72 passed, local TTS 87 passed, transcribe GPU tier 6 passed, Whisper through the pipeline and Smart Turn 4 + 2 passed. Reports: `bench-results/p2-exit/` (git-ignored); numbers in [docs/benchmarks/SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md).
+
+Final P2 gate after the review fixes (2026-09-29): `pnpm typecheck` clean, `pnpm i18n:check` OK (4 staged keys added, 2 removed), `pnpm test:unit` 58 files / 841 tests, `pnpm build` OK (speech SDK chunk hash unchanged), `cargo clippy --all-targets` 0 warnings, `cargo test` 1104 passed / 0 failed / 55 ignored. The fixes: the TS router mirror matches Rust again (auto `streamLanguages`, `no_cpu_fallback`, an unknown voice-changer device counts as the CPU); the pipeline enforces an auto plan's stream languages; a first pass removed by the post-filter no longer counts as a first final; `stop_pipeline` takes an optional `epoch`; the sentence's `TextEvent.lang` reaches local TTS voices.
+
+| Exit criterion | Evidence | Status |
+|---|---|---|
+| Gates green; the app starts with no runtime packs installed | Gates above. The debug `sigil.exe` has 38 load-time imports, all in `scripts/release/expected-imports.txt` (no CUDA, ORT, ggml or sherpa DLL); on an empty `SIGIL_APP_DATA_DIR`, `--headless fetch --list` lists every P2 entry as not installed (exit 0) and `--headless engine-probe sherpa stt/sense-voice-small-int8` ends with "the sherpa-onnx runtime pack is not installed" (exit 1, no crash). Every speech engine answers `NotInstalled` naming its catalog id; the sherpa preload runs only when the pack is installed | Met (automated); a `pnpm tauri dev` start on a fresh profile is manual row 1 |
+| CPU-only: en gives Nemotron partials, zh SenseVoice finals, ja Qwen3-ASR-0.6B finals; the router never sends ja / zh / ko to Cohere | Shared routing fixture (56 cases) in Rust (`speech::router`) and TS (`router.test.ts`), plus the exhaustive rule test over every language × tier × PC profile. Through the real pipeline with real Silero VAD (`through_the_pipeline::real_sherpa_engines_decode_through_the_pipeline`): Nemotron en 9 partials then the final 160 ms after VAD end; SenseVoice zh final 233 ms with `lang:zh` / `emotion:neutral` tags; Qwen3-ASR-0.6B ja final 1216 ms; Parakeet Ultra de 287 ms | Met |
+| On the dev GPU, two-pass finals replace partials under the same segmentId ≤ 800 ms after VAD end for an 8 s utterance | `real_two_pass_ja_with_vram_logged` (RTX 4090, Qwen3-ASR 1.7B Q8_0 through the governor and the real two-pass queue): 199 ms and 194 ms after VAD end, same segment, revision + 1; process VRAM 384 → 3476 MiB. The TS `SegmentPublisher` publishes one final per segment (`localDriver.test.ts`) | Met |
+| Kokoro starts playing after the first sentence (≤ 400 ms on CPU); Stop cancels; every PCM backend honours the device and can route into the VC | Kokoro v1.0 on 4 threads: median RTF 0.294 (Sigil's ORT with the CPU arena, now the default; 0.315 inside sherpa-onnx). The sentence pipeline starts sentence 1 before synthesizing sentence 2 (`pipeline.test.ts`); first audio of a long first sentence 656 ms (its opening clause is about 2 s of audio), so ≤ 400 ms holds only for short opening clauses. Cancel stops a long utterance in about 0.6 s; skip / stop cut audio already in the sink ring (`tts_sink` tests). Device field honoured with tolerant names and route `device` / `voiceChanger` / `both` (`tts_sink` and `aux_feed` tests; P2-G and P2-I mocked-IPC smokes) | Met except the 400 ms target for long opening clauses (P7 decides); the real-device checks are manual rows 5–7 |
+| New installs default to `local`; native-backend users get a one-time prompt | `stt/migrate.ts` + `tts/defaults.ts` planners and `Service_STT` / `Service_TTS` tests (fresh install → `local` / `localNeural` silently; an existing native profile is asked once, no → Whisper; offers never repeat; web build untouched). Production-bundle smoke with an IPC mock: a fresh profile boots on `local` + `localNeural` with no dialog; an existing profile on Web Speech gets the STT offer, then the TTS offer, and the language carries over (`ja-JP` → `ja`) | Met |
+
+**Manual checks still open** (need the real app, devices, servers or keys):
+
+1. **Fresh profile in `pnpm tauri dev`:** onboarding offers **On this PC (automatic)** first; press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a Qwen3-ASR 0.6B final); an existing profile on Web Speech sees the two one-time offers.
+2. **Whisper with a real microphone:** the download row fills and Models & Runtimes shows `whisper/<id>` installed; captions; the STT hard mute drops the open sentence; replugging a USB microphone continues the recording.
+3. **Vosk and Groq:** Vosk English captions and mute; Groq with a real key (captions, rate-limit status, bad-key message, nothing sent while muted); an OpenAI-compatible STT server on the LAN; the Moonshine server backend with the server off shows its message.
+4. **Local voices:** Kokoro en / ja / zh, Piper ru and Kitten from the panel (download, Preview, the UI never freezes).
+5. **VOICEVOX / AivisSpeech:** a long text starts after its first sentence on the chosen device.
+6. **TTS into the voice changer:** route **Voice changer** or **Both** with the voice changer running: speech in the converted voice, the microphone ducked or muted per its setting.
+7. **Output device unplugged mid-sentence:** that sentence errors once and the next one reopens the device.
+8. **OpenAI-compatible TTS presets** against real servers (Kokoro-FastAPI, Chatterbox, vLLM-Omni, qwentts): pick the preset, **Test voice**, or `cargo test openai_speech_live -- --ignored` with `SIGIL_TEST_OPENAI_SPEECH_URL` / `_MODEL` / `_VOICE`.
 
 ---
 

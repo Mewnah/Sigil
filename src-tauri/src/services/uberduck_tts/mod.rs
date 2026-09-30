@@ -2,12 +2,24 @@
 //!
 //! - Voices: `GET /v1/voices` → `{ voices: [{ voicemodel_uuid, display_name, ... }] }`.
 //! - Speech: `POST /v1/text-to-speech { text, voice, output_format: "wav" }` → `{ audio_url, ... }`;
-//!   the clip is downloaded and played on the requested output device via the `audio` plugin, on
-//!   the blocking pool (playback blocks until the clip ends).
+//!   the clip is downloaded, decoded (WAV, or MP3 / FLAC / Ogg if the service sends those) and
+//!   pushed into the unified TTS sink (`tts_sink`) on the blocking pool; no audio crosses IPC.
+//!   - `speak_to_sink { data, utteranceId }` → [`SpeakReport`]: into the sink utterance the TS
+//!     sentence pipeline began (route, device and volume are the utterance's); stops early with
+//!     `"cancelled"` once stop / skip cancelled it, abandoning a synthesis request or download
+//!     still in flight within ~25 ms.
+//!   - `speak { data }` (legacy whole-line path): begins its own utterance on `device_name` with
+//!     `volume` and resolves once the clip is queued (the sink plays utterances in order).
 //!
 //! Timeouts: voice list 20 s; synthesis and audio download each 30 s + 100 ms per character
 //! (max 120 s). The retired pre-v1 endpoints and the `secret_key` credential are no longer used.
 
+use std::future::Future;
+use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+use rodio::Source;
 use serde::{Deserialize, Serialize};
 use tauri::{
     command,
@@ -15,7 +27,7 @@ use tauri::{
     Runtime,
 };
 
-use crate::services::audio::{play_async, RpcAudioPlayAsync};
+use crate::services::tts_sink::{self, SinkError, SinkRoute, SinkTarget, SpeakReport, UtteranceSpec, UtteranceWriter};
 use crate::services::http_client::{
     content_type, describe_api_error, describe_request_error, ensure_audio_body, http_client,
     parse_named_list, read_body_capped, tts_timeout, LIST_TIMEOUT, MAX_AUDIO_BYTES,
@@ -61,6 +73,21 @@ struct UberduckRequest {
     voicemodel_uuid: String,
     volume: f32,
 }
+
+/// `speak_to_sink` argument: no device or volume (they belong to the sink utterance).
+#[derive(Deserialize, Debug)]
+struct UberduckSinkRequest {
+    auth: UberDuckAuth,
+    text: String,
+    voicemodel_uuid: String,
+}
+
+/// Pushed per sink call (seconds), so a cancel is noticed quickly.
+const PUSH_SECONDS: usize = 1;
+/// How often a request in flight checks whether its sink utterance was cancelled.
+const CANCEL_POLL: Duration = Duration::from_millis(25);
+/// Ids of the legacy `speak` utterances.
+static NEXT_LEGACY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize, Debug)]
 struct V1SpeechRequest<'a> {
@@ -123,20 +150,25 @@ async fn get_voices(auth: UberDuckAuth) -> Result<Vec<Voice>, String> {
     Ok(parse_voices(&body))
 }
 
-#[command]
-async fn speak(data: UberduckRequest) -> Result<(), String> {
-    let text = data.text.trim();
+/// Checked text and voice of a speech request (`None`: nothing to say).
+fn checked_request<'a>(text: &'a str, voice: &'a str) -> Result<Option<(&'a str, &'a str)>, String> {
+    let text = text.trim();
     if text.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(format!("Uberduck accepts at most {MAX_TEXT_CHARS} characters per request."));
     }
-    let voice = data.voicemodel_uuid.trim();
+    let voice = voice.trim();
     if voice.is_empty() {
         return Err("Choose an Uberduck voice first.".into());
     }
-    let key = data.auth.bearer()?;
+    Ok(Some((text, voice)))
+}
+
+/// Synthesize `text` and download the clip (encoded audio).
+async fn fetch_audio(auth: &UberDuckAuth, text: &str, voice: &str) -> Result<Vec<u8>, String> {
+    let key = auth.bearer()?;
     let timeout = tts_timeout(text);
 
     let what = "Uberduck speech";
@@ -173,30 +205,134 @@ async fn speak(data: UberduckRequest) -> Result<(), String> {
     let ct = content_type(&resp);
     let audio = read_body_capped(what, resp, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT).await?;
     ensure_audio_body(what, ct.as_deref(), &audio)?;
-
-    let clip = RpcAudioPlayAsync {
-        device_name: data.device_name,
-        data: audio,
-        volume: if data.volume.is_finite() { data.volume.max(0.0) } else { 1.0 },
-        rate: 1.0,
-    };
-    // `play_async` waits for the clip to end with rodio's blocking `sleep_until_end`, so it runs on
-    // the blocking pool instead of holding a runtime worker for the whole clip.
-    off_runtime(move || futures::executor::block_on(play_async(clip))).await
+    Ok(audio)
 }
 
-/// Run blocking work (audio playback) on the blocking thread pool and await its result.
+/// Decode a downloaded clip (WAV / MP3 / FLAC / Ogg) into interleaved f32, its rate and channels.
+fn decode_audio(bytes: Vec<u8>) -> Result<(Vec<f32>, u32, u16), String> {
+    let decoder =
+        rodio::Decoder::new(Cursor::new(bytes)).map_err(|e| format!("Uberduck audio cannot be decoded: {e}"))?;
+    let rate = decoder.sample_rate();
+    let channels = decoder.channels().max(1);
+    let samples: Vec<f32> = decoder.map(|s| f32::from(s) / 32_768.0).collect();
+    Ok((samples, rate, channels))
+}
+
+fn elapsed_ms(since: Instant) -> u32 {
+    since.elapsed().as_millis().min(u128::from(u32::MAX)) as u32
+}
+
+/// Push a whole clip into the sink in ~1 s pieces (so a cancel stops it early).
+fn push_clip(
+    writer: &mut UtteranceWriter,
+    samples: &[f32],
+    rate: u32,
+    channels: u16,
+    started: Instant,
+) -> Result<SpeakReport, SinkError> {
+    let ch = usize::from(channels.max(1));
+    let frames = samples.len() / ch;
+    let step = (rate as usize * PUSH_SECONDS).max(1) * ch;
+    let mut first_audio_ms = 0;
+    for (i, part) in samples[..frames * ch].chunks(step).enumerate() {
+        writer.push(part, rate, channels)?;
+        if i == 0 {
+            first_audio_ms = elapsed_ms(started);
+        }
+    }
+    Ok(SpeakReport {
+        sample_rate: rate,
+        frames: frames as u64,
+        first_audio_ms,
+        total_ms: elapsed_ms(started),
+    })
+}
+
+/// Await `fut`, giving up (`None`, dropping it: an HTTP request in flight is aborted) as soon as
+/// `cancelled()` returns true; checked every [`CANCEL_POLL`].
+async fn unless_cancelled<F: Future>(fut: F, cancelled: impl Fn() -> bool) -> Option<F::Output> {
+    tokio::pin!(fut);
+    loop {
+        if cancelled() {
+            return None;
+        }
+        tokio::select! {
+            biased;
+            out = &mut fut => return Some(out),
+            _ = tokio::time::sleep(CANCEL_POLL) => {}
+        }
+    }
+}
+
+/// Speak one sentence into the sink utterance `utterance_id` (begun by the TS sentence pipeline).
+/// Stop / skip cancel the utterance: the synthesis request or download in flight is abandoned at
+/// once (`"cancelled"`), so the pipeline's next sentence does not wait for it.
+#[command]
+async fn speak_to_sink(data: UberduckSinkRequest, utterance_id: String) -> Result<SpeakReport, String> {
+    let started = Instant::now();
+    let mut writer = tts_sink::writer(&utterance_id)?;
+    let Some((text, voice)) = checked_request(&data.text, &data.voicemodel_uuid)? else {
+        return Ok(SpeakReport::default());
+    };
+    let Some(audio) = unless_cancelled(fetch_audio(&data.auth, text, voice), || writer.is_cancelled()).await else {
+        return Err(SinkError::Cancelled.into());
+    };
+    let audio = audio?;
+    if writer.is_cancelled() {
+        return Err(SinkError::Cancelled.into());
+    }
+    off_runtime(move || {
+        let (samples, rate, channels) = decode_audio(audio)?;
+        push_clip(&mut writer, &samples, rate, channels, started).map_err(String::from)
+    })
+    .await
+}
+
+/// Legacy whole-line path: its own sink utterance on `device_name`.
+#[command]
+async fn speak(data: UberduckRequest) -> Result<(), String> {
+    let Some((text, voice)) = checked_request(&data.text, &data.voicemodel_uuid)? else {
+        return Ok(());
+    };
+    let audio = fetch_audio(&data.auth, text, voice).await?;
+    let id = format!("uberduck-{}", NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed));
+    let volume = if data.volume.is_finite() { data.volume.clamp(0.0, 2.0) } else { 1.0 };
+    tts_sink::begin(UtteranceSpec {
+        id: id.clone(),
+        target: SinkTarget {
+            route: SinkRoute::Device,
+            device: data.device_name,
+            volume,
+        },
+    })?;
+    let result = off_runtime({
+        let id = id.clone();
+        move || {
+            let (samples, rate, channels) = decode_audio(audio)?;
+            let mut writer = tts_sink::writer(&id)?;
+            push_clip(&mut writer, &samples, rate, channels, Instant::now())?;
+            tts_sink::end(&id).map_err(String::from)
+        }
+    })
+    .await;
+    if result.is_err() {
+        tts_sink::cancel(Some(&id));
+    }
+    result
+}
+
+/// Run blocking work (decoding, pushes that wait for room) on the blocking thread pool.
 async fn off_runtime<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(job)
         .await
-        .map_err(|e| format!("Uberduck playback failed: {e}"))?
+        .map_err(|e| format!("Uberduck playback task failed: {e}"))?
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("uberduck-tts")
-        .invoke_handler(tauri::generate_handler![speak, get_voices])
+        .invoke_handler(tauri::generate_handler![speak, speak_to_sink, get_voices])
         .build()
 }
 
@@ -262,9 +398,68 @@ mod tests {
         assert_eq!(err, "no such device");
     }
 
+    /// Review finding: a cancelled sentence waited for both HTTP requests (up to 2 x 54 s) before
+    /// it settled, holding the pipeline's synthesis slot. The request is now abandoned at once.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cancel_abandons_the_request_in_flight() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            flag.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        let out = unless_cancelled(std::future::pending::<Result<Vec<u8>, String>>(), || cancelled.load(Ordering::Acquire)).await;
+        assert!(out.is_none());
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        // A request that finishes first is returned; one cancelled before it starts never runs.
+        let done = unless_cancelled(async { 7 }, || false).await;
+        assert_eq!(done, Some(7));
+        let ran = AtomicBool::new(false);
+        let never = unless_cancelled(async { ran.store(true, Ordering::Release) }, || true).await;
+        assert_eq!(never, None);
+        assert!(!ran.load(Ordering::Acquire));
+    }
+
     #[test]
     fn audio_url_rejects_non_http_schemes() {
         assert!(audio_url("file:///C:/Windows/win.ini").is_err());
         assert!(audio_url("not a url").is_err());
+    }
+
+    #[test]
+    fn requests_are_checked_before_any_network_call() {
+        assert_eq!(checked_request("  ", "v"), Ok(None));
+        assert_eq!(checked_request(" hi ", " v "), Ok(Some(("hi", "v"))));
+        assert!(checked_request("hi", " ").unwrap_err().contains("voice"));
+        let long = "a".repeat(MAX_TEXT_CHARS + 1);
+        assert!(checked_request(&long, "v").unwrap_err().contains("characters"));
+    }
+
+    /// Downloaded WAV clips decode to f32 with their own rate and channel count (the sink converts
+    /// them to the device / voice changer); garbage is a readable error.
+    #[test]
+    fn downloaded_clips_decode_to_pcm() {
+        let mut cur = Cursor::new(Vec::new());
+        {
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate: 22_050,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut w = hound::WavWriter::new(&mut cur, spec).unwrap();
+            for s in [16_384i16, -16_384, 8_192, 0] {
+                w.write_sample(s).unwrap();
+            }
+            w.finalize().unwrap();
+        }
+        let (samples, rate, channels) = decode_audio(cur.into_inner()).unwrap();
+        assert_eq!((rate, channels), (22_050, 2));
+        assert_eq!(samples, vec![0.5, -0.5, 0.25, 0.0]);
+        assert!(decode_audio(b"<html>not audio</html>".to_vec()).unwrap_err().contains("cannot be decoded"));
     }
 }

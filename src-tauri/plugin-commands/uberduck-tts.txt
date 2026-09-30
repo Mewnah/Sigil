@@ -2,4 +2,5 @@
 # Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
 # with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
 speak
+speak_to_sink
 get_voices

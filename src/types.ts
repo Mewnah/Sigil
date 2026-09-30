@@ -35,7 +35,24 @@ export const TextEventSchema = z.object({
   value: z.string().default(""),
   emotes: z.record(z.number().or(z.string()), z.string()).default({}),
   textFieldType: z.enum(["textField", "twitchChat", "kickChat"]).nullish(),
-  id: z.number().optional()
+  id: z.number().optional(),
+  /*
+   * Optional revision fields (P2-S0). Set by the speech-pipeline STT driver; every consumer must
+   * treat them as optional (older sources and peers never send them). Malformed values from peers
+   * are dropped (`.catch(undefined)`) instead of rejecting the whole event.
+   */
+  /**
+   * Stable id of one spoken segment (`<pipelineId>:<epoch>:<segmentId>` from `speech:*` events):
+   * interims and finals with the same `segmentId` describe the same speech, the higher `revision`
+   * replacing the lower (two-pass finals replace partials).
+   */
+  segmentId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional().catch(undefined),
+  /** Increases with every update of a segment (partials, first final, two-pass final). */
+  revision: z.number().int().min(0).max(1_000_000).optional().catch(undefined),
+  /** Lower-case BCP-47 base language of the text (`en`, `ja`, `yue`, ...), when the engine knows it. */
+  lang: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/).optional().catch(undefined),
+  /** Smart Turn: the speaker probably finished their turn after this final (commit hint only). */
+  turnEnd: z.boolean().optional().catch(undefined),
 });
 
 export type TextEvent = z.infer<typeof TextEventSchema>;
@@ -138,11 +155,14 @@ export interface RustWhisperSpeechStart {
   start_ms: number;
 }
 
-/** Payload of `whisper:utterance_dropped`: the decoder fell behind and skipped the oldest waiting utterance. */
+/**
+ * Payload of `whisper:utterance_dropped`: the decoder fell behind and skipped a waiting utterance (`backlog`: the
+ * oldest one past the backlog cap; `latency_budget`: it waited longer than the latency budget, 20 s by default).
+ */
 export interface RustWhisperUtteranceDropped {
   seq: number;
   audio_ms: number;
-  reason: "backlog" | (string & {});
+  reason: "backlog" | "latency_budget" | (string & {});
 }
 
 /** Payload of `whisper:capture_error`: the input device failed and the recording ended. */
@@ -505,4 +525,348 @@ export interface RustAudioStreamEvent {
   epoch: number;
   /** Error text (stream_error) or null. */
   message: string | null;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * P2 speech engine contracts (P2-S0). Change only through an INTEGRATE step, together with the Rust
+ * side named in each comment. Wire names are camelCase; Rust structs may gain fields, so readers
+ * treat unknown fields as absent.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Rust `speech::engine_api::EngineKind`. */
+export type RustSpeechEngineKind = "whisper" | "http" | "sherpa-online" | "sherpa-offline" | "transcribe";
+
+/**
+ * Rust `speech::engine_api::EngineSpec`: one engine to create. `options` may carry secrets (the HTTP
+ * engine's `apiKey`): never log it. Options per engine (see docs/DEVELOPER_GUIDE.md → Speech stack internals):
+ * - `http`: `preset` ("openai" | "groq" | "moonshine"), `baseUrl`, `model`, `apiKey` (sent only in the
+ *   Authorization header), `language`, `prompt`.
+ * - `whisper`: `noSpeechThreshold`, `preset` ("anime-whisper" for the Japanese bring-your-own preset).
+ * - `sherpa-online` / `sherpa-offline`: `language`, `hotwords`, `hotwordsScore`, `prompt`, `decoding`,
+ *   `maxActivePaths`, `maxNewTokens`, `useItn`, `tailPaddingMs`.
+ * - `transcribe`: `language`, `cpuFallback`, `minFreeVramMb`, `appendOnly`, `isolation` ("inProcess" | "worker"),
+ *   `workerMemoryLimitMb`, and the decoder knobs listed in the developer guide.
+ */
+export interface RustSpeechEngineSpec {
+  engine: RustSpeechEngineKind;
+  /** Model-store catalog id (`stt/...`, `whisper/<id>`) or an absolute path (bring your own); "" for HTTP. */
+  model?: string;
+  /** Inference threads; null / omitted = engine default. */
+  threads?: number | null;
+  /** Runtime variant to force (`cpu`, `cpu-avx2`, `cpu-avx512`, `vulkan`, `cuda13`). */
+  variant?: string | null;
+  /** Engine-specific options. */
+  options?: Record<string, unknown> | null;
+}
+
+/** Rust `speech::engine_api::Tier`. */
+export type RustSpeechTier = "auto" | "cpu" | "gpu";
+
+/** Rust `speech::engine_api::RouteRequest` (argument `request` of `plugin:speech|preview_route`). */
+export interface RustSpeechRouteRequest {
+  /** "auto" (spoken language ID) or a language code. */
+  language?: string;
+  tier?: RustSpeechTier;
+  /** Re-decode each closed utterance with the final model (default true). */
+  twoPass?: boolean;
+}
+
+/** Rust `speech::engine_api::RoutePlan` (result of `plugin:speech|preview_route`). */
+export interface RustSpeechRoutePlan {
+  language: string;
+  tier: RustSpeechTier;
+  streaming: RustSpeechEngineSpec | null;
+  /** Utterance engine (finals; with `streaming` it is the two-pass re-decode). */
+  final: RustSpeechEngineSpec | null;
+  /** CPU engine promoted when a GPU `final` fails. */
+  fallback: RustSpeechEngineSpec | null;
+  languageId: RustSpeechEngineSpec | null;
+  /** Every catalog id the plan needs (for `<ModelRequirement ids>`). */
+  models: string[];
+  /** Not installed yet. */
+  missing: string[];
+  vramMb: number;
+  /** Machine codes explaining the choice. */
+  notes: string[];
+}
+
+/**
+ * Rust `speech::engine_api::PipelineConfig` (argument `config` of `plugin:speech|start_pipeline`). Every
+ * field is optional; Rust fills defaults. `vad` uses the snake_case {@link RustVadConfig}.
+ */
+export interface RustSpeechPipelineConfig {
+  /** "mic" (Service_STT) or "loopback" (other players, P6). */
+  pipelineId?: string;
+  /** Capture source: "" = default microphone, a device name, or `loopback:default` / `loopback:<output>`. */
+  source?: string;
+  vad?: RustVadConfig;
+  language?: string;
+  route?: RustSpeechRouteRequest;
+  /** Explicit engines (legacy backends); bypass the router. */
+  streaming?: RustSpeechEngineSpec | null;
+  final?: RustSpeechEngineSpec | null;
+  smartTurn?: boolean;
+  hotwords?: string[];
+  prompt?: string;
+  hallucinationFilter?: boolean;
+  latencyBudgetMs?: number;
+  maxBacklog?: number;
+  /** Keep closed-utterance PCM for `plugin:speech|take_pipeline_utterance`. */
+  retainPcm?: boolean;
+  /** Voice detection only: never start an engine (no router, no explicit engines). */
+  captureOnly?: boolean;
+}
+
+/** Rust `speech::engine_api::EngineCaps`. */
+export interface RustSpeechEngineCaps {
+  streaming: boolean;
+  utterance: boolean;
+  languages: string[];
+  needsLanguage: boolean;
+  detectsLanguage: boolean;
+  hotwords: boolean;
+  prompt: boolean;
+  tags: boolean;
+}
+
+/** Rust `speech::engine_api::EngineInfo`. */
+export interface RustSpeechEngineInfo {
+  kind: RustSpeechEngineKind;
+  model: string;
+  runtime: string;
+  /** "cpu" | "cuda" | "vulkan" | "directml" | "remote". */
+  device: string;
+  caps: RustSpeechEngineCaps;
+  vramMb: number;
+  fallbackReason: string | null;
+}
+
+/** Rust `speech::events::SpeechState`. */
+export type RustSpeechState = "starting" | "loading" | "listening" | "stopped" | "error";
+
+/** Result of `plugin:speech|start_pipeline` (Rust `speech::pipeline::PipelineStarted`). */
+export interface RustSpeechPipelineStarted {
+  pipelineId: string;
+  /** Every event of this session carries this epoch; drop others. */
+  epoch: number;
+  plan: RustSpeechRoutePlan;
+}
+
+/** Arguments of `plugin:speech|stop_pipeline` (Rust `speech::pipeline::stop_pipeline`). */
+export interface RustSpeechStopPipelineArgs {
+  pipelineId: string;
+  /**
+   * Stop only the session of this epoch, while it is still the key's current one; starts queued behind it are never
+   * cancelled (omit it to stop whatever runs and every start issued before the stop).
+   */
+  epoch?: number;
+}
+
+/** Row of `plugin:speech|get_pipeline_status` (Rust `speech::pipeline::PipelineStatus`). */
+export interface RustSpeechPipelineStatus {
+  pipelineId: string;
+  epoch: number;
+  state: RustSpeechState;
+  source: string;
+  streaming: RustSpeechEngineInfo | null;
+  final: RustSpeechEngineInfo | null;
+  backlog: number;
+  dropped: number;
+}
+
+/** Common envelope of every `speech:*` event: drop payloads whose pair is not the running session. */
+export interface RustSpeechEnvelope {
+  pipelineId: string;
+  epoch: number;
+}
+
+/** Payload of `speech:partial` (Rust `speech::events::SpeechPartial`). */
+export interface RustSpeechPartial extends RustSpeechEnvelope {
+  segmentId: number;
+  /** Increases with every partial / final of the segment; the highest wins. */
+  revision: number;
+  text: string;
+  lang: string | null;
+}
+
+/** Payload of `speech:final` (Rust `speech::events::SpeechFinal`). */
+export interface RustSpeechFinal extends RustSpeechEnvelope {
+  segmentId: number;
+  revision: number;
+  text: string;
+  lang: string | null;
+  /** `<kind>:<value>` tags: `emotion:*`, `event:*`, `lang:*` (ignore unknown kinds). */
+  tags: string[];
+  /** "second" = two-pass re-decode replacing the first final. */
+  pass: "first" | "second";
+  engine: RustSpeechEngineKind | (string & {});
+  model: string;
+  startMs: number;
+  endMs: number;
+  forced: boolean;
+  /** VAD end → emit. */
+  latencyMs: number;
+  /** Smart Turn verdict when known before this final (copy to `TextEvent.turnEnd`); null = not evaluated. */
+  turnEnd: boolean | null;
+}
+
+/** Payload of `speech:status` (Rust `speech::events::SpeechStatus`): UI only, never published as text. */
+export interface RustSpeechStatus extends RustSpeechEnvelope {
+  state: RustSpeechState;
+  /** Machine code (Rust `speech::events::codes`): localize known codes, else show `detail`. */
+  code: string;
+  detail: string;
+  progress: number | null;
+  level: "info" | "warning" | "error";
+  modelId: string | null;
+  engine: string | null;
+  device: string | null;
+}
+
+/**
+ * Why a closed utterance never got a final (`speech:utterance` kind `dropped`). With an engine, every closed
+ * utterance ends with at least one final or exactly one `dropped`; `merged` means the previous segment's final
+ * carries this utterance's text (merge on backlog).
+ */
+export type RustSpeechDropReason =
+  | "backlog"
+  | "latency_budget"
+  | "muted"
+  | "no_speech"
+  | "merged"
+  | "engine_error"
+  | "rate_limited"
+  | "stream_skipped"
+  | "queue_full"
+  | (string & {});
+
+/** Payload of `speech:utterance` (Rust `speech::events::SpeechUtterance`). */
+export type RustSpeechUtterance =
+  | (RustSpeechEnvelope & { kind: "speech_start"; segmentId: number; startMs: number })
+  | (RustSpeechEnvelope & { kind: "utterance"; segmentId: number; startMs: number; endMs: number; samples: number; forced: boolean })
+  | (RustSpeechEnvelope & { kind: "dropped"; segmentId: number; reason: RustSpeechDropReason });
+
+/** Payload of `speech:turn_end` (Rust `speech::events::SpeechTurnEnd`): commit hint only. */
+export interface RustSpeechTurnEnd extends RustSpeechEnvelope {
+  segmentId: number;
+  probability: number;
+  lang: string | null;
+}
+
+/** Tauri events of the `speech` plugin (Rust `speech::events::*_EVENT`). */
+export const SPEECH_EVENTS = {
+  partial: "speech:partial",
+  final: "speech:final",
+  status: "speech:status",
+  utterance: "speech:utterance",
+  turnEnd: "speech:turn_end",
+} as const;
+
+/** Rust `tts_sink::SinkRoute`: where synthesized speech plays. */
+export type RustTtsSinkRoute = "device" | "voiceChanger" | "both";
+
+/** Rust `tts_sink::SinkTarget`. */
+export interface RustTtsSinkTarget {
+  route: RustTtsSinkRoute;
+  /** Output device (cpal name from `plugin:audio|list_output_devices`); "" = system default. */
+  device: string;
+  /** Linear gain 0..2. */
+  volume: number;
+}
+
+/** Argument `spec` of `plugin:tts-sink|begin_utterance` (Rust `tts_sink::UtteranceSpec`). */
+export interface RustTtsUtteranceSpec {
+  id: string;
+  target?: Partial<RustTtsSinkTarget>;
+}
+
+/** Rust `tts_sink::UtteranceState`. */
+export type RustTtsUtteranceState = "queued" | "playing" | "done" | "cancelled" | "error";
+
+/** Payload of `tts_sink:utterance` (Rust `tts_sink::UtteranceEvent`). */
+export interface RustTtsSinkUtteranceEvent {
+  id: string;
+  state: RustTtsUtteranceState;
+  error: string | null;
+  playedMs: number;
+}
+
+/** Result of `plugin:tts-sink|get_sink_status` and payload of `tts_sink:state` (Rust `tts_sink::SinkStatus`). */
+export interface RustTtsSinkStatus {
+  playing: string | null;
+  queued: string[];
+  queuedMs: number;
+  devices: string[];
+}
+
+/** Result of engines that speak into the sink (Rust `tts_sink::SpeakReport`). */
+export interface RustTtsSpeakReport {
+  sampleRate: number;
+  frames: number;
+  firstAudioMs: number;
+  totalMs: number;
+}
+
+/** Tauri events of the `tts-sink` plugin (Rust `tts_sink::STATE_EVENT` / `UTTERANCE_EVENT`). */
+export const TTS_SINK_EVENTS = {
+  state: "tts_sink:state",
+  utterance: "tts_sink:utterance",
+} as const;
+
+/**
+ * Headers of `plugin:tts-sink|push_pcm` (Rust `tts_sink::HEADER_*`). Push little-endian f32 PCM with
+ * `invoke("plugin:tts-sink|push_pcm", new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength), { headers })`.
+ */
+export const TTS_SINK_HEADERS = {
+  utterance: "x-sigil-utterance",
+  sampleRate: "x-sigil-sample-rate",
+  channels: "x-sigil-channels",
+} as const;
+
+/** Argument `request` of `plugin:local-tts|speak_local_tts` / `synthesize_local_tts` (Rust `local_tts::commands::LocalTtsRequest`). */
+export interface RustLocalTtsRequest {
+  /** Catalog id (`tts/...`) or a local package folder. */
+  model: string;
+  voice: string;
+  speed?: number;
+  language?: string | null;
+  text: string;
+  threads?: number | null;
+}
+
+/** Rust `local_tts::commands::LocalTtsVoice`. */
+export interface RustLocalTtsVoice {
+  id: string;
+  name: string;
+  language: string | null;
+}
+
+/** Row of `plugin:local-tts|list_local_tts_models` (Rust `local_tts::commands::LocalTtsModelInfo`). */
+export interface RustLocalTtsModelInfo {
+  id: string;
+  family: "kokoro" | "piper" | "kitten" | (string & {});
+  title: string;
+  languages: string[];
+  voices: RustLocalTtsVoice[];
+  sampleRate: number;
+  installed: boolean;
+}
+
+/** Argument `request` of `plugin:openai-speech|openai_speech_speak` (Rust `openai_speech::OpenAiSpeechRequest`). */
+export interface RustOpenAiSpeechRequest {
+  /** Base URL including the API prefix, e.g. `http://127.0.0.1:8880/v1`. */
+  baseUrl: string;
+  /** Sent only as a Bearer header; "" = none. */
+  apiKey?: string;
+  model?: string;
+  input: string;
+  voice?: string;
+  responseFormat?: "pcm" | "wav";
+  speed?: number;
+  stream?: boolean;
+  /** Sample rate of raw `pcm` responses (default 24000). */
+  pcmSampleRate?: number;
+  /** Extra JSON members merged into the request body. */
+  extra?: Record<string, unknown> | null;
+  timeoutMs?: number;
 }

@@ -47,8 +47,17 @@ describe("STT status channel", () => {
     expect(s.alive).toHaveBeenCalledTimes(2);
     r.onFinal("hello there");
     expect(s.alive).toHaveBeenCalledTimes(2);
-    expect(s.interim).toHaveBeenCalledWith("hello");
-    expect(s.final).toHaveBeenCalledWith("hello there");
+    expect(s.interim).toHaveBeenCalledWith("hello", undefined);
+    expect(s.final).toHaveBeenCalledWith("hello there", undefined);
+  });
+
+  it("forwards the engine's segment metadata with the text", () => {
+    const s = sinks();
+    const r = createScopedReceiver(s);
+    r.onInterim("hel", { segmentId: "mic:1:2", revision: 0 });
+    r.onFinal("Hello.", { segmentId: "mic:1:2", revision: 1, lang: "en" });
+    expect(s.interim).toHaveBeenCalledWith("hel", { segmentId: "mic:1:2", revision: 0 });
+    expect(s.final).toHaveBeenCalledWith("Hello.", { segmentId: "mic:1:2", revision: 1, lang: "en" });
   });
 
   it("drops every report from a stale session", () => {

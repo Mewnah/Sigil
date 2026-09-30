@@ -1,0 +1,1651 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "In-process local TTS models for the local-tts plugin (P2-H): Kokoro v1.0 / v1.1-zh, Kitten 0.8 and Piper voices, all run by sherpa-onnx OfflineTts on the processor (runtime/sherpa-onnx, C espeak-ng). How each id runs (family, languages, voices, files) is local_tts::catalog; a unit test keeps that table and this fragment in step.",
+    "Archives are official k2-fsa \"tts-models\" release assets (size and sha256 = GitHub asset digests from the release listing); only the model, voices, tokens, lexicons, text-normalization FSTs, espeak-ng-data and notices are extracted (strip 1, include). The unused jieba dict/ folder of the Kokoro packages is not extracted (sherpa-onnx 1.13.8 ignores dict_dir).",
+    "Kokoro is the fp32 build: the int8 build is not faster on the processor (RTF about 1.0 at any thread count vs about 0.3 for fp32 at 4 threads on a 7800X3D, measured by P2-H) and sounds worse, so it is not listed.",
+    "The tts-models release replaces assets now and then (kokoro-multi-lang-v1_0 was re-uploaded on 2026-09-08); a replaced asset fails its hash and must be re-pinned (scripts/models/pin-catalog.mjs) together with local_tts::catalog.",
+    "Piper voice licenses differ per voice (each package carries its MODEL_CARD)."
+  ],
+  "entries": [
+    {
+      "id": "tts/kokoro-v1.0",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-09-08",
+      "title": "Kokoro v1.0 (multilingual)",
+      "description": "Natural voices for English, Japanese, Chinese, Spanish, French, Hindi, Italian and Brazilian Portuguese (54 voices), on the processor. About 350 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "kokoro-multi-lang-v1_0.tar.bz2",
+          "size": 349906910,
+          "sha256": "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "voices.bin",
+              "tokens.txt",
+              "lexicon-*.txt",
+              "*.fst",
+              "espeak-ng-data/**",
+              "LICENSE",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/kokoro-v1.1-zh",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-18",
+      "title": "Kokoro v1.1-zh (Mandarin)",
+      "description": "Kokoro with 100 Mandarin Chinese voices plus a few English ones; good at mixed Chinese and English lines. About 365 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "kokoro-multi-lang-v1_1.tar.bz2",
+          "size": 364816464,
+          "sha256": "a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "voices.bin",
+              "tokens.txt",
+              "lexicon-*.txt",
+              "*.fst",
+              "espeak-ng-data/**",
+              "LICENSE",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/kitten-mini-en-v0.8",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-05-12",
+      "title": "Kitten mini 0.8 (English)",
+      "description": "The largest Kitten model: 8 expressive English voices, light on the processor. About 68 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "kitten-mini-en-v0_8.tar.bz2",
+          "size": 67547594,
+          "sha256": "518f9b130320f690d5b5476df77bde4215fca67773cda16710318e5081234b9d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-mini-en-v0_8.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "voices.bin",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/kitten-micro-en-v0.8",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-05-12",
+      "title": "Kitten micro 0.8 (English)",
+      "description": "A smaller Kitten model with 8 English voices. About 44 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "kitten-micro-en-v0_8.tar.bz2",
+          "size": 44423643,
+          "sha256": "85faaea7511ca9d1d2f251fed0a4553bdf0d1ee046102fa60ddd8046c751f76f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-micro-en-v0_8.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "voices.bin",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/kitten-nano-en-v0.8",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-05-12",
+      "title": "Kitten nano 0.8 (English)",
+      "description": "The smallest and fastest Kitten model with 8 English voices. About 64 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "kitten-nano-en-v0_8-fp32.tar.bz2",
+          "size": 63815222,
+          "sha256": "16092117bfe591ddcd58d078e1454603b8e1caea46f85653b2c2efae76bd883e",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_8-fp32.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "voices.bin",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ru_ru-irina-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Russian: Irina (Piper)",
+      "description": "A Piper voice for Russian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ru_RU-irina-medium.tar.bz2",
+          "size": 67153308,
+          "sha256": "1fc0f54e5e084fe287c07909f2f6e0ba6d857864cf800e3ab80286a4e8233008",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-irina-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ru_ru-dmitri-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Russian: Dmitri (Piper)",
+      "description": "A Piper voice for Russian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ru_RU-dmitri-medium.tar.bz2",
+          "size": 67188551,
+          "sha256": "c86d0803737de13d441923ff3b3f309482fab8d7af3ec85949942809eb9a3660",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-dmitri-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ar_jo-kareem-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "Arabic: Kareem (Piper)",
+      "description": "A Piper voice for Arabic on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ar_JO-kareem-medium.tar.bz2",
+          "size": 67177830,
+          "sha256": "9ebbcea30e0fbd588f7b2cb45ee897d6aeb1bf5791cbc037a7b5a3f641e3dbce",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ar_JO-kareem-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-de_de-thorsten-high",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "German: Thorsten (Piper)",
+      "description": "A Piper voice for German on the processor. About 116 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-de_DE-thorsten-high.tar.bz2",
+          "size": 115591546,
+          "sha256": "dd4ed1b0d42c30a1a4862fc2b243e8044d52b8889c9ff3d1e99e92028888bc4a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-thorsten-high.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-uk_ua-ukrainian_tts-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Ukrainian: Lada, Mykyta, Tetiana (Piper)",
+      "description": "A Piper voice for Ukrainian on the processor, with 3 speakers. About 80 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-uk_UA-ukrainian_tts-medium.tar.bz2",
+          "size": 80355083,
+          "sha256": "92be6ff21ebb1cbcc0c71121a6437db8d060cee5785287aaa6a19a2548f59c03",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-uk_UA-ukrainian_tts-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-pl_pl-gosia-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-24",
+      "title": "Polish: Gosia (Piper)",
+      "description": "A Piper voice for Polish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-pl_PL-gosia-medium.tar.bz2",
+          "size": 67211182,
+          "sha256": "75bd34dcbdc4dd98d763954756b4b34b4208100497c836381542e4d73dcefa9c",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-gosia-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-nl_nl-pim-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-24",
+      "title": "Dutch: Pim (Piper)",
+      "description": "A Piper voice for Dutch on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-nl_NL-pim-medium.tar.bz2",
+          "size": 67240538,
+          "sha256": "e78ed301bf6fc66561a04c110754cd6928d772630a3b80b09a83f89410130171",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-nl_NL-pim-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-tr_tr-dfki-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-24",
+      "title": "Turkish: DFKI (Piper)",
+      "description": "A Piper voice for Turkish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-tr_TR-dfki-medium.tar.bz2",
+          "size": 67201221,
+          "sha256": "b63babaefcdd63202c7079aba25b72a2013825ad5895e2aeff03d1ae5a5b3bbf",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-tr_TR-dfki-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-vi_vn-vais1000-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Vietnamese: VAIS1000 (Piper)",
+      "description": "A Piper voice for Vietnamese on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-vi_VN-vais1000-medium.tar.bz2",
+          "size": 67154040,
+          "sha256": "fa1367710767d36ed5cf13b4a449e20c35ffd12791c2e47c2e64142bfa55551a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-vi_VN-vais1000-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-id_id-news_tts-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-05",
+      "title": "Indonesian: News (Piper)",
+      "description": "A Piper voice for Indonesian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-id_ID-news_tts-medium.tar.bz2",
+          "size": 67243848,
+          "sha256": "634b0169fe41c368e9fafe128f30647f9e0301e852ce503cd78146db524f1f12",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-id_ID-news_tts-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ur_pk-fasih-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-24",
+      "title": "Urdu: Fasih (Piper)",
+      "description": "A Piper voice for Urdu on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ur_PK-fasih-medium.tar.bz2",
+          "size": 67227718,
+          "sha256": "de64e03109f3c896b7cf910db6d9ffd2703e3d665580d9a19bedbf3e0760d0e4",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ur_PK-fasih-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-pt_pt-tugao-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-07-20",
+      "title": "European Portuguese: Tugão (Piper)",
+      "description": "A Piper voice for European Portuguese on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-pt_PT-tugao-medium.tar.bz2",
+          "size": 67195014,
+          "sha256": "6b4f0a7bfc957bef26d6ac0703a8fa1ba659c8ab2df8b294f20206551859070c",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pt_PT-tugao-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sv_se-nst-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-07-20",
+      "title": "Swedish: NST (Piper)",
+      "description": "A Piper voice for Swedish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sv_SE-nst-medium.tar.bz2",
+          "size": 67144884,
+          "sha256": "5aed0f5ab75135fc3ba6a4f3567e171d72df753305b08a01ca42f79411587f67",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sv_SE-nst-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-cs_cz-jirka-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "Czech: Jirka (Piper)",
+      "description": "A Piper voice for Czech on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-cs_CZ-jirka-medium.tar.bz2",
+          "size": 67212775,
+          "sha256": "321aafd83dd89b3d5b2c36c5898e0710d4f472f3c191cb7f73901a89b7f8539f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-cs_CZ-jirka-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-fi_fi-harri-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-05",
+      "title": "Finnish: Harri (Piper)",
+      "description": "A Piper voice for Finnish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-fi_FI-harri-medium.tar.bz2",
+          "size": 67205198,
+          "sha256": "a7fd608e73983c366a5e0bcd13382e6529a6749f67efc406b5a7f9021e3a8b1d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fi_FI-harri-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-el_gr-rapunzelina-low",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "Greek: Rapunzelina (Piper)",
+      "description": "A Piper voice for Greek on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-el_GR-rapunzelina-low.tar.bz2",
+          "size": 67105521,
+          "sha256": "bb868070a9ba0d7220b3d7c9291a998c2f60accdb73525bd63b8751b86dd4839",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-el_GR-rapunzelina-low.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-hu_hu-anna-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-05",
+      "title": "Hungarian: Anna (Piper)",
+      "description": "A Piper voice for Hungarian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-hu_HU-anna-medium.tar.bz2",
+          "size": 67167701,
+          "sha256": "c67b13e57b71eca19098fe499afc35ebce8f63a0b524017c786af2025821216a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-hu_HU-anna-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ro_ro-mihai-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Romanian: Mihai (Piper)",
+      "description": "A Piper voice for Romanian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ro_RO-mihai-medium.tar.bz2",
+          "size": 67182137,
+          "sha256": "cfbee3cdc25cf063339f69e189f4d93cc3be6610d267567537323ced3cf87f4d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ro_RO-mihai-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-fa_ir-amir-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-05",
+      "title": "Persian: Amir (Piper)",
+      "description": "A Piper voice for Persian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-fa_IR-amir-medium.tar.bz2",
+          "size": 67180373,
+          "sha256": "46af65c1cdd86ec300db3998f2bf31a68d9e38da930c0655c1ff6f610e84f864",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fa_IR-amir-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ka_ge-natia-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Georgian: Natia (Piper)",
+      "description": "A Piper voice for Georgian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ka_GE-natia-medium.tar.bz2",
+          "size": 67209457,
+          "sha256": "18e34c601f4be13e5132ec772e2cbcfa47ca6a4aaaf995dd5baefe014f5a0256",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ka_GE-natia-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-kk_kz-issai-high",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Kazakh: ISSAI (Piper)",
+      "description": "A Piper voice for Kazakh on the processor, with 6 speakers. About 129 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-kk_KZ-issai-high.tar.bz2",
+          "size": 129278805,
+          "sha256": "6c59955f7f5e3fc50b130ced59a430eb4ef62d69155af4ce836db0dde4a42682",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-kk_KZ-issai-high.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ne_np-google-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-07-20",
+      "title": "Nepali: Google (Piper)",
+      "description": "A Piper voice for Nepali on the processor, with 18 speakers. About 80 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ne_NP-google-medium.tar.bz2",
+          "size": 80242801,
+          "sha256": "73c1e093451867779ec2b55cc3666de2db058019a2e7760e8c8f294a42caca2a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ne_NP-google-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sr_rs-serbski_institut-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Serbian: Serbski Institut (Piper)",
+      "description": "A Piper voice for Serbian on the processor. About 80 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sr_RS-serbski_institut-medium.tar.bz2",
+          "size": 80298557,
+          "sha256": "b8c100e5ff885d11ff96ad92a953f4b82e1cd649f9ac60a77ae4553d37507b2b",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sr_RS-serbski_institut-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sw_cd-lanfrica-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Swahili: Lanfrica (Piper)",
+      "description": "A Piper voice for Swahili on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sw_CD-lanfrica-medium.tar.bz2",
+          "size": 67217230,
+          "sha256": "93196704a0ae0c984806059480775d69dcc2419d0d545cddd0903d244dc66a72",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sw_CD-lanfrica-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-no_no-talesyntese-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Norwegian: Talesyntese (Piper)",
+      "description": "A Piper voice for Norwegian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-no_NO-talesyntese-medium.tar.bz2",
+          "size": 67194829,
+          "sha256": "dcb7c36b7222e290cca1fd4cdecb474e7fd651dc5b0d3d42c33d416a8e62018b",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-no_NO-talesyntese-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-da_dk-talesyntese-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "Danish: Talesyntese (Piper)",
+      "description": "A Piper voice for Danish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-da_DK-talesyntese-medium.tar.bz2",
+          "size": 67185257,
+          "sha256": "f2e2cbcdb2b21e76f93635b35105d07b37997ace434d7289d04b689a97c19bd0",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-da_DK-talesyntese-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ca_es-upc_ona-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-04",
+      "title": "Catalan: Ona (Piper)",
+      "description": "A Piper voice for Catalan on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ca_ES-upc_ona-medium.tar.bz2",
+          "size": 67223188,
+          "sha256": "b6c50f22e13cfc72ce51c496d22b987adf6704047f6d342968197b4b0b3127a5",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ca_ES-upc_ona-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-is_is-ugla-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-05",
+      "title": "Icelandic: Ugla (Piper)",
+      "description": "A Piper voice for Icelandic on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-is_IS-ugla-medium.tar.bz2",
+          "size": 67376655,
+          "sha256": "2d2295b13746758620ef02ee35294ff1096d94fd01cb055c53f70de17a222519",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-is_IS-ugla-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sk_sk-lili-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Slovak: Lili (Piper)",
+      "description": "A Piper voice for Slovak on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sk_SK-lili-medium.tar.bz2",
+          "size": 67183092,
+          "sha256": "a00dfbca5d34733862a59d9e309f4e94a92fccc9337c2b124de9a241b604fc0d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sk_SK-lili-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sl_si-artur-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Slovenian: Artur (Piper)",
+      "description": "A Piper voice for Slovenian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sl_SI-artur-medium.tar.bz2",
+          "size": 67025668,
+          "sha256": "df805f31c4513864edebf7e287cf0b54d72788fc661ed73f88dc4e5aabc5efd5",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sl_SI-artur-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-lv_lv-aivars-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Latvian: Aivars (Piper)",
+      "description": "A Piper voice for Latvian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-lv_LV-aivars-medium.tar.bz2",
+          "size": 67196173,
+          "sha256": "a0df58c9924761e201ef75d82473b90bde32c5372267e9b4c628fdd267cf2508",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-lv_LV-aivars-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-cy_gb-gwryw_gogleddol-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-07-20",
+      "title": "Welsh: Gwryw Gogleddol (Piper)",
+      "description": "A Piper voice for Welsh on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-cy_GB-gwryw_gogleddol-medium.tar.bz2",
+          "size": 67230234,
+          "sha256": "f31f90afc4f28e9a768309f0b1c87272ef178936b32dd181aa1aa3a0eeddd187",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-cy_GB-gwryw_gogleddol-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-lb_lu-marylux-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-12-02",
+      "title": "Luxembourgish: Marylux (Piper)",
+      "description": "A Piper voice for Luxembourgish on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-lb_LU-marylux-medium.tar.bz2",
+          "size": 67184319,
+          "sha256": "f11117fc121db0d5c4dc46e07eac7b1d8ea719b04f0b381836a23050310ea5a4",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-lb_LU-marylux-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-ml_in-meera-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2025-06-17",
+      "title": "Malayalam: Meera (Piper)",
+      "description": "A Piper voice for Malayalam on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-ml_IN-meera-medium.tar.bz2",
+          "size": 67195010,
+          "sha256": "c8d870441e60870b7e8781c26eb22104aff51587b63bee94aba5e5f6c9fbb71f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ml_IN-meera-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-sq_al-edon-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-22",
+      "title": "Albanian: Edon (Piper)",
+      "description": "A Piper voice for Albanian on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-sq_AL-edon-medium.tar.bz2",
+          "size": 67191820,
+          "sha256": "2d7a3b3647a499ad40a28662edd5ff50eb8594ad7ace94a5d3525e280212bf99",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sq_AL-edon-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/piper-eu_es-maider-medium",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-04-24",
+      "title": "Basque: Maider (Piper)",
+      "description": "A Piper voice for Basque on the processor. About 67 MB download.",
+      "license": "see MODEL_CARD",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "vits-piper-eu_ES-maider-medium.tar.bz2",
+          "size": 67247291,
+          "sha256": "60493b81a7f117ea96b6efc841d7465c1d4107ea72ef553ff91f92f72fbd95c1",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-eu_ES-maider-medium.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "*.onnx.json",
+              "tokens.txt",
+              "espeak-ng-data/**",
+              "MODEL_CARD",
+              "LICENSE*",
+              "README*"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

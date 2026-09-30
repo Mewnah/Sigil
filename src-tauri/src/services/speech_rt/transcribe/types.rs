@@ -55,6 +55,10 @@ pub struct ModelOptions {
     pub backend: BackendChoice,
     /// Only this runtime variant (no fallback between variants).
     pub variant: Option<RuntimeVariant>,
+    /// Installed packs only: the variants the walk may use (`None` = all). The speech engine sets
+    /// it from the resource governor's admission, e.g. `cuda13` plus the CPU variants when the GPU
+    /// is admitted (never the unmeasured `vulkan` build behind the governor's back).
+    pub allowed_variants: Option<Vec<RuntimeVariant>>,
     /// Load `sigil_transcribe.dll` from this folder instead of the installed packs (development,
     /// engine probes). Also taken from `SIGIL_TRANSCRIBE_RUNTIME_DIR`.
     pub runtime_dir: Option<PathBuf>,
@@ -96,6 +100,7 @@ impl ModelOptions {
             model: model.into(),
             backend: BackendChoice::Auto,
             variant: None,
+            allowed_variants: None,
             runtime_dir: None,
             threads: None,
             device: None,
@@ -148,7 +153,8 @@ pub(crate) fn is_gpu_backend(backend: &str) -> bool {
 }
 
 /// Pick the device of `backend` that `device` names (the backend's first device when `None`) from
-/// a `{"op":"devices"}` answer.
+/// a `{"op":"devices"}` answer. PCI bus ids match in any spelling ([`same_pci_bus_id`]: NVML's
+/// `00000000:01:00.0` is CUDA's `0000:01:00.0`).
 pub(crate) fn select_device(devices: &[DeviceInfo], backend: &str, device: Option<&DeviceRef>) -> Option<DeviceInfo> {
     let mut of_kind = devices
         .iter()
@@ -159,12 +165,37 @@ pub(crate) fn select_device(devices: &[DeviceInfo], backend: &str, device: Optio
         Some(DeviceRef::Id(id)) => of_kind.find(|d| {
             d.device_id
                 .as_deref()
-                .is_some_and(|v| v.eq_ignore_ascii_case(id))
+                .is_some_and(|v| v.eq_ignore_ascii_case(id) || same_pci_bus_id(v, id))
                 || d.name.as_deref() == Some(id.as_str())
                 || d.description.as_deref() == Some(id.as_str())
         }),
     }
     .cloned()
+}
+
+/// A PCI bus id (`[domain:]bus:device.function`, hex, any domain width) as
+/// `(domain, bus, device, function)`; `None` for anything else (a device description).
+pub(crate) fn parse_pci_bus_id(id: &str) -> Option<(u32, u32, u32, u32)> {
+    let id = id.trim();
+    let (head, function) = id.rsplit_once('.')?;
+    let mut parts: Vec<&str> = head.split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    let device = parts.pop()?;
+    let bus = parts.pop()?;
+    let domain = parts.pop().unwrap_or("0");
+    let hex = |s: &str, max_len: usize| -> Option<u32> {
+        (!s.is_empty() && s.len() <= max_len && s.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| u32::from_str_radix(s, 16).ok())
+            .flatten()
+    };
+    Some((hex(domain, 8)?, hex(bus, 2)?, hex(device, 2)?, hex(function, 1)?))
+}
+
+/// Whether two strings name the same PCI device (both must be PCI bus ids).
+pub(crate) fn same_pci_bus_id(a: &str, b: &str) -> bool {
+    matches!((parse_pci_bus_id(a), parse_pci_bus_id(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// Longest utterance Sigil sends in one call (P2's VAD cap is 15 to 20 s): GPU warm-ups decode this
@@ -333,6 +364,9 @@ pub struct TranscribeOptions {
     pub no_speech_threshold: Option<f32>,
     /// Streams only: `auto` / `on_finalize` / `stable_prefix`.
     pub commit: Option<String>,
+    /// Streams only, `stable_prefix`: how many consecutive hypotheses must agree before a word is
+    /// committed (0 = the engine's default, at most 16).
+    pub agreement: Option<u32>,
 }
 
 impl TranscribeOptions {
@@ -379,6 +413,9 @@ impl TranscribeOptions {
         }
         if let Some(c) = self.commit.as_deref().filter(|c| !c.is_empty()) {
             o.insert("commit".into(), Value::String(c.to_string()));
+        }
+        if let Some(n) = self.agreement.filter(|n| *n > 0) {
+            o.insert("agreement".into(), json!(n.min(16)));
         }
         Value::Object(o).to_string()
     }

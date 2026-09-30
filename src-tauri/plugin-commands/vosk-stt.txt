@@ -2,10 +2,6 @@
 # Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
 # with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
 get_vosk_models
-check_vosk_native_availability
-set_vosk_model_path
-get_vosk_model_path
-vosk_native_transcribe
 download_vosk_model
 cancel_vosk_model_download
 import_vosk_model_zip

@@ -16,9 +16,15 @@
 //! - [`tts`]: [`OfflineTts::generate`] with chunk callback and cancel.
 //! - [`lid`]: [`SpokenLanguageId`]; [`speaker`]: [`SpeakerEmbeddingExtractor`].
 //! - [`detect`]: official sherpa model package folder → config.
+//! - [`catalog`]: Sigil's sherpa STT catalog models (`model-catalog/stt-sherpa.json`): catalog id →
+//!   family, files, languages and capabilities (P2-B; read by the engines and the router).
+//! - [`languages`]: the language spellings each family wants (Qwen3-ASR names, SenseVoice codes,
+//!   Nemotron's prompt dictionary) and the catalog models' language sets.
+//! - [`hotwords`]: hotword / context text per family and the derived `bpe.vocab` for NeMo
+//!   transducers.
 //! - [`probe`]: `Sigil.exe --headless engine-probe sherpa` and [`probe::validate_in_child`].
-//! - `onnx_info`: ONNX graph output count (tells a NeMo streaming transducer from a k2 one before
-//!   sherpa sees it).
+//! - `onnx_info`: ONNX graph inputs, output count and metadata (tells a NeMo streaming transducer
+//!   from a k2 one, and reads Nemotron's language prompts, before sherpa sees the model).
 //!
 //! # Rules
 //! - Every engine is CPU-only (`provider = "cpu"`), 2 threads by default (at most 4).
@@ -46,18 +52,23 @@
 #![allow(dead_code)]
 
 pub mod bindings;
+pub mod catalog;
 pub mod detect;
+pub mod hotwords;
+pub mod languages;
 pub mod lib;
 pub mod lid;
 pub mod offline;
 pub mod online;
-mod onnx_info;
+pub(crate) mod onnx_info;
 pub mod probe;
 pub mod speaker;
 pub mod tts;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod testkit;
+#[cfg(test)]
+pub(crate) mod tests;
 
 // The API surface for P2's `speech` plugin (unused inside the crate until then).
 #[allow(unused_imports)]
@@ -65,7 +76,7 @@ pub use self::{
     detect::{detect, DetectHints, SherpaModel},
     lib::{runtime_dir, RuntimeInfo, SherpaRuntime, EXPECTED_VERSION, RUNTIME_ID},
     lid::{LanguageIdConfig, SpokenLanguageId},
-    offline::{DecodeOptions, OfflineModel, OfflineRecognizer, OfflineRecognizerConfig, OfflineResult},
+    offline::{DecodeOptions, HotwordsMode, OfflineModel, OfflineRecognizer, OfflineRecognizerConfig, OfflineResult},
     online::{Decoding, EndpointRules, OnlineModel, OnlineRecognizer, OnlineRecognizerConfig, OnlineResult, OnlineStream},
     speaker::{cosine_similarity, SpeakerEmbeddingConfig, SpeakerEmbeddingExtractor},
     tts::{ChunkCallback, GenerateOptions, GeneratedAudio, OfflineTts, TtsConfig, TtsModel},

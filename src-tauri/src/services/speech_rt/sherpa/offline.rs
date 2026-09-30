@@ -286,7 +286,8 @@ impl OfflineRecognizerConfig {
     /// `CreateStream(hotwords)` does too ("Only transducer models support contextual biasing").
     fn check_decoding(&self, what: &str) -> Result<(), String> {
         let qwen3_hint = if matches!(self.model, OfflineModel::Qwen3Asr { .. }) {
-            " (Qwen3-ASR takes hotwords in its model config instead)"
+            " (Qwen3-ASR takes hotwords as prompt context instead: the model config's `hotwords` or the stream's \
+             `hotwords` option)"
         } else {
             ""
         };
@@ -311,10 +312,19 @@ impl OfflineRecognizerConfig {
         Ok(())
     }
 
+    /// How streams of this (validated) config take per-utterance hotwords.
+    pub fn hotwords_mode(&self) -> HotwordsMode {
+        match self.model {
+            OfflineModel::Transducer { .. } if self.decoding.is_beam_search() => HotwordsMode::ContextGraph,
+            OfflineModel::Qwen3Asr { .. } => HotwordsMode::PromptContext,
+            _ => HotwordsMode::None,
+        }
+    }
+
     /// Whether streams of this (validated) config may carry per-utterance hotwords: a transducer
-    /// decoded with modified beam search.
+    /// decoded with modified beam search, or Qwen3-ASR (prompt context).
     pub fn supports_hotwords(&self) -> bool {
-        matches!(self.model, OfflineModel::Transducer { .. }) && self.decoding.is_beam_search()
+        self.hotwords_mode() != HotwordsMode::None
     }
 
     /// `Err` (with the reason) unless [`supports_hotwords`](Self::supports_hotwords).
@@ -324,11 +334,11 @@ impl OfflineRecognizerConfig {
         }
         let family = self.model.family();
         Err(match self.model {
-            OfflineModel::Qwen3Asr { .. } => {
-                "Qwen3-ASR takes hotwords only in its model config (`hotwords` of the qwen3_asr model), not per utterance".to_string()
-            }
             OfflineModel::Transducer { .. } => format!("the {family} model takes hotwords only when it decodes with modified beam search"),
-            _ => format!("the {family} model does not take hotwords (only transducer models decoded with modified beam search do)"),
+            _ => format!(
+                "the {family} model does not take hotwords (only transducer models decoded with modified beam search and \
+                 Qwen3-ASR do)"
+            ),
         })
     }
 
@@ -470,17 +480,31 @@ pub(crate) fn should_decode(accepted: Option<(usize, u32)>) -> bool {
     accepted.is_some_and(|(samples, rate)| long_enough(samples, rate))
 }
 
+/// How an offline recognizer takes per-utterance hotwords.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HotwordsMode {
+    /// Not at all (non-empty hotwords are an `Err`: sherpa would `exit(-1)`).
+    None,
+    /// A context graph on a transducer decoded with modified beam search
+    /// (`CreateOfflineStreamWithHotwords`; one phrase per line).
+    ContextGraph,
+    /// Qwen3-ASR system-prompt context: the per-stream `hotwords` option (comma-separated terms or
+    /// free text), which overrides the model config's `hotwords` for that utterance.
+    PromptContext,
+}
+
 /// Per-call options of [`OfflineRecognizer::transcribe`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecodeOptions {
     /// Language hint, passed as the per-stream `language` option. Only families that read that
     /// option use it; SenseVoice does not (measured, ADR 0002): its language is part of the model
-    /// config, so force one with a recognizer created for it. `None` keeps the model config's.
+    /// config, so force one with a recognizer created for it. Qwen3-ASR wants the English language
+    /// name (`Japanese`, see `languages::qwen3_language_name`). `None` keeps the model config's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Per-utterance hotwords. Only a transducer decoded with modified beam search takes them
-    /// ([`OfflineRecognizerConfig::supports_hotwords`]); on any other model non-empty hotwords are an
-    /// `Err` (sherpa would `exit(-1)`). Qwen3-ASR takes hotwords in its model config.
+    /// Per-utterance hotwords, in the format of the recognizer's
+    /// [`OfflineRecognizerConfig::hotwords_mode`] (see `hotwords.rs`). Non-empty hotwords on a model
+    /// without hotword support are an `Err` (sherpa would `exit(-1)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hotwords: Option<String>,
 }
@@ -609,9 +633,14 @@ impl OfflineRecognizer {
         if !long_enough(samples.len(), sample_rate) {
             return Ok(OfflineResult::default());
         }
-        let mut stream = match hotwords {
-            Some(h) => self.create_stream_with_hotwords(h)?,
-            None => self.create_stream()?,
+        let mut stream = match (hotwords, self.config.hotwords_mode()) {
+            (Some(h), HotwordsMode::ContextGraph) => self.create_stream_with_hotwords(h)?,
+            (Some(h), HotwordsMode::PromptContext) => {
+                let mut s = self.create_stream()?;
+                s.set_option("hotwords", h)?;
+                s
+            }
+            _ => self.create_stream()?,
         };
         if let Some(lang) = options.language.as_deref().filter(|l| !l.is_empty()) {
             stream.set_option("language", lang)?;
@@ -629,9 +658,15 @@ impl OfflineRecognizer {
     }
 
     /// A stream biased toward `hotwords` (one phrase per line). `Err` unless the model is a
-    /// transducer decoded with modified beam search (sherpa would `exit(-1)`).
+    /// transducer decoded with modified beam search (sherpa would `exit(-1)`; Qwen3-ASR takes its
+    /// context through the stream's `hotwords` option instead, see [`HotwordsMode`]).
     pub fn create_stream_with_hotwords(&self, hotwords: &str) -> Result<OfflineStream, String> {
-        self.config.require_hotwords_support()?;
+        if self.config.hotwords_mode() != HotwordsMode::ContextGraph {
+            let family = self.config.model.family();
+            return Err(format!(
+                "the {family} model has no hotword context graph (only transducer models decoded with modified beam search do)"
+            ));
+        }
         let mut arena = CStrArena::default();
         let words = arena.str(hotwords)?;
         let _g = self.inner.lock.lock();

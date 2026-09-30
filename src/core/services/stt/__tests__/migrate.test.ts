@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { estimatePhysicalCores, pickDesktopWhisperModel, planDesktopDefaultMigration } from "../migrate";
+import { estimatePhysicalCores, pickDesktopWhisperModel, planDesktopDefaultMigration, planWhisperMigration } from "../migrate";
 import { Service_STT_Schema, STT_Backends } from "../schema";
 import { findWhisperModel } from "../whisperModels";
 
 const base = { isDesktop: true, alreadyMigrated: false, backend: STT_Backends.native, logicalCores: 12 };
+
+describe("desktop default migration (P2: native → local for new installs, an offer for existing profiles)", () => {
+  it("starts a new install on the local backend", () => {
+    expect(planDesktopDefaultMigration({ ...base, freshInstall: true })).toEqual({ action: "local", backend: STT_Backends.local });
+    expect(planDesktopDefaultMigration({ ...base, backend: STT_Backends.browser, freshInstall: true }).action).toBe("local");
+    // A new install that already picked a working backend (onboarding) is only recorded.
+    expect(planDesktopDefaultMigration({ ...base, backend: STT_Backends.vosk, freshInstall: true })).toEqual({ action: "mark" });
+  });
+
+  it("offers local to an existing profile once, with Whisper as the answer to no", () => {
+    expect(planDesktopDefaultMigration({ ...base, nativeLanguage: "ja-JP", logicalCores: 4 })).toEqual({
+      action: "offer",
+      fallback: { action: "migrate", backend: STT_Backends.whisper, whisperModel: "base-q5_1", whisperLanguage: "ja" },
+    });
+    // Offer already shown (for example the app closed with the dialog open): straight to Whisper.
+    expect(planDesktopDefaultMigration({ ...base, localOfferShown: true }).action).toBe("migrate");
+    expect(planDesktopDefaultMigration({ ...base, isDesktop: false, freshInstall: true })).toEqual({ action: "none" });
+  });
+});
 
 describe("desktop default migration (native → Whisper)", () => {
   it("does nothing in the web build or once done", () => {
@@ -16,11 +35,11 @@ describe("desktop default migration (native → Whisper)", () => {
       expect(planDesktopDefaultMigration({ ...base, backend })).toEqual({ action: "mark" });
   });
 
-  it("moves a fresh desktop profile (schema defaults) to Whisper small on 6+ cores", () => {
+  it("moves a desktop profile on schema defaults to Whisper small on 6+ cores", () => {
     const defaults = Service_STT_Schema.parse({});
     expect(defaults.backend).toBe(STT_Backends.native);
     expect(defaults.desktopDefaultMigrated).toBe(false);
-    const plan = planDesktopDefaultMigration({
+    const plan = planWhisperMigration({
       ...base,
       backend: defaults.backend,
       nativeLanguage: defaults.native.language,
@@ -31,25 +50,26 @@ describe("desktop default migration (native → Whisper)", () => {
   });
 
   it("maps the Web Speech language and picks a multilingual model for it", () => {
-    expect(planDesktopDefaultMigration({ ...base, nativeLanguage: "ja-JP", logicalCores: 4 })).toEqual({
+    expect(planWhisperMigration({ ...base, nativeLanguage: "ja-JP", logicalCores: 4 })).toEqual({
       action: "migrate",
       backend: STT_Backends.whisper,
       whisperModel: "base-q5_1",
       whisperLanguage: "ja",
     });
-    expect(planDesktopDefaultMigration({ ...base, nativeLanguage: "yue-Hant-HK" })).toMatchObject({ whisperLanguage: "zh" });
-    expect(planDesktopDefaultMigration({ ...base, nativeLanguage: "sw-KE" })).toMatchObject({
+    expect(planWhisperMigration({ ...base, nativeLanguage: "yue-Hant-HK" })).toMatchObject({ whisperLanguage: "zh" });
+    expect(planWhisperMigration({ ...base, nativeLanguage: "sw-KE" })).toMatchObject({
       whisperModel: "small-q5_1",
       whisperLanguage: "auto",
     });
   });
 
   it("treats the legacy 'browser' backend like native", () => {
-    expect(planDesktopDefaultMigration({ ...base, backend: STT_Backends.browser }).action).toBe("migrate");
+    expect(planDesktopDefaultMigration({ ...base, backend: STT_Backends.browser }).action).toBe("offer");
+    expect(planDesktopDefaultMigration({ ...base, backend: STT_Backends.browser, localOfferShown: true }).action).toBe("migrate");
   });
 
   it("keeps Whisper settings the user already chose", () => {
-    expect(planDesktopDefaultMigration({ ...base, whisperModel: "medium-q5_0", whisperLanguage: "de" })).toEqual({
+    expect(planWhisperMigration({ ...base, whisperModel: "medium-q5_0", whisperLanguage: "de" })).toEqual({
       action: "migrate",
       backend: STT_Backends.whisper,
     });

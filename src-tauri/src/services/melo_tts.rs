@@ -1,15 +1,20 @@
 //! `melo-tts` plugin: client for a MeloTTS HTTP server (default `http://localhost:8888`,
 //! `GET /speakers`, `POST /tts/generate` returning WAV).
 //!
+//! Synthesis streams into the TTS sink (`melo_speak_to_sink`, P2-I): the WAV body is decoded as it
+//! arrives by the shared HTTP speech core (`openai_speech::speak_http`), so the output device, the
+//! voice-changer route, stop and skip apply and no audio crosses IPC. The server's API is not
+//! OpenAI-compatible, so the request keeps its own shape (`{text, speaker_id, speed, sample_rate}`).
+//!
 //! Every command takes an optional per-call `endpoint` (blank = the one stored by
-//! `set_melo_endpoint`). Timeouts: speakers 20 s, health 10 s, synthesis 60 s + 1 s per character
-//! (max 10 min) on this PC or the LAN, else 30 s + 100 ms per character (max 120 s); see `tts_post`.
+//! `set_melo_endpoint`). Timeouts: speakers 20 s, health 10 s; synthesis on this PC or the LAN
+//! 60 s + 1 s per character to the first audio (max 10 min), else 60 s (see `openai_speech`).
 
 use crate::services::http_client::{
-    api_url, content_type, describe_api_error, describe_request_error, ensure_audio_body,
-    http_client, parse_named_list, pick_endpoint, probe_ok, read_body_capped, tts_post,
-    LIST_TIMEOUT, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT,
+    api_url, describe_api_error, describe_request_error, http_client, parse_named_list,
+    pick_endpoint, probe_ok, LIST_TIMEOUT,
 };
+use crate::services::openai_speech::{speak_http, HttpSpeech, SpeakReport, SpeechFormat};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{
@@ -107,40 +112,37 @@ async fn get_melo_speakers<R: Runtime>(
     Ok(parse_speakers(&v))
 }
 
-/// Generate speech using MeloTTS and return audio bytes (WAV).
+/// Sample rate asked from the server (MeloTTS models run at 44.1 kHz; 22.05 kHz halves the body).
+const REQUEST_SAMPLE_RATE: u32 = 22_050;
+
+/// The streaming request for one sentence: `POST {base}/tts/generate`, WAV back.
+fn melo_spec(base: &str, text: &str, speaker_id: Option<&str>, speed: Option<f32>) -> Result<HttpSpeech, String> {
+    let url = api_url(base, "/tts/generate")?;
+    let body = serde_json::to_value(GenerateRequest {
+        text,
+        speaker_id: speaker_id.map(str::trim).filter(|s| !s.is_empty()),
+        speed: speed.filter(|s| s.is_finite() && *s > 0.0),
+        sample_rate: Some(REQUEST_SAMPLE_RATE),
+    })
+    .map_err(|e| format!("MeloTTS request: {e}"))?;
+    Ok(HttpSpeech::new("MeloTTS synthesis", url, body, text, SpeechFormat::Wav))
+}
+
+/// Speak `text` into the begun TTS sink utterance `utteranceId` (streamed WAV). Resolves once the
+/// last audio was queued; `Err("cancelled")` after stop / skip / `openai_speech_cancel`.
 #[command]
-async fn melo_speak<R: Runtime>(
+async fn melo_speak_to_sink<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, MeloTTSState>,
     text: String,
     speaker_id: Option<String>,
     speed: Option<f32>,
     endpoint: Option<String>,
-) -> Result<Vec<u8>, String> {
-    if text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = api_url(&state.endpoint_for(endpoint.as_deref()), "/tts/generate")?;
-    let what = "MeloTTS synthesis";
-
-    let (req, timeout) = tts_post(url, &text);
-    let response = req
-        .json(&GenerateRequest {
-            text: &text,
-            speaker_id: speaker_id.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-            speed: speed.filter(|s| s.is_finite() && *s > 0.0),
-            sample_rate: Some(22050),
-        })
-        .send()
-        .await
-        .map_err(|e| describe_request_error(what, &e, timeout))?;
-    if !response.status().is_success() {
-        return Err(describe_api_error(what, response).await);
-    }
-    let ct = content_type(&response);
-    let audio = read_body_capped(what, response, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT).await?;
-    ensure_audio_body(what, ct.as_deref(), &audio)?;
-    Ok(audio)
+    utterance_id: String,
+) -> Result<SpeakReport, String> {
+    let base = state.endpoint_for(endpoint.as_deref());
+    let spec = melo_spec(&base, &text, speaker_id.as_deref(), speed)?;
+    speak_http(spec, &utterance_id).await
 }
 
 /// Check if the MeloTTS service answers (`GET /speakers` within 10 s).
@@ -165,7 +167,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             set_melo_endpoint,
             get_melo_speakers,
-            melo_speak,
+            melo_speak_to_sink,
             check_melo_availability
         ])
         .build()
@@ -197,5 +199,32 @@ mod tests {
         })
         .unwrap();
         assert_eq!(v, serde_json::json!({"text": "hi", "sample_rate": 22050}));
+    }
+
+    #[test]
+    fn melo_spec_keeps_the_legacy_request() {
+        let spec = melo_spec("http://localhost:8888/", "Hello.", Some(" EN-US "), Some(1.2)).unwrap();
+        assert_eq!(spec.url().as_str(), "http://localhost:8888/tts/generate");
+        assert_eq!(
+            spec.body(),
+            &serde_json::json!({"text": "Hello.", "speaker_id": "EN-US", "speed": 1.2f32, "sample_rate": 22050})
+        );
+        let spec = melo_spec("http://localhost:8888", "Hello.", Some("  "), Some(f32::NAN)).unwrap();
+        assert_eq!(spec.body(), &serde_json::json!({"text": "Hello.", "sample_rate": 22050}));
+        assert!(melo_spec("", "Hello.", None, None).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn melo_streams_the_wav_answer_into_the_sink() {
+        use crate::services::openai_speech::testing::*;
+        let values: Vec<i16> = (0..2205).map(|i| (i % 64) as i16 * 100).collect();
+        let (base, server) = serve_once(full_response("200 OK", "audio/wav", &wav16(&values, 22_050, 1))).await;
+        let (sink, pushes) = Recorder::new();
+        let report = speak(melo_spec(&base, "Hello.", None, None).unwrap(), "melo-test", Box::new(sink)).await.unwrap();
+        let seen = server.await.unwrap();
+        assert!(seen.head.starts_with("POST /tts/generate "), "{}", seen.head);
+        assert_eq!(report.sample_rate, 22_050);
+        assert_eq!(report.frames, values.len() as u64);
+        assert_eq!(pushes.samples(), f(&values));
     }
 }

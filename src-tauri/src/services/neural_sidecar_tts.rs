@@ -1,17 +1,20 @@
 //! HTTP sidecar TTS for heavy / custom neural models (`POST {endpoint}/speech` → WAV,
 //! `GET {endpoint}/health`; reference server: `scripts/neural-sidecar/tts_sidecar.py`).
 //!
+//! Synthesis streams into the TTS sink (`neural_sidecar_tts_speak_to_sink`, P2-I): the request asks
+//! for a streamed answer (`"stream": true`; servers that do not know the member send the whole WAV,
+//! which works too) and the shared HTTP speech core (`openai_speech::speak_http`) decodes the WAV as
+//! it arrives, so the first audio plays before the server finished the sentence. The output device
+//! and the top-level route (device / voice changer / both) replace the old per-backend
+//! "send into the voice changer" command.
+//!
 //! Every command takes an optional per-call `endpoint` (blank = the one stored by
-//! `set_neural_sidecar_tts_endpoint`). Timeouts: health 10 s; synthesis 60 s + 1 s per character
-//! (max 10 min) on this PC or the LAN, else 30 s + 100 ms per character (max 120 s) (`tts_post`);
-//! the body is read with a 30 s stall limit.
+//! `set_neural_sidecar_tts_endpoint`). Timeouts: health 10 s; synthesis on this PC or the LAN 60 s +
+//! 1 s per character to the first audio (max 10 min) and 60 s between chunks, else 60 s / 30 s (see
+//! `openai_speech`).
 
-use crate::services::http_client::{
-    api_url, content_type, describe_api_error, describe_request_error, ensure_audio_body,
-    http_client, pick_endpoint, probe_ok, read_body_capped, tts_post, MAX_AUDIO_BYTES,
-    TTS_STALL_TIMEOUT,
-};
-use crate::services::voice_changer::{push_aux_wav_bytes, VoiceChangerState};
+use crate::services::http_client::{api_url, http_client, pick_endpoint, probe_ok};
+use crate::services::openai_speech::{speak_http, HttpSpeech, SpeakReport, SpeechFormat};
 use serde::Serialize;
 use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{
@@ -44,6 +47,9 @@ impl NeuralSidecarTtsState {
 struct SpeechRequest<'a> {
     text: &'a str,
     voice: &'a str,
+    /// Ask for a streamed WAV (the reference sidecar sends a header with placeholder sizes, then
+    /// the audio as it is generated).
+    stream: bool,
 }
 
 #[command]
@@ -57,66 +63,33 @@ async fn set_neural_sidecar_tts_endpoint<R: Runtime>(
     Ok(())
 }
 
-async fn sidecar_fetch_wav_bytes(base: &str, text: &str, voice: &str) -> Result<Vec<u8>, String> {
-    if text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
+/// The streaming request for one sentence: `POST {base}/speech {text, voice, stream: true}`.
+fn sidecar_spec(base: &str, text: &str, voice: &str) -> Result<HttpSpeech, String> {
     let url = api_url(base, "/speech")?;
-    let what = "Neural sidecar TTS";
     let voice = voice.trim();
-    let (req, timeout) = tts_post(url, text);
-    let response = req
-        .json(&SpeechRequest {
-            text,
-            voice: if voice.is_empty() { "default" } else { voice },
-        })
-        .send()
-        .await
-        .map_err(|e| describe_request_error(what, &e, timeout))?;
-    if !response.status().is_success() {
-        return Err(describe_api_error(what, response).await);
-    }
-    let ct = content_type(&response);
-    let audio = read_body_capped(what, response, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT).await?;
-    ensure_audio_body(what, ct.as_deref(), &audio)?;
-    Ok(audio)
+    let body = serde_json::to_value(SpeechRequest {
+        text,
+        voice: if voice.is_empty() { "default" } else { voice },
+        stream: true,
+    })
+    .map_err(|e| format!("Neural sidecar TTS request: {e}"))?;
+    Ok(HttpSpeech::new("Neural sidecar TTS", url, body, text, SpeechFormat::Wav))
 }
 
+/// Speak `text` into the begun TTS sink utterance `utteranceId` (streamed WAV). Resolves once the
+/// last audio was queued; `Err("cancelled")` after stop / skip / `openai_speech_cancel`.
 #[command]
-async fn neural_sidecar_tts_speak<R: Runtime>(
+async fn neural_sidecar_tts_speak_to_sink<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, NeuralSidecarTtsState>,
     text: String,
     voice: String,
     endpoint: Option<String>,
-) -> Result<Vec<u8>, String> {
+    utterance_id: String,
+) -> Result<SpeakReport, String> {
     let base = state.endpoint_for(endpoint.as_deref());
-    sidecar_fetch_wav_bytes(&base, &text, &voice).await
-}
-
-/// One IPC hop: fetch WAV from the sidecar and mix it into the voice changer. Decoding, resampling
-/// and queueing run on a blocking thread, never on an async worker.
-#[command]
-async fn neural_sidecar_tts_speak_into_voice_changer<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, NeuralSidecarTtsState>,
-    text: String,
-    voice: String,
-    endpoint: Option<String>,
-) -> Result<(), String> {
-    let base = state.endpoint_for(endpoint.as_deref());
-    let wav = sidecar_fetch_wav_bytes(&base, &text, &voice).await?;
-    if wav.is_empty() {
-        return Ok(());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let vc = app
-            .try_state::<VoiceChangerState>()
-            .ok_or("The voice changer is not available.")?;
-        push_aux_wav_bytes(&vc, wav)
-    })
-    .await
-    .map_err(|e| format!("Voice changer hand-off failed: {e}"))?
+    let spec = sidecar_spec(&base, &text, &voice)?;
+    speak_http(spec, &utterance_id).await
 }
 
 #[command]
@@ -139,8 +112,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         })
         .invoke_handler(tauri::generate_handler![
             set_neural_sidecar_tts_endpoint,
-            neural_sidecar_tts_speak,
-            neural_sidecar_tts_speak_into_voice_changer,
+            neural_sidecar_tts_speak_to_sink,
             check_neural_sidecar_tts,
         ])
         .build()
@@ -149,6 +121,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::openai_speech::testing::*;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn sidecar_endpoint_override_does_not_touch_stored_value() {
@@ -157,9 +131,49 @@ mod tests {
         assert_eq!(s.endpoint_for(None), DEFAULT_ENDPOINT);
     }
 
+    #[test]
+    fn sidecar_request_asks_for_a_stream() {
+        let spec = sidecar_spec("http://127.0.0.1:8766", "Hi.", "  ").unwrap();
+        assert_eq!(spec.url().as_str(), "http://127.0.0.1:8766/speech");
+        assert_eq!(spec.body(), &serde_json::json!({"text": "Hi.", "voice": "default", "stream": true}));
+        let spec = sidecar_spec("http://127.0.0.1:8766", "Hi.", " alice ").unwrap();
+        assert_eq!(spec.body()["voice"], "alice");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sidecar_streamed_wav_plays_while_it_arrives() {
+        // What tts_sidecar.py sends in streaming mode: a header with placeholder sizes, then PCM.
+        let values: Vec<i16> = (0..6000).map(|i| (i % 500) as i16 - 250).collect();
+        let mut body = chunked_head("audio/wav");
+        body.extend_from_slice(&chunk(&wav_header(22_050, 1, 1, 16, u32::MAX)));
+        for part in pcm16(&values).chunks(2000) {
+            body.extend_from_slice(&chunk(part));
+        }
+        body.extend_from_slice(LAST_CHUNK);
+        let (l, base) = listener().await;
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = l.accept().await.unwrap();
+            let seen = read_request(&mut sock).await;
+            sock.write_all(&body).await.unwrap();
+            let _ = sock.shutdown().await;
+            seen
+        });
+        let (sink, pushes) = Recorder::new();
+        let report = speak(sidecar_spec(&base, "Hello there.", "default").unwrap(), "sidecar-test", Box::new(sink))
+            .await
+            .unwrap();
+        let seen = server.await.unwrap();
+        assert!(seen.head.starts_with("POST /speech "), "{}", seen.head);
+        assert_eq!(seen.json()["stream"], true);
+        assert_eq!(report.frames, values.len() as u64);
+        assert_eq!(report.sample_rate, 22_050);
+        assert_eq!(pushes.samples(), f(&values));
+    }
+
     #[tokio::test]
     async fn empty_text_makes_no_request() {
         // An unroutable endpoint proves no request is attempted.
-        assert_eq!(sidecar_fetch_wav_bytes("http://invalid.invalid", "  ", "v").await.unwrap(), Vec::<u8>::new());
+        let spec = sidecar_spec("http://invalid.invalid", "  ", "v").unwrap();
+        assert_eq!(speak_http(spec, "sidecar-empty").await.unwrap().frames, 0);
     }
 }

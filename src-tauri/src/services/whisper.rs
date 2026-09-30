@@ -1,54 +1,71 @@
-//! `whisper` plugin: local Whisper (whisper-rs / whisper.cpp, CPU) behind a Silero VAD gate.
+//! `whisper` plugin: local Whisper (whisper-rs / whisper.cpp, CPU) model management and the legacy
+//! recording commands.
 //!
-//! Pipeline: microphone → capture hub (`audio::hub`: one stream per device, shared with the other
-//! consumers; raw 16 kHz mono before any voice conversion; device loss recovered automatically) →
-//! `audio::speech_capture` (Silero v6.2 segmenter) → VAD-closed utterances → one ordered worker per
-//! recording (bounded, drop-oldest backlog) → whisper.cpp with one reused `WhisperState` →
-//! no-speech drop + hallucination/repeat filter → `whisper:segment_transcript` (one final per
-//! utterance). Silence never reaches Whisper, and no PCM crosses IPC.
+//! Since P2 the recording runs through the speech pipeline (`speech::pipeline`): capture hub (raw
+//! 16 kHz mono, before any voice conversion; device loss recovered; the STT mute gate upstream) →
+//! Silero v6.2 segmenter → the ordered utterance worker (latency budget, drop-oldest backlog, merge
+//! on backlog) → the Whisper engine (`speech::engines::whisper`: one reused `WhisperState`,
+//! no-speech drop, token cap, prompt / hotwords) → hallucination / repeat filter. `start_recording`
+//! keeps its IPC contract and events; it starts the crate-internal pipeline key `legacy-whisper`
+//! with an engine over the model `ensure_dependencies` loaded, and maps the pipeline's events back
+//! to the `whisper:*` names below. Silence never reaches Whisper, and no PCM crosses IPC.
 //!
-//! Events (all emitted under the recording's stop lock with its epoch still current):
-//! - `whisper:segment_transcript` (string): one final transcript per utterance (unchanged contract).
-//! - `whisper:speech_start` (`{ seq, start_ms }`): speech detected (after `min_speech_ms`; a short
-//!   voiced tail after an 18 s forced split gets it right before its transcript).
-//! - `whisper:utterance_dropped` (`{ seq, audio_ms, reason }`): `reason` is `"backlog"` when the model
-//!   runs slower than real time and the oldest waiting utterance was discarded.
-//! - `whisper:capture_error` (`{ message }`): the capture failed for good (speech detection error);
-//!   the recording is over. A lost or unplugged device is *not* an error here: the capture hub
+//! Models: catalog models download through the model store (`model_store` entries
+//! `whisper/<id>`: pinned sha256, resume, mirrors, one download at a time), which installs them in
+//! the same `<app_data>/whisper/` folder and adopts files already there. A local `.bin`
+//! ("Use local model file") or an imported one is copied in and registered with the store when it
+//! matches the catalog. Anime-Whisper is bring-your-own.
+//!
+//! Events (the legacy recording's, all emitted under the pipeline's epoch discipline):
+//! - `whisper:segment_transcript` (string): one final transcript per utterance (or merged batch).
+//! - `whisper:speech_start` (`{ seq, start_ms }`): speech detected (`seq` is the pipeline segment id).
+//! - `whisper:utterance_dropped` (`{ seq, audio_ms, reason }`): `reason` is `"backlog"` (the model
+//!   runs slower than real time and the oldest waiting utterance was discarded) or
+//!   `"latency_budget"` (an utterance waited longer than 20 s).
+//! - `whisper:capture_error` (`{ message }`): the recording stopped itself (speech detection failed,
+//!   the model failed repeatedly). A lost or unplugged device is *not* an error: the capture hub
 //!   reconnects it (`audio:stream_error` / `audio:stream_recovered`) and the recording continues.
 //! - `whisper:download_progress`, `whisper:load_status`, `whisper:download_complete`,
 //!   `whisper:download_dismiss`: model fetch / load (unchanged).
 
-use crate::services::audio::speech_capture::{start_speech_capture, SpeechCapture, SpeechCaptureEvent};
-use crate::services::http_client::{describe_failed_response, http_download_get};
-use crate::services::speech_core::hallucination::clean_transcript;
-use crate::services::speech_core::utterance::{samples_to_ms, BoundedQueue};
-use crate::services::speech_core::{SegmenterEvent, VadConfig, SAMPLE_RATE};
-use futures::StreamExt;
+use crate::services::model_store::{self, register_legacy_file, CancelToken, Digest, Origin};
+use crate::services::speech::engine_api::{AsrEngine, EngineKind, EngineSpec, PipelineConfig, RouteRequest};
+use crate::services::speech::engines::whisper::{self as whisper_engine, LoadedModel, SharedModel, WhisperEngine};
+use crate::services::speech::events::{
+    SpeechFinal, SpeechPartial, SpeechState, SpeechStatus, SpeechTurnEnd, SpeechUtterance,
+};
+use crate::services::speech::pipeline::{self, EngineFactory, EventSink, SessionDeps, INTERNAL_PREFIX};
+use crate::services::speech::utterance::reasons;
+use crate::services::speech_core::VadConfig;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::ffi::{c_int, c_void};
+use sha2::{Digest as _, Sha256};
+use futures::future::BoxFuture;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::thread;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tauri::{
     command,
     plugin::{Builder, TauriPlugin},
     AppHandle, Emitter, Manager, Runtime, State,
 };
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use tokio::sync::broadcast::error::RecvError;
 
-/// Log target of the Whisper pipeline (file log via `diagnostics`).
+/// Log target of the Whisper plugin (file log via `diagnostics`).
 const LOG: &str = "sigil::stt::whisper";
 
-/// Download base of the official whisper.cpp ggml conversions.
-const HF_WHISPER_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+/// Folder under the app data folder that holds the ggml models (shared with the model store).
+pub(crate) const WHISPER_FOLDER: &str = "whisper";
 
-/// Model id → ggml file on `HF_WHISPER_BASE` (the ids the inspector persists). Checked against the
+/// Pipeline key of the legacy recording (crate-internal).
+pub(crate) const LEGACY_PIPELINE_ID: &str = "legacy-whisper";
+const _: () = assert!(LEGACY_PIPELINE_ID.len() > INTERNAL_PREFIX.len());
+
+/// Model id → ggml file (the ids the inspector persists; the model store's `whisper/<id>`
+/// entries, `model-catalog/stt-legacy.json`, carry the URLs and hashes). Checked against the
 /// repository's file list (revision 5359861c, 2026-09).
 const CATALOG: &[(&str, &str)] = &[
     ("tiny.en", "ggml-tiny.en.bin"),
@@ -109,13 +126,6 @@ pub(crate) struct WhisperModelInfo {
     pub accepts_prompt: bool,
 }
 
-impl WhisperModelInfo {
-    /// Download URL, `None` for bring-your-own presets.
-    pub fn download_url(&self) -> Option<String> {
-        (!self.bring_your_own).then(|| huggingface_model_url(&format!("{HF_WHISPER_BASE}{}", self.filename)))
-    }
-}
-
 /// Resolve a model id; unknown ids are an error (they used to fall back to base.en silently).
 pub(crate) fn get_model_info(model: &str) -> Result<WhisperModelInfo, String> {
     let id = model.trim();
@@ -143,7 +153,7 @@ pub(crate) fn get_model_info(model: &str) -> Result<WhisperModelInfo, String> {
 }
 
 /// Message for a bring-your-own model whose file is missing.
-fn bring_your_own_missing(info: &WhisperModelInfo) -> String {
+pub(crate) fn bring_your_own_missing(info: &WhisperModelInfo) -> String {
     if info.id == ANIME_WHISPER_ID {
         "Anime-Whisper is bring-your-own: convert litagin/anime-whisper to a ggml .bin with whisper.cpp's \
          models/convert-h5-to-ggml.py, then choose that file with \"Use local model file\" (or import it)."
@@ -168,6 +178,9 @@ const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Chunk size of the local-model copy; progress and cancellation are checked once per chunk.
 const COPY_CHUNK_BYTES: usize = 1 << 20;
+
+/// How often a store download checks whether this `ensure_dependencies` run went stale.
+const STALE_POLL: Duration = Duration::from_millis(250);
 
 /// Remove `*.partial` / `*.partial_import` left by a previous process (exit or crash mid-download or mid-copy).
 /// Per-run names carry the process id plus an epoch/sequence, so no other run or instance reuses them.
@@ -237,12 +250,14 @@ pub(crate) fn progress_percent(done: u64, total: u64) -> Option<f64> {
     }
 }
 
-/// Copy `src` to `dest` in [`COPY_CHUNK_BYTES`] chunks. `on_progress(copied, total)` runs after every chunk;
-/// returning `false` stops the copy with [`DOWNLOAD_CANCELLED`]. The caller removes `dest` on `Err`.
-fn copy_with_progress(src: &Path, dest: &Path, on_progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<(), String> {
+/// Copy `src` to `dest` in [`COPY_CHUNK_BYTES`] chunks, hashing it (sha256, hex). `on_progress(copied, total)`
+/// runs after every chunk; returning `false` stops the copy with [`DOWNLOAD_CANCELLED`]. The caller removes
+/// `dest` on `Err`.
+fn copy_with_progress(src: &Path, dest: &Path, on_progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<String, String> {
     let mut input = File::open(src).map_err(|e| e.to_string())?;
     let total = input.metadata().map(|m| m.len()).unwrap_or(0);
     let mut output = File::create(dest).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
     let mut buf = vec![0u8; COPY_CHUNK_BYTES];
     let mut copied: u64 = 0;
     loop {
@@ -253,23 +268,18 @@ fn copy_with_progress(src: &Path, dest: &Path, on_progress: &mut dyn FnMut(u64, 
             Err(e) => return Err(e.to_string()),
         };
         output.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        hasher.update(&buf[..n]);
         copied += n as u64;
         if !on_progress(copied, total) {
             return Err(DOWNLOAD_CANCELLED.to_string());
         }
     }
-    output.flush().map_err(|e| e.to_string())
+    output.flush().map_err(|e| e.to_string())?;
+    Ok(hex::encode(hasher.finalize()))
 }
 
-fn huggingface_model_url(base: &str) -> String {
-    if base.contains('?') {
-        base.to_string()
-    } else {
-        format!("{base}?download=true")
-    }
-}
-
-fn validate_whisper_bin_src(path: &Path) -> Result<(), String> {
+/// A ggml Whisper model file of plausible size that is not an HTML error page.
+pub(crate) fn validate_whisper_bin_src(path: &Path) -> Result<(), String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     if meta.len() < MIN_WHISPER_BIN_BYTES {
         return Err(
@@ -286,11 +296,12 @@ fn validate_whisper_bin_src(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Copy a validated `.bin` into place through a per-call temp file; returns its sha256.
 fn copy_whisper_bin_to_model_path(
     src: &Path,
     dest: &Path,
     on_progress: &mut dyn FnMut(u64, u64) -> bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     validate_whisper_bin_src(src)?;
     if let Some(parent) = dest.parent() {
         if !parent.exists() {
@@ -300,28 +311,31 @@ fn copy_whisper_bin_to_model_path(
     let seq = IMPORT_SEQ.fetch_add(1, Ordering::Relaxed);
     let partial_path = dest.with_extension(format!("bin.{}.{seq}.partial_import", std::process::id()));
     let _ = fs::remove_file(&partial_path);
-    if let Err(e) = copy_with_progress(src, &partial_path, on_progress) {
-        let _ = fs::remove_file(&partial_path);
-        return Err(e);
-    }
+    let sha = match copy_with_progress(src, &partial_path, on_progress) {
+        Ok(sha) => sha,
+        Err(e) => {
+            let _ = fs::remove_file(&partial_path);
+            return Err(e);
+        }
+    };
     // `rename` replaces an existing destination in one step (Windows and Unix), so `dest` is never missing.
     fs::rename(&partial_path, dest).map_err(|e| {
         let _ = fs::remove_file(&partial_path);
         e.to_string()
     })?;
-    Ok(())
+    Ok(sha)
 }
 
 /// Copy a user-picked `.bin` to `dest` on a blocking thread (a medium/large model is 0.5-1.6 GB), emitting
 /// `whisper:download_progress` for `file` at most ~5 times per second. `live()` is polled once per chunk: when it
-/// returns false the copy stops with [`DOWNLOAD_CANCELLED`] and nothing more is emitted.
+/// returns false the copy stops with [`DOWNLOAD_CANCELLED`] and nothing more is emitted. Returns the sha256.
 async fn copy_whisper_bin_with_progress<R: Runtime, L>(
     app: &AppHandle<R>,
     src: PathBuf,
     dest: PathBuf,
     file: &'static str,
     live: L,
-) -> Result<(), String>
+) -> Result<String, String>
 where
     L: Fn() -> bool + Send + 'static,
 {
@@ -334,13 +348,7 @@ where
             }
             if let Some(progress) = progress_percent(copied, total) {
                 if copied >= total || throttle.ready() {
-                    let _ = app.emit(
-                        "whisper:download_progress",
-                        ProgressPayload {
-                            file: file.to_string(),
-                            progress,
-                        },
-                    );
+                    emit_progress(&app, file, progress);
                 }
             }
             true
@@ -351,8 +359,19 @@ where
     .map_err(|e| format!("Model copy task failed: {}", e))?
 }
 
+/// Register `whisper/<file>` with the model store when it is the catalog's file (the Models tab
+/// then shows it installed); a custom model under a catalog name is left unregistered.
+fn register_with_store(model_id: &str, sha256: &str, origin: Origin) {
+    let Ok(store) = model_store::global_store() else { return };
+    if let Some(entry) = store.catalog.get(&model_store::whisper_entry_id(model_id)) {
+        if register_legacy_file(&store, entry, &Digest::Sha256(sha256.to_string()), origin) {
+            store.set_state(&entry.id, None);
+        }
+    }
+}
+
 /// Decoder options of `start_recording` (`decode`); every field optional, snake_case like
-/// `VadConfig`. TS mirror: `RustWhisperDecodeOptions` (INTEGRATE adds it to `src/types.ts`).
+/// `VadConfig`. TS mirror: `RustWhisperDecodeOptions` in `src/types.ts`.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct WhisperDecodeOptions {
@@ -370,75 +389,6 @@ pub struct WhisperDecodeOptions {
     pub max_backlog: Option<u32>,
 }
 
-/// Longest prompt kept, in bytes (whisper.cpp keeps at most the last 223 tokens anyway).
-const MAX_PROMPT_BYTES: usize = 1024;
-/// Prompt tokens fed to the decoder (`n_text_ctx / 2 - 1`).
-const MAX_PROMPT_TOKENS: usize = 223;
-
-/// `WhisperDecodeOptions` resolved to concrete values.
-#[derive(Clone, Debug, PartialEq)]
-struct DecodeSettings {
-    n_threads: c_int,
-    prompt: String,
-    no_speech_threshold: f32,
-    hallucination_filter: bool,
-    max_backlog: usize,
-}
-
-/// Default inference threads: half the logical CPUs (about the physical cores), 1..=4.
-fn default_whisper_threads() -> u32 {
-    let logical = thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(4);
-    (logical / 2).clamp(1, 4)
-}
-
-impl DecodeSettings {
-    fn resolve(opts: &WhisperDecodeOptions) -> Self {
-        let mut prompt = opts.initial_prompt.as_deref().unwrap_or("").trim().to_string();
-        let hotwords: Vec<&str> = opts
-            .hotwords
-            .iter()
-            .flatten()
-            .map(|w| w.trim())
-            .filter(|w| !w.is_empty())
-            .collect();
-        if !hotwords.is_empty() {
-            if !prompt.is_empty() {
-                prompt.push(' ');
-            }
-            prompt.push_str(&hotwords.join(", "));
-            prompt.push('.');
-        }
-        // NUL would abort tokenization; cap on a char boundary.
-        prompt.retain(|c| c != '\0');
-        if prompt.len() > MAX_PROMPT_BYTES {
-            let mut cut = MAX_PROMPT_BYTES;
-            while !prompt.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            prompt.truncate(cut);
-        }
-        let threads = opts.n_threads.filter(|&n| n > 0).unwrap_or_else(default_whisper_threads);
-        let available = thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(4);
-        Self {
-            n_threads: threads.clamp(1, available.max(1)).min(16) as c_int,
-            prompt,
-            no_speech_threshold: opts
-                .no_speech_threshold
-                .filter(|v| v.is_finite())
-                .map_or(0.6, |v| v.clamp(0.05, 1.0)),
-            hallucination_filter: opts.hallucination_filter.unwrap_or(true),
-            max_backlog: opts.max_backlog.map_or(3, |n| n.clamp(1, 10) as usize),
-        }
-    }
-}
-
-/// Whisper's per-pass token cap for an utterance of `samples` (16 kHz): generous for fast speech
-/// (about 12 tokens/s + 32), far below a runaway repetition loop (224).
-fn max_tokens_for(samples: usize) -> c_int {
-    let secs = samples as f32 / SAMPLE_RATE as f32;
-    ((secs * 12.0).ceil() as c_int + 32).clamp(48, 220)
-}
-
 /// VAD settings for a recording: the explicit `vad` object, else defaults. The legacy
 /// `vadEnabled: false` ("fixed 5 s windows") maps to 5 s forced splits; silence is still never sent.
 fn resolve_vad(vad: Option<VadConfig>, vad_enabled: Option<bool>) -> VadConfig {
@@ -452,63 +402,62 @@ fn resolve_vad(vad: Option<VadConfig>, vad_enabled: Option<bool>) -> VadConfig {
     }
 }
 
-/// The loaded model plus the one `WhisperState` reused for every utterance (created lazily; both
-/// are replaced together on a model switch, so the old model's memory is freed at once).
-struct LoadedModel {
-    ctx: WhisperContext,
-    state: Option<whisper_rs::WhisperState>,
-    accepts_prompt: bool,
-    /// `(prompt text, its tokens)` for this model's vocabulary.
-    prompt_tokens: Option<(String, Vec<c_int>)>,
-}
-
-impl LoadedModel {
-    fn new(ctx: WhisperContext, info: &WhisperModelInfo) -> Self {
-        Self {
-            ctx,
-            state: None,
-            accepts_prompt: info.accepts_prompt,
-            prompt_tokens: None,
-        }
+/// The pipeline config of a legacy recording.
+fn legacy_pipeline_config(
+    device_name: Option<String>,
+    vad: VadConfig,
+    decode: &WhisperDecodeOptions,
+    language: &str,
+    model: &str,
+) -> PipelineConfig {
+    let mut options = serde_json::Map::new();
+    if let Some(v) = decode.no_speech_threshold.filter(|v| v.is_finite()) {
+        options.insert("noSpeechThreshold".into(), serde_json::json!(v));
     }
-}
-
-/// One VAD-closed utterance waiting for the model.
-struct WhisperJob {
-    seq: u64,
-    samples: Vec<f32>,
-}
-
-/// A running recording.
-struct RecordingSession {
-    /// Capture-hub consumer behind the Silero segmenter.
-    capture: SpeechCapture,
-    queue: Arc<BoundedQueue<WhisperJob>>,
-}
-
-impl RecordingSession {
-    /// Discard waiting utterances, wake the worker and release the capture (bounded wait).
-    async fn shutdown(self) {
-        self.queue.close();
-        self.capture.stop().await;
+    PipelineConfig {
+        pipeline_id: LEGACY_PIPELINE_ID.to_string(),
+        source: device_name.unwrap_or_default(),
+        vad,
+        language: language.to_string(),
+        route: RouteRequest::default(),
+        streaming: None,
+        final_engine: Some(EngineSpec {
+            engine: EngineKind::Whisper,
+            model: model.to_string(),
+            threads: decode.n_threads.filter(|&n| n > 0),
+            variant: None,
+            options: serde_json::Value::Object(options),
+        }),
+        smart_turn: false,
+        hotwords: decode.hotwords.clone().unwrap_or_default(),
+        prompt: decode.initial_prompt.clone().unwrap_or_default(),
+        hallucination_filter: decode.hallucination_filter.unwrap_or(true),
+        latency_budget_ms: 0,
+        max_backlog: decode.max_backlog.unwrap_or(3),
+        retain_pcm: false,
+        capture_only: false,
     }
 }
 
 #[derive(Clone)]
 pub struct WhisperState {
-    /// The stop lock and the running recording. Starts and stops bump `recording_epoch` while holding
-    /// it; every event of a recording is emitted while holding it with that recording's epoch current,
-    /// so once a stop (or restart) returns nothing of the ended recording is emitted.
-    session: Arc<Mutex<Option<RecordingSession>>>,
-    recording_epoch: Arc<AtomicU64>,
-    ctx: Arc<Mutex<Option<LoadedModel>>>,
-    /// Model file whose weights are in `ctx` (updated together with `ctx`, lock order ctx -> this).
-    loaded_model_file: Arc<Mutex<Option<String>>>,
+    /// The loaded model and its reused `WhisperState`, shared with the recording's engine.
+    model: SharedModel,
+    /// Preset of the model whose weights are in `model` (updated together with it, lock order
+    /// model -> this).
+    loaded: Arc<Mutex<Option<WhisperModelInfo>>>,
     /// Language used for transcription; written only by a current (non-stale) `ensure_dependencies` run.
     current_language: Arc<Mutex<String>>,
     /// Bumped on each `ensure_dependencies` start and on cancel; stale runs must not mutate state or emit,
     /// and only ever touch their own temp files.
     ensure_deps_epoch: Arc<AtomicU64>,
+    /// Cancels the store downloads and copies started before the next `cancel_whisper_download`
+    /// (which cancels this token and installs a fresh one).
+    cancel: Arc<Mutex<CancelToken>>,
+    /// Store entries whose install job a Whisper run cancelled, and when (it created the job,
+    /// then went stale or was cancelled). A newer run that had joined that job queues it again
+    /// instead of failing; a cancel from the Models tab is not in here and ends the waiting run.
+    store_cancels: Arc<Mutex<HashMap<String, Instant>>>,
     /// Held across a model load (build + publish), so a restart during a load waits for it instead of building a
     /// second `WhisperContext` alongside it (2x model RAM). Async so a waiting run does not block a runtime thread.
     load_lock: Arc<tokio::sync::Mutex<()>>,
@@ -517,30 +466,28 @@ pub struct WhisperState {
 impl WhisperState {
     fn new() -> Self {
         Self {
-            session: Arc::new(Mutex::new(None)),
-            recording_epoch: Arc::new(AtomicU64::new(0)),
-            ctx: Arc::new(Mutex::new(None)),
-            loaded_model_file: Arc::new(Mutex::new(None)),
+            model: Arc::new(Mutex::new(None)),
+            loaded: Arc::new(Mutex::new(None)),
             current_language: Arc::new(Mutex::new("en".to_string())),
             ensure_deps_epoch: Arc::new(AtomicU64::new(0)),
+            cancel: Arc::new(Mutex::new(CancelToken::default())),
+            store_cancels: Arc::new(Mutex::new(HashMap::new())),
             load_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
-    fn lock_session(&self) -> MutexGuard<'_, Option<RecordingSession>> {
-        self.session.lock().unwrap_or_else(PoisonError::into_inner)
+    fn token(&self) -> CancelToken {
+        self.cancel.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    fn epoch_is(&self, epoch: u64) -> bool {
-        self.recording_epoch.load(Ordering::SeqCst) == epoch
+    fn cancel_all(&self) {
+        let mut t = self.cancel.lock().unwrap_or_else(PoisonError::into_inner);
+        t.cancel();
+        *t = CancelToken::default();
     }
 
-    /// Emit `event` only while recording `epoch` is current (under the stop lock).
-    fn emit_for<R: Runtime, S: Serialize + Clone>(&self, app: &AppHandle<R>, epoch: u64, event: &str, payload: S) {
-        let _guard = self.lock_session();
-        if self.epoch_is(epoch) {
-            let _ = app.emit(event, payload);
-        }
+    fn loaded(&self) -> Option<WhisperModelInfo> {
+        *self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -554,7 +501,7 @@ struct SpeechStartPayload {
 struct UtteranceDroppedPayload {
     seq: u64,
     audio_ms: u64,
-    reason: &'static str,
+    reason: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -573,97 +520,189 @@ struct DownloadCompletePayload {
     file: String,
 }
 
-#[allow(dead_code)]
-fn verify_file(path: &std::path::Path, expected_hash: &str) -> Result<(), String> {
-    let mut file = File::open(path).map_err(|e| format!("Failed to open: {}", e))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 4096];
-    loop {
-        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    let hash_hex = hex::encode(hasher.finalize());
-    if hash_hex.to_lowercase() != expected_hash.to_lowercase() {
-        return Err(format!("Hash mismatch! Expected {}, got {}", expected_hash, hash_hex));
-    }
-    Ok(())
+fn emit_progress<R: Runtime>(app: &AppHandle<R>, file: &str, progress: f64) {
+    let _ = app.emit(
+        "whisper:download_progress",
+        ProgressPayload {
+            file: file.to_string(),
+            progress,
+        },
+    );
 }
 
 fn ensure_deps_stale(state: &WhisperState, my_epoch: u64) -> bool {
     state.ensure_deps_epoch.load(Ordering::SeqCst) != my_epoch
 }
 
-/// Stream `model_url` into this run's own `partial_path` and validate it. The caller removes the partial on `Err`.
-async fn fetch_model_to_partial<R: Runtime>(
+/// Forward the store's `models:progress` for `entry_id` as `whisper:download_progress` (percent, or
+/// -1 while the size is unknown).
+fn bridge_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    store: &model_store::Store,
+    entry_id: String,
+    file: &'static str,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let mut rx = store.subscribe_progress();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(e) if e.id == entry_id => {
+                    let progress = e
+                        .bytes_total
+                        .and_then(|t| progress_percent(e.bytes_done, t))
+                        .unwrap_or(-1.0);
+                    emit_progress(&app, file, progress);
+                }
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
+/// Error text of a cancelled store job (`model_store`'s).
+const STORE_CANCELLED: &str = "cancelled";
+/// How often one run queues its model again after another Whisper run cancelled the job it joined.
+const MAX_REQUEUES: u32 = 3;
+/// A Whisper run's cancel of a store job explains a joined job's `cancelled` only this long.
+const STORE_CANCEL_WINDOW: Duration = Duration::from_secs(30);
+
+/// A store install job as [`wait_for_install`] sees it (closures over the store's job, so the
+/// waiting logic is testable without a store).
+struct InstallJob {
+    wait: BoxFuture<'static, Result<PathBuf, String>>,
+    cancel: Box<dyn Fn() + Send + Sync>,
+    /// This run created the job (vs. joined one already queued or running).
+    created: bool,
+}
+
+/// How [`wait_for_install`] ended.
+#[derive(Debug, PartialEq)]
+enum InstallEnd {
+    /// Installed (or adopted) already: nothing was downloaded.
+    AlreadyInstalled,
+    Installed,
+    /// This run was cancelled or went stale (or someone cancelled the job in the Models tab).
+    Cancelled,
+    /// Queueing or the install failed (the error text).
+    Failed(String),
+}
+
+/// Queue `entry_id` and wait for its install job. A cancel or staleness of this run stops the wait
+/// and cancels the job when this run created it (recorded in `store_cancels`); a job that ends
+/// `cancelled` while this run still wants the model is queued again when a Whisper run cancelled
+/// it (bounded), since this run may have joined it just before that run gave up.
+async fn wait_for_install(
+    entry_id: &str,
+    mut enqueue: impl FnMut() -> Result<Option<InstallJob>, String>,
+    cancel: &CancelToken,
+    stale: impl Fn() -> bool,
+    store_cancels: &Mutex<HashMap<String, Instant>>,
+) -> InstallEnd {
+    let mut requeues = 0u32;
+    let mut waited = false;
+    loop {
+        let job = match enqueue() {
+            Ok(Some(job)) => job,
+            Ok(None) if waited => return InstallEnd::Installed,
+            Ok(None) => return InstallEnd::AlreadyInstalled,
+            Err(e) => return InstallEnd::Failed(e),
+        };
+        waited = true;
+        if job.created {
+            // A fresh job: an older cancel of this entry concerns nobody any more.
+            store_cancels.lock().unwrap_or_else(PoisonError::into_inner).remove(entry_id);
+            tracing::info!(target: LOG, "downloading {entry_id} through the model store");
+        }
+        let stale_wait = async {
+            while !stale() {
+                tokio::time::sleep(STALE_POLL).await;
+            }
+        };
+        let result = tokio::select! {
+            r = job.wait => r,
+            _ = cancel.cancelled() => Err(STORE_CANCELLED.to_string()),
+            _ = stale_wait => Err(STORE_CANCELLED.to_string()),
+        };
+        match result {
+            Ok(_) => return InstallEnd::Installed,
+            Err(e) if e == STORE_CANCELLED => {
+                if cancel.is_cancelled() || stale() {
+                    if job.created {
+                        store_cancels
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(entry_id.to_string(), Instant::now());
+                        (job.cancel)();
+                    }
+                    return InstallEnd::Cancelled;
+                }
+                let ours = store_cancels
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(entry_id)
+                    .is_some_and(|at| at.elapsed() <= STORE_CANCEL_WINDOW);
+                if !ours || requeues >= MAX_REQUEUES {
+                    return InstallEnd::Cancelled;
+                }
+                requeues += 1;
+                tracing::info!(target: LOG, "{entry_id}: the download this run joined was cancelled by an earlier run; queueing it again");
+            }
+            Err(e) => return InstallEnd::Failed(format!("Model download failed: {e}")),
+        }
+    }
+}
+
+/// Install a catalog model through the model store (pinned, resumable, mirrored; a file already in
+/// `whisper/` is adopted instead of downloaded). A cancel or a newer `ensure_dependencies` run stops
+/// waiting, and cancels the download when this call started it (one started from the Models tab
+/// continues); the partial download is kept for resume. See [`wait_for_install`].
+async fn download_through_store<R: Runtime>(
     app: &AppHandle<R>,
     state: &WhisperState,
     my_epoch: u64,
-    model_url: &str,
-    model_filename: &str,
-    partial_path: &Path,
+    cancel: &CancelToken,
+    info: &WhisperModelInfo,
 ) -> Result<(), String> {
-    let response = http_download_get(model_url)
-        .send()
-        .await
-        .map_err(|e| format!("Model download failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let detail = describe_failed_response(response).await;
-        return Err(format!("Model download failed: {detail}"));
+    let store = model_store::global_store()?;
+    let entry_id = model_store::whisper_entry_id(info.id);
+    if store.catalog.get(&entry_id).is_none() {
+        return Err(format!("Whisper model '{}' is not in the model catalog.", info.id));
     }
-
-    let total = response.content_length().unwrap_or(0);
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
-    let mut throttle = ProgressThrottle::new();
-
-    {
-        let mut file = File::create(partial_path).map_err(|e| e.to_string())?;
-        while let Some(chunk) = stream.next().await {
-            if ensure_deps_stale(state, my_epoch) {
-                return Err(DOWNLOAD_CANCELLED.to_string());
-            }
-            let chunk = chunk.map_err(|e| e.to_string())?;
-            file.write_all(&chunk).map_err(|e| e.to_string())?;
-            downloaded += chunk.len() as u64;
-            // One event per network chunk would flood IPC (thousands per second); ~5 per second is plenty.
-            if downloaded > 0 && throttle.ready() {
-                let _ = app.emit(
-                    "whisper:download_progress",
-                    ProgressPayload {
-                        file: model_filename.to_string(),
-                        // Unknown total length: 0 still shows activity (indeterminate % in the UI).
-                        progress: progress_percent(downloaded, total).unwrap_or(0.0),
-                    },
-                );
-            }
+    let bridge = bridge_progress(app, &store, entry_id.clone(), info.filename);
+    let enqueue = || -> Result<Option<InstallJob>, String> {
+        let queued = store.enqueue(std::slice::from_ref(&entry_id))?;
+        Ok(queued.into_iter().next().and_then(|q| {
+            let created = q.created;
+            q.job.map(|job| {
+                let waiter = Arc::clone(&job);
+                InstallJob {
+                    wait: Box::pin(async move { waiter.wait().await }),
+                    cancel: Box::new(move || job.cancel.cancel()),
+                    created,
+                }
+            })
+        }))
+    };
+    let end = wait_for_install(
+        &entry_id,
+        enqueue,
+        cancel,
+        || ensure_deps_stale(state, my_epoch),
+        &state.store_cancels,
+    )
+    .await;
+    bridge.abort();
+    match end {
+        InstallEnd::AlreadyInstalled => Ok(()),
+        InstallEnd::Installed => {
+            emit_progress(app, info.filename, 100.0);
+            Ok(())
         }
-        if total > 0 && !ensure_deps_stale(state, my_epoch) {
-            let _ = app.emit(
-                "whisper:download_progress",
-                ProgressPayload {
-                    file: model_filename.to_string(),
-                    progress: 100.0,
-                },
-            );
-        }
+        InstallEnd::Cancelled => Err(DOWNLOAD_CANCELLED.to_string()),
+        InstallEnd::Failed(e) => Err(e),
     }
-
-    let meta = fs::metadata(partial_path).map_err(|e| e.to_string())?;
-    if meta.len() < MIN_WHISPER_BIN_BYTES {
-        return Err("Downloaded file is too small to be a valid Whisper model (got an error page?)".to_string());
-    }
-
-    let mut sniff = [0u8; 8];
-    let mut sniff_file = File::open(partial_path).map_err(|e| e.to_string())?;
-    let n = sniff_file.read(&mut sniff).map_err(|e| e.to_string())?;
-    if n > 0 && sniff[0] == b'<' {
-        return Err("Download returned HTML instead of a model file.".to_string());
-    }
-    Ok(())
 }
 
 #[command]
@@ -676,6 +715,7 @@ async fn ensure_dependencies<R: Runtime>(
 ) -> Result<(), String> {
     // A newer run or `cancel_whisper_download` bumps the epoch; from then on this run is stale.
     let my_epoch = state.ensure_deps_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+    let cancel = state.token();
 
     let info = get_model_info(&model)?;
     let model_filename = info.filename;
@@ -684,7 +724,7 @@ async fn ensure_dependencies<R: Runtime>(
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
-    let whisper_dir = app_data_dir.join("whisper");
+    let whisper_dir = app_data_dir.join(WHISPER_FOLDER);
     let model_path = whisper_dir.join(model_filename);
 
     if !whisper_dir.exists() {
@@ -693,9 +733,8 @@ async fn ensure_dependencies<R: Runtime>(
 
     // Reload when nothing is loaded, a different model is loaded, or the file still has to be fetched.
     let need_reload = {
-        let ctx_guard = state.ctx.lock().map_err(|_| "Failed to lock ctx")?;
-        let loaded = state.loaded_model_file.lock().map_err(|_| "Lock failed")?;
-        ctx_guard.is_none() || loaded.as_deref() != Some(model_filename) || !model_path.exists()
+        let model_guard = state.model.lock().map_err(|_| "Failed to lock the model")?;
+        model_guard.is_none() || state.loaded().map(|l| l.filename) != Some(model_filename) || !model_path.exists()
     };
 
     // Set when this run put the model file in place (download or local copy): the inspector's progress row then
@@ -711,45 +750,36 @@ async fn ensure_dependencies<R: Runtime>(
                 let _ = app.emit("whisper:load_status", "Copying local Whisper model...");
                 // Cancellable like a download: a stop or a newer run ends the copy at the next 1 MiB chunk.
                 let epoch = state.ensure_deps_epoch.clone();
-                copy_whisper_bin_with_progress(
+                let token = cancel.clone();
+                let sha = copy_whisper_bin_with_progress(
                     &app,
                     PathBuf::from(trimmed),
                     model_path.clone(),
                     model_filename,
-                    move || epoch.load(Ordering::SeqCst) == my_epoch,
+                    move || epoch.load(Ordering::SeqCst) == my_epoch && !token.is_cancelled(),
                 )
                 .await?;
+                register_with_store(info.id, &sha, Origin::Import);
                 fetched_model = true;
             }
         }
 
         if !model_path.exists() {
-            let Some(model_url) = info.download_url() else {
+            if info.bring_your_own {
                 return Err(bring_your_own_missing(&info));
-            };
-            fetched_model = true;
-            // Per-run name (process id + epoch): overlapping runs, and a second Sigil instance whose epoch
-            // counter also restarted at launch, never share, rename or delete each other's partial file.
-            let partial_path =
-                whisper_dir.join(format!("{}.{}.{}.partial", model_filename, std::process::id(), my_epoch));
-            let _ = fs::remove_file(&partial_path);
-
-            if let Err(e) = fetch_model_to_partial(&app, &state, my_epoch, &model_url, model_filename, &partial_path).await {
-                let _ = fs::remove_file(&partial_path);
-                return Err(e);
             }
             if ensure_deps_stale(&state, my_epoch) {
-                let _ = fs::remove_file(&partial_path);
                 return Err(DOWNLOAD_CANCELLED.to_string());
             }
-            if model_path.exists() {
-                // An overlapping run committed this model first; keep its file and drop ours.
-                let _ = fs::remove_file(&partial_path);
-            } else if let Err(e) = fs::rename(&partial_path, &model_path) {
-                let _ = fs::remove_file(&partial_path);
-                return Err(e.to_string());
+            fetched_model = true;
+            download_through_store(&app, &state, my_epoch, &cancel, &info).await?;
+            if ensure_deps_stale(&state, my_epoch) {
+                return Err(DOWNLOAD_CANCELLED.to_string());
             }
-            // From here on the committed model file is valid and is never deleted, even if this run goes stale.
+            if !model_path.exists() {
+                return Err("The Whisper model was installed, but its file is missing.".to_string());
+            }
+            // From here on the installed model file is valid and is never deleted, even if this run goes stale.
         }
     }
 
@@ -765,25 +795,21 @@ async fn ensure_dependencies<R: Runtime>(
         if ensure_deps_stale(&state, my_epoch) {
             return Err("Model load cancelled.".to_string());
         }
-        let path_str = model_path.to_string_lossy().into_owned();
-        let ctx = tauri::async_runtime::spawn_blocking(move || {
-            WhisperContext::new_with_params(&path_str, WhisperContextParameters::default())
-        })
-        .await
-        .map_err(|e| format!("Model load task failed: {}", e))?
-        .map_err(|e| format!("Failed to load context: {}", e))?;
+        let path = model_path.clone();
+        let ctx = tauri::async_runtime::spawn_blocking(move || whisper_engine::load_context(&path))
+            .await
+            .map_err(|e| format!("Model load task failed: {}", e))??;
         let previous = {
-            let mut ctx_guard = state.ctx.lock().map_err(|_| "Failed to lock ctx")?;
-            // Checked under the lock the transcription worker holds across inference (seconds): a cancel or restart that
-            // lands while this run waits for it is seen here, and the stale context is never published.
+            let mut model_guard = state.model.lock().map_err(|_| "Failed to lock the model")?;
+            // Checked under the lock the recording's engine holds across inference (seconds): a cancel or restart
+            // that lands while this run waits for it is seen here, and the stale context is never published.
             if ensure_deps_stale(&state, my_epoch) {
                 return Err("Model load cancelled.".to_string());
             }
-            let mut loaded = state.loaded_model_file.lock().map_err(|_| "Lock failed")?;
-            *loaded = Some(model_filename.to_string());
-            ctx_guard.replace(LoadedModel::new(ctx, &info))
+            *state.loaded.lock().map_err(|_| "Lock failed")? = Some(info);
+            model_guard.replace(LoadedModel::new(ctx, info.accepts_prompt))
         };
-        // Free the replaced model outside the ctx lock so transcription is not blocked while it is released.
+        // Free the replaced model outside the model lock so transcription is not blocked while it is released.
         drop(previous);
         if !ensure_deps_stale(&state, my_epoch) {
             let _ = app.emit("whisper:load_status", "");
@@ -818,9 +844,10 @@ async fn import_whisper_model<R: Runtime>(
     model: String,
     source_path: String,
 ) -> Result<(), String> {
-    let model_filename = get_model_info(&model)?.filename;
+    let info = get_model_info(&model)?;
+    let model_filename = info.filename;
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let whisper_dir = app_data_dir.join("whisper");
+    let whisper_dir = app_data_dir.join(WHISPER_FOLDER);
     if !whisper_dir.exists() {
         fs::create_dir_all(&whisper_dir).map_err(|e| e.to_string())?;
     }
@@ -836,319 +863,100 @@ async fn import_whisper_model<R: Runtime>(
     )
     .await;
     let _ = app.emit("whisper:download_dismiss", ());
-    copied?;
-    // The file on disk changed: make the next `ensure_dependencies` reload it instead of reusing `ctx`.
-    let mut loaded = state.loaded_model_file.lock().map_err(|_| "Lock failed")?;
-    if loaded.as_deref() == Some(model_filename) {
+    let sha = copied?;
+    register_with_store(info.id, &sha, Origin::Import);
+    // The file on disk changed: make the next `ensure_dependencies` reload it instead of reusing the model.
+    let mut loaded = state.loaded.lock().map_err(|_| "Lock failed")?;
+    if loaded.map(|l| l.filename) == Some(model_filename) {
         *loaded = None;
     }
     Ok(())
 }
 
-/// Abort flag handed to whisper.cpp: inference stops as soon as the recording's epoch moves on
-/// (stop / restart), so a stop never waits for a long decode and a model reload is not held up.
-struct AbortToken {
-    epoch: Arc<AtomicU64>,
-    mine: u64,
-}
-
-impl AbortToken {
-    fn aborted(&self) -> bool {
-        self.epoch.load(Ordering::Relaxed) != self.mine
-    }
-}
-
-/// `ggml_abort_callback`: `user_data` is the worker's `AbortToken`.
-unsafe extern "C" fn abort_trampoline(user_data: *mut c_void) -> bool {
-    // SAFETY: set only by `transcribe_utterance`, which passes a pointer to an `AbortToken` that
-    // outlives the `full()` call that invokes this callback.
-    let token = unsafe { &*(user_data as *const AbortToken) };
-    token.aborted()
-}
-
-/// Result of one utterance.
-struct Transcript {
-    /// Final text, `None` when nothing survived the no-speech / hallucination filters.
-    text: Option<String>,
-    /// Language Whisper decoded (configured or detected).
-    language: Option<&'static str>,
-    /// No-speech probability of the utterance ([`sot_no_speech_prob`]; 0 when unavailable).
-    no_speech_prob: f32,
-}
-
-/// OpenAI's no-speech probability: P(`<|nospeech|>`) at the `<|startoftranscript|>` position, from one
-/// extra decoder step over the encoder output `full()` left in `wstate` (a single 30 s window for a
-/// VAD utterance).
-///
-/// whisper.cpp's own per-segment value cannot be used: it reads row 0 of the logits buffer, but a
-/// multi-token prompt decode (initial prompt, or the language/task tokens of every multilingual
-/// model) writes only the last row, so row 0 holds stale logits of an earlier decode. Measured on
-/// base.en: this probe gives 0.94 on silence and 0.0006 on speech with or without a prompt, while
-/// whisper.cpp's value simply repeated the previous utterance's number.
-fn sot_no_speech_prob(ctx: &WhisperContext, wstate: &mut whisper_rs::WhisperState, threads: c_int) -> Option<f32> {
-    wstate.decode(&[ctx.token_sot()], 0, threads.max(1) as usize).ok()?;
-    let logits = wstate.get_logits().ok()?;
-    let nosp = usize::try_from(ctx.token_nosp()).ok()?;
-    let target = *logits.get(nosp)?;
-    let max = logits.iter().copied().filter(|v| v.is_finite()).fold(f32::NEG_INFINITY, f32::max);
-    if !target.is_finite() || !max.is_finite() {
-        return None;
-    }
-    let sum: f64 = logits.iter().filter(|v| v.is_finite()).map(|&v| f64::from(v - max).exp()).sum();
-    (sum > 0.0).then(|| (f64::from(target - max).exp() / sum) as f32)
-}
-
-/// Whisper language code for `configured` (`auto`, empty or unknown codes: detect).
-fn whisper_language(configured: &str) -> Option<&'static str> {
-    let code = configured.trim().split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
-    if code.is_empty() || code == "auto" {
-        return None;
-    }
-    whisper_rs::get_lang_id(&code).and_then(whisper_rs::get_lang_str)
-}
-
-/// Transcribe one 16 kHz mono utterance on the loaded model, reusing its `WhisperState`.
-fn transcribe_utterance(
-    state: &WhisperState,
-    settings: &DecodeSettings,
-    samples: &[f32],
-    abort: &AbortToken,
-) -> Result<Transcript, String> {
-    if samples.len() < SAMPLE_RATE as usize / 5 {
-        // whisper.cpp needs >= 100 ms; the VAD never closes anything this short.
-        return Ok(Transcript {
-            text: None,
-            language: None,
-            no_speech_prob: 1.0,
-        });
-    }
-    let configured = state
-        .current_language
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    let language = whisper_language(&configured);
-
-    let mut guard = state.ctx.lock().unwrap_or_else(PoisonError::into_inner);
-    let loaded = guard.as_mut().ok_or("Whisper model is not loaded")?;
-    let LoadedModel {
-        ctx,
-        state: wstate_slot,
-        accepts_prompt,
-        prompt_tokens,
-    } = loaded;
-
-    // Prompt tokens for this model's vocabulary, tokenized once per (model, prompt).
-    let use_prompt = *accepts_prompt && !settings.prompt.is_empty();
-    if use_prompt && prompt_tokens.as_ref().is_none_or(|(text, _)| *text != settings.prompt) {
-        // Every token covers at least one byte, so `len + 8` can never overflow whisper-rs' buffer.
-        match ctx.tokenize(&settings.prompt, settings.prompt.len() + 8) {
-            Ok(mut tokens) => {
-                if tokens.len() > MAX_PROMPT_TOKENS {
-                    tokens.drain(..tokens.len() - MAX_PROMPT_TOKENS);
-                }
-                *prompt_tokens = Some((settings.prompt.clone(), tokens));
-            }
-            Err(e) => {
-                tracing::warn!(target: LOG, "initial prompt ignored (tokenize failed: {e})");
-                *prompt_tokens = Some((settings.prompt.clone(), Vec::new()));
-            }
-        }
-    }
-
-    if wstate_slot.is_none() {
-        *wstate_slot = Some(ctx.create_state().map_err(|e| format!("Failed to create Whisper state: {e}"))?);
-    }
-    let wstate = wstate_slot.as_mut().expect("state created above");
-
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_n_threads(settings.n_threads);
-    params.set_translate(false);
-    params.set_language(language);
-    // Each utterance stands alone: carrying the previous text as context propagates hallucinations.
-    params.set_no_context(true);
-    // One decode window per utterance (utterances are <= 18 s by default): whisper.cpp would otherwise
-    // re-encode a short tail after the last timestamp, which is where "you" / "Thank you." hallucinations
-    // come from, and the no-speech probe below must see the utterance's own encoder output.
-    params.set_single_segment(true);
-    params.set_suppress_nst(true);
-    params.set_suppress_blank(true);
-    // Disables whisper.cpp's internal no-speech skip, which acts on its stale value (see
-    // `sot_no_speech_prob`) and could discard real speech after a noisy utterance; the probe below
-    // replaces it. Temperature fallback still runs on low average log-probability.
-    params.set_no_speech_thold(1.0);
-    params.set_max_tokens(max_tokens_for(samples.len()));
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    if use_prompt {
-        if let Some((_, tokens)) = prompt_tokens.as_ref().filter(|(_, t)| !t.is_empty()) {
-            params.set_tokens(tokens);
-        }
-    }
-    // SAFETY: `abort` outlives `full()` below, the only call that uses the callback.
-    unsafe {
-        params.set_abort_callback(Some(abort_trampoline));
-        params.set_abort_callback_user_data(abort as *const AbortToken as *mut c_void);
-    }
-
-    if let Err(e) = wstate.full(params, samples) {
-        // Never reuse a state whose decode failed or was aborted midway.
-        *wstate_slot = None;
-        return Err(if abort.aborted() {
-            ABORTED.to_string()
-        } else {
-            format!("Whisper inference failed: {e}")
-        });
-    }
-
-    // Concatenate raw bytes: a multi-byte character can be split across segments, and segment text
-    // already carries its own leading space where the script uses spaces (none for CJK).
-    let mut bytes = Vec::new();
-    for segment in wstate.as_iter() {
-        if let Ok(b) = segment.to_bytes() {
-            bytes.extend_from_slice(b);
-        }
-    }
-    let detected = whisper_rs::get_lang_str(wstate.full_lang_id_from_state());
-    // After the segments are read: this extra decode reuses the state's decoder buffers. It sees the
-    // last encoded window only, so it is meaningful for utterances that fit one 30 s window (all of
-    // them at the default 18 s VAD limit); longer ones are never dropped on it.
-    let no_speech_prob = if samples.len() <= WHISPER_WINDOW_SAMPLES {
-        sot_no_speech_prob(ctx, wstate, settings.n_threads).unwrap_or(0.0)
-    } else {
-        0.0
-    };
-    drop(guard);
-    if no_speech_prob > settings.no_speech_threshold {
-        // The utterance as a whole is judged non-speech (breath, keyboard, music the VAD let through).
-        bytes.clear();
-    }
-
-    let raw = String::from_utf8_lossy(&bytes);
-    let language = detected.or(language);
-    let text = if settings.hallucination_filter {
-        clean_transcript(&raw, language, no_speech_prob)
-    } else {
-        Some(raw.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty())
-    };
-    Ok(Transcript {
-        text,
-        language,
-        no_speech_prob,
-    })
-}
-
-const ABORTED: &str = "aborted";
-
-/// One whisper.cpp decode window (30 s at 16 kHz).
-const WHISPER_WINDOW_SAMPLES: usize = 30 * SAMPLE_RATE as usize;
-
-/// The ordered worker of one recording: transcribes utterances strictly in order, one at a time.
-fn run_whisper_worker<R: Runtime>(
+/// Maps the legacy recording's pipeline events to the `whisper:*` events `whisper.ts` listens to.
+struct LegacyWhisperSink<R: Runtime> {
     app: AppHandle<R>,
-    state: WhisperState,
-    epoch: u64,
-    queue: Arc<BoundedQueue<WhisperJob>>,
-    settings: DecodeSettings,
-) {
-    let abort = AbortToken {
-        epoch: Arc::clone(&state.recording_epoch),
-        mine: epoch,
-    };
-    let mut last_error_log: Option<Instant> = None;
-    while let Some(job) = queue.pop() {
-        if abort.aborted() {
-            break;
-        }
-        let audio_ms = samples_to_ms(job.samples.len() as u64);
-        let started = Instant::now();
-        tracing::info!(target: LOG, "transcribe utterance seq={} audio_ms={audio_ms} backlog={}", job.seq, queue.len());
-        match transcribe_utterance(&state, &settings, &job.samples, &abort) {
-            Ok(t) => {
-                let took = started.elapsed().as_millis();
-                match t.text {
-                    Some(text) => {
-                        tracing::info!(
-                            target: LOG,
-                            "utterance seq={} done in {took} ms (lang={})",
-                            job.seq,
-                            t.language.unwrap_or("?")
-                        );
-                        // One final per utterance. `whisper.ts` maps it to STT `onFinal`.
-                        state.emit_for(&app, epoch, "whisper:segment_transcript", text);
-                    }
-                    None => tracing::info!(
-                        target: LOG,
-                        "utterance seq={} produced no text in {took} ms (no-speech {:.2}, or filtered)",
-                        job.seq,
-                        t.no_speech_prob
-                    ),
-                }
-            }
-            Err(e) if e == ABORTED => break,
-            Err(e) => {
-                // Rate-limit: a missing model fails every utterance the same way.
-                if last_error_log.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
-                    tracing::warn!(target: LOG, "utterance seq={} failed: {e}", job.seq);
-                    last_error_log = Some(Instant::now());
-                }
-            }
-        }
-    }
-    tracing::debug!(target: LOG, "worker for recording {epoch} exited");
 }
 
-/// Route a VAD event of recording `epoch` (runs on the capture's worker thread).
-fn handle_vad_event<R: Runtime>(
-    state: &WhisperState,
-    app: &AppHandle<R>,
-    epoch: u64,
-    queue: &BoundedQueue<WhisperJob>,
-    event: SegmenterEvent,
-) {
-    match event {
-        SegmenterEvent::SpeechStart { seq, start_sample } => {
-            state.emit_for(
-                app,
-                epoch,
-                "whisper:speech_start",
-                SpeechStartPayload {
-                    seq,
-                    start_ms: samples_to_ms(start_sample),
-                },
-            );
-        }
-        SegmenterEvent::Segment(segment) => {
-            if !state.epoch_is(epoch) {
-                return;
-            }
-            let dropped = queue.push(WhisperJob {
-                seq: segment.seq,
-                samples: segment.samples,
-            });
-            for old in dropped {
-                let audio_ms = samples_to_ms(old.samples.len() as u64);
-                tracing::warn!(
-                    target: LOG,
-                    "utterance seq={} ({audio_ms} ms) dropped: Whisper is slower than real time (backlog cap {})",
-                    old.seq,
-                    queue.capacity()
-                );
-                state.emit_for(
-                    app,
-                    epoch,
-                    "whisper:utterance_dropped",
-                    UtteranceDroppedPayload {
-                        seq: old.seq,
-                        audio_ms,
-                        reason: "backlog",
-                    },
-                );
-            }
+/// A legacy event: name and payload.
+#[derive(Debug, PartialEq)]
+enum LegacyEvent {
+    Transcript(String),
+    SpeechStart { seq: u64, start_ms: u64 },
+    Dropped { seq: u64, audio_ms: u64, reason: String },
+    CaptureError(String),
+}
+
+impl LegacyEvent {
+    fn from_final(e: &SpeechFinal) -> Option<Self> {
+        (!e.text.trim().is_empty()).then(|| LegacyEvent::Transcript(e.text.clone()))
+    }
+
+    fn from_status(e: &SpeechStatus) -> Option<Self> {
+        (e.state == SpeechState::Error).then(|| {
+            LegacyEvent::CaptureError(if e.detail.is_empty() { e.code.clone() } else { e.detail.clone() })
+        })
+    }
+
+    fn from_utterance(e: &SpeechUtterance, audio_ms: u64) -> Option<Self> {
+        match e {
+            SpeechUtterance::SpeechStart {
+                segment_id, start_ms, ..
+            } => Some(LegacyEvent::SpeechStart {
+                seq: *segment_id,
+                start_ms: *start_ms,
+            }),
+            // Only real losses were ever reported (a merged utterance's text is in the previous final).
+            SpeechUtterance::Dropped {
+                segment_id, reason, ..
+            } if reason == reasons::BACKLOG || reason == reasons::LATENCY_BUDGET => Some(LegacyEvent::Dropped {
+                seq: *segment_id,
+                audio_ms,
+                reason: reason.clone(),
+            }),
+            _ => None,
         }
     }
+
+    fn emit<R: Runtime>(self, app: &AppHandle<R>) {
+        let _ = match self {
+            LegacyEvent::Transcript(text) => app.emit("whisper:segment_transcript", text),
+            LegacyEvent::SpeechStart { seq, start_ms } => {
+                app.emit("whisper:speech_start", SpeechStartPayload { seq, start_ms })
+            }
+            LegacyEvent::Dropped { seq, audio_ms, reason } => app.emit(
+                "whisper:utterance_dropped",
+                UtteranceDroppedPayload { seq, audio_ms, reason },
+            ),
+            LegacyEvent::CaptureError(message) => {
+                app.emit("whisper:capture_error", CaptureErrorPayload { message })
+            }
+        };
+    }
+}
+
+impl<R: Runtime> EventSink for LegacyWhisperSink<R> {
+    fn partial(&self, _event: &SpeechPartial) {}
+
+    fn final_transcript(&self, event: &SpeechFinal) {
+        if let Some(e) = LegacyEvent::from_final(event) {
+            e.emit(&self.app);
+        }
+    }
+
+    fn status(&self, event: &SpeechStatus) {
+        if let Some(e) = LegacyEvent::from_status(event) {
+            e.emit(&self.app);
+        }
+    }
+
+    fn utterance(&self, event: &SpeechUtterance, audio_ms: u64) {
+        if let Some(e) = LegacyEvent::from_utterance(event, audio_ms) {
+            e.emit(&self.app);
+        }
+    }
+
+    fn turn_end(&self, _event: &SpeechTurnEnd) {}
 }
 
 // The argument list is the IPC contract with `whisper.ts` (one named field per setting). Legacy RMS
@@ -1170,104 +978,67 @@ async fn start_recording<R: Runtime>(
     if capture_local == Some(false) {
         return Err("Whisper no longer accepts audio over IPC (captureLocal: false); it captures through the audio hub.".to_string());
     }
-    // Stop any previous recording and claim an epoch before the (slow) device open.
-    let (my_epoch, previous) = {
-        let mut session = state.lock_session();
-        let epoch = state.recording_epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        (epoch, session.take())
+    let loaded_model = {
+        let model = state.model.lock().unwrap_or_else(PoisonError::into_inner);
+        model.as_ref().and(state.loaded())
     };
-    if let Some(previous) = previous {
-        previous.shutdown().await;
-    }
-
-    let vad = resolve_vad(vad, vad_enabled);
-    let settings = DecodeSettings::resolve(&decode.unwrap_or_default());
-    let queue = Arc::new(BoundedQueue::new(settings.max_backlog));
-    let whisper = state.inner().clone();
-
-    let handler = {
-        let whisper = whisper.clone();
-        let app = app.clone();
-        let queue = Arc::clone(&queue);
-        move |event| match event {
-            SpeechCaptureEvent::Vad(ev) => handle_vad_event(&whisper, &app, my_epoch, &queue, ev),
-            SpeechCaptureEvent::Error(message) => {
-                whisper.emit_for(&app, my_epoch, "whisper:capture_error", CaptureErrorPayload { message });
-            }
-        }
+    let Some(info) = loaded_model else {
+        return Err("The Whisper model is not loaded yet (ensure_dependencies must run first).".to_string());
     };
-    let capture = start_speech_capture(device_name, vad.clone(), "Whisper", handler).await?;
-
-    let session = RecordingSession {
-        capture,
-        queue: Arc::clone(&queue),
+    let decode = decode.unwrap_or_default();
+    let language = state
+        .current_language
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let label = if info.bring_your_own {
+        info.id.to_string()
+    } else {
+        model_store::whisper_entry_id(info.id)
     };
-    let cancelled = {
-        let mut current = state.lock_session();
-        if state.epoch_is(my_epoch) {
-            *current = Some(session);
-            None
-        } else {
-            Some(session)
-        }
-    };
-    if let Some(session) = cancelled {
-        // A stop (or a newer start) landed while the device was opening.
-        session.shutdown().await;
-        return Err("cancelled".to_string());
-    }
-
+    let config = legacy_pipeline_config(device_name, resolve_vad(vad, vad_enabled), &decode, &language, &label);
+    let engine_info = whisper_engine::engine_info(&label, info.accepts_prompt, info.language);
+    let model = Arc::clone(&state.model);
+    let threads = decode.n_threads;
+    let no_speech = decode.no_speech_threshold;
+    let factory: EngineFactory = Arc::new(move |_spec, _ctx| {
+        Ok(Box::new(WhisperEngine::shared(
+            Arc::clone(&model),
+            engine_info.clone(),
+            threads,
+            no_speech,
+            info.language,
+        )) as Box<dyn AsrEngine>)
+    });
+    let sink: Arc<dyn EventSink> = Arc::new(LegacyWhisperSink { app });
+    let started = pipeline::start_with(config, SessionDeps::production(sink).with_engines(factory)).await?;
     tracing::info!(
         target: LOG,
-        "recording {my_epoch} started (threads={}, prompt={}B, backlog={}, vad={:?})",
-        settings.n_threads,
-        settings.prompt.len(),
-        settings.max_backlog,
-        vad.sanitized()
+        "recording started through pipeline {} (session {}, model {label})",
+        started.pipeline_id,
+        started.epoch
     );
-    let spawned = thread::Builder::new().name("sigil-whisper".into()).spawn({
-        let app = app.clone();
-        let queue = Arc::clone(&queue);
-        move || run_whisper_worker(app, whisper, my_epoch, queue, settings)
-    });
-    if let Err(e) = spawned {
-        let session = {
-            let mut current = state.lock_session();
-            state.recording_epoch.fetch_add(1, Ordering::SeqCst);
-            current.take()
-        };
-        if let Some(session) = session {
-            session.shutdown().await;
-        }
-        return Err(format!("Failed to start the Whisper worker: {e}"));
-    }
     Ok(())
 }
 
 #[command]
 fn cancel_whisper_download(state: State<'_, WhisperState>) -> Result<(), String> {
-    // Makes every in-flight `ensure_dependencies` run stale; each one then removes only its own partial file.
+    // Makes every in-flight `ensure_dependencies` run stale and stops what it waits for; downloads this
+    // plugin started are cancelled (their partial files are kept for resume).
     state.ensure_deps_epoch.fetch_add(1, Ordering::SeqCst);
+    state.cancel_all();
     Ok(())
 }
 
 #[command]
-async fn stop_recording<R: Runtime>(_app: AppHandle<R>, state: State<'_, WhisperState>) -> Result<String, String> {
-    let previous = {
-        let mut session = state.lock_session();
-        // Cancels a `start_recording` still opening its device (it re-checks the epoch under this lock) and
-        // aborts an in-flight decode; nothing of the ended recording is emitted after this block.
-        state.recording_epoch.fetch_add(1, Ordering::SeqCst);
-        session.take()
-    };
-    match previous {
-        Some(session) => {
-            // Waits (bounded) until the microphone is released before the caller moves on.
-            session.shutdown().await;
-            tracing::info!(target: LOG, "recording stopped");
-            Ok(String::new())
-        }
-        None => Err("Not recording".to_string()),
+async fn stop_recording<R: Runtime>(_app: AppHandle<R>, _state: State<'_, WhisperState>) -> Result<String, String> {
+    // After this returns nothing of the ended recording is emitted and the microphone was released
+    // (bounded wait); an in-flight decode is aborted.
+    if pipeline::stop_pipeline_key(LEGACY_PIPELINE_ID).await {
+        tracing::info!(target: LOG, "recording stopped");
+        Ok(String::new())
+    } else {
+        Err("Not recording".to_string())
     }
 }
 
@@ -1276,7 +1047,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _api| {
             app.manage(WhisperState::new());
             if let Ok(dir) = app.path().app_data_dir() {
-                sweep_stale_partials(&dir.join("whisper"));
+                sweep_stale_partials(&dir.join(WHISPER_FOLDER));
             }
             Ok(())
         })
@@ -1293,6 +1064,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::speech::events::FinalPass;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -1351,7 +1123,7 @@ mod tests {
     }
 
     #[test]
-    fn local_model_copy_reports_progress_and_can_be_cancelled() {
+    fn local_model_copy_hashes_reports_progress_and_can_be_cancelled() {
         let dir = temp_dir("copy");
         let src = dir.join("src.bin");
         let data: Vec<u8> = (0..(COPY_CHUNK_BYTES * 2 + 1234)).map(|i| (i % 251) as u8).collect();
@@ -1359,12 +1131,13 @@ mod tests {
 
         let dest = dir.join("ggml-base.en.bin");
         let mut calls = Vec::new();
-        copy_whisper_bin_to_model_path(&src, &dest, &mut |copied, total| {
+        let sha = copy_whisper_bin_to_model_path(&src, &dest, &mut |copied, total| {
             calls.push((copied, total));
             true
         })
         .unwrap();
         assert_eq!(fs::read(&dest).unwrap(), data);
+        assert_eq!(sha, hex::encode(Sha256::digest(&data)), "the sha256 registers imports with the store");
         let total = data.len() as u64;
         assert_eq!(calls.last(), Some(&(total, total)));
         assert!(calls.len() >= 3);
@@ -1396,10 +1169,7 @@ mod tests {
             let info = get_model_info(id).unwrap();
             assert_eq!((info.id, info.filename), (*id, *file));
             assert!(file.starts_with("ggml-") && file.ends_with(".bin"));
-            assert_eq!(
-                info.download_url().unwrap(),
-                format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{file}?download=true")
-            );
+            assert!(!info.bring_your_own && info.accepts_prompt);
         }
         // The previously missing ids.
         for id in ["small-q8_0", "base.en-q8_0", "tiny-q5_1", "large-v3-turbo", "large-v3-turbo-q8_0", "medium-q5_0"] {
@@ -1414,52 +1184,28 @@ mod tests {
         assert!(get_model_info("").is_err());
     }
 
+    /// Every downloadable model is a store entry, so downloads go through the store (pinned,
+    /// resumable) and land in the folder this plugin loads from.
+    #[test]
+    fn every_catalog_model_downloads_through_the_store() {
+        let catalog = model_store::Catalog::embedded().unwrap();
+        for (id, file) in CATALOG {
+            let entry = catalog
+                .get(&model_store::whisper_entry_id(id))
+                .unwrap_or_else(|| panic!("whisper/{id} is missing from the model catalog"));
+            assert_eq!(entry.family, WHISPER_FOLDER);
+            assert_eq!(entry.files.len(), 1);
+            assert_eq!(entry.files[0].path, *file);
+        }
+    }
+
     #[test]
     fn anime_whisper_is_a_japanese_bring_your_own_preset() {
         let info = get_model_info(ANIME_WHISPER_ID).unwrap();
         assert!(info.bring_your_own);
-        assert_eq!(info.download_url(), None);
         assert_eq!(info.language, Some("ja"));
         assert!(!info.accepts_prompt);
         assert!(bring_your_own_missing(&info).contains("convert-h5-to-ggml.py"));
-    }
-
-    #[test]
-    fn decode_options_resolve_to_safe_values() {
-        let d = DecodeSettings::resolve(&WhisperDecodeOptions::default());
-        assert!((1..=4).contains(&d.n_threads));
-        assert_eq!((d.no_speech_threshold, d.hallucination_filter, d.max_backlog), (0.6, true, 3));
-        assert!(d.prompt.is_empty());
-
-        let d = DecodeSettings::resolve(&WhisperDecodeOptions {
-            n_threads: Some(1),
-            initial_prompt: Some("  Chat in VRChat. ".into()),
-            hotwords: Some(vec!["Sigil".into(), " ".into(), "Kokoro".into()]),
-            no_speech_threshold: Some(f32::NAN),
-            hallucination_filter: Some(false),
-            max_backlog: Some(99),
-        });
-        assert_eq!(d.n_threads, 1);
-        assert_eq!(d.prompt, "Chat in VRChat. Sigil, Kokoro.");
-        assert_eq!((d.no_speech_threshold, d.hallucination_filter, d.max_backlog), (0.6, false, 10));
-
-        // NUL bytes are removed and long prompts are capped on a char boundary.
-        let d = DecodeSettings::resolve(&WhisperDecodeOptions {
-            initial_prompt: Some(format!("a\0b{}", "語".repeat(600))),
-            ..Default::default()
-        });
-        assert!(!d.prompt.contains('\0') && d.prompt.starts_with("ab"));
-        assert!(d.prompt.len() <= MAX_PROMPT_BYTES);
-        let json: WhisperDecodeOptions = serde_json::from_str(r#"{"n_threads":2,"hotwords":["a"]}"#).unwrap();
-        assert_eq!(json.n_threads, Some(2));
-    }
-
-    #[test]
-    fn token_cap_scales_with_utterance_length() {
-        assert_eq!(max_tokens_for(8_000), 48);
-        assert_eq!(max_tokens_for(16_000 * 5), 92);
-        assert_eq!(max_tokens_for(16_000 * 18), 220);
-        assert_eq!(max_tokens_for(16_000 * 60), 220);
     }
 
     #[test]
@@ -1475,75 +1221,233 @@ mod tests {
     }
 
     #[test]
-    fn whisper_language_codes_are_validated() {
-        assert_eq!(whisper_language("auto"), None);
-        assert_eq!(whisper_language(""), None);
-        assert_eq!(whisper_language("en"), Some("en"));
-        assert_eq!(whisper_language("zh-TW"), Some("zh"));
-        assert_eq!(whisper_language("pt_BR"), Some("pt"));
-        assert_eq!(whisper_language("xx"), None, "unknown codes auto-detect instead of failing");
+    fn decode_options_map_onto_the_pipeline_config() {
+        let json: WhisperDecodeOptions = serde_json::from_str(r#"{"n_threads":2,"hotwords":["a"]}"#).unwrap();
+        assert_eq!(json.n_threads, Some(2));
+        let decode = WhisperDecodeOptions {
+            n_threads: Some(3),
+            initial_prompt: Some("Chat in VRChat.".into()),
+            hotwords: Some(vec!["Sigil".into()]),
+            no_speech_threshold: Some(0.7),
+            hallucination_filter: Some(false),
+            max_backlog: Some(5),
+        };
+        let c = legacy_pipeline_config(Some("Mic".into()), VadConfig::default(), &decode, "ja", "whisper/small-q5_1");
+        assert_eq!(c.pipeline_id, LEGACY_PIPELINE_ID);
+        assert!(c.pipeline_id.starts_with(INTERNAL_PREFIX), "not reachable from start_pipeline");
+        assert_eq!((c.source.as_str(), c.language.as_str()), ("Mic", "ja"));
+        assert_eq!((c.prompt.as_str(), c.hotwords.clone()), ("Chat in VRChat.", vec!["Sigil".to_string()]));
+        assert_eq!((c.hallucination_filter, c.max_backlog, c.smart_turn, c.retain_pcm), (false, 5, false, false));
+        let spec = c.final_engine.unwrap();
+        assert_eq!((spec.engine, spec.model.as_str(), spec.threads), (EngineKind::Whisper, "whisper/small-q5_1", Some(3)));
+        assert_eq!(spec.options["noSpeechThreshold"].as_f64().map(|v| (v * 10.0).round()), Some(7.0));
+        assert!(c.streaming.is_none());
+        let defaults = legacy_pipeline_config(None, VadConfig::default(), &WhisperDecodeOptions::default(), "auto", "m");
+        assert_eq!((defaults.source.as_str(), defaults.max_backlog, defaults.hallucination_filter), ("", 3, true));
+        assert!(defaults.final_engine.unwrap().options.as_object().unwrap().is_empty());
     }
 
-    /// Real-model check (manual): `SIGIL_TEST_MODELS_DIR` must hold `ggml-tiny.en.bin`,
-    /// `ggml-base.en.bin` or `ggml-base.bin`. Run with `cargo test real_model -- --ignored`.
     #[test]
-    #[ignore = "needs SIGIL_TEST_MODELS_DIR with a ggml Whisper model"]
-    fn real_model_transcribes_speech_and_filters_silence() {
-        let Ok(dir) = std::env::var("SIGIL_TEST_MODELS_DIR") else { return };
-        let dir = PathBuf::from(dir);
-        let Some(model) = ["ggml-tiny.en.bin", "ggml-base.en.bin", "ggml-base.bin"]
-            .iter()
-            .map(|f| dir.join(f))
-            .find(|p| p.exists())
-        else {
-            return;
+    fn pipeline_events_map_to_the_legacy_whisper_events() {
+        let fin = SpeechFinal {
+            pipeline_id: LEGACY_PIPELINE_ID.into(),
+            epoch: 1,
+            segment_id: 3,
+            text: "hello".into(),
+            pass: FinalPass::First,
+            ..SpeechFinal::default()
         };
-        let ctx = WhisperContext::new_with_params(model.to_str().unwrap(), WhisperContextParameters::default()).unwrap();
-        let state = WhisperState::new();
-        let info = get_model_info("base.en").unwrap();
-        *state.ctx.lock().unwrap() = Some(LoadedModel::new(ctx, &info));
-        let settings = DecodeSettings::resolve(&WhisperDecodeOptions {
-            hotwords: Some(vec!["weather".into()]),
-            ..Default::default()
-        });
-        let abort = AbortToken {
-            epoch: Arc::clone(&state.recording_epoch),
-            mine: state.recording_epoch.load(Ordering::SeqCst),
+        assert_eq!(LegacyEvent::from_final(&fin), Some(LegacyEvent::Transcript("hello".into())));
+        assert_eq!(LegacyEvent::from_final(&SpeechFinal { text: " ".into(), ..fin }), None);
+
+        let start = SpeechUtterance::SpeechStart {
+            pipeline_id: "p".into(),
+            epoch: 1,
+            segment_id: 4,
+            start_ms: 20,
         };
+        assert_eq!(
+            LegacyEvent::from_utterance(&start, 0),
+            Some(LegacyEvent::SpeechStart { seq: 4, start_ms: 20 })
+        );
+        let dropped = |reason: &str| SpeechUtterance::Dropped {
+            pipeline_id: "p".into(),
+            epoch: 1,
+            segment_id: 5,
+            reason: reason.into(),
+        };
+        assert_eq!(
+            LegacyEvent::from_utterance(&dropped("backlog"), 3100),
+            Some(LegacyEvent::Dropped { seq: 5, audio_ms: 3100, reason: "backlog".into() })
+        );
+        assert!(LegacyEvent::from_utterance(&dropped("latency_budget"), 1).is_some());
+        for quiet in ["merged", "no_speech", "muted", "engine_error"] {
+            assert_eq!(LegacyEvent::from_utterance(&dropped(quiet), 1), None, "{quiet}");
+        }
+        let closed = SpeechUtterance::Utterance {
+            pipeline_id: "p".into(),
+            epoch: 1,
+            segment_id: 5,
+            start_ms: 0,
+            end_ms: 900,
+            samples: 14_400,
+            forced: false,
+        };
+        assert_eq!(LegacyEvent::from_utterance(&closed, 900), None);
 
-        let speech = crate::services::speech_core::silero::tests::speech_fixture();
-        let t = transcribe_utterance(&state, &settings, &speech, &abort).unwrap();
-        let text = t.text.expect("speech transcribed").to_lowercase();
-        assert!(text.contains("weather"), "{text}");
-        // The same WhisperState is reused for the next utterance.
-        assert!(state.ctx.lock().unwrap().as_ref().unwrap().state.is_some());
-        let again = transcribe_utterance(&state, &settings, &speech, &abort).unwrap();
-        assert_eq!(again.text.map(|t| t.to_lowercase()), Some(text));
+        let error = SpeechStatus {
+            state: SpeechState::Error,
+            code: "capture_error".into(),
+            detail: "speech detection failed: x".into(),
+            ..SpeechStatus::default()
+        };
+        assert_eq!(
+            LegacyEvent::from_status(&error),
+            Some(LegacyEvent::CaptureError("speech detection failed: x".into()))
+        );
+        let listening = SpeechStatus {
+            state: SpeechState::Listening,
+            ..SpeechStatus::default()
+        };
+        assert_eq!(LegacyEvent::from_status(&listening), None);
+    }
 
-        assert!(t.no_speech_prob < 0.1, "speech no-speech prob {}", t.no_speech_prob);
+    /// A fake store queue: one job per entry until it finishes, like `model_store`'s queue (which
+    /// forgets a job before it publishes the job's result).
+    #[derive(Default)]
+    struct FakeQueue {
+        current: Mutex<Option<Arc<FakeJob>>>,
+        created: AtomicU64,
+        enqueued: AtomicU64,
+    }
 
-        // Silence or noise that slipped past the VAD produces no caption, even with a prompt (whisper.cpp
-        // alone would emit "you" / "Thank you." here on multilingual models).
-        let silence = vec![0.0f32; 16_000 * 3];
-        let s = transcribe_utterance(&state, &settings, &silence, &abort).unwrap();
-        assert_eq!(s.text, None);
-        assert!(s.no_speech_prob > 0.6, "silence no-speech prob {}", s.no_speech_prob);
-        let mut seed = 7u32;
-        let noise: Vec<f32> = (0..16_000 * 3)
-            .map(|_| {
-                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                ((seed >> 8) as f32 / 16_777_216.0 - 0.5) * 0.01
-            })
-            .collect();
-        assert_eq!(transcribe_utterance(&state, &settings, &noise, &abort).unwrap().text, None);
-        // Speech right after noise is still transcribed (no stale no-speech value carries over).
-        assert!(transcribe_utterance(&state, &settings, &speech, &abort).unwrap().text.is_some());
+    struct FakeJob {
+        done: tokio::sync::watch::Sender<Option<Result<PathBuf, String>>>,
+        cancelled: std::sync::atomic::AtomicBool,
+    }
 
-        // A bumped epoch aborts inference promptly and the state is discarded.
-        state.recording_epoch.fetch_add(1, Ordering::SeqCst);
-        let long: Vec<f32> = speech.iter().cycle().take(16_000 * 15).copied().collect();
-        let started = Instant::now();
-        assert_eq!(transcribe_utterance(&state, &settings, &long, &abort).err().as_deref(), Some(ABORTED));
-        assert!(started.elapsed() < Duration::from_secs(5));
+    impl FakeQueue {
+        fn enqueue(&self) -> Result<Option<InstallJob>, String> {
+            self.enqueued.fetch_add(1, Ordering::SeqCst);
+            let (job, created) = {
+                let mut current = self.current.lock().unwrap();
+                match current.as_ref() {
+                    Some(job) => (Arc::clone(job), false),
+                    None => {
+                        let job = Arc::new(FakeJob {
+                            done: tokio::sync::watch::channel(None).0,
+                            cancelled: std::sync::atomic::AtomicBool::new(false),
+                        });
+                        *current = Some(Arc::clone(&job));
+                        self.created.fetch_add(1, Ordering::SeqCst);
+                        (job, true)
+                    }
+                }
+            };
+            let waiter = Arc::clone(&job);
+            Ok(Some(InstallJob {
+                wait: Box::pin(async move {
+                    let mut rx = waiter.done.subscribe();
+                    loop {
+                        if let Some(r) = rx.borrow_and_update().clone() {
+                            return r;
+                        }
+                        if rx.changed().await.is_err() {
+                            return Err("gone".into());
+                        }
+                    }
+                }),
+                cancel: Box::new(move || job.cancelled.store(true, Ordering::SeqCst)),
+                created,
+            }))
+        }
+
+        fn job(&self) -> Option<Arc<FakeJob>> {
+            self.current.lock().unwrap().clone()
+        }
+
+        /// The store finishes the current job.
+        fn finish(&self, result: Result<PathBuf, String>) {
+            let job = self.current.lock().unwrap().take().expect("a job");
+            job.done.send_replace(Some(result));
+        }
+    }
+
+    async fn until(what: &str, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    type Cancels = Arc<Mutex<HashMap<String, Instant>>>;
+
+    fn spawn_run(
+        queue: &Arc<FakeQueue>,
+        epoch: &Arc<AtomicU64>,
+        cancels: &Cancels,
+        mine: u64,
+    ) -> tokio::task::JoinHandle<InstallEnd> {
+        let (queue, epoch, cancels) = (Arc::clone(queue), Arc::clone(epoch), Arc::clone(cancels));
+        tokio::spawn(async move {
+            let token = CancelToken::default();
+            wait_for_install(
+                "whisper/base",
+                || queue.enqueue(),
+                &token,
+                || epoch.load(Ordering::SeqCst) != mine,
+                &cancels,
+            )
+            .await
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_run_that_joined_a_job_an_older_run_cancelled_queues_it_again() {
+        let queue = Arc::new(FakeQueue::default());
+        let epoch = Arc::new(AtomicU64::new(1));
+        let cancels: Cancels = Arc::default();
+        let run1 = spawn_run(&queue, &epoch, &cancels, 1);
+        until("the first job", || queue.created.load(Ordering::SeqCst) == 1).await;
+        let first = queue.job().unwrap();
+        // A restart: the new run makes the first stale and joins its job (which the store has not
+        // finished yet, cancelled or not).
+        epoch.store(2, Ordering::SeqCst);
+        let run2 = spawn_run(&queue, &epoch, &cancels, 2);
+        until("the join", || queue.enqueued.load(Ordering::SeqCst) == 2).await;
+        until("the stale run's cancel", || first.cancelled.load(Ordering::SeqCst)).await;
+        assert_eq!(queue.created.load(Ordering::SeqCst), 1, "the second run joined");
+        queue.finish(Err(STORE_CANCELLED.into()));
+        assert_eq!(run1.await.unwrap(), InstallEnd::Cancelled);
+        // The newer run still wants the model: it queues it again instead of failing.
+        until("the new job", || queue.created.load(Ordering::SeqCst) == 2).await;
+        queue.finish(Ok(PathBuf::from("whisper/base")));
+        assert_eq!(run2.await.unwrap(), InstallEnd::Installed);
+        assert!(cancels.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancel_from_the_models_tab_ends_the_waiting_run() {
+        let queue = Arc::new(FakeQueue::default());
+        let epoch = Arc::new(AtomicU64::new(1));
+        let cancels: Cancels = Arc::default();
+        let run = spawn_run(&queue, &epoch, &cancels, 1);
+        until("the job", || queue.created.load(Ordering::SeqCst) == 1).await;
+        queue.finish(Err(STORE_CANCELLED.into()));
+        assert_eq!(run.await.unwrap(), InstallEnd::Cancelled);
+        assert_eq!(queue.created.load(Ordering::SeqCst), 1, "never queued again");
+
+        // A failure is reported as such; an installed model needs no job.
+        let run = spawn_run(&queue, &epoch, &cancels, 1);
+        until("the job", || queue.created.load(Ordering::SeqCst) == 2).await;
+        queue.finish(Err("sha256 mismatch".into()));
+        assert_eq!(
+            run.await.unwrap(),
+            InstallEnd::Failed("Model download failed: sha256 mismatch".into())
+        );
+        let token = CancelToken::default();
+        let end = wait_for_install("whisper/base", || Ok(None), &token, || false, &cancels).await;
+        assert_eq!(end, InstallEnd::AlreadyInstalled);
     }
 }

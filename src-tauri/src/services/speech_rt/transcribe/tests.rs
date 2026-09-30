@@ -20,7 +20,9 @@
 
 use super::engine::{backend_for, combined_kind, falls_through, kind_of_status, plan_variants, stream_closed_error, takeover_reason};
 use super::probe;
-use super::types::{create_config, estimated_model_vram_mb, select_device, vram_shortfall, warmup_seconds, DeviceRef};
+use super::types::{
+    create_config, estimated_model_vram_mb, parse_pci_bus_id, same_pci_bus_id, select_device, vram_shortfall, warmup_seconds, DeviceRef,
+};
 use super::*;
 use crate::services::native_runtime::{abi, RuntimeVariant, VariantSupport};
 use crate::services::speech_rt::EngineProbeArgs;
@@ -136,6 +138,25 @@ fn devices_are_selected_per_backend_and_resolved_to_a_stable_id() {
 }
 
 #[test]
+fn pci_bus_ids_match_in_every_spelling() {
+    // NVML / DXGI write an 8-digit domain, CUDA a 4-digit one, Vulkan may omit it.
+    assert_eq!(parse_pci_bus_id("00000000:01:00.0"), Some((0, 1, 0, 0)));
+    assert_eq!(parse_pci_bus_id(" 0000:0A:1f.7 "), Some((0, 0x0a, 0x1f, 7)));
+    assert_eq!(parse_pci_bus_id("01:00.0"), Some((0, 1, 0, 0)));
+    for bad in ["", "NVIDIA GeForce RTX 4090", "0000:01:00", "0000:01:00.10", "0000:001:00.0", "x:01:00.0", "1:2:3:4.0"] {
+        assert_eq!(parse_pci_bus_id(bad), None, "{bad:?}");
+    }
+    assert!(same_pci_bus_id("00000000:01:00.0", "0000:01:00.0"));
+    assert!(same_pci_bus_id("0000:0a:00.0", "0A:00.0"));
+    assert!(!same_pci_bus_id("0000:01:00.0", "0000:02:00.0"));
+    assert!(!same_pci_bus_id("NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 4090"), "descriptions are not bus ids");
+    // select_device finds a CUDA device from NVML's spelling of its bus id.
+    let cuda = vec![device("cuda", "CUDA0", "NVIDIA GeForce RTX 4090", Some("0000:01:00.0"), 20_000)];
+    let found = select_device(&cuda, "cuda", Some(&DeviceRef::Id("00000000:01:00.0".into())));
+    assert_eq!(found.and_then(|d| d.name).as_deref(), Some("CUDA0"));
+}
+
+#[test]
 fn vram_checks_keep_gpu_runs_away_from_ggml_cuda_aborts() {
     // Qwen3-ASR-1.7B Q8_0 (2185030624 bytes) measured about 2970 MiB after load + warm-up.
     let qwen = estimated_model_vram_mb(2_185_030_624);
@@ -193,6 +214,7 @@ fn transcribe_options_json_carries_only_meaningful_fields() {
         temperature_fallback: Some(false),
         no_speech_threshold: Some(1.7),
         commit: Some("stable_prefix".into()),
+        agreement: Some(20),
     };
     let v: serde_json::Value = serde_json::from_str(&o.to_json()).unwrap();
     assert_eq!(v["language"], "ja");
@@ -206,6 +228,16 @@ fn transcribe_options_json_carries_only_meaningful_fields() {
     assert_eq!(v["temperature_fallback"], false);
     assert_eq!(v["no_speech_threshold"], 1.0);
     assert_eq!(v["commit"], "stable_prefix");
+    assert_eq!(v["agreement"], 16, "clamped to the shim's maximum");
+    let v: serde_json::Value = serde_json::from_str(
+        &TranscribeOptions {
+            agreement: Some(0),
+            ..Default::default()
+        }
+        .to_json(),
+    )
+    .unwrap();
+    assert!(v.get("agreement").is_none(), "0 = the engine's default");
 }
 
 /// Real outputs of sigil_transcribe.dll 0.2.4-s1 (cpu-avx2, whisper-tiny.en).
@@ -259,25 +291,44 @@ fn variant_plans_follow_the_backend_choice() {
         avx512: true,
         avx2: true,
     };
-    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &full), all.to_vec());
-    assert_eq!(plan_variants(BackendChoice::Gpu, None, &all, &full), vec![Cuda13, Vulkan]);
-    assert_eq!(plan_variants(BackendChoice::Cpu, None, &all, &full), vec![CpuAvx512, CpuAvx2, Cpu]);
+    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &full, None), all.to_vec());
+    assert_eq!(plan_variants(BackendChoice::Gpu, None, &all, &full, None), vec![Cuda13, Vulkan]);
+    assert_eq!(plan_variants(BackendChoice::Cpu, None, &all, &full, None), vec![CpuAvx512, CpuAvx2, Cpu]);
 
     let no_gpu = VariantSupport {
         avx2: true,
         ..VariantSupport::default()
     };
-    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &no_gpu), vec![CpuAvx2, Cpu]);
-    assert!(plan_variants(BackendChoice::Gpu, None, &all, &no_gpu).is_empty());
+    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &no_gpu, None), vec![CpuAvx2, Cpu]);
+    assert!(plan_variants(BackendChoice::Gpu, None, &all, &no_gpu, None).is_empty());
     // GPU variants carry AVX2 host kernels: no AVX2, no GPU variant.
     let old_cpu = VariantSupport {
         cuda13: true,
         ..VariantSupport::default()
     };
-    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &old_cpu), vec![Cpu]);
+    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &old_cpu, None), vec![Cpu]);
     // A forced variant is tried alone (the caller gets the real error), whatever the choice.
-    assert_eq!(plan_variants(BackendChoice::Cpu, Some(Cuda13), &all, &no_gpu), vec![Cuda13]);
-    assert!(plan_variants(BackendChoice::Auto, Some(Vulkan), &[Cpu], &full).is_empty());
+    assert_eq!(plan_variants(BackendChoice::Cpu, Some(Cuda13), &all, &no_gpu, None), vec![Cuda13]);
+    assert!(plan_variants(BackendChoice::Auto, Some(Vulkan), &[Cpu], &full, None).is_empty());
+
+    // The resource governor's admission removes every other variant (never the unmeasured vulkan
+    // build behind its back), including a forced one it did not allow.
+    let admitted = [Cuda13, CpuAvx512, CpuAvx2, Cpu];
+    assert_eq!(
+        plan_variants(BackendChoice::Auto, None, &all, &full, Some(&admitted)),
+        vec![Cuda13, CpuAvx512, CpuAvx2, Cpu]
+    );
+    assert!(plan_variants(BackendChoice::Auto, Some(Vulkan), &all, &full, Some(&admitted)).is_empty());
+    let cpu_only = [CpuAvx512, CpuAvx2, Cpu];
+    assert_eq!(plan_variants(BackendChoice::Auto, None, &all, &full, Some(&cpu_only)), cpu_only.to_vec());
+    // The CPU choice on a PC with only a GPU pack runs that build's CPU backend (GPU builds carry
+    // AVX2 CPU kernels), unless the governor forbids the build or the CPU lacks AVX2.
+    assert_eq!(plan_variants(BackendChoice::Cpu, None, &[Cuda13], &full, None), vec![Cuda13]);
+    assert_eq!(plan_variants(BackendChoice::Cpu, None, &[Cuda13, Vulkan], &no_gpu, None), vec![Cuda13, Vulkan]);
+    assert!(plan_variants(BackendChoice::Cpu, None, &[Cuda13], &full, Some(&cpu_only)).is_empty());
+    assert!(plan_variants(BackendChoice::Cpu, None, &[Cuda13], &old_cpu, None).is_empty());
+    // An installed CPU build always wins over a GPU build's CPU backend.
+    assert_eq!(plan_variants(BackendChoice::Cpu, None, &[Cuda13, Cpu], &full, None), vec![Cpu]);
 }
 
 #[test]
@@ -898,15 +949,26 @@ fn gpu_failures_and_low_vram_fall_back_to_the_cpu() {
     let mut m = TranscribeModel::open(&o).expect("CPU fallback after a bad GPU index");
     let why = m.fallback_reason().expect("a fallback reason").to_string();
     assert!(why.contains("device"), "{why}");
+    assert!(m.runtime().gpu_backend_initialized, "the CUDA backend was initialized: its context stays");
     check_cpu_transcript(&mut m);
     drop(m);
 
-    // 2. Not enough free VRAM for the model plus the headroom: refused before anything loads.
+    // 2. Not enough free VRAM for the model plus the headroom: refused before anything loads (the
+    //    device query already initialized CUDA, so the engine keeps claiming its context).
     let mut o = base();
     o.min_free_vram_mb = 4_000_000;
     let mut m = TranscribeModel::open(&o).expect("CPU fallback for a GPU without room");
     let why = m.fallback_reason().expect("a fallback reason").to_string();
     assert!(why.contains("VRAM"), "{why}");
+    assert!(m.runtime().gpu_backend_initialized);
+    check_cpu_transcript(&mut m);
+    assert!(m.check_headroom().is_ok(), "no check on the CPU");
+    drop(m);
+    // The CPU backend of the same DLL never touches the GPU.
+    let mut cpu = base();
+    cpu.backend = BackendChoice::Cpu;
+    let mut m = TranscribeModel::open(&cpu).expect("CPU backend of the cuda13 DLL");
+    assert!(!m.runtime().gpu_backend_initialized);
     check_cpu_transcript(&mut m);
     drop(m);
     o.cpu_fallback = false;
@@ -935,6 +997,7 @@ fn gpu_failures_and_low_vram_fall_back_to_the_cpu() {
     let mut strict = base();
     strict.cpu_fallback = false;
     let mut m = TranscribeModel::open(&strict).expect("open on CUDA");
+    assert!(m.check_headroom().is_ok(), "room: the per-utterance check passes");
     m.set_min_free_vram_mb(4_000_000);
     assert_eq!(
         m.transcribe(&jfk, &TranscribeOptions::default())
@@ -942,7 +1005,15 @@ fn gpu_failures_and_low_vram_fall_back_to_the_cpu() {
             .kind,
         ErrorKind::OutOfMemory
     );
+    assert_eq!(m.check_headroom().unwrap_err().kind, ErrorKind::OutOfMemory);
     assert!(m.info().on_gpu(), "no silent move without cpu_fallback");
+    drop(m);
+    // With the CPU fallback, the per-utterance check (what a reused stream runs) moves the model.
+    let mut m = TranscribeModel::open(&base()).expect("open on CUDA");
+    m.set_min_free_vram_mb(4_000_000);
+    m.check_headroom().expect("moved to the CPU");
+    assert!(!m.info().on_gpu());
+    assert!(m.fallback_reason().is_some_and(|w| w.contains("VRAM")));
 }
 
 #[test]

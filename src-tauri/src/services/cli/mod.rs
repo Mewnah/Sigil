@@ -19,6 +19,8 @@
 //!   - `vc-import-worker <job.json>` → `neural_audio::vc::import::run_import_worker` (P1-G3 / P3-B).
 //!   - `sysinfo [--out <file>]` → `resources::headless_report` (P1-D2): system probe, VRAM
 //!     budget, claims and every recommendation as JSON.
+//!   - `stt-worker [<spec.json>]` → `speech::worker_proc::headless_stt_worker` (P2-D; arm added
+//!     by P2-S0): one speech engine in an isolated worker process.
 //!
 //!   Every handler returns `Result<String, String>`: `Ok(text)` is printed to stdout (exit 0),
 //!   `Err(msg)` to stderr (exit 1). The P1 arms were added by P1-S0b (`sysinfo` by P1-I0).
@@ -120,6 +122,12 @@ enum HeadlessCommand {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Host one speech engine in an isolated worker process (spawned by the speech plugin through
+    /// the process host; talks over stdio).
+    SttWorker {
+        /// Worker spec (JSON); optional when the parent sends it over stdio.
+        spec: Option<PathBuf>,
+    },
 }
 
 /// Parse and run one headless command; returns the process exit code.
@@ -189,6 +197,11 @@ pub fn run(args: Vec<OsString>) -> i32 {
             "sysinfo",
             crate::services::resources::headless_report(),
             out.as_deref(),
+        ),
+        HeadlessCommand::SttWorker { spec } => report(
+            "stt-worker",
+            crate::services::speech::worker_proc::headless_stt_worker(spec.as_deref()),
+            None,
         ),
     }
 }
@@ -302,6 +315,14 @@ mod tests {
         assert!(matches!(cli.command, HeadlessCommand::Sysinfo { out: Some(ref p) } if p.ends_with("sys.json")));
         let cli = HeadlessCli::try_parse_from(["sysinfo"]).unwrap();
         assert!(matches!(cli.command, HeadlessCommand::Sysinfo { out: None }));
+    }
+
+    #[test]
+    fn parses_p2_subcommands() {
+        let cli = HeadlessCli::try_parse_from(["stt-worker", "spec.json"]).unwrap();
+        assert!(matches!(cli.command, HeadlessCommand::SttWorker { spec: Some(ref p) } if p.ends_with("spec.json")));
+        let cli = HeadlessCli::try_parse_from(["stt-worker"]).unwrap();
+        assert!(matches!(cli.command, HeadlessCommand::SttWorker { spec: None }));
     }
 
     #[test]

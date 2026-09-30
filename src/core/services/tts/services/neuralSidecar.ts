@@ -1,12 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { RustTtsSpeakReport } from "@/types";
 import { ITTSReceiver } from "../types";
 import { TTS_State } from "../schema";
 import { devLog } from "@/utils/devLog";
-import { ClipTtsBackend } from "../clipBackend";
+import { HttpSinkBackend } from "./openaiSpeech";
 
-/** User-run HTTP speech server (`GET /health`, `POST /speech`) through the `neural-sidecar-tts` plugin. */
-export class TTS_NeuralSidecarService extends ClipTtsBackend {
+/**
+ * User-run HTTP speech server (`GET /health`, `POST /speech`) through the `neural-sidecar-tts` plugin. Each sentence
+ * streams into the TTS sink (`neural_sidecar_tts_speak_to_sink`, which asks the server for a streamed WAV); the
+ * top-level route decides whether it plays on the device, into the voice changer, or both.
+ */
+export class TTS_NeuralSidecarService extends HttpSinkBackend {
   #endpoint = "";
+  #voice = "default";
 
   constructor(receiver: ITTSReceiver) {
     super(receiver, "HTTP speech server");
@@ -15,6 +21,7 @@ export class TTS_NeuralSidecarService extends ClipTtsBackend {
   protected async connect(data: TTS_State): Promise<string | null> {
     const c = data.neuralSidecar;
     this.#endpoint = c.endpoint.trim();
+    this.#voice = c.voice.trim() || "default";
     await invoke("plugin:neural-sidecar-tts|set_neural_sidecar_tts_endpoint", {
       endpoint: this.#endpoint,
     });
@@ -28,20 +35,12 @@ export class TTS_NeuralSidecarService extends ClipTtsBackend {
     return null;
   }
 
-  protected async synthesize(text: string) {
-    const data = window.ApiServer.state.services.tts.data.neuralSidecar;
-    if (data.routeThroughVoiceChanger && window.ApiServer.voiceChanger.state.isRunning) {
-      await invoke("plugin:neural-sidecar-tts|neural_sidecar_tts_speak_into_voice_changer", {
-        text,
-        voice: data.voice,
-        endpoint: this.#endpoint,
-      });
-      return null;
-    }
-    return invoke<number[]>("plugin:neural-sidecar-tts|neural_sidecar_tts_speak", {
+  protected speak(text: string, utteranceId: string) {
+    return invoke<RustTtsSpeakReport>("plugin:neural-sidecar-tts|neural_sidecar_tts_speak_to_sink", {
       text,
-      voice: data.voice,
+      voice: this.#voice,
       endpoint: this.#endpoint,
+      utteranceId,
     });
   }
 }

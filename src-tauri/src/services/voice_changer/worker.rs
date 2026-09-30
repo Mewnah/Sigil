@@ -549,6 +549,8 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
             },
             // The voice changer's rows stay the plain `vc` / `vc.*` keys.
             component_prefix: None,
+            // Benchmarked configuration (ort rc.13 default): P3 decides on the CPU arena.
+            cpu_arena: false,
         };
         if matches!(preset, RvcPresetProfile::Streamer)
             && crate::services::neural_audio::vc::supports_int8_content_encoder()

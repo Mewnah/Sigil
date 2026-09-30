@@ -474,6 +474,8 @@ fn build_rvc(spec: &RvcSpec, priority: WorkerPriority) -> Result<(Box<dyn VoiceC
         thread_priority: Some(priority),
         vram_cap_mb: if ep == "cuda" { spec.vram_cap_mb } else { None },
         component_prefix: Some(BENCH_COMPONENT_PREFIX),
+        // Same CPU allocator as the voice changer it measures.
+        cpu_arena: false,
     };
     let since = unix_ms_now();
     let extractor: Box<dyn PitchExtractor> = match pitch {

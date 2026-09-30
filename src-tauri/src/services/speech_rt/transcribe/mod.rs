@@ -31,14 +31,27 @@
 //!   0003b).
 //! - Nothing is load-time linked; with no pack installed `open` returns
 //!   [`ErrorKind::NotInstalled`] and the app is unaffected.
+//!
+//! # GPU tier of the `speech` plugin (P2-D)
+//! - [`models`]: the GGUF speech models of `model-catalog/stt-gguf.json` (Qwen3-ASR-1.7B Q8_0 /
+//!   BF16, Cohere Transcribe Q4_K, Granite Speech 5.0 TurboCTC, Voxtral Mini 4B Realtime),
+//!   bring-your-own files, and the per-family rules (Cohere never for ja / zh / ko / ru / yue).
+//! - [`governor`]: whether a model may use the GPU (the resource governor's admission, from
+//!   `resources::policy`'s room for the STT final), the VRAM claims it holds, and the measured
+//!   footprint they are resized to. [`ModelOptions::allowed_variants`] carries the admission into
+//!   the variant walk.
+//! - The engine adapter itself is `speech::engines::transcribe`; worker-process isolation is
+//!   `speech::worker_proc`.
 
 mod engine;
+pub mod governor;
+pub mod models;
 mod probe;
 #[cfg(test)]
 mod tests;
 mod types;
 
-// The API the P2 `speech` plugin consumes; until it lands only the probe and tests use it.
+// The API the P2 `speech` plugin consumes (`speech::engines::transcribe`), the probe and tests.
 #[allow(unused_imports)]
 pub use engine::{
     installed_variants, to_16k_mono, ErrorKind, RuntimeSelection, TranscribeCanceller, TranscribeError, TranscribeModel, TranscribeStream,

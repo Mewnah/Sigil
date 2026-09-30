@@ -1,15 +1,14 @@
 //! `moonshine-stt` plugin: client for a Moonshine HTTP server (`POST {endpoint}/transcribe` with a
-//! base64 WAV, `GET {endpoint}/health`).
+//! base64 WAV, `GET {endpoint}/health`). Legacy: the speech pipeline's HTTP engine
+//! (`speech::engines::http`, preset `moonshine`) sends one request per VAD utterance from Rust and
+//! shares the request code below.
 //!
 //! Timeouts: health 10 s; transcription 30 s plus the clip's duration (estimated from the WAV size
 //! at 16 kHz mono 16-bit), capped at 120 s. Without them a hung server held an utterance for up to
 //! the shared client's 2 h download cap.
 
-use crate::services::http_client::{
-    api_url, describe_api_error, describe_request_error, http_client, probe_ok,
-    stt_timeout_for_wav_bytes,
-};
-use serde::{Deserialize, Serialize};
+use crate::services::http_client::{api_url, http_client, probe_ok, stt_timeout_for_wav_bytes};
+use crate::services::speech::engines::http::{moonshine_request, Failure};
 use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{
     command,
@@ -39,21 +38,6 @@ impl MoonshineSttState {
     }
 }
 
-#[derive(Serialize, Debug)]
-struct TranscribeRequest<'a> {
-    audio: &'a str, // base64 encoded audio
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<&'a str>,
-}
-
-#[derive(Deserialize, Debug)]
-struct TranscribeResponse {
-    text: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    language: Option<String>,
-}
-
 /// Decoded size of a base64 payload (what the WAV occupies), for the timeout estimate.
 fn base64_decoded_len(b64: &str) -> usize {
     let trimmed = b64.trim_end_matches('=');
@@ -80,27 +64,14 @@ async fn moonshine_transcribe<R: Runtime>(
         return Ok(String::new());
     }
     let url = api_url(&state.endpoint(), "/transcribe")?;
-    let what = "Moonshine transcription";
     let timeout = stt_timeout_for_wav_bytes(base64_decoded_len(&audio_base64));
-
-    let response = http_client()
-        .post(url)
-        .timeout(timeout)
-        .json(&TranscribeRequest {
-            audio: &audio_base64,
-            language: language.as_deref().map(str::trim).filter(|l| !l.is_empty()),
+    moonshine_request(url, &audio_base64, language.as_deref(), timeout)
+        .await
+        .map_err(|f| match f {
+            Failure::Cancelled => "Moonshine transcription cancelled".to_string(),
+            Failure::Retryable(m) | Failure::Fatal(m) => m,
+            Failure::RateLimited { message, .. } => message,
         })
-        .send()
-        .await
-        .map_err(|e| describe_request_error(what, &e, timeout))?;
-    if !response.status().is_success() {
-        return Err(describe_api_error(what, response).await);
-    }
-    let result: TranscribeResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("{what}: unexpected response ({e})"))?;
-    Ok(result.text)
 }
 
 /// Check if the Moonshine service answers (`GET /health` within 10 s).

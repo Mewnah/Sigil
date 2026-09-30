@@ -125,6 +125,12 @@ fn main() {
         .plugin(services::resources::init())
         .plugin(services::process_host::init())
         .plugin(services::bench::init())
+        // P2 speech engine (P2-S0): STT pipelines, the unified TTS sink, in-process local TTS and
+        // the OpenAI-compatible streaming TTS client.
+        .plugin(services::speech::init())
+        .plugin(services::tts_sink::init())
+        .plugin(services::local_tts::init())
+        .plugin(services::openai_speech::init())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {

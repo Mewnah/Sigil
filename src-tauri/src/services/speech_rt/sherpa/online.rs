@@ -306,6 +306,64 @@ impl OnlineRecognizerConfig {
     }
 }
 
+/// Silence fed around a stream's audio (see [`StreamPadding::for_encoder`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamPadding {
+    /// Before the first audio.
+    pub head_ms: u32,
+    /// After the last audio, before the input is finished.
+    pub tail_ms: u32,
+}
+
+/// Tail padding when the model does not say how much it needs (sherpa-onnx's streaming examples
+/// pad 0.66 s).
+pub const DEFAULT_TAIL_PADDING_MS: u32 = 660;
+/// Head padding of NeMo cache-aware streams: without it the first word is often lost when speech
+/// starts right away (measured on Nemotron 3.5: "No preguntes ..." lost "No", "Alles hat ein Ende"
+/// its first words); sherpa-onnx's own CLI pads 0.3 s since its Nemotron 3.5 support. It costs no
+/// wall-clock latency (the padding is there at once).
+pub const NEMO_HEAD_PADDING_MS: u32 = 300;
+
+/// sherpa decodes a NeMo cache-aware stream only in whole windows (`window_size` feature frames of
+/// 10 ms), also after the input is finished, so up to a window of real audio at the end is never
+/// decoded without enough padding (measured at 560 ms chunks with 0.3 s: "... tu país" came out
+/// as "... tu pa"). One full window plus a frame of slack flushes it.
+pub fn window_padding_ms(window_frames: u32) -> u32 {
+    window_frames.saturating_mul(10).saturating_add(30)
+}
+
+impl StreamPadding {
+    /// Padding for a streaming model whose encoder metadata is `encoder` (`None`: unreadable or
+    /// not a transducer): NeMo cache-aware encoders (`window_size` metadata) get
+    /// [`NEMO_HEAD_PADDING_MS`] and one window of tail; others none and
+    /// [`DEFAULT_TAIL_PADDING_MS`].
+    pub fn for_encoder(encoder: Option<&super::onnx_info::OnnxSummary>) -> Self {
+        let window = encoder
+            .and_then(|s| s.meta("window_size"))
+            .and_then(|w| w.trim().parse::<u32>().ok())
+            .filter(|w| (1..=1000).contains(w));
+        match window {
+            Some(w) => Self {
+                head_ms: NEMO_HEAD_PADDING_MS,
+                tail_ms: window_padding_ms(w),
+            },
+            None => Self {
+                head_ms: 0,
+                tail_ms: DEFAULT_TAIL_PADDING_MS,
+            },
+        }
+    }
+
+    /// For the encoder of `config` (reads its metadata; cheap, no initializers).
+    pub fn for_config(config: &OnlineRecognizerConfig) -> Self {
+        let summary = match &config.model {
+            OnlineModel::Transducer { encoder, .. } => super::onnx_info::summary(encoder).ok(),
+            _ => None,
+        };
+        Self::for_encoder(summary.as_ref())
+    }
+}
+
 /// Snapshot of a stream's hypothesis.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct OnlineResult {
@@ -508,9 +566,18 @@ impl OnlineStream {
 
     /// Decode every chunk that is ready; returns how many decode steps ran.
     pub fn decode(&mut self) -> usize {
+        self.decode_cancellable(None).unwrap_or(0)
+    }
+
+    /// [`decode`](Self::decode) that stops between decode steps once `cancel` is set (`None` when
+    /// it stopped early; the stream stays usable, the skipped chunks decode on the next call).
+    pub fn decode_cancellable(&mut self, cancel: Option<&std::sync::atomic::AtomicBool>) -> Option<usize> {
         let api = self.rec.rt.api();
         let mut steps = 0;
         loop {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                return None;
+            }
             let _g = self.rec.lock.lock();
             // SAFETY: valid recognizer and stream of that recognizer, call serialized.
             unsafe {
@@ -521,7 +588,7 @@ impl OnlineStream {
             }
             steps += 1;
         }
-        steps
+        Some(steps)
     }
 
     /// The current hypothesis.

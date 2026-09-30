@@ -22,8 +22,15 @@ export function waitForVoices(synth: SpeechSynthesis, timeoutMs = VOICES_TIMEOUT
   });
 }
 
-/** Web Speech API (`speechSynthesis`) on the webview's default output. */
+/**
+ * Web Speech API (`speechSynthesis`) on the webview's default output. Self-playing (ITTSService v2): the browser
+ * speaks whole finals itself, so there is no sentence pipeline, device choice or voice-changer routing.
+ */
 export class TTS_NativeService implements ITTSService {
+  get selfPlaying(): boolean {
+    return true;
+  }
+
   #voice?: SpeechSynthesisVoice;
   #running = false;
   #stopped = false;

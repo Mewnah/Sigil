@@ -1,0 +1,176 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "STT routing table (owned by P2-C): the top-level 'routing' object is read by speech::router with include_str! (build.rs checks only that it is an object). It adds no catalog entries: every id it names is a model or runtime of another fragment (stt-sherpa, stt-gguf, stt-legacy, runtime-*), and the router never plans an id the catalog in effect does not have (or an unpublished one that is not installed).",
+    "Algorithm (speech::router, mirrored in TS by src/core/services/stt/router.ts; shared cases in src-tauri/test-fixtures/routing.json): pick the row whose 'languages' holds the normalized language ('auto' row for auto, '*' row otherwise); streaming = first usable 'streaming' model, CPU final = first usable 'cpuFinal', GPU final = first usable 'gpuFinal' that fits the VRAM the resource governor grants (vramMb, minTotalVramMb) when the tier allows the GPU. Two passes (streaming partials + the final re-decode) when asked for and the PC allows it (GPU final, or at least cpuTwoPassMinCores physical cores and no voice changer that runs, or may run, on the CPU: a running one whose device is not known yet counts as on the CPU); a single pass uses the streaming model when 'streamFinal' (its own finals are caption quality) on the CPU, else the final. A GPU final gets the row's CPU final as its fallback, except next to a stream on a PC whose CPU may not run two engines (then the first-pass finals stand after a GPU failure). Never-route rules are enforced in code on top of this table (Cohere never for ja/zh/ko/ru/yue or auto; a model that needs a language always gets one; in auto mode the stream opens only for detected languages whose own row streams with it, carried as the streaming spec's options.streamLanguages, so never zh/yue).",
+    "detectsLanguage follows what the engine reports, not what the model hears: Qwen3-ASR-0.6B through sherpa-onnx 1.13.8 returns no language (speech_rt::sherpa::catalog Family::detects_language), so an auto plan with it as the final also runs the languageId engine; the transcribe.cpp Qwen3-ASR-1.7B finals report it. Rows follow research 2026-09 section 1.1 and the plan's rules: en: Nemotron streaming, Parakeet Ultra re-decode on the CPU, Cohere on the GPU; European languages: Parakeet Ultra finals (Cohere on the GPU where it beats Parakeet on FLEURS: pl, el; Qwen3-ASR-1.7B and Cohere both beat it for de/es/fr/it/pt/nl); zh/yue: SenseVoice on the CPU, Qwen3-ASR-1.7B on the GPU, no Nemotron partials (Mandarin CER ~19); ja/ko/ru: Nemotron partials + Qwen3-ASR finals; ar/hi/tr: Nemotron's own finals beat Qwen3-ASR-0.6B on FLEURS (15.9/8.6/15.4 vs 24.5/12.7/16.7 WER), so the CPU runs Nemotron alone; other Qwen3-ASR languages: Qwen3-ASR finals; everything else: Whisper. Per-language numbers are transcribe.cpp's FLEURS validation tables (Q8_0); P7-A replaces them with Sigil's own measurements.",
+    "vramMb: process VRAM while loaded and running, including the ~0.38 GB CUDA context (measured on CUDA by P2-D: Qwen3-ASR-1.7B Q8_0 3.47-3.5 GB, BF16 5.9 GB, Cohere Q4_K_M 1.95 GB). Keep them in step with resources::policy."
+  ],
+  "entries": [],
+  "routing": {
+    "version": 1,
+    "languageId": "stt/lid-whisper-base-int8",
+    "cpuTwoPassMinCores": 6,
+    "vcShareGpuMinTotalMb": 15000,
+    "gpuRuntimes": {
+      "cuda13": ["runtime/sigil-transcribe-cuda13", "runtime/nvidia-cuda13"],
+      "vulkan": ["runtime/sigil-transcribe-vulkan"]
+    },
+    "models": {
+      "stt/nemotron-3.5-streaming-560ms-int8": {
+        "engine": "sherpa-online",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": ["ar", "bg", "cs", "da", "de", "en", "es", "et", "fi", "fr", "hi", "hr", "hu", "it", "ja", "ko", "nb", "nl", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh"],
+        "needsLanguage": true,
+        "languageOption": true
+      },
+      "stt/parakeet-ultra-int8": {
+        "engine": "sherpa-offline",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+        "languageOption": true
+      },
+      "stt/parakeet-tdt-0.6b-v3-int8": {
+        "engine": "sherpa-offline",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+        "languageOption": true
+      },
+      "stt/qwen3-asr-0.6b-int8": {
+        "engine": "sherpa-offline",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": ["zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"],
+        "languageOption": true
+      },
+      "stt/sense-voice-small-int8": {
+        "engine": "sherpa-offline",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": ["zh", "en", "ja", "ko", "yue"],
+        "detectsLanguage": true,
+        "languageOption": true
+      },
+      "stt/lid-whisper-base-int8": {
+        "engine": "sherpa-offline",
+        "runtimes": ["runtime/sherpa-onnx"],
+        "languages": [],
+        "detectsLanguage": true
+      },
+      "whisper/small-q5_1": {
+        "engine": "whisper",
+        "languages": [],
+        "detectsLanguage": true,
+        "minCores": 6
+      },
+      "whisper/base-q5_1": {
+        "engine": "whisper",
+        "languages": [],
+        "detectsLanguage": true
+      },
+      "stt/qwen3-asr-1.7b-bf16": {
+        "engine": "transcribe",
+        "gpu": true,
+        "languages": ["zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"],
+        "detectsLanguage": true,
+        "vramMb": 6000,
+        "minTotalVramMb": 15000
+      },
+      "stt/qwen3-asr-1.7b-q8_0": {
+        "engine": "transcribe",
+        "gpu": true,
+        "languages": ["zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"],
+        "detectsLanguage": true,
+        "vramMb": 3500
+      },
+      "stt/cohere-transcribe-q4_k": {
+        "engine": "transcribe",
+        "gpu": true,
+        "languages": ["en", "fr", "de", "es", "it", "pt", "nl", "pl", "el"],
+        "neverLanguages": ["ja", "zh", "ko", "ru", "yue"],
+        "requiresLanguage": true,
+        "vramMb": 2000
+      }
+    },
+    "routes": [
+      {
+        "name": "english",
+        "languages": ["en"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "streamFinal": true,
+        "cpuFinal": ["stt/parakeet-ultra-int8", "stt/parakeet-tdt-0.6b-v3-int8"],
+        "gpuFinal": ["stt/cohere-transcribe-q4_k", "stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "european-major",
+        "languages": ["de", "es", "fr", "it", "pt", "nl"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/parakeet-ultra-int8", "stt/parakeet-tdt-0.6b-v3-int8"],
+        "gpuFinal": ["stt/cohere-transcribe-q4_k", "stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "european-cohere",
+        "languages": ["pl", "el"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/parakeet-ultra-int8", "stt/parakeet-tdt-0.6b-v3-int8"],
+        "gpuFinal": ["stt/cohere-transcribe-q4_k"]
+      },
+      {
+        "name": "european-parakeet",
+        "languages": ["bg", "cs", "da", "et", "fi", "hr", "hu", "lt", "lv", "mt", "ro", "sk", "sl", "sv", "uk"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/parakeet-ultra-int8", "stt/parakeet-tdt-0.6b-v3-int8"],
+        "gpuFinal": []
+      },
+      {
+        "name": "ja-ko-ru",
+        "languages": ["ja", "ko", "ru"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/qwen3-asr-0.6b-int8"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "chinese",
+        "languages": ["zh", "yue"],
+        "streaming": [],
+        "cpuFinal": ["stt/sense-voice-small-int8"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "nemotron-final",
+        "languages": ["ar", "hi", "tr"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "streamFinal": true,
+        "cpuFinal": [],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "qwen3",
+        "languages": ["vi", "id", "ms", "th", "fil", "fa", "mk"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/qwen3-asr-0.6b-int8"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "nemotron-only",
+        "languages": ["nb"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "streamFinal": true,
+        "cpuFinal": [],
+        "gpuFinal": []
+      },
+      {
+        "name": "auto",
+        "languages": ["auto"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/qwen3-asr-0.6b-int8", "whisper/small-q5_1", "whisper/base-q5_1"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "other",
+        "languages": ["*"],
+        "streaming": [],
+        "cpuFinal": ["whisper/small-q5_1", "whisper/base-q5_1"],
+        "gpuFinal": []
+      }
+    ]
+  }
+}

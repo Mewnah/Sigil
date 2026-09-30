@@ -30,6 +30,9 @@ use super::{
 
 use super::{phonemize::phonemize, preprocess::TextPreprocessor};
 
+/// Sigil: one voice's style matrix, `(name, rows, cols, row-major data)`.
+pub type VoiceMatrix = (String, usize, usize, Vec<f32>);
+
 /// Samples trimmed from the tail of every generated chunk to remove the model's
 /// trailing silence artifact.
 ///
@@ -166,6 +169,67 @@ impl KittenTtsOnnx {
                     preprocessor: TextPreprocessor::new(),
             available_voices,
         })
+    }
+
+    /// Sigil: load the model with voices given as row-major style matrices (`(name, rows, cols,
+    /// data)`) instead of an NPZ file, e.g. from a sherpa-onnx Kitten package's `voices.bin`.
+    pub fn load_with_voices(
+        model_path: &Path,
+        voices: Vec<VoiceMatrix>,
+        speed_priors: HashMap<String, f32>,
+        voice_aliases: HashMap<String, String>,
+    ) -> Result<Self> {
+        let (session, _outcome) = build_session(
+            None,
+            EP_CPU,
+            &VcSessionOptions::default(),
+            ModelSource::File(model_path),
+        )
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("Cannot load ONNX model: {}", model_path.display()))?;
+        let mut available_voices = Vec::with_capacity(voices.len());
+        let mut table = HashMap::with_capacity(voices.len());
+        for (name, nrows, ncols, data) in voices {
+            if nrows == 0 || ncols == 0 || data.len() != nrows * ncols {
+                anyhow::bail!("Voice '{name}' has {} values, expected {nrows} x {ncols}", data.len());
+            }
+            available_voices.push(name.clone());
+            table.insert(name, Voice { nrows, ncols, data });
+        }
+        Ok(Self {
+            session: Mutex::new(session),
+            voices: table,
+            speed_priors,
+            voice_aliases,
+            preprocessor: TextPreprocessor::new(),
+            available_voices,
+        })
+    }
+
+    /// Sigil: whether `voice` (a voice or an alias) names a loaded voice.
+    pub fn resolves_voice(&self, voice: &str) -> bool {
+        self.voices.contains_key(self.resolve_voice(voice))
+    }
+
+    /// Sigil: the names a user can pick: aliases of loaded voices (KittenML's friendly names), then
+    /// the voices no alias points at.
+    pub fn voice_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .voice_aliases
+            .iter()
+            .filter(|(_, target)| self.voices.contains_key(target.as_str()))
+            .map(|(alias, _)| alias.clone())
+            .collect();
+        names.sort();
+        let mut raw: Vec<String> = self
+            .available_voices
+            .iter()
+            .filter(|v| !self.voice_aliases.values().any(|t| t == *v))
+            .cloned()
+            .collect();
+        raw.sort();
+        names.extend(raw);
+        names
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

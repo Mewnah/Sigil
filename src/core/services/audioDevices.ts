@@ -75,6 +75,7 @@ export function sttCaptureClass(backend: string): SttCaptureClass {
     case STT_Backends.vosk:
     case STT_Backends.moonshine:
     case STT_Backends.openai_audio:
+    case STT_Backends.local:
       return "hub";
     case STT_Backends.azure:
     case STT_Backends.deepgram:
@@ -317,6 +318,7 @@ export default class Service_AudioDevices {
       : backend === STT_Backends.vosk ? data.vosk.device
       : backend === STT_Backends.moonshine ? data.moonshine.device
       : backend === STT_Backends.openai_audio ? data.openai_audio.device
+      : backend === STT_Backends.local ? data.local.device
       : undefined;
     return resolveRustInputDeviceForInvoke(device);
   }

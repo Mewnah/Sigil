@@ -1,5 +1,6 @@
 //! `audio` plugin: device lists, the capture hub (one stream per physical source, fanned out to
-//! STT and other consumers), device-follow events, the Rust mute gate, and `play_async`.
+//! STT and other consumers), device-follow events and the Rust mute gate. (Clip playback moved to
+//! the `tts-sink` plugin in P2; the old `play_async` command is gone.)
 //!
 //! Capture (P1-C):
 //! - [`hub`]: sources, per-consumer rtrb rings with QPC-stamped blocks, drop-oldest per consumer,
@@ -7,7 +8,8 @@
 //!   stall detection, default-device follow; [`stream`]: the cpal/WASAPI backend (MMCSS callback
 //!   threads); [`loopback`]: source ids, output devices as loopback sources; [`device_watch`]:
 //!   `IMMNotificationClient` with a polling fallback.
-//! - Consumers: Whisper (`whisper::start_recording`), utterance capture (HTTP STT), and the legacy
+//! - Consumers: the speech pipeline (`speech::pipeline`, also behind `whisper::start_recording`),
+//!   utterance capture (legacy HTTP STT IPC, no TS caller since P2-F), and the legacy
 //!   `audio:chunk` stream (Vosk in the webview; 16 kHz mono when `sampleRate: 16000` is requested).
 //!
 //! Events: `audio:devices_changed` ([`device_watch::DevicesChanged`]), `audio:stream_error`,
@@ -16,14 +18,12 @@
 //! Source ids accepted by every `deviceName`: see [`loopback`] (`"loopback:<output>"` captures
 //! what an output device plays).
 
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, Thread};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait};
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use serde::{Deserialize, Serialize};
 use tauri::{
     command,
@@ -44,8 +44,6 @@ mod watchdog;
 
 #[cfg(test)]
 mod hub_tests;
-
-pub use device_resolve::resolve_output_device;
 
 use hub::{
     CaptureConsumer, ConsumerFormat, ConsumerOptions, HubEventSink, HubStatus, MuteGroup, SourceSpec, StreamEvent,
@@ -313,39 +311,6 @@ pub fn stop_audio_capture(state: State<'_, AudioCaptureState>) -> Result<(), Str
     Ok(())
 }
 
-fn get_output_stream(device_name: &str) -> Result<(OutputStream, OutputStreamHandle), String> {
-    let name = device_name.trim();
-    if name.is_empty() || name.eq_ignore_ascii_case("default") {
-        // rodio's `try_default` falls back to any other output device when the default one
-        // cannot be opened (exclusive-mode hold, unplugged endpoint, unsupported config).
-        return OutputStream::try_default().map_err(|e| e.to_string());
-    }
-    let host = cpal::default_host();
-    let device = resolve_output_device(&host, device_name)?;
-    OutputStream::try_from_device(&device).map_err(|e| e.to_string())
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RpcAudioPlayAsync {
-    pub device_name: String,
-    pub data: Vec<u8>,
-    pub volume: f32,
-    pub rate: f32,
-}
-
-#[command]
-pub async fn play_async(data: RpcAudioPlayAsync) -> Result<(), String> {
-    let (_stream, stream_handle) = get_output_stream(&data.device_name)?;
-    let sink = Sink::try_new(&stream_handle).map_err(|e| e.to_string())?;
-    sink.set_volume(data.volume);
-    sink.set_speed(data.rate);
-
-    let source = Decoder::new(Cursor::new(data.data)).map_err(|e| e.to_string())?;
-    sink.append(source);
-    sink.sleep_until_end();
-    Ok(())
-}
-
 /// Forwards hub stream events to the webview.
 struct TauriHubEvents<R: Runtime> {
     app: AppHandle<R>,
@@ -403,7 +368,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            play_async,
             list_input_devices,
             list_output_devices,
             get_device_snapshot,

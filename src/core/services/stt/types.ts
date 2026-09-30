@@ -11,6 +11,22 @@ export interface RustAudioChunkPayload {
   channels: number;
 }
 
+/**
+ * Revision metadata of a transcript, published on the `TextEvent` (`segmentId`, `revision`, `lang`, `turnEnd`; see
+ * `TextEventSchema` in `@/types`). Set by engines that know segments (the `local` speech pipeline); every field is
+ * optional and consumers must work without them.
+ */
+export interface SttTextMeta {
+  /** Stable id of one spoken segment (`<pipelineId>:<epoch>:<segmentId>`): interims and the final share it. */
+  segmentId?: string;
+  /** Rises with every interim and final of the segment; the highest wins. */
+  revision?: number;
+  /** Lower-case base language of the text (`en`, `ja`, `yue`, ...). */
+  lang?: string;
+  /** Smart Turn: the speaker probably finished their turn after this final (commit hint only). */
+  turnEnd?: boolean;
+}
+
 /** Severity of an engine status line (styling only; errors that end a session go through `onStop`). */
 export type SttStatusLevel = "info" | "warning";
 
@@ -33,10 +49,13 @@ export interface SttStatusOptions {
 export interface ISTTReceiver {
   onStart(): void;
   onStop(error?: string): void;
-  /** A partial hypothesis of recognized speech. Only transcript text: never status, progress or placeholders. */
-  onInterim(value: string): void;
-  /** A final transcript. Only transcript text. */
-  onFinal(value: string): void;
+  /**
+   * A partial hypothesis of recognized speech. Only transcript text: never status, progress or placeholders. `""`
+   * abandons the open sentence (nothing is published). `meta` (speech-pipeline engines) is published with the text.
+   */
+  onInterim(value: string, meta?: SttTextMeta): void;
+  /** A final transcript. Only transcript text. `meta` (speech-pipeline engines) is published with the text. */
+  onFinal(value: string, meta?: SttTextMeta): void;
   /**
    * Engine status for the UI (connecting, model download / load progress, transient errors, rate-limit waits).
    * Never published. `""` clears it. While the session is connecting, every call also proves the engine is alive
@@ -57,6 +76,19 @@ export interface ISTTService {
   dispose(): void | Promise<void>;
   /** Wired by Service_STT before each `start()`; engines may race awaits against this signal. */
   startAbortSignal?: AbortSignal | null;
+  /**
+   * Wired by Service_STT before each `start()`: true when nobody pressed Start just now (auto-start at launch).
+   * Engines must not ask questions then (such as download consent); they stop with a message instead.
+   */
+  startAutomatic?: boolean;
+  /**
+   * Publish now, through the receiver, the finals of finished sentences the engine still holds back (the `local`
+   * backend holds a first-pass final while it waits for the two-pass replacement, showing it as an interim).
+   * Service_STT calls it synchronously right before it closes the open sentence with the "[...]" marker (mute, stop,
+   * a new start), so a finished sentence is never replaced by the marker. Optional: engines that publish finals as
+   * soon as they have them have nothing to commit.
+   */
+  commitPending?(): void;
 }
 
 export interface ISTTServiceConstructor {

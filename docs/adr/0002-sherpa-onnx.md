@@ -189,10 +189,40 @@ cargo test --manifest-path src-tauri/Cargo.toml speech_rt::sherpa -- --include-i
   choosing the default Kokoro build, and should not ship int8 Kokoro as the CPU default. Japanese
   Kokoro through sherpa uses espeak-ng phonemes; compare it with the AivisSpeech / SBV2 paths
   before routing ja to it.
-- **Manual checks still open (P2 / P7):** Nemotron 3.5 streaming at 160 ms with
-  `chunk_ms=160 threads=1`; Qwen3-ASR-0.6B on `ja.wav`; a multilingual Whisper tiny for language ID
-  and a CAM++ model for speaker embeddings (wrappers compile and are unit-tested, not model-tested);
-  the probe matrix on H1 / H3 rigs.
+- **Manual checks still open (P7):** a CAM++ model for speaker embeddings (the wrapper compiles and
+  is unit-tested, not model-tested) and the probe matrix on H1 / H3 rigs. Nemotron, Qwen3-ASR-0.6B
+  and Whisper-base language ID ran in P2 (above).
+- **P2 results (recorded by P2-I0 from P2-B / P2-H; dev PC Ryzen 7 7800X3D, debug `sigil.exe` with
+  the release sherpa DLLs, median of 3):**
+  - **Nemotron 3.5 streaming** has now run. It takes the spoken language through the per-stream
+    `language` option (a code or locale, checked against the encoder's `prompt_dictionary`; without
+    one it runs on auto, which is less accurate, and the engine warns once). It needs 0.3 s of head
+    padding and one decode window (`window_size` × 10 ms + 30 ms) of tail padding, or the first and
+    last words are lost. RTF on one thread: 560 ms chunks 0.30–0.35 (en / ja / zh / ru / de), 160 ms
+    chunks 0.80–0.87; 2 threads 0.22 at about 2.5 cores. The 560 ms model is Sigil's default (same
+    475 MB download, 2.7× less CPU, fewer errors); first partial 1.1–1.7 s into speech.
+  - **Qwen3-ASR-0.6B** takes per-stream `hotwords` (prompt context) and `language` as the English
+    name ("Japanese"); RTF 0.16–0.27 at 2 threads. It does not report the language it detected
+    (1.13.8 strips the prefix), so auto mode relies on the language-ID engine.
+  - **Offline NeMo transducer hotwords** (Parakeet) need modified beam search plus a `bpe.vocab`,
+    which Sigil derives from `tokens.txt` (score = −id). The biasing effect is modest.
+  - **Parakeet Ultra** (community int8 export, pinned) and v3: RTF 0.063–0.075 at 2 threads.
+    **SenseVoice**: 0.029–0.041 with language / emotion / event tags. **Moonshine base-en**: 0.017.
+    **Whisper-base language ID**: RTF about 0.03, correct on en / ja / zh / ru / de / es.
+    Moonshine v2 Streaming is not packaged for sherpa; only base-en is catalogued.
+  - Through the speech pipeline, finals arrived 132 ms (Moonshine), 161 ms (Nemotron), 190 ms
+    (SenseVoice), 295 ms (Parakeet) and 1.2 s (Qwen3-ASR) after the end of speech.
+  - Utterance engines on 2 threads spin 20–75 ms of CPU per second for about 1 s after each decode;
+    streaming stays on 1 thread and does not spin.
+  - **Kokoro:** the fp32 package (`kokoro-multi-lang-v1_0`, 350 MB) is the catalog default; int8 is
+    not faster (RTF about 1.0) and sounds worse, so it is not catalogued. Inside sherpa-onnx the fp32
+    model measured RTF 0.30–0.32 on 4 threads at P2 integration; `local_tts::kokoro_ort` runs the
+    same graph on Sigil's ORT (with the CPU memory arena) behind sherpa's text frontend at 0.28–0.30
+    for 22 % less CPU, and is the default since P2-I0. Japanese kanji get Mandarin readings from
+    sherpa's frontend (kana are fine): Japanese needs a morphological frontend (future work).
+  - The runtime preload at speech-plugin setup loads the pack whenever it is installed
+    (`SIGIL_SHERPA_PRELOAD=0` turns it off). Full tables: `bench-results/sherpa/p2b-*/summary.md`
+    and [docs/benchmarks/SPEECH_BENCHMARKS.md](../benchmarks/SPEECH_BENCHMARKS.md).
 - **Optional hardening:** a tiny C++ shim (`try`/`catch` around each sherpa call, returning an error
   code) would turn in-process model exceptions into `Err` instead of an abort; build it only if field
   reports show crashes that the catalog hashes and `validate_in_child` do not prevent.

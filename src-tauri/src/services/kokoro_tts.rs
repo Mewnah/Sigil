@@ -1,15 +1,18 @@
-//! `kokoro-tts` plugin: client for an OpenAI-compatible Kokoro server (Kokoro-FastAPI, default
-//! `http://localhost:8880`).
+//! `kokoro-tts` plugin: voice list and health check of an OpenAI-compatible Kokoro server
+//! (Kokoro-FastAPI, default `http://localhost:8880`).
+//!
+//! Synthesis goes through the generic OpenAI-compatible client (`openai-speech` plugin,
+//! `openai_speech_speak`, P2-I): the `kokoro` backend maps its saved settings onto it
+//! (`{endpoint}/v1`, model `kokoro`, raw 24 kHz PCM, streamed into the TTS sink), so the first audio
+//! plays before the sentence is finished and the output device / voice-changer route apply.
 //!
 //! Every command takes an optional per-call `endpoint` (blank = the one stored by
 //! `set_kokoro_endpoint`), so the inspector's voice list never re-points a running service.
-//! Timeouts: voices 20 s, health 10 s, synthesis 30 s + 100 ms per character (max 120 s), or
-//! 60 s + 1 s per character (max 10 min) for a server on this PC or the LAN (`tts_post`).
+//! Timeouts: voices 20 s, health 10 s.
 
 use crate::services::http_client::{
-    api_url, content_type, describe_api_error, describe_request_error, ensure_audio_body,
-    http_client, parse_named_list, pick_endpoint, probe_ok, read_body_capped, tts_post,
-    LIST_TIMEOUT, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT,
+    api_url, describe_api_error, describe_request_error, http_client, parse_named_list,
+    pick_endpoint, probe_ok, LIST_TIMEOUT,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -20,7 +23,6 @@ use tauri::{
 };
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:8880";
-const DEFAULT_VOICE: &str = "af_bella";
 
 #[derive(Clone)]
 pub struct KokoroTTSState {
@@ -45,16 +47,6 @@ pub struct KokoroVoice {
     pub name: String,
 }
 
-#[derive(Serialize, Debug)]
-struct SpeechRequest<'a> {
-    model: &'static str,
-    input: &'a str,
-    voice: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speed: Option<f32>,
-    response_format: &'static str,
-}
-
 /// Voice ids from `GET /v1/audio/voices`. Kokoro-FastAPI answers `{"voices": ["af_bella", ...]}`;
 /// other servers answer `{"voices": [{"name": ...}]}`, `{"data": [...]}` or a bare array. All
 /// shapes are accepted (the old strict parser failed on the string list and showed no voices).
@@ -72,11 +64,6 @@ fn parse_voices(v: &serde_json::Value) -> Vec<KokoroVoice> {
     .into_iter()
     .map(|e| KokoroVoice { name: e.id })
     .collect()
-}
-
-/// A finite speed within Kokoro's accepted range, or `None` to use the server default.
-fn sanitize_speed(speed: Option<f32>) -> Option<f32> {
-    speed.filter(|s| s.is_finite() && *s > 0.0).map(|s| s.clamp(0.25, 4.0))
 }
 
 /// Set the Kokoro API endpoint URL (the default for calls without `endpoint`).
@@ -112,44 +99,6 @@ async fn get_kokoro_voices<R: Runtime>(
     Ok(parse_voices(&v))
 }
 
-/// Generate speech using Kokoro TTS and return audio bytes (mp3).
-#[command]
-async fn kokoro_speak<R: Runtime>(
-    _app: AppHandle<R>,
-    state: State<'_, KokoroTTSState>,
-    text: String,
-    voice: String,
-    speed: Option<f32>,
-    endpoint: Option<String>,
-) -> Result<Vec<u8>, String> {
-    if text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = api_url(&state.endpoint_for(endpoint.as_deref()), "/v1/audio/speech")?;
-    let what = "Kokoro synthesis";
-    let voice = voice.trim();
-
-    let (req, timeout) = tts_post(url, &text);
-    let response = req
-        .json(&SpeechRequest {
-            model: "kokoro",
-            input: &text,
-            voice: if voice.is_empty() { DEFAULT_VOICE } else { voice },
-            speed: sanitize_speed(speed),
-            response_format: "mp3",
-        })
-        .send()
-        .await
-        .map_err(|e| describe_request_error(what, &e, timeout))?;
-    if !response.status().is_success() {
-        return Err(describe_api_error(what, response).await);
-    }
-    let ct = content_type(&response);
-    let audio = read_body_capped(what, response, MAX_AUDIO_BYTES, TTS_STALL_TIMEOUT).await?;
-    ensure_audio_body(what, ct.as_deref(), &audio)?;
-    Ok(audio)
-}
-
 /// Check if the Kokoro service answers (`GET /v1/audio/voices` within 10 s).
 #[command]
 async fn check_kokoro_availability<R: Runtime>(
@@ -172,7 +121,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             set_kokoro_endpoint,
             get_kokoro_voices,
-            kokoro_speak,
             check_kokoro_availability
         ])
         .build()
@@ -214,27 +162,5 @@ mod tests {
         assert_eq!(names(serde_json::json!({"voices": [{"voice": "bf_emma", "name": "Emma"}]})), ["bf_emma"]);
         // Legacy `{name}` objects still work.
         assert_eq!(names(serde_json::json!({"voices": [{"name": "af_sky", "language": "en-us"}]})), ["af_sky"]);
-    }
-
-    #[test]
-    fn kokoro_speed_is_sanitized() {
-        assert_eq!(sanitize_speed(None), None);
-        assert_eq!(sanitize_speed(Some(f32::NAN)), None);
-        assert_eq!(sanitize_speed(Some(0.0)), None);
-        assert_eq!(sanitize_speed(Some(1.2)), Some(1.2));
-        assert_eq!(sanitize_speed(Some(50.0)), Some(4.0));
-    }
-
-    #[test]
-    fn kokoro_request_shape() {
-        let v = serde_json::to_value(SpeechRequest {
-            model: "kokoro",
-            input: "hi",
-            voice: DEFAULT_VOICE,
-            speed: None,
-            response_format: "mp3",
-        })
-        .unwrap();
-        assert_eq!(v, serde_json::json!({"model": "kokoro", "input": "hi", "voice": "af_bella", "response_format": "mp3"}));
     }
 }

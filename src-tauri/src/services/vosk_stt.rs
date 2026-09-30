@@ -27,7 +27,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
     command,
@@ -101,8 +101,6 @@ fn get_available_models() -> Vec<VoskModel> {
 }
 
 pub struct VoskSttState {
-    model_path: Arc<Mutex<Option<String>>>,
-    is_available: Arc<Mutex<bool>>,
     /// Cancels every download / import started before the next `cancel_vosk_model_download`
     /// (which cancels this token and installs a fresh one).
     cancel: Mutex<CancelToken>,
@@ -111,8 +109,6 @@ pub struct VoskSttState {
 impl VoskSttState {
     fn new() -> Self {
         Self {
-            model_path: Arc::new(Mutex::new(None)),
-            is_available: Arc::new(Mutex::new(false)),
             cancel: Mutex::new(CancelToken::default()),
         }
     }
@@ -131,32 +127,6 @@ impl VoskSttState {
 #[command]
 fn get_vosk_models() -> Vec<VoskModel> {
     get_available_models()
-}
-
-#[command]
-fn check_vosk_native_availability(state: State<'_, VoskSttState>) -> bool {
-    *state.is_available.lock().unwrap() = false;
-    false
-}
-
-#[command]
-fn set_vosk_model_path(state: State<'_, VoskSttState>, path: String) -> Result<(), String> {
-    *state.model_path.lock().map_err(|_| "Lock failed")? = Some(path);
-    Ok(())
-}
-
-#[command]
-fn get_vosk_model_path(state: State<'_, VoskSttState>) -> Option<String> {
-    state.model_path.lock().ok()?.clone()
-}
-
-#[command]
-async fn vosk_native_transcribe(
-    _state: State<'_, VoskSttState>,
-    _audio_data: Vec<i16>,
-    _sample_rate: u32,
-) -> Result<String, String> {
-    Err("Native Vosk not available. Using browser-based Vosk (WASM) instead.".to_string())
 }
 
 fn zip_rel_path(model_id: &str) -> String {
@@ -510,10 +480,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         })
         .invoke_handler(tauri::generate_handler![
             get_vosk_models,
-            check_vosk_native_availability,
-            set_vosk_model_path,
-            get_vosk_model_path,
-            vosk_native_transcribe,
             download_vosk_model,
             cancel_vosk_model_download,
             import_vosk_model_zip,
