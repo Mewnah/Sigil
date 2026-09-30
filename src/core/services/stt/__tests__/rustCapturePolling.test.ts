@@ -33,6 +33,7 @@ import { Service_STT_Schema, type STT_State } from "../schema";
 import { TRANSIENT_WARNING_MS } from "../statusChannel";
 import type { ISTTReceiver } from "../types";
 import { initSttTestI18n, translated } from "./sttTestI18n";
+import { PROCESS_NONCE } from "@/utils/processNonce";
 
 const SETUP: PipelineEngineSetup = {
   engine: { engine: "http", model: "", options: { preset: "openai", baseUrl: "http://127.0.0.1:8000/v1", model: "small", apiKey: "sk-secret" } },
@@ -235,8 +236,8 @@ describe("RustUtteranceService (speech pipeline driver)", () => {
     emit("speech:final", final(e, 6, "[noise]")); // nothing left after post-processing
     emit("speech:final", final(e, 7, "second", { lang: null, turnEnd: true }));
     expect(r.onFinal.mock.calls).toEqual([
-      ["hello  there", { segmentId: `mic:${e}:3`, revision: 1, lang: "en" }],
-      ["second", { segmentId: `mic:${e}:7`, revision: 0, turnEnd: true }],
+      ["hello  there", { segmentId: `mic-${PROCESS_NONCE}:${e}:3`, revision: 1, lang: "en" }],
+      ["second", { segmentId: `mic-${PROCESS_NONCE}:${e}:7`, revision: 0, turnEnd: true }],
     ]);
     expect(r.onInterim).not.toHaveBeenCalled();
     await engine.stop();

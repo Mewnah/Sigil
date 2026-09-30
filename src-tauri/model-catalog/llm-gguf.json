@@ -1,0 +1,703 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Local LLM translation models (GGUF) for the bundled llama-server helper (owned by P4-B; runtime packs in runtime-llama.json, the server in src-tauri/src/services/llm_server/). Family 'mt-llm'; list_llm_models shows them in this order.",
+    "Every file is pinned to a Hugging Face commit with its LFS sha256 (from the Hub tree API, as scripts/models/pin-catalog.mjs does). Official Tencent GGUFs for Hy-MT2; community quantizations (mradermacher, the model authors' own repos) elsewhere. Only the text model is used: the mmproj vision files of the Gemma-based models are never downloaded.",
+    "min_vram_mb is the whole server on the GPU at the default 4096-token context (weights, KV cache, compute buffers). The Hy-MT2 and MiLMMT numbers equal resources::policy (a test keeps them in step); the others are estimates from the architecture. All are provisional until the P7 campaign measures them; llm_server resizes its VRAM claim to the buffer sizes llama-server reports once it is running.",
+    "routing.models: per-model data read by llm_server::catalog with include_str! (not embedded in the model catalog): promptFormat (a TranslationPromptFormat of translation/schema/llm.ts), role (default | challenger | alternative | high_gpu | ab | specialist; specialists are opt-in and never chosen automatically), availability (ok when absent | needs_runtime_update | experimental), kvBytesPerToken (f16 K+V bytes per context token, for contexts above 4096; read from the GGUF header when absent), languages (canonical BCP-47; empty = broadly multilingual), directions (supported pairs when narrower than languages), sampling (the model authors' recommended sampler).",
+    "mt/hy-mt2-1.8b-1.25bit needs llama.cpp's STQ1_0 ternary kernel (ggml-org/llama.cpp PR #22836, open and ARM-only as of 2026-09-29): llama-server b11146 cannot load it, so it is listed but never started. mt/madlad400-3b-q4_k_m is a T5 encoder-decoder model; whether llama-server b11146 serves it is unverified (experimental). MiLMMT-46 12B now has a community GGUF (mradermacher, 2026-08); scripts/models/make-gguf.md describes self-conversion for models without one."
+  ],
+  "entries": [
+    {
+      "id": "mt/hy-mt2-1.8b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "a0c709d",
+      "title": "Hy-MT2 1.8B",
+      "description": "Tencent's small translation model for 33 languages (plus Cantonese and Traditional Chinese). Sigil's default local translator: runs on most graphics cards next to the voice changer, or on the processor. About 1.1 GB download; uses about 1.6 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 1600,
+      "files": [
+        {
+          "path": "Hy-MT2-1.8B-Q4_K_M.gguf",
+          "size": 1133080448,
+          "sha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/a0c709d9fac510f2c807aa3af52872340dc37a4a/Hy-MT2-1.8B-Q4_K_M.gguf",
+              "revision": "a0c709d9fac510f2c807aa3af52872340dc37a4a"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/hy-mt2-1.8b-1.25bit",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "9df5c82",
+      "title": "Hy-MT2 1.8B (1.25-bit)",
+      "description": "The 440 MB extreme-compression build of Hy-MT2 1.8B for PCs with little memory. It needs a llama.cpp kernel (STQ1_0) that Sigil's llama.cpp build does not include yet, so Sigil cannot run it for now.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 700,
+      "files": [
+        {
+          "path": "Hy-MT2-1.8B-1.25Bit.gguf",
+          "size": 461860800,
+          "sha256": "cc497fe8f033b52b3b8b00a7669e9661435432f9d4cd43f7ed24400c01507a93",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tencent/Hy-MT2-1.8B-1.25Bit-GGUF/resolve/9df5c824a00a744fb0512a29c640466f4d97dfb0/Hy-MT2-1.8B-1.25Bit.gguf",
+              "revision": "9df5c824a00a744fb0512a29c640466f4d97dfb0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/hy-mt2-7b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "ab84726",
+      "title": "Hy-MT2 7B",
+      "description": "The larger Hy-MT2: better translations for graphics cards with 10 GB or more (on 8 GB cards only while the voice changer is off). About 4.6 GB download; uses about 5.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 5300,
+      "files": [
+        {
+          "path": "Hy-MT2-7B-Q4_K_M.gguf",
+          "size": 4624648896,
+          "sha256": "9f96256500f3fc1ab4d64336b58f52a949a95ad7516b0c229476eef782f9f77b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tencent/Hy-MT2-7B-GGUF/resolve/ab8472660ac61fac25f1af43fac2599d52a8a775/Hy-MT2-7B-Q4_K_M.gguf",
+              "revision": "ab8472660ac61fac25f1af43fac2599d52a8a775"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/hy-mt2-30b-a3b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "fd3dcbb",
+      "title": "Hy-MT2 30B-A3B",
+      "description": "The largest Hy-MT2 (a mixture-of-experts model that is fast for its size), for 24 GB graphics cards. About 18.2 GB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 19600,
+      "files": [
+        {
+          "path": "Hy-MT2-30B-A3B-Q4_K_M.gguf",
+          "size": 18236702880,
+          "sha256": "bb44b11bb0f7cd3d1321645b41e911cd3de2e473731227fc6bf37aa18b543f88",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tencent/Hy-MT2-30B-A3B-GGUF/resolve/fd3dcbb6b31e9e03923ef4f9f42500f74c3851c3/Hy-MT2-30B-A3B-Q4_K_M.gguf",
+              "revision": "fd3dcbb6b31e9e03923ef4f9f42500f74c3851c3"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/milmmt-46-4b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "765aa35",
+      "title": "MiLMMT-46 4B",
+      "description": "Xiaomi's 46-language translation model (Gemma 3 based): close to Hy-MT2 7B in published scores at half the size, a strong choice for 8 GB graphics cards. About 2.5 GB download; uses about 3 GB of video memory.",
+      "license": "Gemma",
+      "status": "published",
+      "min_vram_mb": 3000,
+      "files": [
+        {
+          "path": "MiLMMT-46-4B-v1.0.Q4_K_M.gguf",
+          "size": 2489893152,
+          "sha256": "25424cbb5423afaa22b1b53bfb3d8aa116cfd84b5f8dcfa82363bfb3c4221ddf",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/MiLMMT-46-4B-v1.0-GGUF/resolve/765aa350dc9aa28c41e2a9e34e1b25d56c0d3911/MiLMMT-46-4B-v1.0.Q4_K_M.gguf",
+              "revision": "765aa350dc9aa28c41e2a9e34e1b25d56c0d3911"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/milmmt-46-12b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "d19a328",
+      "title": "MiLMMT-46 12B",
+      "description": "The largest MiLMMT model, with the highest published translation scores of the open models; for 16 GB graphics cards (12 GB with the voice changer off). About 7.3 GB download; uses about 8 GB of video memory.",
+      "license": "Gemma",
+      "status": "published",
+      "min_vram_mb": 8100,
+      "files": [
+        {
+          "path": "MiLMMT-46-12B-v1.0.Q4_K_M.gguf",
+          "size": 7300777440,
+          "sha256": "8c2d878d8daf8722faf1a42eef02ce046411ede17bf3115fb8b2cce491d5fb03",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/MiLMMT-46-12B-v1.0-GGUF/resolve/d19a3282cf4dc9e629023795449469efd92fa5b5/MiLMMT-46-12B-v1.0.Q4_K_M.gguf",
+              "revision": "d19a3282cf4dc9e629023795449469efd92fa5b5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/translategemma-4b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "35a7486",
+      "title": "TranslateGemma 4B",
+      "description": "Google's translation-tuned Gemma 3 for 55 languages, good at conversational Japanese and English. About 2.5 GB download; uses about 3 GB of video memory.",
+      "license": "Gemma",
+      "status": "published",
+      "min_vram_mb": 3000,
+      "files": [
+        {
+          "path": "translategemma-4b-it.Q4_K_M.gguf",
+          "size": 2489909760,
+          "sha256": "81200d03e843d2ec1ece6eeafe7d13cb6e5211e1fcd336ade55790b683a08330",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/35a7486e128b19642cdc72d7b91b21ba388aaf42/translategemma-4b-it.Q4_K_M.gguf",
+              "revision": "35a7486e128b19642cdc72d7b91b21ba388aaf42"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/translategemma-12b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "fdf84c9",
+      "title": "TranslateGemma 12B",
+      "description": "The larger TranslateGemma for 16 GB graphics cards. About 7.3 GB download; uses about 8 GB of video memory.",
+      "license": "Gemma",
+      "status": "published",
+      "min_vram_mb": 8100,
+      "files": [
+        {
+          "path": "translategemma-12b-it.Q4_K_M.gguf",
+          "size": 7300794112,
+          "sha256": "b7aac4b4be7ab0c49b6556c29c4467e74313df7f1e95d9f9676bb2adf0afa528",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/fdf84c9f6fe14e69d58814f14e7b5b63bb6a1b28/translategemma-12b-it.Q4_K_M.gguf",
+              "revision": "fdf84c9f6fe14e69d58814f14e7b5b63bb6a1b28"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/seed-x-ppo-7b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "c9166f2",
+      "title": "Seed-X PPO 7B",
+      "description": "ByteDance's 28-language translation model with the best reference-based scores in published tests; driven by a plain prompt, one line at a time. About 4.6 GB download; uses about 5.2 GB of video memory.",
+      "license": "OpenMDW-1.0",
+      "status": "published",
+      "min_vram_mb": 5300,
+      "files": [
+        {
+          "path": "Seed-X-PPO-7B.Q4_K_M.gguf",
+          "size": 4557582848,
+          "sha256": "9202183d5b52a1d80271cfdf20e4bf98fb7430c797a225581cd226ba7ba3cdb1",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/Seed-X-PPO-7B-GGUF/resolve/c9166f2c073d3219fe22e1f35910a41e666e971f/Seed-X-PPO-7B.Q4_K_M.gguf",
+              "revision": "c9166f2c073d3219fe22e1f35910a41e666e971f"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/lmt-60-4b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "fd76914",
+      "title": "NiuTrans LMT-60 4B",
+      "description": "NiuTrans' 60-language translation model, offered for side-by-side comparison. About 2.7 GB download; uses about 3.5 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3600,
+      "files": [
+        {
+          "path": "LMT-60-4B.Q4_K_M.gguf",
+          "size": 2716068544,
+          "sha256": "6ab245a422b854b4582401c1240b64c35899fe1c816af059aa23b38ac9707bb4",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/LMT-60-4B-GGUF/resolve/fd76914adb08e4aa076ef7044e0f3b54d5987a5d/LMT-60-4B.Q4_K_M.gguf",
+              "revision": "fd76914adb08e4aa076ef7044e0f3b54d5987a5d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/cat-translate-7b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "1d53d50",
+      "title": "CAT-Translate 7B (Japanese and English)",
+      "description": "CyberAgent's Japanese and English specialist, strongest on formal and technical text. About 4.5 GB download; uses about 5.2 GB of video memory.",
+      "license": "MIT",
+      "status": "published",
+      "min_vram_mb": 5300,
+      "files": [
+        {
+          "path": "CAT-Translate-7b.i1-Q4_K_M.gguf",
+          "size": 4537758304,
+          "sha256": "07a7e6589908cb269a1a48b67aeebc3e7d02724d9069e94df8ee266f32d07aec",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/CAT-Translate-7b-i1-GGUF/resolve/1d53d50066add9e349a75fd8b7b1cae939afb4df/CAT-Translate-7b.i1-Q4_K_M.gguf",
+              "revision": "1d53d50066add9e349a75fd8b7b1cae939afb4df"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/shisa-v2.1-qwen3-8b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "f81b733",
+      "title": "Shisa V2.1 8B (Japanese and English)",
+      "description": "Shisa.AI's bilingual Japanese and English chat model, used as a translator. About 5 GB download; uses about 5.8 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 5900,
+      "files": [
+        {
+          "path": "shisa-v2.1-qwen3-8b.i1-Q4_K_M.gguf",
+          "size": 5027784992,
+          "sha256": "52511a1d45c27f7ee2c2c652d4f611ff6226822890b9d702d54e42b47f6ea897",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/mradermacher/shisa-v2.1-qwen3-8b-i1-GGUF/resolve/f81b7339717484ea3710497f2c9347233c05efdf/shisa-v2.1-qwen3-8b.i1-Q4_K_M.gguf",
+              "revision": "f81b7339717484ea3710497f2c9347233c05efdf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/vntl-llama3-8b-v2-q5_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "ab7c828",
+      "title": "VNTL Llama 3 8B (Japanese to English)",
+      "description": "A Japanese-to-English specialist trained on game and visual-novel dialogue. About 5.7 GB download; uses about 6.3 GB of video memory.",
+      "license": "Llama-3",
+      "status": "published",
+      "min_vram_mb": 6400,
+      "files": [
+        {
+          "path": "vntl-llama3-8b-v2-hf-q5_k_m.gguf",
+          "size": 5732991008,
+          "sha256": "6392622ff4417c2e065b51644bc0cb5ab493e027c10dde2425a03959efdc5dc7",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/lmg-anon/vntl-llama3-8b-v2-gguf/resolve/ab7c8285d386fab7cd89e951f62e129085df6372/vntl-llama3-8b-v2-hf-q5_k_m.gguf",
+              "revision": "ab7c8285d386fab7cd89e951f62e129085df6372"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/galtransl-v4-4b-q5_k_s",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "d56c877",
+      "title": "GalTransl v4 4B (Japanese to Chinese)",
+      "description": "SakuraLLM's Japanese to Simplified Chinese specialist, popular for games and visual novels. About 2.8 GB download; uses about 3.7 GB of video memory.",
+      "license": "CC-BY-NC-SA-4.0",
+      "status": "published",
+      "min_vram_mb": 3800,
+      "files": [
+        {
+          "path": "Galtransl-v4-4B-2601-Q5_K_S.gguf",
+          "size": 2823707232,
+          "sha256": "2458cd336abc86d91f37df1a4375d59b96d32012fe6382c8265e640e84cea204",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/SakuraLLM/GalTransl-v4-4B-2601/resolve/d56c8770a37d93b2bd408a13ddd24d55c53f8578/Galtransl-v4-4B-2601-Q5_K_S.gguf",
+              "revision": "d56c8770a37d93b2bd408a13ddd24d55c53f8578"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/madlad400-3b-q4_k_m",
+      "family": "mt-llm",
+      "kind": "model",
+      "version": "b325d39",
+      "title": "MADLAD-400 3B (400+ languages)",
+      "description": "Google's translation model for more than 400 languages, including many rare ones. Experimental: it is an encoder-decoder model, which llama.cpp's server may not run. About 1.9 GB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 2600,
+      "files": [
+        {
+          "path": "madlad400-3b-mt-q4_k_m.gguf",
+          "size": 1858124864,
+          "sha256": "fc56f16d215db71e856de3c3770974c867e3d95a782d415d4cfabc9fb470b8e4",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/notjjustnumbers/madlad400-3b-mt-Q4_K_M-GGUF/resolve/b325d397b871d944f12cd98ddff3a969cc8fec6e/madlad400-3b-mt-q4_k_m.gguf",
+              "revision": "b325d397b871d944f12cd98ddff3a969cc8fec6e"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "routing": {
+    "$comment": "llm_server catalog metadata (see $comment above). Keys are catalog ids of this fragment.",
+    "ctxDefault": 4096,
+    "models": {
+      "mt/hy-mt2-1.8b-q4_k_m": {
+        "promptFormat": "hy-mt2",
+        "role": "default",
+        "kvBytesPerToken": 65536,
+        "languages": [
+          "zh",
+          "en",
+          "fr",
+          "pt",
+          "es",
+          "ja",
+          "tr",
+          "ru",
+          "ar",
+          "ko",
+          "th",
+          "it",
+          "de",
+          "vi",
+          "ms",
+          "id",
+          "fil",
+          "hi",
+          "zh-Hant",
+          "pl",
+          "cs",
+          "nl",
+          "km",
+          "my",
+          "fa",
+          "gu",
+          "ur",
+          "te",
+          "mr",
+          "he",
+          "bn",
+          "ta",
+          "uk",
+          "bo",
+          "kk",
+          "mn",
+          "ug",
+          "yue"
+        ],
+        "sampling": {
+          "temperature": 0.7,
+          "topP": 0.6,
+          "topK": 20,
+          "repetitionPenalty": 1.05
+        }
+      },
+      "mt/hy-mt2-1.8b-1.25bit": {
+        "promptFormat": "hy-mt2",
+        "role": "default",
+        "availability": "needs_runtime_update",
+        "languages": [
+          "zh",
+          "en",
+          "fr",
+          "pt",
+          "es",
+          "ja",
+          "tr",
+          "ru",
+          "ar",
+          "ko",
+          "th",
+          "it",
+          "de",
+          "vi",
+          "ms",
+          "id",
+          "fil",
+          "hi",
+          "zh-Hant",
+          "pl",
+          "cs",
+          "nl",
+          "km",
+          "my",
+          "fa",
+          "gu",
+          "ur",
+          "te",
+          "mr",
+          "he",
+          "bn",
+          "ta",
+          "uk",
+          "bo",
+          "kk",
+          "mn",
+          "ug",
+          "yue"
+        ],
+        "sampling": {
+          "temperature": 0.7,
+          "topP": 0.6,
+          "topK": 20,
+          "repetitionPenalty": 1.05
+        }
+      },
+      "mt/hy-mt2-7b-q4_k_m": {
+        "promptFormat": "hy-mt2",
+        "role": "default",
+        "kvBytesPerToken": 131072,
+        "languages": [
+          "zh",
+          "en",
+          "fr",
+          "pt",
+          "es",
+          "ja",
+          "tr",
+          "ru",
+          "ar",
+          "ko",
+          "th",
+          "it",
+          "de",
+          "vi",
+          "ms",
+          "id",
+          "fil",
+          "hi",
+          "zh-Hant",
+          "pl",
+          "cs",
+          "nl",
+          "km",
+          "my",
+          "fa",
+          "gu",
+          "ur",
+          "te",
+          "mr",
+          "he",
+          "bn",
+          "ta",
+          "uk",
+          "bo",
+          "kk",
+          "mn",
+          "ug",
+          "yue"
+        ],
+        "sampling": {
+          "temperature": 0.7,
+          "topP": 0.6,
+          "topK": 20,
+          "repetitionPenalty": 1.05
+        }
+      },
+      "mt/hy-mt2-30b-a3b-q4_k_m": {
+        "promptFormat": "hy-mt2",
+        "role": "high_gpu",
+        "languages": [
+          "zh",
+          "en",
+          "fr",
+          "pt",
+          "es",
+          "ja",
+          "tr",
+          "ru",
+          "ar",
+          "ko",
+          "th",
+          "it",
+          "de",
+          "vi",
+          "ms",
+          "id",
+          "fil",
+          "hi",
+          "zh-Hant",
+          "pl",
+          "cs",
+          "nl",
+          "km",
+          "my",
+          "fa",
+          "gu",
+          "ur",
+          "te",
+          "mr",
+          "he",
+          "bn",
+          "ta",
+          "uk",
+          "bo",
+          "kk",
+          "mn",
+          "ug",
+          "yue"
+        ],
+        "sampling": {
+          "temperature": 0.7,
+          "topP": 1,
+          "topK": -1,
+          "repetitionPenalty": 1
+        }
+      },
+      "mt/milmmt-46-4b-q4_k_m": {
+        "promptFormat": "milmmt",
+        "role": "challenger",
+        "languages": []
+      },
+      "mt/milmmt-46-12b-q4_k_m": {
+        "promptFormat": "milmmt",
+        "role": "high_gpu",
+        "kvBytesPerToken": 393216,
+        "languages": []
+      },
+      "mt/translategemma-4b-q4_k_m": {
+        "promptFormat": "translategemma",
+        "role": "alternative",
+        "languages": []
+      },
+      "mt/translategemma-12b-q4_k_m": {
+        "promptFormat": "translategemma",
+        "role": "alternative",
+        "kvBytesPerToken": 393216,
+        "languages": []
+      },
+      "mt/seed-x-ppo-7b-q4_k_m": {
+        "promptFormat": "seed-x",
+        "role": "high_gpu",
+        "kvBytesPerToken": 131072,
+        "languages": []
+      },
+      "mt/lmt-60-4b-q4_k_m": {
+        "promptFormat": "lmt",
+        "role": "ab",
+        "kvBytesPerToken": 147456,
+        "languages": []
+      },
+      "mt/cat-translate-7b-q4_k_m": {
+        "promptFormat": "generic",
+        "role": "specialist",
+        "languages": [
+          "ja",
+          "en"
+        ],
+        "directions": [
+          {
+            "from": "ja",
+            "to": "en"
+          },
+          {
+            "from": "en",
+            "to": "ja"
+          }
+        ]
+      },
+      "mt/shisa-v2.1-qwen3-8b-q4_k_m": {
+        "promptFormat": "generic",
+        "role": "specialist",
+        "kvBytesPerToken": 147456,
+        "languages": [
+          "ja",
+          "en"
+        ],
+        "directions": [
+          {
+            "from": "ja",
+            "to": "en"
+          },
+          {
+            "from": "en",
+            "to": "ja"
+          }
+        ]
+      },
+      "mt/vntl-llama3-8b-v2-q5_k_m": {
+        "promptFormat": "vntl",
+        "role": "specialist",
+        "kvBytesPerToken": 131072,
+        "languages": [
+          "ja",
+          "en"
+        ],
+        "directions": [
+          {
+            "from": "ja",
+            "to": "en"
+          }
+        ]
+      },
+      "mt/galtransl-v4-4b-q5_k_s": {
+        "promptFormat": "sakura",
+        "role": "specialist",
+        "kvBytesPerToken": 147456,
+        "languages": [
+          "ja",
+          "zh"
+        ],
+        "directions": [
+          {
+            "from": "ja",
+            "to": "zh"
+          }
+        ]
+      },
+      "mt/madlad400-3b-q4_k_m": {
+        "promptFormat": "madlad",
+        "role": "specialist",
+        "availability": "experimental",
+        "languages": []
+      }
+    }
+  }
+}

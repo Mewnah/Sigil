@@ -145,24 +145,45 @@ Sidebar → **Translation**.
 
 ### Typical flow
 
-1. **Start** the translation service when your pipeline is ready.  
-2. Set **source** and **target** languages (options depend on configured provider).  
-3. Ensure **STT** (or another text source) is producing text that feeds the same pipeline.
+1. Pick a **provider** at the top of the panel. **Automatic (best available)** tries several engines in order and falls back when one does not answer.
+2. Set the **source** and **target** language. Leave the source on automatic to use the language speech-to-text recognized.
+3. Follow the panel's hints: it shows what is still missing (an API key, a download) under **Start**.
+4. **Start** translation. Speech-to-text (or typed text) feeds it automatically.
 
-### Configuration
+### Providers
 
-Providers and API keys vary by integration; use the fields in the inspector and any cloud account requirements. For engine-specific minimums, see [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md) where applicable.
+- **Automatic (best available)**: an engine order (by default AI model, then Firefox Translations, then NLLB), plus optional rules for some language pairs (for example a Japanese specialist for Japanese to English). Each engine gets a few seconds (**Time per engine**) before the next one is tried; when an online engine fails, the offline ones are tried too. The status line shows which engine translated the last line and warns while a fallback is in use.
+- **AI model (LLM)**: the best quality. **Model runs on**:
+  - **This PC (Sigil's model server)**: Sigil downloads a translation model (Hy-MT2 1.8B, about 1.1 GB, by default) and runs it on your graphics card or processor. The **Local model server** box shows where it will run and how much video memory it needs. If it does not fit next to your game or the voice changer, it is refused with the reason; **Start it anyway** overrides that until Sigil closes. **Test load** checks it; the server stops a few seconds after translation stops and always ends with Sigil. You can also pick a larger model, a specialist, or your own GGUF file.
+  - **Google Gemini (free tier available)**: create a free key in Google AI Studio.
+  - **OpenRouter** or **OpenAI**: paste the key and a model name.
+  - **Your own server (Ollama, LM Studio, …)**: pick the preset, press **Check connection** and choose a model from the list.
+  - **Prompt format** is automatic for the catalog models; **Custom** lets you write your own template (a preview shows what is sent). Keep **Reasoning effort** on **Model default** for translation models.
+- **DeepL**: paste your DeepL API key (Free keys end in `:fx`, 500,000 characters a month). The panel shows this month's usage. Partial captions are off by default because they use quota.
+- **Firefox Translations (offline)**: fast, offline, no video memory. Import the Firefox Translations engine pack in **Models & Runtimes**, then download the language models the panel lists (small downloads; pairs without English go through English). It needs to know the spoken language.
+- **NLLB-200 (offline, 200 languages)**: about 0.9 GB, runs on the processor, about a second per line. Best for languages the other offline engines do not cover.
+- **Azure**, **LibreTranslate** (including the **LTEngine** preset) and **On-device (WebView)** work as before.
+
+### Live settings
+
+These apply to the next line while translation runs; no restart is needed.
+
+- **Glossary**: names and terms and how to translate them. Only the terms in a line are sent. **Paste a list** accepts one term per line (term and translation separated by a tab, `=`, `->` or a comma), and the tester shows which terms a sample line would use. AI models use the glossary; DeepL, Firefox Translations and NLLB ignore it.
+- **Context**: earlier lines (3 by default) and a short **Background** (topic, names, speaking style) help AI models and DeepL keep names and tone consistent.
+- **Partial captions**: **Steady partial translations** show only the words two partial translations agree on, so captions grow without flickering; **Also show the unconfirmed end** shows the newest words too (they may still change). **Wait until you finish speaking** joins a sentence Smart Turn marks as unfinished with the next one.
+- **Use keyboard input**: whether typed text is translated too.
 
 ### What to expect
 
-- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one.
-- A line that fails to translate shows a short notice and is written to the **System log**.
+- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one, which may reword the line once because it sees the whole sentence.
+- A line that fails to translate shows a short notice and is written to the **System log**; untranslated text is never passed off as a translation.
 - **Azure:** the **Region** field is optional (only regional or multi-service resources need it). Leave the source language empty to auto-detect.
 
 ### Tips
 
-- Match **language codes** to what your STT engine outputs.
-- If output looks wrong, verify whether **interim** vs **final** text is being translated in your setup.
+- For the best quality with no cloud account, use **AI model** on **This PC**. For older PCs or while the voice changer needs the graphics card, **Firefox Translations** or **NLLB** run on the processor.
+- If a local server (Ollama, LM Studio) cannot be reached, set **Route** to **Through Sigil**.
+- If output looks wrong, check the source language, and whether your text source sends interim or only final text.
 
 ### Related
 
@@ -176,7 +197,7 @@ Providers and API keys vary by integration; use the fields in the inspector and 
 
 ### Purpose
 
-Rewrite, summarize, or stylize text with an **LLM** (OpenAI, OpenRouter, or a **local** HTTP endpoint). Often applied to **STT** output before display or TTS.
+Rewrite, summarize, or stylize text with an **LLM** (OpenAI, OpenRouter, Google Gemini, or a **local** OpenAI-compatible server such as Ollama or LM Studio). Often applied to **STT** output before display or TTS.
 
 ### Open the inspector
 
@@ -189,13 +210,16 @@ Sidebar → **AI Transform**.
 
 ### Configuration
 
-Set the **provider**, **model**, **API key** (if required), and **base URL** for local or proxy setups. Prompts and options are in the inspector; keep them aligned with your stream’s tone and latency budget.
+Set the **provider** (OpenAI, OpenRouter, **Google Gemini**, or your own server), **model**, **API key** (if required), and **base URL** for local or proxy setups. **Check connection** lists the models the server offers and says whether yours is among them. Prompts and options are in the inspector; keep them aligned with your stream’s tone and latency budget.
 
+- **Google Gemini (free tier available):** create a free key in Google AI Studio (aistudio.google.com). Flash-Lite models answer fastest and have the most generous free limits.
 - **Max output tokens** (default 1024) limits the reply length. Thinking models spend tokens on reasoning, so give them a higher limit.
-- **Reasoning effort** (default **Model default**) controls how long reasoning models think. For Gemini 2.5 Flash through OpenRouter, choose **None**. If a model rejects a level, keep **Model default**.
+- **Reasoning effort** (default **Model default**) controls how long reasoning models think. Choose **None** or **Minimal** to keep captions fast. If a model rejects a level, keep **Model default**.
+- **Stream the reply** (on by default): captions bound to the synced AI source ("AI: Original Text (Synced)") fill in word by word as the reply arrives. TTS, the chatbox and the AI Transform source still get only the finished line.
+- **Timeout per line** (15 seconds by default). On a failure or timeout the **original text** is sent on (with a short notice), so captions and TTS keep flowing.
+- **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block browser requests (Ollama, LM Studio). Change it to **Direct from the app window** or **Through Sigil** only if a server cannot be reached.
 - Changes apply to the next sentence; no restart is needed.
-- Each sentence has 15 seconds. On a failure or timeout the **original text** is sent on (with a short notice), so captions and TTS keep flowing.
-- **Stop with stream** now works, and “Sync timing” captions follow STT when AI is off.
+- **Stop with stream** works, and “Sync timing” captions follow STT when AI is off.
 
 ### Tips
 

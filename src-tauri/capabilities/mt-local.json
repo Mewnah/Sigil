@@ -1,0 +1,11 @@
+{
+  "identifier": "mt-local",
+  "description": "IPC for the mt-local plugin (NLLB-200 on ONNX Runtime and the Bergamot helper) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "mt-local:default"
+  ]
+}

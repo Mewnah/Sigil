@@ -17,6 +17,9 @@
  * - Every job has a deadline, so a hung backend delays later utterances by at most that long. A final's
  *   deadline grows with its length (see `finalDeadlineMs`). A final that fails or times out is
  *   reported through `onError` and its utterance is closed without output.
+ * - Interim throttling (`interimGapMs`, P4-C): interim requests of one utterance start at least that far apart;
+ *   meanwhile only the latest interim waits (latest wins).
+ * - `abandon` closes the open utterance without any output (its speech was given up upstream).
  */
 
 /** Published by Service_STT.tryCancelSentence (stt/index.ts) when a sentence is cut off mid-interim. */
@@ -59,8 +62,11 @@ class SequencerCancelled extends Error {
 export interface TranslationSequencerOptions<E> {
   /** Runs one job: resolve with the output text, reject on failure. Should honour `job.signal`. */
   run(job: SequencerJob<E>): Promise<string>;
-  /** Receives outputs in order (see the module docs). */
-  publish(job: SequencerJob<E>, value: string): void;
+  /**
+   * Receives outputs in order (see the module docs). Returning `false` for an interim means nothing was shown
+   * (e.g. LocalAgreement committed nothing new): a later cancel then closes the utterance silently.
+   */
+  publish(job: SequencerJob<E>, value: string): boolean | void;
   /** A job failed or timed out. Not called for superseded or reset jobs. */
   onError?(job: SequencerJob<E>, error: unknown): void;
   /**
@@ -75,6 +81,8 @@ export interface TranslationSequencerOptions<E> {
    * opening a new utterance that would never be finalized. 0 = off.
    */
   staleInterimMs?: number;
+  /** Minimum gap between the starts of two interim requests of one utterance (ms, read per event); 0 = none. */
+  interimGapMs?: number | (() => number);
   now?: () => number;
 }
 
@@ -83,7 +91,9 @@ type FinalState = "open" | "pending" | "ready" | "dropped";
 interface Utterance<E> {
   readonly id: number;
   revision: number;
-  /** Revision last published (-1 = nothing published for this utterance yet). */
+  /** Revision last offered to `publish` (orders interim results). */
+  offered: number;
+  /** Revision last shown (-1 = nothing published for this utterance yet). */
   shown: number;
   final: FinalState;
   finalOut?: { job: SequencerJob<E>; value: string };
@@ -92,6 +102,10 @@ interface Utterance<E> {
   queued?: { revision: number; event: E };
   /** Latest interim result waiting for earlier utterances to settle. */
   held?: { job: SequencerJob<E>; value: string };
+  /** When the last interim request started (throttling). */
+  lastDispatchAt: number;
+  /** Pending throttled dispatch of `queued`. */
+  gapTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface StreamState<E> {
@@ -144,6 +158,7 @@ export class TranslationSequencer<E extends { value: string }> {
   #epoch = 0;
   readonly #timeouts: Record<SequenceKind, Deadline<E>>;
   readonly #staleMs: number;
+  readonly #gap: number | (() => number);
   readonly #now: () => number;
 
   constructor(private readonly options: TranslationSequencerOptions<E>) {
@@ -152,6 +167,7 @@ export class TranslationSequencer<E extends { value: string }> {
       final: options.timeoutMs?.final ?? ((event: E) => finalDeadlineMs(event.value)),
     };
     this.#staleMs = options.staleInterimMs ?? 1_500;
+    this.#gap = options.interimGapMs ?? 0;
     this.#now = options.now ?? (() => Date.now());
   }
 
@@ -167,16 +183,43 @@ export class TranslationSequencer<E extends { value: string }> {
     return this.#controllers.size;
   }
 
-  pushInterim(stream: string, event: E): void {
+  /**
+   * @param options.trusted The caller already filtered late interims (segment ids): skip the late-interim check.
+   */
+  pushInterim(stream: string, event: E, options: { trusted?: boolean } = {}): void {
     const s = this.#stream(stream);
-    if (!s.open && this.#isLateInterim(s, event)) return;
+    if (!s.open && !options.trusted && this.#isLateInterim(s, event)) return;
     const u = s.open ?? this.#openUtterance(s);
     const revision = ++u.revision;
-    if (u.inFlight) {
+    if (u.inFlight || u.gapTimer !== undefined) {
       u.queued = { revision, event };
       return;
     }
+    const wait = this.#gapWait(u);
+    if (wait > 0) {
+      u.queued = { revision, event };
+      this.#scheduleQueued(stream, s, u, wait);
+      return;
+    }
     this.#dispatchInterim(stream, s, u, revision, event);
+  }
+
+  /**
+   * Closes the open utterance of `stream` without any output (its speech was given up upstream, so no final
+   * follows). Interim work is aborted; later utterances are no longer held back by it.
+   */
+  abandon(stream: string): void {
+    const s = this.#streams.get(stream);
+    const u = s?.open;
+    if (!s || !u) return;
+    this.#close(s, u);
+    u.final = "dropped";
+    this.#flush(s);
+  }
+
+  /** Whether `utterance` of `stream` is the oldest unsettled one (the only one allowed to publish now). */
+  isHead(stream: string, utterance: number): boolean {
+    return this.#streams.get(stream)?.queue[0]?.id === utterance;
   }
 
   pushFinal(stream: string, event: E): void {
@@ -229,6 +272,9 @@ export class TranslationSequencer<E extends { value: string }> {
     const cancelled = new SequencerCancelled();
     for (const c of this.#controllers) c.abort(cancelled);
     this.#controllers.clear();
+    for (const s of this.#streams.values()) {
+      for (const u of s.queue) this.#clearGap(u);
+    }
     this.#streams.clear();
   }
 
@@ -242,7 +288,14 @@ export class TranslationSequencer<E extends { value: string }> {
   }
 
   #openUtterance(s: StreamState<E>): Utterance<E> {
-    const u: Utterance<E> = { id: s.nextUtterance++, revision: -1, shown: -1, final: "open" };
+    const u: Utterance<E> = {
+      id: s.nextUtterance++,
+      revision: -1,
+      offered: -1,
+      shown: -1,
+      final: "open",
+      lastDispatchAt: Number.NEGATIVE_INFINITY,
+    };
     s.open = u;
     s.queue.push(u);
     return u;
@@ -255,20 +308,48 @@ export class TranslationSequencer<E extends { value: string }> {
     return text.length > 0 && normalizeForMatch(last.text).startsWith(text);
   }
 
-  /** Ends interim work of `u`; the caller sets its final state. */
-  #close(s: StreamState<E>, u: Utterance<E>, event: E): void {
+  /** Ends interim work of `u`; the caller sets its final state. `event` (the closing final) feeds the late check. */
+  #close(s: StreamState<E>, u: Utterance<E>, event?: E): void {
     if (s.open === u) s.open = undefined;
     u.inFlight?.controller.abort(new SequencerCancelled());
     u.inFlight = undefined;
     u.queued = undefined;
     u.held = undefined;
-    s.lastClosed = { text: event.value, at: this.#now() };
+    this.#clearGap(u);
+    if (event) s.lastClosed = { text: event.value, at: this.#now() };
+  }
+
+  #clearGap(u: Utterance<E>): void {
+    if (u.gapTimer !== undefined) clearTimeout(u.gapTimer);
+    u.gapTimer = undefined;
+  }
+
+  /** ms until the next interim request of `u` may start (0 = now). */
+  #gapWait(u: Utterance<E>): number {
+    const gap = typeof this.#gap === "function" ? this.#gap() : this.#gap;
+    if (!(gap > 0)) return 0;
+    return Math.max(0, u.lastDispatchAt + gap - this.#now());
+  }
+
+  /** Dispatches `u.queued` after `wait` ms, unless something else settles it first. */
+  #scheduleQueued(stream: string, s: StreamState<E>, u: Utterance<E>, wait: number): void {
+    this.#clearGap(u);
+    const epoch = this.#epoch;
+    u.gapTimer = setTimeout(() => {
+      u.gapTimer = undefined;
+      if (epoch !== this.#epoch || u.final !== "open" || u.inFlight) return;
+      const next = u.queued;
+      if (!next) return;
+      u.queued = undefined;
+      this.#dispatchInterim(stream, s, u, next.revision, next.event);
+    }, wait);
   }
 
   #dispatchInterim(stream: string, s: StreamState<E>, u: Utterance<E>, revision: number, event: E): void {
     const controller = this.#newController();
     const job = this.#job(stream, u, revision, "interim", event, controller);
     u.inFlight = { revision, controller };
+    u.lastDispatchAt = this.#now();
     const epoch = this.#epoch;
     const settle = (ok: boolean, valueOrError: unknown) => {
       if (epoch !== this.#epoch) return;
@@ -277,9 +358,14 @@ export class TranslationSequencer<E extends { value: string }> {
         if (ok) this.#offerInterim(s, u, job, valueOrError as string);
         else if (!(controller.signal.reason instanceof SequencerCancelled)) this.options.onError?.(job, valueOrError);
         const next = u.queued;
-        if (next && !u.inFlight) {
-          u.queued = undefined;
-          this.#dispatchInterim(stream, s, u, next.revision, next.event);
+        if (next && !u.inFlight && u.gapTimer === undefined) {
+          const wait = this.#gapWait(u);
+          if (wait > 0) {
+            this.#scheduleQueued(stream, s, u, wait);
+          } else {
+            u.queued = undefined;
+            this.#dispatchInterim(stream, s, u, next.revision, next.event);
+          }
         }
       }
     };
@@ -290,10 +376,10 @@ export class TranslationSequencer<E extends { value: string }> {
   }
 
   #offerInterim(s: StreamState<E>, u: Utterance<E>, job: SequencerJob<E>, value: string): void {
-    if (job.revision <= u.shown) return;
+    if (job.revision <= u.offered) return;
     if (s.queue[0] === u) {
-      u.shown = job.revision;
-      this.options.publish(job, value);
+      u.offered = job.revision;
+      if (this.options.publish(job, value) !== false) u.shown = job.revision;
     } else if (!u.held || u.held.job.revision < job.revision) {
       u.held = { job, value };
     }

@@ -21,6 +21,7 @@ import Service_Models from "./services/models";
 import Service_Sysinfo from "./services/sysinfo";
 import Service_Resources from "./services/resources";
 import Service_AudioDevices from "./services/audioDevices";
+import { ensureLlmServerHost } from "./services/llm_server";
 import { initSystemLogListeners, pushSystemLog } from "./services/systemLog";
 import i18n from "i18next";
 import { changeLanguage, initI18n } from '@/i18n';
@@ -177,6 +178,8 @@ class ApiServer {
       { label: "Models", run: run(() => this.models.init()) },
       { label: "System info", run: run(() => this.sysinfo.init()) },
       { label: "Resources", run: run(() => this.resources.init()) },
+      // P4-B: state events + idle stop of a llama-server nobody leases (e.g. after a webview reload).
+      { label: "Local model server", run: run(() => ensureLlmServerHost()) },
       { label: "Audio devices", run: run(() => this.audioDevices.init()) },
     ];
   }

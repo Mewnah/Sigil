@@ -14,8 +14,8 @@ keep their slot even when written out of order).
 | [0003](0003-gpu-ep-delivery.md) | Delivering GPU execution providers and reporting the one in use | Accepted (P0 interim; its P1 follow-ups are resolved by [0007](0007-native-runtime-packs.md)) | P0-H |
 | [0003b](0003b-transcribe-cpp.md) | transcribe.cpp as an in-process sigil_engine DLL (GPU tier of STT) | Accepted (go: cuda13 + CPU variants built and measured; vulkan build path ready, unmeasured) | P1-G2 |
 | [0004](0004-rvc-templates.md) | RVC voices run as Sigil templates with imported weights | Accepted (P1 spike; P3-A/B/C build on it) | P1-G3 |
-| [0005](0005-process-host-llama.md) | Process host for helper processes, with llama-server as the local LLM runtime | Accepted (llama-server + Hy-MT2 live smoke pending, manual) | P1-E |
+| [0005](0005-process-host-llama.md) | Process host for helper processes, with llama-server as the local LLM runtime | Accepted (P4-B built the llm-server on it; the live llama-server + Hy-MT2 smoke is still manual) | P1-E |
 | [0007](0007-native-runtime-packs.md) | Native runtime packs: lazily loaded sigil_engine DLLs, and the CUDA 13 runtime and provider as model-store packs | Accepted (provider still bundled until its pack is published) | P1-D1 |
+| [0008](0008-bergamot.md) | Mozilla Bergamot as a JSON-lines helper process (zero-VRAM CPU translation) | Accepted (helper build and the en↔ja latency run pending, manual; no-go fallback NLLB-600M + Hy-MT2 1.8B on CPU) | P4-E |
 
-Reserved by the plan, not written yet: 0006 (zero-shot and singing export feasibility, P3), 0008
-(Bergamot helper, P4).
+Reserved by the plan, not written yet: 0006 (zero-shot and singing export feasibility, P3).

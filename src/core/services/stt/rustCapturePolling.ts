@@ -12,6 +12,7 @@ import {
   type RustSpeechUtterance,
 } from "@/types";
 import { devLog } from "@/utils/devLog";
+import { PROCESS_NONCE } from "@/utils/processNonce";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "./abort";
 import { SttStartLifecycle } from "./localEngineLifecycle";
@@ -153,9 +154,15 @@ export function buildUtterancePipelineConfig(
   };
 }
 
-/** Revision metadata of a final (`TextEvent.segmentId` / `revision` / `lang` / `turnEnd`). */
-export function speechFinalMeta(ev: Pick<RustSpeechFinal, "pipelineId" | "epoch" | "segmentId" | "revision" | "lang" | "turnEnd">): SttTextMeta {
-  const meta: SttTextMeta = { segmentId: `${ev.pipelineId}:${ev.epoch}:${ev.segmentId}` };
+/**
+ * Revision metadata of a final (`TextEvent.segmentId` / `revision` / `lang` / `turnEnd`). The segment id is
+ * `<pipelineId>-<PROCESS_NONCE>:<epoch>:<n>` (see {@link PROCESS_NONCE}: epochs restart at 1 in every process).
+ */
+export function speechFinalMeta(
+  ev: Pick<RustSpeechFinal, "pipelineId" | "epoch" | "segmentId" | "revision" | "lang" | "turnEnd">,
+  stream = `${ev.pipelineId}-${PROCESS_NONCE}`,
+): SttTextMeta {
+  const meta: SttTextMeta = { segmentId: `${stream}:${ev.epoch}:${ev.segmentId}` };
   if (Number.isInteger(ev.revision) && ev.revision >= 0) meta.revision = ev.revision;
   const lang = baseLanguageTag(ev.lang);
   if (lang) meta.lang = lang;

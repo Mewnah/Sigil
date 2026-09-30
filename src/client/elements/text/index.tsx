@@ -1,118 +1,133 @@
 import fastEqual from "fast-deep-equal";
-import { FC, memo, useEffect, useRef } from "react";
+import { FC, memo, useCallback, useEffect, useRef } from "react";
 import { subscribe, useSnapshot } from "valtio";
 import { useGetState } from "../..";
 import { TextEvent, TextEventSource, TextEventType } from "../../../types";
+import {
+  CaptionDom,
+  CaptionKind,
+  CaptionLine,
+  CaptionUpdate,
+  detachCaptionLines,
+  findCaptionLine,
+  isStaleUpdate,
+  readCaptionMeta,
+  RetiredCaptionLines,
+  supersededCaptionLines,
+} from "./revising";
 import { Element_TextState } from "./schema";
 import { buildStateStyle, elementStyle } from "./style";
 
 type SentenceState = {
-  type: TextEventType
+  line: CaptionLine<Node>
   element: HTMLElement
-  text: string
-  cursor: number
-  cursorProfanity: number
-  profanityCursorList: Record<number, any>
-  isAnimated: boolean,
-  emotes: Record<number, string>
-  id?: number
+  /** Nothing of the line is left to animate (or it is not its turn yet: see `nextAnimationIndex`). */
+  isAnimated: boolean
 }
 
 /*
  * Text reaches this element from STT, translation, Twitch chat and LAN peers, so it is never parsed
- * as HTML: words become text nodes, masks are spans with textContent and emotes are <img> elements
+ * as HTML: text goes into text nodes, masks are spans with textContent and emotes are <img> elements
  * whose src is set as a property (the host webview has full Tauri IPC).
+ *
+ * Revising text (./revising.ts): an update pairs with its line by segmentId / id / revision and only
+ * the part after what is still correct on screen is re-rendered, so a line never restarts when just
+ * its tail changes. An interim line keeps the interim look; TextEvent.stableLength additionally marks
+ * its uncommitted tail (`.tentative`).
  */
-const PROFANITY_RE = /[^\s\.,?!]*\*+[^\s\.,?!]*/gi;
-
-function profanitySpan(mask: string, interim = false): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.className = interim ? "interim profanity" : "profanity";
-  span.textContent = mask;
-  return span;
+function setTextData(node: Text, data: string) {
+  const old = node.data;
+  if (data === old) return;
+  if (data.startsWith(old)) node.appendData(data.slice(old.length));
+  else if (old.startsWith(data)) node.deleteData(data.length, old.length - data.length);
+  else node.data = data;
 }
 
-function emoteImage(url: string): HTMLImageElement {
-  const img = document.createElement("img");
-  img.src = url;
-  return img;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Append `text` as text nodes, with every emote name in `emotes` (numeric keys are animation cursors) as its image. */
-function appendWithEmotes(parent: Node, text: string, emotes: TextEvent["emotes"] | undefined) {
-  const map = (emotes ?? {}) as Record<string, string>;
-  const names = Object.keys(map)
-    .filter(k => k.length > 0 && !/^\d+$/.test(k) && typeof map[k] === "string")
-    .sort((a, b) => b.length - a.length);
-  let last = 0;
-  if (names.length) {
-    for (const m of text.matchAll(new RegExp(names.map(escapeRegExp).join("|"), "g"))) {
-      const at = m.index ?? 0;
-      if (at > last) parent.appendChild(document.createTextNode(text.slice(last, at)));
-      parent.appendChild(emoteImage(map[m[0]]));
-      last = at + m[0].length;
+const DOM_CAPTIONS: CaptionDom<Node> = {
+  text: data => document.createTextNode(data),
+  span: (className, data) => {
+    const span = document.createElement("span");
+    span.className = className;
+    span.textContent = data;
+    return span;
+  },
+  image: (className, url) => {
+    const img = document.createElement("img");
+    if (className) img.className = className;
+    img.src = url;
+    return img;
+  },
+  setData: (node, data) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      setTextData(node as Text, data);
+      return;
     }
-  }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
-}
-
-/** The static rendering of a sentence: text, profanity masks and emotes, plus a trailing space. */
-function buildStaticSentence(value: string, emotes: TextEvent["emotes"] | undefined, mask: string, interim: boolean): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  let last = 0;
-  for (const m of value.matchAll(PROFANITY_RE)) {
-    const at = m.index ?? 0;
-    if (at > last) appendWithEmotes(frag, value.slice(last, at), emotes);
-    frag.appendChild(profanitySpan(mask, interim));
-    last = at + m[0].length;
-  }
-  if (last < value.length) appendWithEmotes(frag, value.slice(last), emotes);
-  frag.appendChild(document.createTextNode(" "));
-  return frag;
-}
+    const only = node.firstChild;
+    if (only && only.nodeType === Node.TEXT_NODE && !only.nextSibling) setTextData(only as Text, data);
+    else node.textContent = data;
+  },
+  setClass: (node, className) => {
+    const el = node as Element;
+    if ((el.getAttribute("class") ?? "") === className) return;
+    if (className) el.className = className;
+    else el.removeAttribute("class");
+  },
+  append: (parent, node) => { parent.appendChild(node); },
+  remove: node => { (node as ChildNode).remove(); },
+  replace: (oldNode, ...nodes) => { (oldNode as ChildNode).replaceWith(...nodes); },
+};
 
 class TextController {
   constructor(private id: string) { }
   private disposed: boolean = false;
 
   private boxElement!: HTMLElement
-  private containerElement!: HTMLElement
+  private containerElement?: HTMLElement
   private scrollContainerElement!: HTMLElement
   private textElement!: HTMLElement
   private textEndElement!: HTMLSpanElement
-  private baseStyleElement!: HTMLStyleElement;
-  private stateStyleElement!: HTMLStyleElement;
+  private baseStyleElement?: HTMLStyleElement;
+  private stateStyleElement?: HTMLStyleElement;
 
-  private textObserver!: ResizeObserver;
+  private textObserver?: ResizeObserver;
 
   private eventTextRef: any;
   private eventTextInputRef: any;
   private storeEventCancelToken?: () => void;
   private sceneChangeEventCancelToken?: () => void;
   private fileUrlsUnsub?: () => void;
+  private peerMirrorUnsub?: () => void;
 
-  private currentState!: Element_TextState;
+  private currentState?: Element_TextState;
   private sentenceQueue: SentenceState[] = [];
+  /** Lines that left the screen, so a late update of one does not bring it back. */
+  private retiredLines = new RetiredCaptionLines();
 
   private isPlayingAnimation = false;
+  private animatingSentence: SentenceState | null = null;
   private nextAnimationIndex = 0;
 
   private activityTimerHandle: number = -1;
   private activityTimerDelayClearHandle: number = -1;
   private animationTimerHandle: number = -1;
 
+  private get state(): Element_TextState {
+    return this.currentState!;
+  }
+
+  private get profanityMask(): string {
+    const mask = this.state.textProfanityMask;
+    return typeof mask === "string" ? mask : "";
+  }
+
   onShow() {
-    if (this.currentState.soundEnable && this.currentState.soundFileOnShow) {
-      window.ApiClient.sound.playFile(this.currentState.soundFileOnShow, { volume: this.currentState.soundVolume ?? 1 });
+    if (this.state.soundEnable && this.state.soundFileOnShow) {
+      window.ApiClient.sound.playFile(this.state.soundFileOnShow, { volume: this.state.soundVolume ?? 1 });
     }
   }
   onHide() {
-    if (this.currentState.soundEnable && this.currentState.soundFileOnHide) {
-      window.ApiClient.sound.playFile(this.currentState.soundFileOnHide, { volume: this.currentState.soundVolume ?? 1 });
+    if (this.state.soundEnable && this.state.soundFileOnHide) {
+      window.ApiClient.sound.playFile(this.state.soundFileOnHide, { volume: this.state.soundVolume ?? 1 });
     }
   }
   onNewSentence() { }
@@ -121,39 +136,39 @@ class TextController {
     try {
       const rect = this.textEndElement.getBoundingClientRect();
 
-      if (this.currentState.animateEvent) {
+      if (this.state.animateEvent) {
         window.ApiShared.pubsub.publishLocally({ topic: `element.${this.id}` });
       }
 
-      if (rect && this.currentState.particlesEnable) {
+      if (rect && this.state.particlesEnable) {
         window.ApiClient.particles.emit(rect, {
           imageIds: [
-            this.currentState.particlesSpriteFileIdFirst,
-            this.currentState.particlesSpriteFileIdSecond,
-            this.currentState.particlesSpriteFileIdThird,
+            this.state.particlesSpriteFileIdFirst,
+            this.state.particlesSpriteFileIdSecond,
+            this.state.particlesSpriteFileIdThird,
           ].filter(s => !!s),
-          particlesCountMin: parseFloat(this.currentState.particlesCountMin) || 0,
-          particlesCountMax: parseFloat(this.currentState.particlesCountMax) || 0,
-          particlesDurationMin: parseFloat(this.currentState.particlesDurationMin) || 0,
-          particlesDurationMax: parseFloat(this.currentState.particlesDurationMax) || 0,
-          particlesDirectionXMin: parseFloat(this.currentState.particlesDirectionXMin) || 0,
-          particlesDirectionXMax: parseFloat(this.currentState.particlesDirectionXMax) || 0,
-          particlesDirectionYMin: parseFloat(this.currentState.particlesDirectionYMin) || 0,
-          particlesDirectionYMax: parseFloat(this.currentState.particlesDirectionYMax) || 0,
-          particlesScaleMin: parseFloat(this.currentState.particlesScaleMin) || 1,
-          particlesScaleMax: parseFloat(this.currentState.particlesScaleMax) || 1,
-          particlesRotationMin: parseFloat(this.currentState.particlesRotationMin) || 0,
-          particlesRotationMax: parseFloat(this.currentState.particlesRotationMax) || 0,
+          particlesCountMin: parseFloat(this.state.particlesCountMin) || 0,
+          particlesCountMax: parseFloat(this.state.particlesCountMax) || 0,
+          particlesDurationMin: parseFloat(this.state.particlesDurationMin) || 0,
+          particlesDurationMax: parseFloat(this.state.particlesDurationMax) || 0,
+          particlesDirectionXMin: parseFloat(this.state.particlesDirectionXMin) || 0,
+          particlesDirectionXMax: parseFloat(this.state.particlesDirectionXMax) || 0,
+          particlesDirectionYMin: parseFloat(this.state.particlesDirectionYMin) || 0,
+          particlesDirectionYMax: parseFloat(this.state.particlesDirectionYMax) || 0,
+          particlesScaleMin: parseFloat(this.state.particlesScaleMin) || 1,
+          particlesScaleMax: parseFloat(this.state.particlesScaleMax) || 1,
+          particlesRotationMin: parseFloat(this.state.particlesRotationMin) || 0,
+          particlesRotationMax: parseFloat(this.state.particlesRotationMax) || 0,
         });
       }
 
-      if (this.currentState.soundEnable && this.currentState.soundFile) {
-        window.ApiClient.sound.playFile(this.currentState.soundFile, {
-          volume: this.currentState.soundVolume ?? 1,
-          detuneMin: this.currentState.soundDetuneMin ?? 0,
-          detuneMax: this.currentState.soundDetuneMax ?? 0,
-          playbackMin: this.currentState.soundPlaybackMin ?? 1,
-          playbackMax: this.currentState.soundPlaybackMax ?? 1,
+      if (this.state.soundEnable && this.state.soundFile) {
+        window.ApiClient.sound.playFile(this.state.soundFile, {
+          volume: this.state.soundVolume ?? 1,
+          detuneMin: this.state.soundDetuneMin ?? 0,
+          detuneMax: this.state.soundDetuneMax ?? 0,
+          playbackMin: this.state.soundPlaybackMin ?? 1,
+          playbackMax: this.state.soundPlaybackMax ?? 1,
         });
       }
     } catch (error) {
@@ -167,9 +182,6 @@ class TextController {
     clearTimeout(this.activityTimerHandle);
     clearTimeout(this.activityTimerDelayClearHandle);
 
-    // const previewEnabled = this.currentState.previewMode;
-
-
     if (!this.boxElement.classList.contains("active")) {
       this.onShow();
       this.boxElement.classList.add("active");
@@ -182,93 +194,64 @@ class TextController {
 
       this.activityTimerDelayClearHandle = setTimeout(() => {
         this.clearSentences();
-      }, this.currentState.behaviorClearDelay) as unknown as number;
-    }, this.currentState.behaviorClearTimer) as unknown as number;
+      }, this.state.behaviorClearDelay) as unknown as number;
+    }, this.state.behaviorClearTimer) as unknown as number;
+  }
+
+  #stopAnimation() {
+    clearTimeout(this.animationTimerHandle);
+    this.animatingSentence = null;
+    this.isPlayingAnimation = false;
   }
 
   clearSentences() {
-    for (let v of this.sentenceQueue) {
+    this.#stopAnimation();
+    for (const v of this.sentenceQueue) {
+      this.retiredLines.retire(v.line);
       v.element.remove();
     }
-    // this.textElement.replaceChildren();
     this.sentenceQueue.length = 0;
     this.nextAnimationIndex = 0;
   }
 
-  moveCursorToSpaceOrEnd(sentence: SentenceState) {
-    let emoteEndIndex = sentence.text.indexOf(" ", sentence.cursor);
-    if (emoteEndIndex === -1) { // if last
-      emoteEndIndex = sentence.text.length;
-    }
-    sentence.cursor = emoteEndIndex;
+  /** Removes one line (its text was cleared) and moves the animation on if it was playing it. */
+  removeSentence(index: number) {
+    const [sentence] = this.sentenceQueue.splice(index, 1);
+    if (!sentence) return;
+    if (sentence === this.animatingSentence) this.#stopAnimation();
+    if (index < this.nextAnimationIndex) this.nextAnimationIndex--;
+    this.retiredLines.retire(sentence.line);
+    sentence.element.remove();
+    this.tryAnimateNextSentence();
   }
 
   stepSentenceAnimation(sentence: SentenceState) {
     if (this.disposed) {
       return
     }
-    // end sentence animation
-    if (sentence.cursor >= sentence.text.length) {
+    const line = sentence.line;
+    // end of the line's animation
+    if (!line.pending) {
+      line.finish();
       sentence.isAnimated = true;
       this.isPlayingAnimation = false;
+      this.animatingSentence = null;
       this.tryAnimateNextSentence();
-      // add space in the end ONLY if final
-      if (sentence.type === TextEventType.final) {
-        sentence.element.insertAdjacentText("beforeend", " ");
-      }
       return;
     }
 
     this.isPlayingAnimation = true;
+    this.animatingSentence = sentence;
 
     this.triggerActivity();
-    sentence.text[sentence.cursor] !== " " && this.onActivity();
+    line.text[line.cursor] !== " " && this.onActivity();
 
-    //profanity mask
-    if (sentence.cursor in sentence.profanityCursorList) {
-      const maskStr: string = this.currentState.textProfanityMask;
+    // a whole word per step when there is no per-character delay (spaces still step one by one)
+    line.step(this.profanityMask, this.state.animateDelayChar === 0 ? "word" : "char");
 
-      if (this.currentState.animateDelayChar === 0) {
-        sentence.element.appendChild(profanitySpan(maskStr));
-        this.moveCursorToSpaceOrEnd(sentence);
-      }
-      else {
-        sentence.element.appendChild(profanitySpan(maskStr[sentence.cursorProfanity] ?? ""));
-
-        // finish mask stepping
-        if (sentence.cursorProfanity + 1 >= maskStr.length) {
-          this.moveCursorToSpaceOrEnd(sentence);
-          sentence.cursorProfanity = 0;
-        }
-        else {
-          sentence.cursorProfanity++;
-        }
-      }
-    }
-    // insert emote
-    else if (sentence.cursor in sentence.emotes) {
-      sentence.element.appendChild(emoteImage(sentence.emotes[sentence.cursor]));
-      this.moveCursorToSpaceOrEnd(sentence);
-    }
-    // insert text
-    else {
-      // animate whole word
-      if (this.currentState.animateDelayChar === 0 && sentence.text[sentence.cursor] !== " ") {
-        // skip to next word
-        const wordStart = sentence.cursor;
-        this.moveCursorToSpaceOrEnd(sentence);
-        sentence.element.insertAdjacentText("beforeend", sentence.text.substring(wordStart, sentence.cursor));
-      }
-      // animate single char
-      else {
-        sentence.element.insertAdjacentText("beforeend", sentence.text[sentence.cursor]);
-        sentence.cursor++;
-      }
-    }
-
-    const delay = sentence.text[sentence.cursor] === " " ?
-      this.currentState.animateDelayWord - this.currentState.animateDelayChar :
-      this.currentState.animateDelayChar;
+    const delay = line.text[line.cursor] === " " ?
+      this.state.animateDelayWord - this.state.animateDelayChar :
+      this.state.animateDelayChar;
 
     this.animationTimerHandle = setTimeout(() => this.stepSentenceAnimation(sentence), delay) as unknown as number;
   }
@@ -287,150 +270,102 @@ class TextController {
     }
   }
 
-  enqueueSentence(event: TextEvent) {
-    if (this.currentState.sourceMain === TextEventSource.transform_source) {
-      // console.log("[TextController] Received event for Sync Timing", event);
-    }
-
-    if (!this.currentState.sourceInterim && event?.type === TextEventType.interim) {
+  enqueueSentence(event: TextEvent, topic: string) {
+    const kind: CaptionKind = event.type === TextEventType.interim ? "interim" : "final";
+    if (!this.state.sourceInterim && kind === "interim") {
       return;
     }
 
-    // Try to find target sentence by ID first (Robust), then by Interim status (Legacy)
-    let targetIndex = -1;
-    if (event.id !== undefined) {
-      targetIndex = this.sentenceQueue.findIndex(s => s.id === event.id);
-    } else if (event.type === TextEventType.interim || event.type === TextEventType.final) {
-      // Fallback: assume the first interim sentence is the target for update
-      targetIndex = this.sentenceQueue.findIndex(s => s.type === TextEventType.interim);
+    // Pair the update with its line: segmentId, then id, then (sources with neither) the topic's open interim.
+    // The AI transform publishes each synced line on two topics (same id and segment), so on "Any text source"
+    // they share one line, as they always did.
+    const pairTopic = topic === TextEventSource.transform_raw ? TextEventSource.transform_source : topic;
+    const meta = readCaptionMeta(pairTopic, kind, event);
+    const index = findCaptionLine(this.sentenceQueue.map(s => s.line), meta);
+    const target = index === -1 ? undefined : this.sentenceQueue[index];
+    // older revision, an interim after the final, or a late update of a line that already left the screen
+    if (target ? isStaleUpdate(target.line, meta) : this.retiredLines.blocks(meta)) {
+      return;
     }
 
-    // insert animated text (ONLY for final events)
-    if (this.currentState.animateEnable) {
-
-      if (targetIndex !== -1) {
-        // Update existing sentence
-        const sentence = this.sentenceQueue[targetIndex];
-        const oldText = sentence.text;
-        const newText = event.value;
-
-        // Check for divergence (correction)
-        // If the new text doesn't start with what we've already displayed, we need to reset
-        const displayedText = oldText.substring(0, sentence.cursor);
-        if (!newText.startsWith(displayedText)) {
-          sentence.cursor = 0;
-          sentence.element.replaceChildren();
-          sentence.cursorProfanity = 0;
+    const value = typeof event.value === "string" ? event.value : "";
+    // an empty text removes the line (the text field was cleared)
+    if (!value) {
+      if (target) {
+        this.removeSentence(index);
+        if (!this.sentenceQueue.length) {
+          this.boxElement.classList.remove("active");
         }
+      }
+      return;
+    }
 
-        sentence.text = newText;
-        sentence.type = event.type;
-        sentence.emotes = event.emotes;
+    const animate = this.state.animateEnable;
+    const update: CaptionUpdate = {
+      kind,
+      text: value,
+      emotes: event.emotes,
+      stableLength: event.stableLength,
+      mode: animate ? "positions" : "names",
+      meta,
+    };
 
-        // Update profanity mask list for new text
-        const maskedValue = newText.matchAll(PROFANITY_RE);
-        sentence.profanityCursorList = {};
-        for (let v of maskedValue) {
-          sentence.profanityCursorList[v.index as number] = true;
-        }
+    let sentence = target;
+    let at = index;
+    if (sentence) {
+      // keeps what is still correct on screen; only the rest is rendered again
+      sentence.line.update(update);
+    } else {
+      // A new segment: the stream's open interims of earlier segments were given up upstream (nothing more
+      // comes for them), so they leave now instead of lingering until the clear timer.
+      const superseded = supersededCaptionLines(this.sentenceQueue.map(s => s.line), meta);
+      for (let i = superseded.length - 1; i >= 0; i--) {
+        this.removeSentence(superseded[i]);
+      }
+      this.retiredLines.revive(meta);
+      const element = document.createElement("span");
+      sentence = { line: new CaptionLine<Node>(DOM_CAPTIONS, element, meta), element, isAnimated: false };
+      sentence.line.update(update);
+      at = this.sentenceQueue.push(sentence) - 1;
+      this.textElement.insertBefore(element, this.textEndElement);
+    }
 
-        // If transitioning to final, remove interim class
-        if (event.type === TextEventType.final) {
-          sentence.element.classList.remove("interim");
-        }
-
-        // If we have more content to animate, ensure animation is running
-        if (sentence.cursor < sentence.text.length) {
-          sentence.isAnimated = false;
-          this.tryAnimateNextSentence();
-        }
-
-      } else {
-        // Create new sentence
-        const sentenceState: SentenceState = {
-          id: event.id,
-          type: event.type,
-          element: document.createElement("span"),
-          text: event.value,
-          cursor: 0,
-          cursorProfanity: 0,
-          profanityCursorList: {},
-          isAnimated: false,
-          emotes: event.emotes
-        }
-
-        // find profanity
-        const maskedValue = event.value.matchAll(PROFANITY_RE);
-        for (let v of maskedValue) {
-          sentenceState.profanityCursorList[v.index as number] = true;
-        }
-
-        this.sentenceQueue.push(sentenceState);
-        if (event.type === TextEventType.interim) {
-          sentenceState.element.classList.add("interim");
-        }
-        this.textElement.insertBefore(sentenceState.element, this.textEndElement);
+    if (animate) {
+      if (sentence.line.pending) {
+        // (re)open the line; an earlier line animates before the ones after it
+        sentence.isAnimated = false;
+        this.nextAnimationIndex = Math.min(this.nextAnimationIndex, at);
         this.tryAnimateNextSentence();
+      } else if (sentence !== this.animatingSentence) {
+        // nothing new to show (same text, or shortened): the line is complete as it is
+        sentence.line.finish();
+        sentence.isAnimated = true;
       }
-
-    }
-    // insert static text (OR interim text for animation mode)
-    else {
-      const renderSentence = () => buildStaticSentence(
-        event.value,
-        event.emotes,
-        this.currentState.textProfanityMask,
-        event.type === TextEventType.interim,
-      );
-
-      // update existing
-      if (targetIndex !== -1) {
-
-        // remove sentence / drop active state
-        if (event.value === "") {
-          this.sentenceQueue[targetIndex].element?.remove?.();
-          this.sentenceQueue.splice(targetIndex, 1);
-
-          if (!this.sentenceQueue.length) {
-            this.boxElement.classList.remove("active");
-          }
-          return;
-        }
-
-        const sentenceElement = this.sentenceQueue[targetIndex].element;
-        this.sentenceQueue[targetIndex].type = event.type;
-        if (sentenceElement) {
-          sentenceElement.replaceChildren(renderSentence());
-          // final
-          if (event.type === TextEventType.final) {
-            sentenceElement.classList.remove("interim");
-          }
-        }
-      }
-      else {
-        // create new sentence
-        const sentenceState: SentenceState = {
-          id: event.id,
-          type: event.type,
-          element: document.createElement("span"),
-          text: event.value,
-          cursor: 0,
-          cursorProfanity: 0,
-          profanityCursorList: {},
-          isAnimated: true,
-          emotes: event.emotes
-        }
-
-        this.sentenceQueue.push(sentenceState);
-        sentenceState.element.replaceChildren(renderSentence());
-        if (event.type === TextEventType.interim) {
-          sentenceState.element.classList.add("interim");
-        }
-        this.textElement.insertBefore(sentenceState.element, this.textEndElement);
-      }
+    } else {
+      sentence.line.flush(this.profanityMask);
+      sentence.line.finish();
+      sentence.isAnimated = true;
       this.onActivity();
     }
     this.triggerActivity();
+  }
+
+  /**
+   * The /client page (re)connected to its host. After a reconnect the host may be a restarted Sigil whose segment
+   * and transform ids start over (`mic:1:1`, id 0, ...): the retired ids must not block them, and the lines still
+   * on screen must not pair with them (their interims will never be updated again and leave; finals stay, unpaired).
+   */
+  onHostSynced(reconnected: boolean) {
+    if (reconnected) {
+      const gone = detachCaptionLines(this.sentenceQueue.map(s => s.line));
+      for (let i = gone.length - 1; i >= 0; i--) {
+        this.removeSentence(gone[i]);
+      }
+      if (gone.length && !this.sentenceQueue.length) {
+        this.boxElement.classList.remove("active");
+      }
+    }
+    this.retiredLines.clear();
   }
 
   onResize() {
@@ -439,6 +374,7 @@ class TextController {
 
   // copy state for faster access
   onStateChange() {
+    if (this.disposed || !this.stateStyleElement) return;
     // detect changes
     const scene = window.ApiClient.scenes.state.activeScene;
     const el = window.ApiClient.document.fileBinder.get().elements[this.id];
@@ -465,16 +401,30 @@ class TextController {
 
 
   bindTextEvents() {
-    // primary event sub
-    window.ApiShared.pubsub.unsubscribe(this.eventTextRef);
-    this.eventTextRef = window.ApiShared.pubsub.subscribeText(this.currentState.sourceMain, e => e?.value && this.enqueueSentence(e));
+    const main = this.state.sourceMain;
 
-    // kb input event sub
+    // primary event sub (typed text is taken from the subscription below only, so "Any text source" shows it once)
+    window.ApiShared.pubsub.unsubscribe(this.eventTextRef);
+    this.eventTextRef = window.ApiShared.pubsub.subscribeText(main, (e, topic) => {
+      if (!e?.value || topic === TextEventSource.textfield) return;
+      this.enqueueSentence(e, topic ?? main);
+    });
+
+    // kb input event sub (also delivers the empty events that clear the typed line)
     window.ApiShared.pubsub.unsubscribe(this.eventTextInputRef);
-    this.eventTextInputRef = window.ApiShared.pubsub.subscribeText(TextEventSource.textfield, e => e && this.enqueueSentence(e), true);
+    this.eventTextInputRef = window.ApiShared.pubsub.subscribeText(TextEventSource.textfield, e => {
+      if (!e) return;
+      if (main !== TextEventSource.textfield && !this.state.sourceInputField) return;
+      this.enqueueSentence(e, TextEventSource.textfield);
+    }, true);
   }
 
+  /** Ref callback of the container: binds it once, and releases it when it unmounts or is replaced. */
   bindContainer(containerElement: HTMLDivElement | null) {
+    if (this.disposed || containerElement === this.containerElement) {
+      return;
+    }
+    this.unbindContainer();
     if (!containerElement) {
       return;
     }
@@ -511,23 +461,56 @@ class TextController {
       this.stateStyleElement.innerHTML = buildStateStyle(storedState);
     });
 
+    // /client pages outlive the host (see onHostSynced). On the host the phase stays idle.
+    const mirror = window.ApiShared?.peer?.clientMirrorState;
+    if (mirror) {
+      let phase = mirror.phase;
+      this.peerMirrorUnsub = subscribe(mirror, () => {
+        if (mirror.phase === "synced" && phase !== "synced") {
+          this.onHostSynced(phase === "reconnecting" || phase === "failed");
+        }
+        phase = mirror.phase;
+      });
+    }
+
     this.onStateChange();
   }
 
-  dispose() {
-    this.disposed = true;
-    this.textObserver.disconnect();
+  /** Releases everything bound to the current container (its lines, observers, subscriptions and styles). */
+  unbindContainer() {
+    if (!this.containerElement) return;
+    this.clearSentences();
+    clearTimeout(this.activityTimerHandle);
+    clearTimeout(this.activityTimerDelayClearHandle);
+    this.textObserver?.disconnect();
+    this.textObserver = undefined;
     this.sceneChangeEventCancelToken?.();
     this.storeEventCancelToken?.();
     this.fileUrlsUnsub?.();
+    this.peerMirrorUnsub?.();
+    this.sceneChangeEventCancelToken = this.storeEventCancelToken = this.fileUrlsUnsub = this.peerMirrorUnsub = undefined;
     window.ApiShared.pubsub.unsubscribe(this.eventTextRef);
     window.ApiShared.pubsub.unsubscribe(this.eventTextInputRef);
+    this.eventTextRef = this.eventTextInputRef = undefined;
+    this.baseStyleElement?.remove();
+    this.stateStyleElement?.remove();
+    this.baseStyleElement = this.stateStyleElement = undefined;
+    this.currentState = undefined;
+    this.containerElement = undefined;
+  }
+
+  dispose() {
+    this.unbindContainer();
+    this.disposed = true;
     clearTimeout(this.animationTimerHandle);
+    clearTimeout(this.activityTimerHandle);
+    clearTimeout(this.activityTimerDelayClearHandle);
   }
 }
 // state.previewMode
 const Element_Text: FC<{ id: string }> = memo(({ id }) => {
   const controller = useRef(new TextController(id));
+  const bindContainer = useCallback((ele: HTMLDivElement | null) => controller.current.bindContainer(ele), []);
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
   const state = useGetState(state =>
     state.elements[id]?.scenes[activeScene]?.data as Element_TextState | undefined
@@ -539,7 +522,7 @@ const Element_Text: FC<{ id: string }> = memo(({ id }) => {
 
   if (!state) return null;
 
-  return <div className="container" ref={ele => controller.current.bindContainer(ele)}>
+  return <div className="container" ref={bindContainer}>
     <div className="box">
       <div className="scroll-container">
         <div className="text-container">

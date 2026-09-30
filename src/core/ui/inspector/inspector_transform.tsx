@@ -1,44 +1,125 @@
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import {
+    TRANSFORM_GEMINI_MODEL_DEFAULT,
     TRANSFORM_MAX_TOKENS_MAX,
     TRANSFORM_MAX_TOKENS_MIN,
     TRANSFORM_REASONING_EFFORTS,
+    TRANSFORM_TIMEOUT_MS_MAX,
+    TRANSFORM_TIMEOUT_MS_MIN,
     Transform_Backends,
     Transform_Provider,
     Transform_ReasoningEffort,
     Transform_State,
 } from "@/core/services/transform/schema";
+import { resolveTransformEndpoint } from "@/core/services/transform/services/llmRequest";
+import { createLlmClient, modelListed } from "@/core/services/llm/client";
+import { LLM_TRANSPORTS, LlmTransportChoice } from "@/core/services/llm/types";
 import { ServiceNetworkState } from "@/types";
 import Inspector from "./components";
 import ServiceButton from "../service-button";
 import { InputCheckbox, InputSelect, InputText, InputCode } from "./components/input";
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 
 /** Settings whose change needs a new engine; everything else is read per request. */
 const RESTART_KEYS: (keyof Transform_State)[] = ["backend", "provider"];
 
-const MaxTokensField: FC<{ value: number; onCommit: (v: number) => void }> = ({ value, onCommit }) => {
-    // Local text so the field can be empty or partly typed; only valid numbers are committed.
+/** A number field that commits only valid integers in [min, max] (it can be empty or partly typed meanwhile). */
+const IntField: FC<{ label: string; value: number; min: number; max: number; step?: number; onCommit: (v: number) => void }> = ({
+    label,
+    value,
+    min,
+    max,
+    step = 1,
+    onCommit,
+}) => {
     const [text, setText] = useState(String(value));
     useEffect(() => setText(String(value)), [value]);
     return (
         <InputText
-            label="transform.field_max_tokens"
+            label={label}
             type="number"
             inputMode="numeric"
-            min={TRANSFORM_MAX_TOKENS_MIN}
-            max={TRANSFORM_MAX_TOKENS_MAX}
-            step={64}
+            min={min}
+            max={max}
+            step={step}
             value={text}
             onChange={(e) => {
                 setText(e.target.value);
                 const n = Number(e.target.value);
-                if (e.target.value !== "" && Number.isInteger(n) && n >= TRANSFORM_MAX_TOKENS_MIN && n <= TRANSFORM_MAX_TOKENS_MAX)
-                    onCommit(n);
+                if (e.target.value !== "" && Number.isInteger(n) && n >= min && n <= max) onCommit(n);
             }}
             onBlur={() => setText(String(value))}
         />
+    );
+};
+
+type CheckState = { kind: "idle" } | { kind: "running" } | { kind: "done"; ok: boolean; text: string };
+
+/** Lists the server's models with the current settings: proves the URL, key and route work before going live. */
+const ConnectionCheck: FC<{ data: Transform_State }> = ({ data }) => {
+    const { t } = useTranslation();
+    const [state, setState] = useState<CheckState>({ kind: "idle" });
+    const controller = useRef<AbortController | null>(null);
+    useEffect(() => () => controller.current?.abort(), []);
+    // Stale results would describe other settings.
+    const connectionKey = JSON.stringify([
+        data.provider,
+        data.transport,
+        data.openaiKey,
+        data.openaiUrl,
+        data.openaiModel,
+        data.openRouterKey,
+        data.openRouterUrl,
+        data.openRouterModel,
+        data.geminiKey,
+        data.geminiModel,
+        data.customKey,
+        data.customUrl,
+        data.customModel,
+    ]);
+    useEffect(() => {
+        controller.current?.abort();
+        setState({ kind: "idle" });
+    }, [connectionKey]);
+
+    const run = async () => {
+        controller.current?.abort();
+        const abort = new AbortController();
+        controller.current = abort;
+        setState({ kind: "running" });
+        try {
+            const endpoint = resolveTransformEndpoint(window.ApiServer.state.services.transform.data);
+            const models = await createLlmClient(endpoint).listModels(abort.signal);
+            if (abort.signal.aborted) return;
+            const model = endpoint.model;
+            const known = modelListed(models, model);
+            const text =
+                models.length === 0
+                    ? t("transform.check_ok_empty")
+                    : known
+                      ? t("transform.check_ok", { n: models.length })
+                      : t("transform.check_ok_model_missing", { model, n: models.length });
+            setState({ kind: "done", ok: models.length === 0 || known, text });
+        } catch (e) {
+            if (abort.signal.aborted) return;
+            setState({ kind: "done", ok: false, text: t("transform.check_failed", { error: e instanceof Error ? e.message : String(e) }) });
+        }
+    };
+
+    return (
+        <div className="flex flex-col gap-1 mt-1 mb-2">
+            <div className="flex items-center gap-2">
+                <button type="button" className="btn btn-sm" disabled={state.kind === "running"} onClick={run}>
+                    {state.kind === "running" ? t("transform.check_running") : t("transform.btn_check_connection")}
+                </button>
+            </div>
+            {state.kind === "done" && (
+                <div role="status" className={`text-xs px-1 ${state.ok ? "text-success" : "text-warning"}`}>
+                    {state.text}
+                </div>
+            )}
+        </div>
     );
 };
 
@@ -84,6 +165,7 @@ const Inspector_Transform = () => {
                                 value={data.provider}
                                 options={[
                                     { label: t("transform.provider_openrouter"), value: "openrouter" },
+                                    { label: t("transform.provider_gemini"), value: "gemini" },
                                     { label: t("transform.provider_openai"), value: "openai" },
                                     { label: t("transform.provider_custom"), value: "custom" },
                                 ]}
@@ -140,6 +222,26 @@ const Inspector_Transform = () => {
                                 </>
                             )}
 
+                            {data.provider === "gemini" && (
+                                <>
+                                    <InputText
+                                        label="transform.field_api_key"
+                                        type="password"
+                                        autoComplete="new-password"
+                                        value={data.geminiKey}
+                                        placeholder="AIza..."
+                                        onChange={(e) => handleUpdate("geminiKey", e.target.value)}
+                                    />
+                                    <InputText
+                                        label="transform.field_model"
+                                        value={data.geminiModel}
+                                        placeholder={TRANSFORM_GEMINI_MODEL_DEFAULT}
+                                        onChange={(e) => handleUpdate("geminiModel", e.target.value)}
+                                    />
+                                    <div className="text-xs text-base-content/70 mb-2 px-1">{t("transform.gemini_hint")}</div>
+                                </>
+                            )}
+
                             {data.provider === "custom" && (
                                 <>
                                     <InputText
@@ -165,6 +267,8 @@ const Inspector_Transform = () => {
                                 </>
                             )}
 
+                            <ConnectionCheck data={data as Transform_State} />
+
                             <div className="h-4" />
                             <InputCode
                                 label="transform.field_system_prompt"
@@ -180,7 +284,14 @@ const Inspector_Transform = () => {
                             />
                             <div className="text-xs text-base-content/70 mb-2 px-1">{t("transform.fence_input_hint")}</div>
 
-                            <MaxTokensField value={data.maxTokens} onCommit={(v) => handleUpdate("maxTokens", v)} />
+                            <IntField
+                                label="transform.field_max_tokens"
+                                value={data.maxTokens}
+                                min={TRANSFORM_MAX_TOKENS_MIN}
+                                max={TRANSFORM_MAX_TOKENS_MAX}
+                                step={64}
+                                onCommit={(v) => handleUpdate("maxTokens", v)}
+                            />
                             <InputSelect
                                 label="transform.field_reasoning_effort"
                                 value={data.reasoningEffort}
@@ -191,6 +302,31 @@ const Inspector_Transform = () => {
                                 onValueChange={(v) => handleUpdate("reasoningEffort", v as Transform_ReasoningEffort)}
                             />
                             <div className="text-xs text-base-content/70 mt-1 mb-2 px-1">{t("transform.tokens_reasoning_hint")}</div>
+
+                            <Inspector.SubHeader>{t("transform.connection_subheader")}</Inspector.SubHeader>
+                            <InputCheckbox
+                                label="transform.field_stream"
+                                value={data.stream}
+                                onChange={(v) => handleUpdate("stream", v)}
+                            />
+                            <div className="text-xs text-base-content/70 mb-2 px-1">{t("transform.stream_hint_until_next")}</div>
+                            <IntField
+                                label="transform.field_timeout"
+                                value={Math.round(data.timeoutMs / 1000)}
+                                min={TRANSFORM_TIMEOUT_MS_MIN / 1000}
+                                max={TRANSFORM_TIMEOUT_MS_MAX / 1000}
+                                onCommit={(v) => handleUpdate("timeoutMs", v * 1000)}
+                            />
+                            <InputSelect
+                                label="transform.field_transport"
+                                value={data.transport}
+                                options={LLM_TRANSPORTS.map((transport) => ({
+                                    label: t(`transform.transport_${transport}`),
+                                    value: transport,
+                                }))}
+                                onValueChange={(v) => handleUpdate("transport", v as LlmTransportChoice)}
+                            />
+                            <div className="text-xs text-base-content/70 mt-1 mb-2 px-1">{t("transform.transport_hint")}</div>
                             <div className="text-xs text-base-content/70 mb-2 px-1">{t("transform.live_settings_hint")}</div>
                         </>
                     )}

@@ -25,6 +25,7 @@ import { openAiAudioSetup } from "../services/openaiAudio";
 import { TRANSIENT_WARNING_MS } from "../statusChannel";
 import { resolveOpenAiAudioConfig } from "../sttOptions";
 import { initSttTestI18n, translated } from "./sttTestI18n";
+import { PROCESS_NONCE } from "@/utils/processNonce";
 
 beforeAll(async () => {
   await initSttTestI18n();
@@ -152,14 +153,17 @@ describe("pipeline config and helpers", () => {
 
   it("final metadata", () => {
     expect(speechFinalMeta({ pipelineId: "mic", epoch: 4, segmentId: 12, revision: 1, lang: "JA", turnEnd: null })).toEqual({
-      segmentId: "mic:4:12",
+      segmentId: `mic-${PROCESS_NONCE}:4:12`,
       revision: 1,
       lang: "ja",
     });
     expect(speechFinalMeta({ pipelineId: "mic", epoch: 4, segmentId: 13, revision: -1, lang: null, turnEnd: false })).toEqual({
-      segmentId: "mic:4:13",
+      segmentId: `mic-${PROCESS_NONCE}:4:13`,
       turnEnd: false,
     });
+    // Epochs restart at 1 in every process: the per-process nonce keeps ids unique across restarts and linked hosts.
+    expect(PROCESS_NONCE).toMatch(/^[0-9a-z]{6}$/);
+    expect(speechFinalMeta({ pipelineId: "mic", epoch: 1, segmentId: 1, revision: 0, lang: null, turnEnd: null }, "s").segmentId).toBe("s:1:1");
   });
 
   it("status lines: translated, warnings transient, start lifecycle ignored, listening clears", () => {

@@ -1,0 +1,11 @@
+{
+  "identifier": "llm-server",
+  "description": "IPC for the llm-server plugin (bundled llama-server helper and the OpenAI-compatible HTTP proxy) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "llm-server:default"
+  ]
+}

@@ -1,76 +1,53 @@
 /**
- * Pure request logic for the OpenAI-compatible transform backend (no SDK, no window), unit-tested in
- * transform/__tests__/llmRequest.test.ts.
+ * Pure request logic of the AI transform backend on top of the shared LLM client (`@/core/services/llm`): settings →
+ * connection, the chat request (system prompt, fenced input, history, limits), and LLM errors → transform errors.
+ * No window, no Tauri; unit-tested in transform/__tests__/llmRequest.test.ts.
  */
-import i18n from "i18next";
+import { resolveLlmEndpoint } from "@/core/services/llm/providers";
+import { LlmChatRequest, LlmConnectionSettings, LlmEndpoint, LlmError, LlmMessage } from "@/core/services/llm/types";
 import {
     openRouterModelFor,
     TRANSFORM_MAX_TOKENS_DEFAULT,
     TRANSFORM_MAX_TOKENS_MAX,
     TRANSFORM_MAX_TOKENS_MIN,
-    Transform_Provider,
     Transform_State,
 } from "../schema";
 import { TransformNotConfiguredError, TransformRequest, TransformRequestError } from "../types";
 
-export const OPENAI_DEFAULT_URL = "https://api.openai.com/v1";
-export const OPENROUTER_DEFAULT_URL = "https://openrouter.ai/api/v1";
-/** Sent when a custom (local) server needs no key: the SDK refuses an empty one. */
-export const NO_KEY_PLACEHOLDER = "dummy";
-
-const PROVIDER_NAMES: Record<Transform_Provider, string> = {
-    openai: "OpenAI",
-    openrouter: "OpenRouter",
-    custom: "Custom",
-};
-
-export interface ResolvedProvider {
-    provider: Transform_Provider;
-    apiKey: string;
-    baseURL: string;
-    model: string;
-    headers: Record<string, string>;
-}
-
-/** Connection settings of the selected provider; throws TransformNotConfiguredError when incomplete. */
-export function resolveProvider(data: Transform_State): ResolvedProvider {
-    const provider = data.provider;
-    let apiKey: string;
-    let baseURL: string;
-    let model: string;
-    const headers: Record<string, string> = {};
-
-    switch (provider) {
+/** The selected provider's connection settings, before resolution. */
+export function transformConnection(data: Transform_State): LlmConnectionSettings {
+    const transport = data.transport ?? "auto";
+    switch (data.provider) {
         case "openrouter":
-            apiKey = (data.openRouterKey || data.openaiKey).trim(); // legacy: the key used to be shared
-            baseURL = data.openRouterUrl.trim() || OPENROUTER_DEFAULT_URL;
-            // Stored retired ids (the old default) would fail every line with a 4xx.
-            model = openRouterModelFor(data.openRouterModel);
-            // OpenRouter app attribution (optional headers).
-            headers["HTTP-Referer"] = "https://github.com/Mewnah/Sigil";
-            headers["X-Title"] = "Sigil";
-            break;
+            return {
+                provider: "openrouter",
+                apiKey: data.openRouterKey.trim() || data.openaiKey.trim(), // legacy: the key used to be shared
+                baseUrl: data.openRouterUrl,
+                // Stored retired ids (the old default) would fail every line with a 4xx.
+                model: openRouterModelFor(data.openRouterModel),
+                transport,
+            };
+        case "gemini":
+            return { provider: "gemini", apiKey: data.geminiKey, baseUrl: "", model: data.geminiModel, transport };
         case "custom":
-            apiKey = data.customKey.trim() || NO_KEY_PLACEHOLDER;
-            baseURL = data.customUrl.trim();
-            model = data.customModel.trim();
-            if (!baseURL) throw new TransformNotConfiguredError(i18n.t("transform.error_url_missing"));
-            break;
+            return { provider: "custom", apiKey: data.customKey, baseUrl: data.customUrl, model: data.customModel, transport };
         case "openai":
         default:
-            apiKey = data.openaiKey.trim();
-            baseURL = data.openaiUrl.trim() || OPENAI_DEFAULT_URL;
-            model = data.openaiModel.trim();
-            break;
+            return { provider: "openai", apiKey: data.openaiKey, baseUrl: data.openaiUrl, model: data.openaiModel, transport };
     }
+}
 
-    if (!apiKey) {
-        throw new TransformNotConfiguredError(
-            i18n.t("transform.error_key_missing", { provider: PROVIDER_NAMES[provider] ?? provider }),
-        );
+/**
+ * Resolved endpoint of the selected provider; throws `TransformNotConfiguredError` with a user-facing message when
+ * a key, URL or model is missing (an automatic start at launch reports that silently).
+ */
+export function resolveTransformEndpoint(data: Transform_State, options?: { inTauri?: boolean }): LlmEndpoint {
+    try {
+        return resolveLlmEndpoint(transformConnection(data), options);
+    } catch (e) {
+        if (e instanceof LlmError && e.kind === "not_configured") throw new TransformNotConfiguredError(e.message);
+        throw e;
     }
-    if (!model) throw new TransformNotConfiguredError(i18n.t("transform.error_model_missing"));
-    return { provider, apiKey, baseURL, model, headers };
 }
 
 export function clampMaxTokens(value: unknown): number {
@@ -94,27 +71,23 @@ export function fenceText(text: string): string {
 }
 
 /**
- * Chat Completions body.
- * - Input fencing (`fenceInput`, with a system prompt): every user turn, history included, is wrapped
- *   in `<text>` tags and the system prompt says that content is data to rewrite. Without it, small
- *   models answer spoken questions ("Can you tell me a joke?") or obey spoken instructions instead of
- *   rewriting them. Without a system prompt there is no task to protect, so nothing is fenced.
- * - Token limit: official OpenAI requires `max_completion_tokens` (its reasoning models reject
- *   `max_tokens`); OpenRouter and OpenAI-compatible servers (Gemini, llama.cpp, Ollama, LM Studio,
- *   vLLM) all take `max_tokens`.
- * - Reasoning: OpenRouter's unified `reasoning: { effort }`, everyone else `reasoning_effort`.
- *   "default" sends neither, because models without reasoning reject the parameter.
+ * Chat request of one line. Provider differences (`max_completion_tokens` for OpenAI, OpenRouter's `reasoning`,
+ * Gemini's effort levels) are the shared client's job.
+ * - Input fencing (`fenceInput`, with a system prompt): every user turn, history included, is wrapped in `<text>`
+ *   tags and the system prompt says that content is data to rewrite. Without it, small models answer spoken
+ *   questions ("Can you tell me a joke?") or obey spoken instructions instead of rewriting them. Without a system
+ *   prompt there is no task to protect, so nothing is fenced.
+ * - Reasoning: "default" sends nothing, because models without reasoning reject the parameter.
  */
 export function buildChatRequest(
-    data: Pick<Transform_State, "systemPrompt" | "maxTokens" | "reasoningEffort" | "fenceInput">,
-    provider: Pick<ResolvedProvider, "provider" | "model">,
-    request: TransformRequest,
-): Record<string, unknown> {
+    data: Pick<Transform_State, "systemPrompt" | "maxTokens" | "reasoningEffort" | "fenceInput"> & Partial<Pick<Transform_State, "stream">>,
+    request: Pick<TransformRequest, "text" | "history">,
+): LlmChatRequest {
     const hasPrompt = data.systemPrompt.trim() !== "";
     const fenced = hasPrompt && data.fenceInput !== false;
     const userContent = (text: string) => (fenced ? fenceText(text) : text);
 
-    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [];
+    const messages: LlmMessage[] = [];
     if (hasPrompt) {
         messages.push({
             role: "system",
@@ -126,67 +99,33 @@ export function buildChatRequest(
     }
     messages.push({ role: "user", content: userContent(request.text) });
 
-    const body: Record<string, unknown> = { model: provider.model, messages };
-    const maxTokens = clampMaxTokens(data.maxTokens);
-    if (provider.provider === "openai") body.max_completion_tokens = maxTokens;
-    else body.max_tokens = maxTokens;
+    return {
+        messages,
+        maxTokens: clampMaxTokens(data.maxTokens),
+        reasoningEffort: data.reasoningEffort ?? "default",
+        stream: data.stream !== false,
+    };
+}
 
-    const effort = data.reasoningEffort;
-    if (effort && effort !== "default") {
-        if (provider.provider === "openrouter") body.reasoning = { effort };
-        else body.reasoning_effort = effort;
+/** Maps a failed LLM call to the transform error the service words for the user (messages are already redacted). */
+export function toTransformError(error: unknown): Error {
+    if (!(error instanceof LlmError)) {
+        return new TransformRequestError("request", error instanceof Error ? error.message : String(error));
     }
-    return body;
-}
-
-/** Text of a message `content`, which some OpenAI-compatible servers send as an array of parts. */
-export function contentText(content: unknown): string {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-        return content
-            .map((part) => (typeof part === "string" ? part : typeof part?.text === "string" ? part.text : ""))
-            .join("");
+    switch (error.kind) {
+        case "not_configured":
+            return new TransformNotConfiguredError(error.message);
+        case "rate_limited":
+            return new TransformRequestError("rate_limited", error.message, error.status);
+        case "truncated":
+            return new TransformRequestError("truncated", error.message, error.status);
+        case "empty":
+            return new TransformRequestError("empty", error.message, error.status);
+        case "unauthorized":
+            return new TransformRequestError("unauthorized", error.message, error.status);
+        case "network":
+            return new TransformRequestError("network", error.message, error.status);
+        default:
+            return new TransformRequestError("request", error.message, error.status);
     }
-    return "";
-}
-
-/**
- * Removes reasoning and stray special tokens so only the reply is published. Local reasoning models
- * (Qwen3, DeepSeek-R1 distills, ...) put their thinking inline in `<think>` blocks; a reply cut off
- * while still thinking has no usable text at all. Chat templates that open the block in the prompt
- * (DeepSeek-R1 distills, Qwen3 thinking templates served without a reasoning parser, e.g. vLLM
- * without --reasoning-parser or llama.cpp --reasoning-format none) return the reasoning with only a
- * closing `</think>`: everything up to the last unmatched one is reasoning too.
- */
-export function cleanLlmOutput(raw: string): string {
-    let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "");
-    // Any </think> left has no opening tag before it: the block was opened by the template.
-    let reasoningEnd = -1;
-    for (const m of text.matchAll(/<\/think>/gi)) reasoningEnd = (m.index ?? 0) + m[0].length;
-    if (reasoningEnd >= 0) text = text.slice(reasoningEnd);
-    const unclosed = text.search(/<think>/i);
-    if (unclosed >= 0) text = text.slice(0, unclosed);
-    text = text.replace(/^\s*<s>/, "").replace(/<\/s>\s*$/, "");
-    // Models sometimes echo the input fence (see fenceText).
-    text = text.replace(/^\s*<text>/i, "").replace(/<\/text>\s*$/i, "");
-    return text.trim();
-}
-
-/**
- * Masks API-key-like tokens in provider error text before it reaches toasts and the file log (OpenAI's
- * 401 message, for one, echoes part of the key).
- */
-export function redactKeys(text: string): string {
-    return text
-        .replace(/\b(sk|rk|pk)-[A-Za-z0-9_*.-]{6,}/g, "$1-[redacted]")
-        .replace(/\bAIza[0-9A-Za-z_-]{20,}/g, "[redacted]")
-        .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, "$1 [redacted]");
-}
-
-/** Maps an SDK / network error to a TransformRequestError the service can word for the user. */
-export function classifyLlmError(error: unknown): TransformRequestError {
-    const status = typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : undefined;
-    const message = redactKeys(error instanceof Error ? error.message : String(error));
-    if (status === 429) return new TransformRequestError("rate_limited", message, status);
-    return new TransformRequestError("request", message, status);
 }

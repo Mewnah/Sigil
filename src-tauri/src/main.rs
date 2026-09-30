@@ -131,6 +131,10 @@ fn main() {
         .plugin(services::tts_sink::init())
         .plugin(services::local_tts::init())
         .plugin(services::openai_speech::init())
+        // P4 translation (P4-S0): the bundled llama-server helper + LLM proxy, and local MT
+        // (NLLB on ORT, the Bergamot helper).
+        .plugin(services::llm_server::init())
+        .plugin(services::mt_local::init())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {

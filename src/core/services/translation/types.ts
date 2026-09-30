@@ -1,12 +1,70 @@
-import { Translation_State } from "./schema";
+import type { TranslationEngineId, Translation_State } from "./schema";
 
 export type TranslationKind = "interim" | "final";
 
+/** An earlier final line of the same stream and its translation (rolling context). */
+export interface TranslationContextPair {
+  source: string;
+  target: string;
+}
+
+/** A glossary term already filtered to the line (its `source` occurs in `text`). */
+export interface TranslationGlossaryTerm {
+  source: string;
+  target: string;
+}
+
+/*
+ * Request fields added by P4-S0 (frozen; all optional, so the P0 engines keep working unchanged). The pipeline /
+ * router (P4-C) fills them; an engine that ignores one must still translate correctly.
+ */
 export interface TranslationRequest {
   /** Source text, non-empty. */
   text: string;
   /** Interims are live partials that may be superseded; finals must be delivered. */
   kind: TranslationKind;
+  /**
+   * Canonical lower-case BCP-47 source language (`translation/languages.ts`); "" or absent = unknown (the engine
+   * detects it or uses its own setting). Absent together with `to` = the engine's own slice settings (the legacy
+   * single-backend path).
+   */
+  from?: string;
+  /** Canonical BCP-47 target language; absent = the engine's own slice setting. */
+  to?: string;
+  /** Earlier final pairs of this stream, oldest first (LLM prompts, DeepL `context`); absent = none. */
+  context?: TranslationContextPair[];
+  /** Glossary terms that occur in `text`; absent = none. */
+  glossary?: TranslationGlossaryTerm[];
+  /** Free-text background from the context settings (LLM prompts). */
+  background?: string;
+  /** Utterance id (`TextEvent.segmentId`, or a local counter) plus revision, e.g. `mic:1:4#2`: logs and `*_cancel`. */
+  requestId?: string;
+  /**
+   * Streaming engines (LLM) call this with the translation so far, in order, before resolving. Optional: the
+   * pipeline decides what to publish from it (never more than a final's committed text).
+   */
+  onPartial?: (text: string) => void;
+  /** Router (P4-C): called with the chain member whose result is returned, before `translate` resolves. */
+  onEngine?: (engine: TranslationEngineId) => void;
+}
+
+/** Engine preparation status for the UI (model download or load, server start, a fallback in use); never a caption. */
+export interface TranslationStatusUpdate {
+  /** "" clears the status line. */
+  text: string;
+  level?: "info" | "warning";
+  /** 0-100 while downloading / loading; null or absent = no progress bar. */
+  progress?: number | null;
+  /** Catalog ids the engine needs installed (the inspector offers them in Models & Runtimes). */
+  missing?: string[];
+}
+
+/** What the host (the translation pipeline) gives an engine before `start`. */
+export interface TranslationEngineHost {
+  /** Constructors of the chainable engines (the router builds its chain from them). */
+  readonly engines: Readonly<Record<TranslationEngineId, ITranslationEngineConstructor>>;
+  /** Reports preparation status; the pipeline shows the latest one. */
+  status(update: TranslationStatusUpdate): void;
 }
 
 /**
@@ -24,6 +82,14 @@ export interface ITranslationEngine {
   start(state: Translation_State, signal: AbortSignal): Promise<void>;
   translate(request: TranslationRequest, signal: AbortSignal): Promise<string>;
   stop(): void;
+  /**
+   * Optional (P4-S0): whether the started engine can translate `from` → `to` (canonical BCP-47; `from` may be "" =
+   * unknown). The router skips engines that answer false; absent = assume yes. Must be cheap and synchronous
+   * (answer from data loaded in `start`).
+   */
+  supports?(from: string, to: string): boolean;
+  /** Optional (P4-C): receives the host before `start` (router chain, status reporting). */
+  attach?(host: TranslationEngineHost): void;
 }
 
 export interface ITranslationEngineConstructor {
@@ -36,12 +102,15 @@ export class TranslationError extends Error {
   readonly status?: number;
   /** Whether repeating the same request can succeed (network hiccup, 429, 5xx). */
   readonly retryable: boolean;
+  /** Catalog ids to install before the engine can work (`not_installed`); [] otherwise. */
+  readonly missing: string[];
 
-  constructor(message: string, options: { status?: number; retryable?: boolean } = {}) {
+  constructor(message: string, options: { status?: number; retryable?: boolean; missing?: string[] } = {}) {
     super(message);
     this.name = "TranslationError";
     this.status = options.status;
     this.retryable = options.retryable ?? true;
+    this.missing = options.missing ?? [];
   }
 }
 

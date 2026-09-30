@@ -1,0 +1,15 @@
+# Tauri IPC commands of the `mt-local` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P4-D (this file, nllb_*) and P4-E (bergamot_*); scaffolded by P4-S0.
+nllb_load
+nllb_translate
+nllb_cancel
+nllb_unload
+nllb_status
+bergamot_start
+bergamot_translate
+bergamot_pairs
+bergamot_cancel
+bergamot_stop
+bergamot_status

@@ -32,6 +32,12 @@ Sidebar → **Canvas and Elements**. Use the **Scenes** vs **Elements** subtabs 
 2. The **Properties** panel on the **right** opens for **text** or **image** elements.  
 3. Drag handles to move/resize; use inspector fields for precise values.
 
+### Text captions
+
+- Captions revise in place: when speech-to-text or translation corrects the end of a line, only the changed end re-animates; the rest stays put.
+- Translation partials show their confirmed part in the text colour and the unconfirmed end in the interim colour (CSS classes `.interim.tentative` on text, `interim profanity tentative` on masks, `interim tentative` on emotes). Interims without that information still dim the whole line (`.interim`).
+- **Use keyboard input** controls whether typed text and Twitch chat appear in the element. With **Any text source**, each topic gets its own line (speech-to-text and its translation separately; the AI transform's synced echo stays one line).
+
 ### Scenes
 
 Switch **active scene** from the canvas inspector to edit different layouts (for example “Just Chatting” vs “BRB”).

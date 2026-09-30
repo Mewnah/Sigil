@@ -1,0 +1,7 @@
+{
+  "voice_changer": {
+    "toast_warning_device_lost": "Voice changer: {{message}}",
+    "toast_info_device_restored": "Voice changer: {{message}}",
+    "toast_warning_denoiser": "Voice changer denoiser: {{message}}"
+  }
+}

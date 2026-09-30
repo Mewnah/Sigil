@@ -7,6 +7,11 @@ export interface TransformRequest {
     text: string;
     /** Earlier (source, result) exchanges, oldest first; empty when context history is off. */
     history: ChatTurn[];
+    /**
+     * Streaming progress: the sanitized reply so far (reasoning hidden). Engines that stream call it in order and
+     * never after `signal` aborted; the resolved value is the final text.
+     */
+    onPartial?: (text: string) => void;
 }
 
 /**
@@ -36,7 +41,8 @@ export class TransformNotConfiguredError extends Error {
     }
 }
 
-export type TransformErrorKind = "rate_limited" | "truncated" | "empty" | "request";
+/** `unauthorized`: the provider rejected the key (401/403); `network`: the server could not be reached. */
+export type TransformErrorKind = "rate_limited" | "truncated" | "empty" | "unauthorized" | "network" | "request";
 
 export class TransformRequestError extends Error {
     constructor(

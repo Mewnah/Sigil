@@ -21,6 +21,8 @@
 //!     budget, claims and every recommendation as JSON.
 //!   - `stt-worker [<spec.json>]` → `speech::worker_proc::headless_stt_worker` (P2-D; arm added
 //!     by P2-S0): one speech engine in an isolated worker process.
+//!   - `mt-bench <spec.json> [--out <dir>]` → `mt_local::bench::headless_mt_bench` (P4-D; arm
+//!     added by P4-S0): machine-translation chrF / latency table over a local corpus.
 //!
 //!   Every handler returns `Result<String, String>`: `Ok(text)` is printed to stdout (exit 0),
 //!   `Err(msg)` to stderr (exit 1). The P1 arms were added by P1-S0b (`sysinfo` by P1-I0).
@@ -128,6 +130,15 @@ enum HeadlessCommand {
         /// Worker spec (JSON); optional when the parent sends it over stdio.
         spec: Option<PathBuf>,
     },
+    /// Score local machine-translation engines (NLLB, Bergamot, llama-server LLMs) on a local
+    /// corpus: chrF and latency per engine and direction (report.json / report.md).
+    MtBench {
+        /// Benchmark spec (JSON).
+        spec: PathBuf,
+        /// Output directory for the reports.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 /// Parse and run one headless command; returns the process exit code.
@@ -201,6 +212,11 @@ pub fn run(args: Vec<OsString>) -> i32 {
         HeadlessCommand::SttWorker { spec } => report(
             "stt-worker",
             crate::services::speech::worker_proc::headless_stt_worker(spec.as_deref()),
+            None,
+        ),
+        HeadlessCommand::MtBench { spec, out } => report(
+            "mt-bench",
+            crate::services::mt_local::bench::headless_mt_bench(&spec, out.as_deref()),
             None,
         ),
     }
@@ -323,6 +339,19 @@ mod tests {
         assert!(matches!(cli.command, HeadlessCommand::SttWorker { spec: Some(ref p) } if p.ends_with("spec.json")));
         let cli = HeadlessCli::try_parse_from(["stt-worker"]).unwrap();
         assert!(matches!(cli.command, HeadlessCommand::SttWorker { spec: None }));
+    }
+
+    #[test]
+    fn parses_p4_subcommands() {
+        let cli = HeadlessCli::try_parse_from(["mt-bench", "mt.json", "--out", "bench-results/mt"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            HeadlessCommand::MtBench { ref spec, out: Some(ref o) }
+                if spec.ends_with("mt.json") && o.ends_with("mt")
+        ));
+        let cli = HeadlessCli::try_parse_from(["mt-bench", "mt.json"]).unwrap();
+        assert!(matches!(cli.command, HeadlessCommand::MtBench { out: None, .. }));
+        assert_eq!(HeadlessCli::try_parse_from(["mt-bench"]).unwrap_err().exit_code(), 2);
     }
 
     #[test]

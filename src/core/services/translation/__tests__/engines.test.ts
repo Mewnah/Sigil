@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Service_Translation_Schema, Translation_State } from "../schema";
 import {
   azureHeaders,
+  azurePair,
   azureTranslateUrl,
   parseAzureTranslation,
   Translation_AzureService,
@@ -15,6 +16,7 @@ import {
 import { isRetryableTranslationError } from "../retry";
 import {
   libreErrorStatus,
+  libreLanguageCode,
   libreTranslationError,
   Translation_LibreTranslateService,
 } from "../services/libretranslate";
@@ -347,5 +349,66 @@ describe("On-device (WebView Translator API)", () => {
     expect(err.retryable).toBe(false);
     await expect(od.translate({ text: "x", kind: "final" }, live())).resolves.toBe("T:x");
     expect(Translator.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("pipeline-set language pairs (router chains, reversed pipelines)", () => {
+  it("Azure maps canonical codes, auto-detects an unknown source and refuses unknown targets", async () => {
+    expect(azurePair({ languageFrom: "en", language: "es" }, {})).toEqual({ languageFrom: "en", language: "es" });
+    expect(azurePair({ languageFrom: "en", language: "es" }, { from: "zh-Hant", to: "tl" })).toEqual({ languageFrom: "zh-Hant", language: "fil" });
+    expect(azurePair({ languageFrom: "en", language: "es" }, { from: "", to: "ja" })).toEqual({ languageFrom: "", language: "ja" });
+    expect(() => azurePair({ languageFrom: "en", language: "es" }, { from: "en", to: "ace" })).toThrow(TranslationError);
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ translations: [{ text: "你好" }] }])));
+    vi.stubGlobal("fetch", fetchMock);
+    const az = new Translation_AzureService();
+    await az.start(state((s) => (s.azure.key = "k")), live());
+    await expect(az.translate({ text: "hello", kind: "final", from: "en", to: "zh" }, live())).resolves.toBe("你好");
+    const url = new URL((fetchMock.mock.calls[0] as unknown as [string])[0]);
+    expect(url.searchParams.get("from")).toBe("en");
+    expect(url.searchParams.get("to")).toBe("zh-Hans");
+    await expect(az.translate({ text: "hola", kind: "final", from: "es", to: "es" }, live())).resolves.toBe("hola");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(az.supports("en", "ja")).toBe(true);
+    expect(az.supports("en", "ace")).toBe(false);
+  });
+
+  it("LibreTranslate maps canonical codes to the server's and lets the server detect an unknown source", async () => {
+    expect(libreLanguageCode("zh-TW", ["en", "zt", "zh"])).toBe("zt");
+    expect(libreLanguageCode("zh-Hant", ["en", "zh-Hans", "zh-Hant"])).toBe("zh-Hant");
+    expect(libreLanguageCode("zh", ["en", "zh-Hans"])).toBe("zh-Hans");
+    expect(libreLanguageCode("pt-BR", ["pt"])).toBe("pt");
+    expect(libreLanguageCode("ko", ["en", "ja"])).toBeNull();
+    expect(libreLanguageCode("ja", null)).toBe("ja");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "plugin:translate|check_availability") return true;
+      if (cmd === "plugin:translate|get_languages") return [{ code: "en", name: "English" }, { code: "zt", name: "Chinese (traditional)" }, { code: "ja", name: "Japanese" }];
+      return "翻譯";
+    });
+    const lt = new Translation_LibreTranslateService();
+    await lt.start(state(), live());
+    await expect(lt.translate({ text: "translation", kind: "final", from: "", to: "zh-Hant" }, live())).resolves.toBe("翻譯");
+    expect(invokeMock).toHaveBeenLastCalledWith("plugin:translate|translate", expect.objectContaining({ source: "auto", target: "zt" }));
+    expect(lt.supports("en", "ja")).toBe(true);
+    expect(lt.supports("en", "ko")).toBe(false);
+    await expect(lt.translate({ text: "x", kind: "final", from: "en", to: "ko" }, live())).rejects.toThrow("transl.error_unsupported_pair");
+  });
+
+  it("On-device uses the request pair and detects an unknown source", async () => {
+    const t = { translate: vi.fn(async (text: string) => `T:${text}`), destroy: vi.fn() };
+    const Translator = Object.assign(function Translator() {}, { create: vi.fn(async () => t) });
+    vi.stubGlobal("Translator", Translator);
+    const detector = { detect: vi.fn(async () => [{ detectedLanguage: "fr" }]) };
+    vi.stubGlobal("LanguageDetector", Object.assign(function LanguageDetector() {}, { create: vi.fn(async () => detector) }));
+    // The module caches its detector: use a fresh instance so earlier tests' detectors do not leak in.
+    vi.resetModules();
+    const { Translation_OnDeviceService: FreshOnDevice } = await import("../services/onDevice");
+    const od = new FreshOnDevice();
+    await od.start(state((s) => { s.onDevice.languageFrom = "en"; s.onDevice.language = "es"; }), live());
+    await expect(od.translate({ text: "bonjour", kind: "final", from: "", to: "de" }, live())).resolves.toBe("T:bonjour");
+    expect(Translator.create).toHaveBeenLastCalledWith(expect.objectContaining({ sourceLanguage: "fr", targetLanguage: "de" }));
+    await od.translate({ text: "hi", kind: "final", from: "ja", to: "zh-Hant" }, live());
+    expect(Translator.create).toHaveBeenLastCalledWith(expect.objectContaining({ sourceLanguage: "ja", targetLanguage: "zh-hant" }));
   });
 });

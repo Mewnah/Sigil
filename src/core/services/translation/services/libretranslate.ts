@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import i18n from "i18next";
 import { raceWithSignal } from "../abort";
+import { canonicalLanguage, languageInfo } from "../languages";
 import { Translation_State } from "../schema";
 import { isRetryableStatus, ITranslationEngine, TranslationError, TranslationRequest } from "../types";
 
@@ -54,11 +55,38 @@ function sameLanguage(a: string, b: string): boolean {
   return norm(a) !== "" && norm(a) === norm(b);
 }
 
+/**
+ * The server's code for a canonical language: ISO 639-1 first (Argos / LibreTranslate), then the canonical code,
+ * then the Chinese script forms servers use (`zh-Hans` / `zh-Hant`, Argos' `zt`). Without the server's list the
+ * first candidate is used. Returns null when the server lists languages and has none of the candidates.
+ */
+export function libreLanguageCode(canonical: string, serverCodes: readonly string[] | null): string | null {
+  const code = canonicalLanguage(canonical);
+  if (!code) return null;
+  const info = languageInfo(code);
+  const candidates = [
+    ...(code === "zh-Hant" ? ["zt", "zh-Hant", "zh-TW"] : []),
+    ...(code === "zh" ? ["zh", "zh-Hans", "zh-CN"] : []),
+    info?.iso6391 ?? "",
+    code,
+    code.toLowerCase(),
+  ].filter((c) => c !== "");
+  if (!serverCodes) return candidates[0] ?? null;
+  const byLower = new Map(serverCodes.map((c) => [c.toLowerCase(), c]));
+  for (const c of candidates) {
+    const hit = byLower.get(c.toLowerCase());
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export class Translation_LibreTranslateService implements ITranslationEngine {
   #conn: LibreConnection | null = null;
   #source = "en";
   #targetLanguage = "es";
   #autoDetect = false;
+  /** Codes the server offers (loaded at start, best effort); null = unknown. */
+  #codes: string[] | null = null;
 
   async start(state: Translation_State, signal: AbortSignal): Promise<void> {
     const cfg = state.libretranslate;
@@ -79,11 +107,24 @@ export class Translation_LibreTranslateService implements ITranslationEngine {
     this.#source = cfg.languageFrom.trim();
     this.#targetLanguage = cfg.language.trim();
     this.#autoDetect = cfg.autoDetect;
+    // The language list maps the router's canonical codes to the server's and answers supports(); best effort.
+    try {
+      const langs = await raceWithSignal(invoke<LibreTranslateLanguage[]>("plugin:translate|get_languages", { ...conn }), signal);
+      this.#codes = Array.isArray(langs) && langs.length ? langs.map((l) => String(l.code)) : null;
+    } catch (e) {
+      if (signal.aborted) {
+        this.#conn = null;
+        throw e;
+      }
+      this.#codes = null;
+    }
   }
 
   async translate(request: TranslationRequest, signal: AbortSignal): Promise<string> {
     const conn = this.#conn;
     if (!conn) throw new TranslationError(i18n.t("transl.error_not_running"), { retryable: false });
+
+    if (request.to !== undefined) return this.#translatePair(conn, request, signal);
 
     let source = this.#source;
     if (this.#autoDetect) {
@@ -119,8 +160,37 @@ export class Translation_LibreTranslateService implements ITranslationEngine {
     }
   }
 
+  /** Pipeline-set pair (router chains, reversed pipelines): canonical codes mapped to the server's. */
+  async #translatePair(conn: LibreConnection, request: TranslationRequest, signal: AbortSignal): Promise<string> {
+    const pair = `${request.from || "?"} → ${request.to}`;
+    const target = libreLanguageCode(request.to ?? "", this.#codes);
+    if (!target) {
+      throw new TranslationError(i18n.t("transl.error_unsupported_pair", { engine: "LibreTranslate", pair }), { retryable: false });
+    }
+    // An unknown source is detected by the server (`auto`).
+    const source = request.from ? libreLanguageCode(request.from, this.#codes) : "auto";
+    if (!source) {
+      throw new TranslationError(i18n.t("transl.error_unsupported_pair", { engine: "LibreTranslate", pair }), { retryable: false });
+    }
+    if (sameLanguage(source, target)) return request.text;
+    try {
+      return await raceWithSignal(
+        invoke<string>("plugin:translate|translate", { text: request.text, source, target, ...conn }),
+        signal,
+      );
+    } catch (e) {
+      if (signal.aborted) throw e;
+      throw libreTranslationError(e);
+    }
+  }
+
   stop(): void {
     this.#conn = null;
+    this.#codes = null;
+  }
+
+  supports(from: string, to: string): boolean {
+    return libreLanguageCode(to, this.#codes) !== null && (!from || libreLanguageCode(from, this.#codes) !== null);
   }
 
   /** Languages offered by the server at `endpoint`; [] when it cannot be reached. */

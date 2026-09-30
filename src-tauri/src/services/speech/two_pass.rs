@@ -802,7 +802,14 @@ mod tests {
         };
         let (engine, h) = fake(EngineKind::Transcribe, "gpu", "cuda", script);
         let (on, rx) = collector();
-        let tp = TwoPass::spawn(engine, None, TwoPassConfig::default(), on).unwrap();
+        // Room for all five jobs: on a loaded machine the worker may not take job 1 before job 5 is
+        // submitted, and the default `max_queue` (4) would then skip it as `queue_full` (covered by
+        // its own test below); this test is about engine errors only.
+        let config = TwoPassConfig {
+            max_queue: 8,
+            ..TwoPassConfig::default()
+        };
+        let tp = TwoPass::spawn(engine, None, config, on).unwrap();
         let now = Instant::now();
         for id in 1..=5 {
             assert!(tp.submit(job(id, 16_000, Some("first"), now)));

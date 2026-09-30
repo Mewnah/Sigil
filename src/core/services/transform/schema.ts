@@ -1,3 +1,4 @@
+import { LLM_TRANSPORTS } from "@/core/services/llm/types";
 import { zSafe } from "@/utils";
 import { z } from "zod";
 
@@ -6,7 +7,8 @@ export enum Transform_Backends {
     openai = "openai",
 }
 
-export const TRANSFORM_PROVIDERS = ["openai", "openrouter", "custom"] as const;
+/** Persisted: add values, never rename or remove them. Requests go through the shared LLM client (`@/core/services/llm`). */
+export const TRANSFORM_PROVIDERS = ["openai", "openrouter", "custom", "gemini"] as const;
 export type Transform_Provider = (typeof TRANSFORM_PROVIDERS)[number];
 
 /**
@@ -23,6 +25,16 @@ export const TRANSFORM_MAX_TOKENS_MAX = 32_768;
 export const TRANSFORM_MAX_TOKENS_DEFAULT = 1024;
 
 export const TRANSFORM_OPENROUTER_MODEL_DEFAULT = "google/gemini-2.5-flash-lite";
+/**
+ * Gemini's newest stable Flash-Lite (free tier; checked 2026-09-29 on ai.google.dev: Google limits the 2.5 models to
+ * projects that already used them, so new keys need a 3.x model). The id is editable in the panel.
+ */
+export const TRANSFORM_GEMINI_MODEL_DEFAULT = "gemini-3.5-flash-lite";
+
+/** Per-line deadline (the request is aborted, and the original text sent, when it expires). */
+export const TRANSFORM_TIMEOUT_MS_DEFAULT = 15_000;
+export const TRANSFORM_TIMEOUT_MS_MIN = 3_000;
+export const TRANSFORM_TIMEOUT_MS_MAX = 120_000;
 /**
  * Retired OpenRouter model ids that installs may still have stored: the state is saved with its
  * defaults, so everyone who launched before the default changed kept "google/gemini-1.5-flash".
@@ -64,6 +76,25 @@ export const Service_Transform_Schema = z.object({
     customKey: zSafe(z.string(), ""),
     customUrl: zSafe(z.string(), ""),
     customModel: zSafe(z.string(), ""),
+
+    // Gemini (OpenAI-compatible endpoint; the key travels in the x-goog-api-key header)
+    geminiKey: zSafe(z.string(), ""),
+    geminiModel: zSafe(z.string(), TRANSFORM_GEMINI_MODEL_DEFAULT),
+
+    /**
+     * How requests reach the server: `auto` sends cloud requests from the webview and routes LAN servers through the
+     * Rust proxy (and local servers that refuse the browser); `webview` / `rust` force one route.
+     */
+    transport: zSafe(z.enum(LLM_TRANSPORTS), "auto"),
+    /**
+     * Stream replies: captions on text.transform_source show the newest line's reply as it arrives, until the next
+     * sentence starts. Finals are unchanged. Servers that refuse streaming get plain requests (see the LLM client).
+     */
+    stream: zSafe(z.boolean(), true),
+    timeoutMs: zSafe(
+        z.coerce.number().int().min(TRANSFORM_TIMEOUT_MS_MIN).max(TRANSFORM_TIMEOUT_MS_MAX),
+        TRANSFORM_TIMEOUT_MS_DEFAULT,
+    ),
 
     // Common
     systemPrompt: zSafe(z.string(), "Rewrite the input text to be in an 'uwu' style. Replace words with cute alternatives (e.g. 'hello' -> 'hewwo') and add emoticons. Keep the original meaning."),

@@ -161,10 +161,11 @@ export class Translation_OnDeviceService implements ITranslationEngine {
     const ctor = getTranslatorCtor();
     if (!cfg || !ctor) throw new TranslationError(i18n.t("transl.error_not_running"), { retryable: false });
 
-    const target = normalizeTag(cfg.language);
-    let source = normalizeTag(cfg.languageFrom);
-    if (cfg.autoDetect) {
-      source = await raceWithSignal(firstDetectedLanguage(request.text, source), signal);
+    // The pipeline's pair (router chains, reversed pipelines) wins over the slice's; an unknown source is detected.
+    const target = normalizeTag(request.to ?? cfg.language);
+    let source = normalizeTag(request.to !== undefined ? request.from ?? "" : cfg.languageFrom);
+    if (request.to !== undefined ? !source : cfg.autoDetect) {
+      source = await raceWithSignal(firstDetectedLanguage(request.text, source || normalizeTag(cfg.languageFrom)), signal);
     }
     // A line already in the target language (a bilingual speaker with auto-detect) is its own
     // translation; the Translator API has no same-language translator and would reject the pair.

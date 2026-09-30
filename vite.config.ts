@@ -53,7 +53,6 @@ export default defineConfig({
           if (id.includes("@twurple")) return "twurple";
           if (id.includes("microsoft-cognitiveservices-speech")) return "speech-sdk";
           if (id.includes("vosk-browser")) return "vosk-browser";
-          if (id.includes("openai")) return "openai";
           if (id.includes("framer-motion")) return "framer-motion";
           if (id.includes("peerjs") || id.includes("/yjs/") || id.includes("y-protocols"))
             return "collab";

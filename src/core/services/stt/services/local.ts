@@ -58,6 +58,7 @@ import {
   type RequirementSummary,
 } from "@/core/services/models/format";
 import { pushSystemLog } from "@/core/services/systemLog";
+import { PROCESS_NONCE } from "@/utils/processNonce";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "../abort";
 import { SttStartLifecycle } from "../localEngineLifecycle";
@@ -390,6 +391,12 @@ const systemClock: SegmentClock = {
 export interface SegmentPublisherOptions {
   pipelineId: string;
   epoch: number;
+  /**
+   * Stream part of the published segment ids (`<stream>:<epoch>:<n>`, [A-Za-z0-9._-], no ':'). Default
+   * `<pipelineId>-<PROCESS_NONCE>`: epochs restart at 1 in every Sigil process, so the nonce keeps a restarted or
+   * linked host's ids from matching lines this process already published.
+   */
+  stream?: string;
   /** The session re-decodes each segment (two-pass): hold first-pass finals for their replacement. */
   twoPass: boolean;
   sink: SegmentSink;
@@ -448,6 +455,7 @@ interface Segment {
 export class SegmentPublisher {
   readonly pipelineId: string;
   readonly epoch: number;
+  readonly #stream: string;
   #twoPass: boolean;
   #holding: boolean;
   #misses = 0;
@@ -466,6 +474,7 @@ export class SegmentPublisher {
   constructor(options: SegmentPublisherOptions) {
     this.pipelineId = options.pipelineId;
     this.epoch = options.epoch;
+    this.#stream = options.stream ?? `${options.pipelineId}-${PROCESS_NONCE}`;
     this.#twoPass = options.twoPass;
     this.#holding = options.twoPass;
     this.#sink = options.sink;
@@ -628,7 +637,7 @@ export class SegmentPublisher {
   }
 
   #meta(seg: Segment, revision: number, lang: string | null, turnEnd?: boolean | null): SttTextMeta {
-    const meta: SttTextMeta = { segmentId: `${this.pipelineId}:${this.epoch}:${seg.id}`, revision };
+    const meta: SttTextMeta = { segmentId: `${this.#stream}:${this.epoch}:${seg.id}`, revision };
     const l = normalizeLanguage(lang);
     if (l) meta.lang = l;
     if (typeof turnEnd === "boolean") meta.turnEnd = turnEnd;

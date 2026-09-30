@@ -6561,6 +6561,120 @@
           "markdownDescription": "Denies the set_kokoro_endpoint command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-llm-server-start`\n- `allow-llm-server-stop`\n- `allow-llm-server-status`\n- `allow-llm-server-endpoint`\n- `allow-llm-server-logs`\n- `allow-llm-server-plan`\n- `allow-list-llm-models`\n- `allow-llm-proxy-chat`\n- `allow-llm-proxy-cancel`",
+          "type": "string",
+          "const": "llm-server:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-llm-server-start`\n- `allow-llm-server-stop`\n- `allow-llm-server-status`\n- `allow-llm-server-endpoint`\n- `allow-llm-server-logs`\n- `allow-llm-server-plan`\n- `allow-list-llm-models`\n- `allow-llm-proxy-chat`\n- `allow-llm-proxy-cancel`"
+        },
+        {
+          "description": "Enables the list_llm_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-list-llm-models",
+          "markdownDescription": "Enables the list_llm_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_proxy_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-proxy-cancel",
+          "markdownDescription": "Enables the llm_proxy_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_proxy_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-proxy-chat",
+          "markdownDescription": "Enables the llm_proxy_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_endpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-endpoint",
+          "markdownDescription": "Enables the llm_server_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-logs",
+          "markdownDescription": "Enables the llm_server_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-plan",
+          "markdownDescription": "Enables the llm_server_plan command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-start",
+          "markdownDescription": "Enables the llm_server_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-status",
+          "markdownDescription": "Enables the llm_server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the llm_server_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:allow-llm-server-stop",
+          "markdownDescription": "Enables the llm_server_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_llm_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-list-llm-models",
+          "markdownDescription": "Denies the list_llm_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_proxy_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-proxy-cancel",
+          "markdownDescription": "Denies the llm_proxy_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_proxy_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-proxy-chat",
+          "markdownDescription": "Denies the llm_proxy_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_endpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-endpoint",
+          "markdownDescription": "Denies the llm_server_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-logs",
+          "markdownDescription": "Denies the llm_server_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-plan",
+          "markdownDescription": "Denies the llm_server_plan command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-start",
+          "markdownDescription": "Denies the llm_server_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-status",
+          "markdownDescription": "Denies the llm_server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the llm_server_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "llm-server:deny-llm-server-stop",
+          "markdownDescription": "Denies the llm_server_stop command without any pre-configured scope."
+        },
+        {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-local-tts-models`\n- `allow-load-local-tts`\n- `allow-speak-local-tts`\n- `allow-synthesize-local-tts`\n- `allow-cancel-local-tts`\n- `allow-unload-local-tts`",
           "type": "string",
           "const": "local-tts:default",
@@ -6847,6 +6961,144 @@
           "type": "string",
           "const": "moonshine-stt:deny-set-moonshine-endpoint",
           "markdownDescription": "Denies the set_moonshine_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-nllb-load`\n- `allow-nllb-translate`\n- `allow-nllb-cancel`\n- `allow-nllb-unload`\n- `allow-nllb-status`\n- `allow-bergamot-start`\n- `allow-bergamot-translate`\n- `allow-bergamot-pairs`\n- `allow-bergamot-cancel`\n- `allow-bergamot-stop`\n- `allow-bergamot-status`",
+          "type": "string",
+          "const": "mt-local:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-nllb-load`\n- `allow-nllb-translate`\n- `allow-nllb-cancel`\n- `allow-nllb-unload`\n- `allow-nllb-status`\n- `allow-bergamot-start`\n- `allow-bergamot-translate`\n- `allow-bergamot-pairs`\n- `allow-bergamot-cancel`\n- `allow-bergamot-stop`\n- `allow-bergamot-status`"
+        },
+        {
+          "description": "Enables the bergamot_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-cancel",
+          "markdownDescription": "Enables the bergamot_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bergamot_pairs command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-pairs",
+          "markdownDescription": "Enables the bergamot_pairs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bergamot_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-start",
+          "markdownDescription": "Enables the bergamot_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bergamot_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-status",
+          "markdownDescription": "Enables the bergamot_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bergamot_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-stop",
+          "markdownDescription": "Enables the bergamot_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bergamot_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-bergamot-translate",
+          "markdownDescription": "Enables the bergamot_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the nllb_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-nllb-cancel",
+          "markdownDescription": "Enables the nllb_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the nllb_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-nllb-load",
+          "markdownDescription": "Enables the nllb_load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the nllb_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-nllb-status",
+          "markdownDescription": "Enables the nllb_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the nllb_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-nllb-translate",
+          "markdownDescription": "Enables the nllb_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the nllb_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:allow-nllb-unload",
+          "markdownDescription": "Enables the nllb_unload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-cancel",
+          "markdownDescription": "Denies the bergamot_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_pairs command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-pairs",
+          "markdownDescription": "Denies the bergamot_pairs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-start",
+          "markdownDescription": "Denies the bergamot_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-status",
+          "markdownDescription": "Denies the bergamot_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-stop",
+          "markdownDescription": "Denies the bergamot_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bergamot_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-bergamot-translate",
+          "markdownDescription": "Denies the bergamot_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the nllb_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-nllb-cancel",
+          "markdownDescription": "Denies the nllb_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the nllb_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-nllb-load",
+          "markdownDescription": "Denies the nllb_load command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the nllb_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-nllb-status",
+          "markdownDescription": "Denies the nllb_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the nllb_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-nllb-translate",
+          "markdownDescription": "Denies the nllb_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the nllb_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "mt-local:deny-nllb-unload",
+          "markdownDescription": "Denies the nllb_unload command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-neural-onnx-tts-set-execution-hint`\n- `allow-neural-onnx-tts-set-hub-id`\n- `allow-neural-onnx-tts-set-model-source`\n- `allow-neural-onnx-tts-set-local-package-format`\n- `allow-neural-onnx-tts-set-voice-speed`\n- `allow-neural-onnx-tts-load-model`\n- `allow-neural-onnx-tts-list-voices`\n- `allow-neural-onnx-tts-speak`\n- `allow-neural-onnx-tts-speak-into-voice-changer`\n- `allow-neural-onnx-tts-is-loaded`",
@@ -7383,16 +7635,34 @@
           "markdownDescription": "Denies the get_system_info command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`\n- `allow-deepl-translate`\n- `allow-deepl-usage`\n- `allow-deepl-languages`",
           "type": "string",
           "const": "translate:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`\n- `allow-deepl-translate`\n- `allow-deepl-usage`\n- `allow-deepl-languages`"
         },
         {
           "description": "Enables the check_availability command without any pre-configured scope.",
           "type": "string",
           "const": "translate:allow-check-availability",
           "markdownDescription": "Enables the check_availability command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deepl_languages command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:allow-deepl-languages",
+          "markdownDescription": "Enables the deepl_languages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deepl_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:allow-deepl-translate",
+          "markdownDescription": "Enables the deepl_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deepl_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:allow-deepl-usage",
+          "markdownDescription": "Enables the deepl_usage command without any pre-configured scope."
         },
         {
           "description": "Enables the detect_language command without any pre-configured scope.",
@@ -7429,6 +7699,24 @@
           "type": "string",
           "const": "translate:deny-check-availability",
           "markdownDescription": "Denies the check_availability command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deepl_languages command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:deny-deepl-languages",
+          "markdownDescription": "Denies the deepl_languages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deepl_translate command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:deny-deepl-translate",
+          "markdownDescription": "Denies the deepl_translate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deepl_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "translate:deny-deepl-usage",
+          "markdownDescription": "Denies the deepl_usage command without any pre-configured scope."
         },
         {
           "description": "Denies the detect_language command without any pre-configured scope.",
@@ -7599,10 +7887,10 @@
           "markdownDescription": "Denies the translate command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`\n- `allow-voice-changer-get-capabilities`\n- `allow-voice-changer-import`\n- `allow-voice-changer-cancel-import`\n- `allow-voice-changer-list-slots`\n- `allow-voice-changer-rename-slot`\n- `allow-voice-changer-delete-slot`\n- `allow-voice-changer-duplicate-slot`\n- `allow-voice-changer-set-active-slot`\n- `allow-voice-changer-merge-slots`\n- `allow-voice-changer-import-default-voice`\n- `allow-voice-changer-autotune`\n- `allow-voice-changer-cancel-autotune`\n- `allow-voice-changer-get-autotune`\n- `allow-voice-changer-live-record-start`\n- `allow-voice-changer-live-record-stop`",
           "type": "string",
           "const": "voice-changer:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-voice-changer-params`\n- `allow-set-voice-changer-params`\n- `allow-set-voice-changer-enabled`\n- `allow-start-voice-changer`\n- `allow-stop-voice-changer`\n- `allow-is-voice-changer-running`\n- `allow-get-voice-changer-metrics`\n- `allow-voice-changer-push-aux-pcm`\n- `allow-voice-changer-push-aux-wav`\n- `allow-capture-voice-changer-debug`\n- `allow-list-voice-changer-model-slots`\n- `allow-voice-changer-get-capabilities`\n- `allow-voice-changer-import`\n- `allow-voice-changer-cancel-import`\n- `allow-voice-changer-list-slots`\n- `allow-voice-changer-rename-slot`\n- `allow-voice-changer-delete-slot`\n- `allow-voice-changer-duplicate-slot`\n- `allow-voice-changer-set-active-slot`\n- `allow-voice-changer-merge-slots`\n- `allow-voice-changer-import-default-voice`\n- `allow-voice-changer-autotune`\n- `allow-voice-changer-cancel-autotune`\n- `allow-voice-changer-get-autotune`\n- `allow-voice-changer-live-record-start`\n- `allow-voice-changer-live-record-stop`"
         },
         {
           "description": "Enables the capture_voice_changer_debug command without any pre-configured scope.",
@@ -7659,6 +7947,84 @@
           "markdownDescription": "Enables the stop_voice_changer command without any pre-configured scope."
         },
         {
+          "description": "Enables the voice_changer_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-autotune",
+          "markdownDescription": "Enables the voice_changer_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_cancel_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-cancel-autotune",
+          "markdownDescription": "Enables the voice_changer_cancel_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_cancel_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-cancel-import",
+          "markdownDescription": "Enables the voice_changer_cancel_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_delete_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-delete-slot",
+          "markdownDescription": "Enables the voice_changer_delete_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_duplicate_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-duplicate-slot",
+          "markdownDescription": "Enables the voice_changer_duplicate_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_get_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-get-autotune",
+          "markdownDescription": "Enables the voice_changer_get_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_get_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-get-capabilities",
+          "markdownDescription": "Enables the voice_changer_get_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-import",
+          "markdownDescription": "Enables the voice_changer_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_import_default_voice command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-import-default-voice",
+          "markdownDescription": "Enables the voice_changer_import_default_voice command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_list_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-list-slots",
+          "markdownDescription": "Enables the voice_changer_list_slots command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_live_record_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-live-record-start",
+          "markdownDescription": "Enables the voice_changer_live_record_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_live_record_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-live-record-stop",
+          "markdownDescription": "Enables the voice_changer_live_record_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_merge_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-merge-slots",
+          "markdownDescription": "Enables the voice_changer_merge_slots command without any pre-configured scope."
+        },
+        {
           "description": "Enables the voice_changer_push_aux_pcm command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:allow-voice-changer-push-aux-pcm",
@@ -7669,6 +8035,18 @@
           "type": "string",
           "const": "voice-changer:allow-voice-changer-push-aux-wav",
           "markdownDescription": "Enables the voice_changer_push_aux_wav command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_rename_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-rename-slot",
+          "markdownDescription": "Enables the voice_changer_rename_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_changer_set_active_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:allow-voice-changer-set-active-slot",
+          "markdownDescription": "Enables the voice_changer_set_active_slot command without any pre-configured scope."
         },
         {
           "description": "Denies the capture_voice_changer_debug command without any pre-configured scope.",
@@ -7725,6 +8103,84 @@
           "markdownDescription": "Denies the stop_voice_changer command without any pre-configured scope."
         },
         {
+          "description": "Denies the voice_changer_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-autotune",
+          "markdownDescription": "Denies the voice_changer_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_cancel_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-cancel-autotune",
+          "markdownDescription": "Denies the voice_changer_cancel_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_cancel_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-cancel-import",
+          "markdownDescription": "Denies the voice_changer_cancel_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_delete_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-delete-slot",
+          "markdownDescription": "Denies the voice_changer_delete_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_duplicate_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-duplicate-slot",
+          "markdownDescription": "Denies the voice_changer_duplicate_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_get_autotune command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-get-autotune",
+          "markdownDescription": "Denies the voice_changer_get_autotune command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_get_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-get-capabilities",
+          "markdownDescription": "Denies the voice_changer_get_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-import",
+          "markdownDescription": "Denies the voice_changer_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_import_default_voice command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-import-default-voice",
+          "markdownDescription": "Denies the voice_changer_import_default_voice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_list_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-list-slots",
+          "markdownDescription": "Denies the voice_changer_list_slots command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_live_record_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-live-record-start",
+          "markdownDescription": "Denies the voice_changer_live_record_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_live_record_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-live-record-stop",
+          "markdownDescription": "Denies the voice_changer_live_record_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_merge_slots command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-merge-slots",
+          "markdownDescription": "Denies the voice_changer_merge_slots command without any pre-configured scope."
+        },
+        {
           "description": "Denies the voice_changer_push_aux_pcm command without any pre-configured scope.",
           "type": "string",
           "const": "voice-changer:deny-voice-changer-push-aux-pcm",
@@ -7735,6 +8191,18 @@
           "type": "string",
           "const": "voice-changer:deny-voice-changer-push-aux-wav",
           "markdownDescription": "Denies the voice_changer_push_aux_wav command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_rename_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-rename-slot",
+          "markdownDescription": "Denies the voice_changer_rename_slot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_changer_set_active_slot command without any pre-configured scope.",
+          "type": "string",
+          "const": "voice-changer:deny-voice-changer-set-active-slot",
+          "markdownDescription": "Denies the voice_changer_set_active_slot command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-get-vosk-models`\n- `allow-download-vosk-model`\n- `allow-cancel-vosk-model-download`\n- `allow-import-vosk-model-zip`\n- `allow-vosk-model-zip-relative-path`\n- `allow-list-downloaded-vosk-models`",

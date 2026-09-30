@@ -1,0 +1,24 @@
+{
+  "$comment": [
+    "Example spec for Sigil.exe --headless mt-bench (see scripts/mt-bench/README.md). Paths are relative to this file.",
+    "nllb: the in-process engine of the app; the model comes from the model store of SIGIL_APP_DATA_DIR (Sigil.exe --headless fetch mt/nllb-200-distilled-600m-int8) or a folder given as \"path\".",
+    "openai: any OpenAI-compatible /chat/completions server (llama-server, Ollama, LM Studio, a cloud API); a key, when the server needs one, comes from the environment variable named by \"apiKeyEnv\", never from this file. Remove the entry when no server runs: a failed engine is reported, the rest still run.",
+    "hypotheses: a JSON-lines file of {\"id\", \"hyp\"} produced elsewhere (e.g. the Bergamot helper), scored without latency."
+  ],
+  "corpus": "corpus.sample.jsonl",
+  "directions": [],
+  "warmup": 1,
+  "engines": [
+    { "engine": "nllb", "id": "nllb-600m-greedy", "model": "mt/nllb-200-distilled-600m-int8", "threads": 2, "beam": 1 },
+    { "engine": "nllb", "id": "nllb-600m-beam4", "model": "mt/nllb-200-distilled-600m-int8", "threads": 2, "beam": 4 },
+    {
+      "engine": "openai",
+      "id": "hy-mt2-1.8b-q4",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "model": "hy-mt2",
+      "prompt": "hy-mt2",
+      "maxTokens": 512,
+      "temperature": 0.2
+    }
+  ]
+}

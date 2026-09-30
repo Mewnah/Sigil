@@ -17,7 +17,7 @@ export interface RustAudioChunkPayload {
  * optional and consumers must work without them.
  */
 export interface SttTextMeta {
-  /** Stable id of one spoken segment (`<pipelineId>:<epoch>:<segmentId>`): interims and the final share it. */
+  /** Stable id of one spoken segment (`<pipelineId>-<process nonce>:<epoch>:<segmentId>`): interims and the final share it. */
   segmentId?: string;
   /** Rises with every interim and final of the segment; the highest wins. */
   revision?: number;

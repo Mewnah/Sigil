@@ -79,6 +79,66 @@ sentence (3.9–5.2 s sentences):
 Against `scripts/neural-sidecar/tts_sidecar.py --chunk-delay 0.2` (P2-I): first audio after about
 205 ms, full response after about 2.84 s, for both PCM and WAV (`openai_speech_live_server_streams`).
 
+## Machine translation
+
+`Sigil.exe --headless mt-bench <spec.json> --out <dir>` ([`scripts/mt-bench/README.md`](../../scripts/mt-bench/README.md)),
+corpus chrF2 (sacrebleu 2.6.0 defaults: character order 6, β 2, whitespace removed; the Rust score
+equals sacrebleu's to 1e-14) and wall time per line. Corpus: `scripts/mt-bench/corpus.sample.jsonl`,
+240 casual lines (24 per direction) with a single reference each, written for the smoke test; P7's
+campaign replaces it with consented real caption logs. chrF is character-based with one reference,
+so Chinese and Japanese targets score low for every engine. Dev rig, debug build (dependencies at
+opt-level 3), measured on 2026-09-30 while other builds were running, so latencies are pessimistic.
+
+NLLB-200 distilled 600M, int8 (`mt/nllb-200-distilled-600m-int8`, CPU, 2 threads):
+
+| Direction | chrF greedy | chrF beam 4 | p50 / p95 ms greedy | p50 / p95 ms beam 4 |
+|---|---:|---:|---:|---:|
+| en → ja | 25.4 | 27.4 | 1006 / 1337 | 2912 / 4040 |
+| ja → en | 58.3 | 59.2 | 1102 / 1637 | 2685 / 5181 |
+| en → de | 66.4 | 67.6 | 1141 / 1768 | 2840 / 4016 |
+| de → en | 72.4 | 71.5 | 1109 / 1483 | 2739 / 3993 |
+| en → es | 69.2 | 73.5 | 1147 / 1608 | 2868 / 3960 |
+| es → en | 72.8 | 73.7 | 1043 / 1493 | 2400 / 3586 |
+| en → zh | 20.8 | 23.0 | 1173 / 1707 | 2442 / 3429 |
+| zh → en | 55.5 | 55.5 | 1190 / 1749 | 2517 / 4157 |
+| en → ko | 27.5 | 29.3 | 970 / 1297 | 2232 / 2931 |
+| ko → en | 55.5 | 54.8 | 1001 / 1580 | 2371 / 3301 |
+| **All (corpus)** | **58.6** | **59.6** | | |
+
+Most of NLLB's per-line cost is the 256k-token output layer at every decoding step, which is why
+the `nllb` slice has partials off by default and the router uses NLLB for the long tail.
+
+Hy-MT2 1.8B Q4_K_M (`mt/hy-mt2-1.8b-q4_k_m`) on the pinned llama-server b11146 Vulkan build, RTX 4090
+(`--device Vulkan0 -ngl 999 -c 4096 -np 1 -fa auto --poll 0`, the app's flags), mt-bench `openai` engine
+with the `hy-mt2` prompt and temperature 0.2, same corpus, P4 final gate (2026-09-30):
+
+| Direction | chrF | p50 / p95 ms |
+|---|---:|---:|
+| en → ja | 44.0 | 70 / 107 |
+| ja → en | 54.1 | 57 / 78 |
+| en → de | 64.9 | 70 / 106 |
+| de → en | 68.8 | 53 / 71 |
+| en → es | 66.9 | 67 / 88 |
+| es → en | 68.5 | 50 / 68 |
+| en → zh | 44.0 | 42 / 54 |
+| zh → en | 63.9 | 50 / 70 |
+| en → ko | 35.7 | 74 / 109 |
+| ko → en | 54.6 | 58 / 88 |
+| **All (corpus)** | **59.9** | |
+
+Against NLLB-600M greedy, Hy-MT2 scores much higher on the Asian targets (en → ja 44.0 vs 25.4, en → zh
+44.0 vs 20.8, en → ko 35.7 vs 27.5). It scores a little lower from ja/de/es into English and on en → de,
+and it answers in about 50–75 ms instead of about 1 s. Three lines out of 240 took 1.1–1.7 s (en → ja,
+en → de, zh → en maxima; not investigated, possibly a one-time GPU warm-up); p95 stays under 110 ms. One smoke
+corpus with one reference per line cannot rank close engines, so these numbers are not a default flip
+(P7 decides with real caption logs).
+
+Still to record (manual, see [RELEASE_AND_ENGINEERING.md → P4 exit matrix](../RELEASE_AND_ENGINEERING.md#p4-exit-matrix-translation-stack)):
+
+- **Firefox Translations (Bergamot)**: needs the locally built `sigil-bergamot.exe` pack; target
+  en ↔ ja p95 under 150 ms per line (`build.ps1 -SelfTest -Models <dir>`). Until mt-bench has a
+  `bergamot` engine, score its output with the `hypotheses` engine.
+
 ## Reproducing
 
 - sherpa engines: `SIGIL_APP_DATA_DIR=<store with the models> SIGIL_TEST_MODELS_DIR=<dev cache>
@@ -91,3 +151,7 @@ Against `scripts/neural-sidecar/tts_sidecar.py --chunk-delay 0.2` (P2-I): first 
   real_model -- --ignored`.
 - Local TTS: `SIGIL_APP_DATA_DIR=<store> SIGIL_TEST_MODELS_DIR=<dev cache> cargo test local_tts --
   --include-ignored --test-threads=1 --nocapture`.
+- Machine translation: `SIGIL_APP_DATA_DIR=<store with mt/nllb-200-distilled-600m-int8>
+  sigil.exe --headless mt-bench scripts/mt-bench/spec.example.json --out <dir>` (engines `nllb`,
+  `openai`, `hypotheses`); NLLB parity with the Python reference: `cargo test mt_local --
+  --ignored --test-threads=1` with the same `SIGIL_APP_DATA_DIR`.

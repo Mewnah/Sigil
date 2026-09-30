@@ -1,5 +1,6 @@
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import i18n from "i18next";
+import { canonicalLanguage, toAzure } from "../languages";
 import { Translation_State } from "../schema";
 import {
   isRetryableStatus,
@@ -67,6 +68,26 @@ export function parseAzureTranslation(body: unknown): string {
   return text;
 }
 
+/**
+ * Azure language pair for a request: the request's canonical `from` / `to` mapped to Azure codes when the pipeline
+ * sets them (router chains, reversed pipelines; an unknown source auto-detects), else the slice's own pair.
+ * Throws when Azure has no code for the target.
+ */
+export function azurePair(cfg: Pick<AzureConfig, "languageFrom" | "language">, request: Pick<TranslationRequest, "from" | "to">): {
+  languageFrom: string;
+  language: string;
+} {
+  if (request.to === undefined) return { languageFrom: cfg.languageFrom, language: cfg.language };
+  const language = toAzure(request.to);
+  if (!language) {
+    throw new TranslationError(
+      i18n.t("transl.error_unsupported_pair", { engine: "Azure", pair: `${request.from || "?"} → ${request.to}` }),
+      { retryable: false },
+    );
+  }
+  return { languageFrom: request.from ? toAzure(request.from) ?? "" : "", language };
+}
+
 export class Translation_AzureService implements ITranslationEngine {
   #cfg: AzureConfig | null = null;
 
@@ -82,10 +103,15 @@ export class Translation_AzureService implements ITranslationEngine {
   async translate(request: TranslationRequest, signal: AbortSignal): Promise<string> {
     const cfg = this.#cfg;
     if (!cfg) throw new TranslationError(i18n.t("transl.error_not_running"), { retryable: false });
+    const pair = azurePair(cfg, request);
+    // A line already in the target language is its own translation (pipeline-set pairs; the slice path is unchanged).
+    if (request.to !== undefined && pair.languageFrom && canonicalLanguage(pair.languageFrom) === canonicalLanguage(pair.language)) {
+      return request.text;
+    }
 
     let resp: Response;
     try {
-      resp = await fetchWithTimeout(azureTranslateUrl(cfg), {
+      resp = await fetchWithTimeout(azureTranslateUrl({ ...cfg, ...pair }), {
         method: "POST",
         timeoutMs: AZURE_TIMEOUT_MS,
         signal,
@@ -116,5 +142,9 @@ export class Translation_AzureService implements ITranslationEngine {
 
   stop(): void {
     this.#cfg = null;
+  }
+
+  supports(from: string, to: string): boolean {
+    return toAzure(to) !== null && (!from || toAzure(from) !== null);
   }
 }

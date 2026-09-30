@@ -31,7 +31,9 @@ function harness(options: { staleInterimMs?: number; now?: () => number; timeout
       new Promise<string>((resolve, reject) => {
         jobs.push({ job, resolve, reject });
       }),
-    publish: (job, value) => published.push(`${job.stream}:${job.kind}:${value}`),
+    publish: (job, value) => {
+      published.push(`${job.stream}:${job.kind}:${value}`);
+    },
     onError: (job, error) => errors.push({ job, error }),
     ...options,
   });
@@ -381,5 +383,98 @@ describe("TranslationSequencer", () => {
     expect(errors).toHaveLength(1);
     expect(seq.pendingUtterances).toBe(0);
     expect(seq.runningJobs).toBe(0);
+  });
+});
+
+describe("TranslationSequencer (P4-C additions)", () => {
+  function gapHarness(gapMs: number | (() => number)) {
+    const jobs: Pending[] = [];
+    const published: string[] = [];
+    const seq = new TranslationSequencer<Ev>({
+      run: (job) => new Promise<string>((resolve, reject) => jobs.push({ job, resolve, reject })),
+      publish: (job, value) => {
+        published.push(`${job.kind}:${value}`);
+      },
+      interimGapMs: gapMs,
+    });
+    return { seq, jobs, published };
+  }
+
+  it("throttles interim requests of one utterance, latest wins", async () => {
+    vi.useFakeTimers();
+    const h = gapHarness(300);
+    h.seq.pushInterim("stt", { value: "a" });
+    h.jobs[0].resolve("A");
+    await vi.advanceTimersByTimeAsync(0);
+    h.seq.pushInterim("stt", { value: "ab" });
+    h.seq.pushInterim("stt", { value: "abc" });
+    expect(h.jobs).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(h.jobs).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.jobs.map((j) => j.job.event.value)).toEqual(["a", "abc"]);
+  });
+
+  it("waits for the gap after a fast answer, and the final cancels a pending throttled interim", async () => {
+    vi.useFakeTimers();
+    const h = gapHarness(() => 200);
+    h.seq.pushInterim("stt", { value: "a" });
+    h.seq.pushInterim("stt", { value: "ab" }); // queued behind the in-flight one
+    h.jobs[0].resolve("A");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.jobs).toHaveLength(1); // the gap is not over yet
+    h.seq.pushFinal("stt", { value: "abc" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.jobs.map((j) => `${j.job.kind}:${j.job.event.value}`)).toEqual(["interim:a", "final:abc"]);
+  });
+
+  it("abandon closes the open utterance silently and releases later ones", async () => {
+    const h = harness();
+    h.seq.pushInterim("stt", { value: "lost" });
+    h.seq.abandon("stt");
+    expect(h.find("lost").job.signal.aborted).toBe(true);
+    h.seq.pushFinal("stt", { value: "next" });
+    h.find("next").resolve("NEXT");
+    await h.flush();
+    expect(h.published).toEqual(["stt:final:NEXT"]);
+    expect(h.errors).toEqual([]);
+    h.seq.abandon("stt"); // nothing open: no-op
+    h.seq.abandon("other");
+  });
+
+  it("tells whether an utterance is the head of its stream", () => {
+    const h = harness();
+    h.seq.pushFinal("stt", { value: "one" });
+    h.seq.pushFinal("stt", { value: "two" });
+    const [one, two] = h.jobs;
+    expect(h.seq.isHead("stt", one.job.utterance)).toBe(true);
+    expect(h.seq.isHead("stt", two.job.utterance)).toBe(false);
+    expect(h.seq.isHead("nope", 0)).toBe(false);
+  });
+
+  it("skips the late-interim check for trusted interims", () => {
+    const h = harness();
+    h.seq.pushFinal("stt", { value: "yes i think" });
+    h.seq.pushInterim("stt", { value: "yes" });
+    expect(h.jobs).toHaveLength(1);
+    h.seq.pushInterim("stt", { value: "yes" }, { trusted: true });
+    expect(h.jobs).toHaveLength(2);
+  });
+
+  it("closes silently on cancel when publish showed nothing", async () => {
+    const jobs: Pending[] = [];
+    const published: string[] = [];
+    const seq = new TranslationSequencer<Ev>({
+      run: (job) => new Promise<string>((resolve, reject) => jobs.push({ job, resolve, reject })),
+      publish: (job, value) => {
+        if (job.kind === "interim") return false; // e.g. LocalAgreement committed nothing
+        published.push(`${job.kind}:${value}`);
+      },
+    });
+    seq.pushInterim("stt", { value: "half" });
+    jobs[0].resolve("HALF");
+    await new Promise((r) => setTimeout(r, 0));
+    seq.cancel("stt", { value: CANCEL_MARKER }, CANCEL_MARKER);
+    expect(published).toEqual([]);
   });
 });

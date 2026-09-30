@@ -5,8 +5,10 @@ the latency budget's behaviour under stalls and load, CPU and VRAM. Defaults and
 that one" claims come from these numbers, not from vendor figures (speech-stack plan, Principles
 and §8).
 
-The harness core lives in `src-tauri/src/services/bench/` (P1-F). Quality metrics, competitor
-comparison, live-record and the autotuner build on it in P3.
+The harness core lives in `src-tauri/src/services/bench/` (P1-F). P3-F added real voices through
+the voice changer's engine factory, fidelity against the offline ceiling, named contention
+profiles, competitor comparison, in-app live recording and the per-PC autotuner. The voice-engine
+scorecard against the plan's targets T1–T10 is [VC_BENCHMARKS.md](VC_BENCHMARKS.md).
 
 ## Entry points
 
@@ -15,7 +17,10 @@ comparison, live-record and the autotuner build on it in P3.
 | `Sigil.exe --headless bench <spec.json> [--out <dir>]` | CLI. Runs a spec, writes `report.json`, `report.md` and per-run files, prints a summary. Exit code 0 = every run passed; 1 = a run errored or a threshold failed (reports are still written); 2 = usage error. No window, no server, no port. |
 | IPC `plugin:bench\|run_benchmark({ spec, outDir? })` | "Benchmark this PC" and the autotuner. Returns the report; events `bench:progress` and `bench:done`. `plugin:bench\|cancel_benchmark`, `plugin:bench\|get_last_report`. Relative paths resolve against `app_data/bench/`, and `outDir` must stay inside it (default `app_data/bench/results/<name>-<unix ms>/`). One benchmark at a time. Every accepted call ends in one `bench:done`, including errors and panics; a call refused because a benchmark is already running emits none. |
 | `cargo test --manifest-path src-tauri/Cargo.toml bench` | Stub-model and fake-RVC plumbing, the latency tracer, the budget, the meters. No downloads, no devices. |
-| `scripts/bench/run-perf-gate.ps1` | Dev-rig perf gate: runs specs and compares against a baseline (a p95 regression over 5 % fails). |
+| `scripts/bench/run-perf-gate.ps1` | Dev-rig perf gate: runs specs and compares against a baseline (a p95 regression over 5 % fails). `-Profile p3` also materializes the real-voice templates and checks the plan's T-targets. |
+| `scripts/bench/run-matrix.ps1` | One voice through a matrix of EP × F0 method × block × precision × context × levers; writes `matrix.md` / `matrix.csv`. |
+| IPC `plugin:voice-changer\|voice_changer_autotune({ request })` | The per-PC autotuner (the voice changer must be stopped). Progress on `voice_changer:autotune_progress`; the result is stored per GPU and driver in `app_data/voice-changer/autotune.json` and its report goes to `app_data/bench/results/autotune-<ms>/`. Also `voice_changer_cancel_autotune`, `voice_changer_get_autotune`. |
+| IPC `plugin:voice-changer\|voice_changer_live_record_start({ request })` / `voice_changer_live_record_stop` | Records the running voice changer's per-tick timeline for up to 10 minutes into `app_data/bench/results/live-<ms>/` (no audio, no paths: shareable as it is). |
 
 Quick start (from the repo root):
 
@@ -44,16 +49,27 @@ that could drift.
 - `stub`: a built-in stand-in with no files. It returns identity or silence at any output rate, and
   its compute cost is configurable and seeded. It can `sleep` (a GPU wait) or `spin` (CPU work),
   and it can fail every n-th block. Use it for plumbing, latency accounting and budget behaviour.
-- `rvc`: a real slot through the production `RvcModel` loader. The voice changer's rules apply:
-  - the preset's default EP;
-  - rmvpe runs as fcpe on the CPU EP;
+- `rvc`: a real voice, resolved with the voice changer's own rules (`voice_changer::params` and
+  `capabilities`, never a copy) and built by the voice changer's engine factory, so the benchmark
+  measures exactly what the user runs:
+  - template voices (`sigil-rvc-1`, imported from `.pth` / `.zip`) run on the Sigil Voice Engine;
+    bring-your-own ONNX slots (`rvc`) run on the legacy `RvcModel`;
+  - the preset's default EP; accelerator ids run on their ladder rung (`tensorrt_rtx` on CUDA,
+    `dml_hp` on DirectML);
+  - an F0 method this build cannot run runs its stand-in, and GPU-only methods fall back on the
+    CPU EP, with the voice changer's warning;
+  - the levers resolve through `resolve_levers` (request, availability, the preset's `auto` table);
   - ONNX Runtime pool threads get the worker priority (`protect_game` caps them at 2);
-  - HuBERT, FCPE and RMVPE paths auto-resolve from `app_data/voice-changer/base` and then the slot.
+  - empty model paths resolve like the voice changer's: a template voice's content encoder and
+    pitch models from the model store (its embedder's entry, `vc/pitch-*`), and the legacy
+    candidates in `app_data/voice-changer/base`, then the slot folder.
 
-  The EP the sessions actually landed on is reported, including fallbacks.
-
-  Benchmark sessions record their EP outcomes as `bench.vc`, `bench.vc.content` and
-  `bench.vc.pitch`, separate from the voice changer's.
+  The EP every session actually landed on is reported per component, including fallbacks.
+  Benchmark sessions record their EP outcomes under the `bench.` prefix (`bench.vc`,
+  `bench.vc.content`, `bench.vc.pitch`, `bench.vc.enc`, `bench.vc.flowdec`, ...), separate from the
+  voice changer's. `build: direct` builds a template voice with the benchmark's own builder (the
+  same parts) and adds the per-component compute breakdown (`content_ms`, `f0_ms`, `enc_ms`,
+  `flowdec_ms`) and the `lookahead_ms` knob.
 
 The engine loads once per spec and is shared by its runs.
 
@@ -123,6 +139,112 @@ by routing its input and output through virtual cables.
 
 > The meter plays audio. Point it only at devices you chose. If a virtual cable is also a game's or
 > Discord's microphone, close those apps first: the chirps would go out on voice chat.
+
+**quality** (plan T5) streams the spec's input, led by `lead_s` of silence (default 1 s), through
+the harness exactly like an offline run while recording the 16 kHz stream the model received at
+its absolute positions. The same voice then converts that recorded stream offline: the **offline
+ceiling**. Dynamic-shape models (bring-your-own ONNX) convert it in one call (20 s pieces beyond
+30 s); a template voice is fixed-shape, so a second instance with long shapes converts it block
+after block with no crossfade: `ceiling.block_ms` (200), `ceiling.extra_context_ms` (500, never
+less than the run's), `ceiling.lookahead_ms` (80) and `ceiling.exact` (true: full decode instead
+of partial decode; the F0 cache, anchored noise and phase0 stay, see
+[VC_BENCHMARKS.md](VC_BENCHMARKS.md#the-offline-ceiling)). Its time-anchored noise is keyed to the
+same absolute frames, so the two renditions differ only by what streaming changes. The stream is
+placed against the ceiling from the timeline (the ceiling's absolute start, where the input
+entered the recorded stream, the probed harness latency) and cross-checked on energy envelopes;
+a search is used only when the timeline cannot be derived. Scored over the ceiling's speech (100 ms
+margins):
+- `mcd_db`: mel-cepstral distortion (c1..c24 of 40 mel bands, 25 / 10 ms frames, speech frames);
+- `f0_rmse_cents`, `gross_pitch_error` (> 20 %), `vuv_error`: one F0 analyzer for both (offline
+  RMVPE when installed, else DIO; `scoring.f0_method`);
+- `speaker_cosine`: CAM++ (store entry `bench/campplus`); `speaker_cosine_reference` against a
+  clip of the target voice (`scoring.speaker_reference`);
+- `dnsmos_ovrl` / `_sig` / `_bak` (DNSMOS P.835, `bench/dnsmos-p835`) of the stream,
+  `ceiling_dnsmos_ovrl` and `dnsmos_ovrl_delta`;
+- `clicks`: impulsive events of the stream that the ceiling does not have, in the join windows
+  (a call's first returned samples plus the crossfade), in excess of the artifact rate away from
+  the joins plus two standard deviations; `clicks_per_10min`, `artifact_events`;
+- `seam_flux_ratio` / `ceiling_seam_flux_ratio`: spectral flux at the block period's phases, max
+  over median (about 1 when joins are inaudible);
+- with `stt` (any Sigil STT engine, e.g. Whisper with a local model): `cer` of the stream,
+  `cer_ceiling`, `cer_delta_pts` (T5: ≤ 1 pt), against `stt.reference_text` or the input's own
+  transcript;
+- `ceiling_compute_ms`, `ceiling_rtf`, `offset_ms`, `quality_seconds`, plus the offline run's
+  compute metrics.
+
+A scorer whose model is not installed is skipped with a note (its metrics are then absent, and a
+threshold on them fails as "not measured"). `Sigil.exe --headless fetch bench/campplus` and
+`bench/dnsmos-p835` install them (about 30 MB together); normal users never need them.
+
+**contention** is a paced run under a named load profile, with the paced run's metric names:
+
+| profile | GPU load | CPU load | stall |
+|---|---|---|---|
+| `h1_vrchat_obs` (default) | conv hammer 256 × 256 × 8 layers, 70 % duty, 16.7 ms period (a 60 fps frame) | 3 threads at 50 % (game, render, OBS) | 3 s at 40 % of the run |
+| `h2_load70` | conv hammer, 70 % duty (plan H2) | - | - |
+| `h3_cpu_game` | - | 4 threads at 60 % (VRChat on a 6-core CPU) | - |
+| `stall` | - | - | 3 s at 40 % of the run |
+| `custom` | `load` only | `load` only | `stalls` only |
+
+`load` / `stalls` in the run replace the profile's. The GPU load runs on the engine's own GPU EP
+(DirectML when the engine runs on the CPU) unless `gpu_execution_provider` names one;
+`gpu_load_kind` is `conv` (default: the in-memory `bench/gpu-load` convolution chain) or `matmul`.
+The H1 rows of the scorecard come from here until a friend sends a live-record export.
+
+**compare** (plan T6) scores competitor WAVs of the same input (RVC WebUI realtime, Applio
+realtime, w-okada, ...; drivers and procedure in `scripts/vc-bench/README.md`) with the same
+metrics as Sigil's own output. Each candidate is aligned to the input on energy envelopes and
+scored over the input's speech: DNSMOS, F0 against the input's F0 shifted by `semitones`, CAM++
+against `scoring.speaker_reference`, artifact events per minute, and the latency given for it
+(`latency_ms`, from an `e2e_loopback` run through that app). Sigil's own row (`sigil.include`,
+default on) converts the input with the spec's engine; its latency comes from `sigil.latency_ms`
+or another run of the spec (`sigil.latency_from`, `sigil.latency_metric`). Metrics: Sigil's row
+(`sigil_*`) and the T6 margins: `dnsmos_ovrl_margin` = Sigil − the best competitor (T6: ≥ 0.05),
+`gross_pitch_error_margin` = the best competitor − Sigil (≥ 0), `latency_ratio` = Sigil / the
+fastest competitor (≤ 0.7). The blind A/B test of T6 uses the same WAVs: `tools/listening-test`.
+
+**autotune** runs the per-PC autotuner on the spec's `rvc` engine (`request`: the
+`AutotuneRequest` of `voice_changer_autotune`) and reports the chosen configuration
+(`autotune_*` metrics; `details` holds the result with every candidate measured). The search, per
+EP and then across EPs:
+1. EPs: those the request names, else every EP the build offers; an EP whose sessions fall back
+   is dropped with its reason.
+2. F0 method: every method the build runs on the rung, ranked by accuracy on the tuning clip
+   (gross pitch error + V/UV error against the synthetic voice's exact F0), then the most
+   accurate one that meets the RTF limit at the reference block (40 ms on a GPU, 80 ms on the
+   CPU).
+3. Block, ascending (template voices: 20 / 40 / 60 / 80 / 100 ms engine blocks; ONNX voices: the
+   voice changer's chunk sizes from 20 to 100 ms): the first that meets the limit.
+4. Context: the largest extra context (64–512 ms) that still meets the limit.
+5. Precision (template voices on a GPU): fp32 when it is within 5 % of fp16.
+6. GPU levers (template voices on a GPU): IOBinding, CUDA graphs and the priority stream / queue,
+   each kept when it lowers the p99 RTF by 5 % or more.
+7. Fidelity: the winner is scored against its offline ceiling (T5: CAM++ ≥ 0.97 when installed,
+   F0 RMSE ≤ 15 cents, V/UV ≤ 3 %, no seam clicks). A failing block steps up, twice at most; a
+   larger block is kept only when it passes or cuts the T5 shortfall by a quarter (never when it
+   misses the RTF limit the smaller one met).
+
+"Meets the limit" = p99 RTF ≤ `rtf_limit` (default 0.5: headroom for a game), at most 0.1 % of
+blocks over budget and no model errors, measured on the virtual clock (real compute, no sleeps).
+Across EPs the lowest p50 latency wins. When nothing meets the limit, the fastest configuration is
+returned with a note, so the result is always a valid set of parameters. In the app, the
+`voice_changer_autotune` command fills the voice, models, device block and preset from the voice
+changer, refuses to run while the voice changer or a benchmark runs, stores the result per GPU and
+driver, and the UI applies its `params` with `set_voice_changer_params`.
+
+**live_record** (in-app only: `voice_changer_live_record_start { request: { max_seconds?, note? } }`
+and `voice_changer_live_record_stop`) records the running voice changer's per-tick timeline for up
+to 10 minutes during a real session (VRChat + OBS): the authoritative H1 evidence for T1 / T2 / T7.
+A recorder thread drains the timeline every 100 ms (bounded, drop-oldest: it never slows the
+worker) and samples the voice changer's counters, process CPU and VRAM. It stops at `max_seconds`,
+when the voice changer stops for more than 2 s, or on stop. The folder holds `report.json` /
+`report.md` (one run of mode `live_record`), `live.timeline.csv` and `live.samples.csv`, and no
+audio or file paths, so it can be shared as it is. Metrics: `latency_ms_*` (capture of a block's
+newest frame to the estimated playout of its first converted sample), `block_ms_*`, `model_ms_*`,
+`backlog_ms_*`, `queued_out_ms_*`, `ticks`, `live_seconds`, `underrun_ticks`, `budget_drop_ticks`,
+`gap_ticks`, `error_ticks`, `silent_ratio`, `governor_steps`, `governor_level_max`, `dropped_ms`,
+`backlog_max_ms`, `over_budget_ratio`, `cpu_cores`, `vram_mb_peak`, `timeline_dropped`,
+`underruns`.
 
 ### Load and stalls (paced)
 
@@ -201,15 +323,21 @@ disables a gate. Relative paths resolve against the spec file's folder (CLI) or 
 
   `{"kind": "wav", "path": ...}` reads any PCM or float WAV and resamples it to `input_rate`.
 - `rvc` engine fields:
-  - `slot_dir` (required);
-  - `hubert`, `fcpe`, `rmvpe` (empty = auto);
-  - `pitch_extractor`: `fcpe`, `rmvpe` (alias `crepe`) or `dio`;
-  - `execution_provider`: `cpu`, `cuda`, `dml`, or empty for the preset's default;
-  - `preset`: `streamer`, `low_latency` or `quality`;
-  - `gpu_device_index`;
-  - `intra_threads`: for the plan's "1-2 threads for real-time sessions" measurement;
-  - `vram_cap_mb`;
-  - `silence_skip`: default true, as in the voice changer.
+  - `slot_dir` (required): a template voice (`sigil-rvc-1`) or a bring-your-own ONNX slot;
+  - `hubert` (the content encoder), `fcpe`, `rmvpe` (empty = auto), `index` (empty = the slot's);
+  - `pitch_extractor`: `rmvpe`, `fcpe`, `swiftf0`, `crepe`, `pesto`, `fusion` or `dio`;
+  - `execution_provider`: `cpu`, `cuda`, `dml`, `tensorrt_rtx`, `dml_hp`, or empty for the
+    preset's default;
+  - `preset`: `streamer`, `low_latency`, `quality` or `studio_trt`;
+  - `gpu_device_index`, `intra_threads` (the plan's "1-2 threads for real-time sessions"
+    measurement), `vram_cap_mb`, `silence_skip` (default true, as in the voice changer);
+  - template voices: `block_ms` (engine block, 0 = the device block), `precision` (`auto`, `fp32`,
+    `fp16`), `levers` (`{"io_binding": "on", ...}`: each of `partial_decode`, `anchored_noise`,
+    `nsf_phase0`, `f0_cache`, `gpu_knn`, `io_binding`, `cuda_graphs`, `gpu_priority`, `governor`
+    is `auto`, `on` or `off`), `f0_range` (`speech`, `singing`), `lookahead_ms` (0–80, direct
+    build), `noise_seed`;
+  - `build`: `auto` (the engine factory; the direct builder when `lookahead_ms` is set),
+    `factory` or `direct`.
 - Paced `clock` is `wall` (default), `virtual` or `simulated` (see Modes). `warmup_s` (default
   0.5) excludes start-up priming from `latency_ms_*` and must be below `seconds`.
 - A stall must start at least 1 s after `warmup_s` and end at least 1 s before its run ends, so
@@ -233,14 +361,23 @@ disables a gate. Relative paths resolve against the spec file's folder (CLI) or 
 
 Distribution metrics are `<prefix>_<suffix>` with suffixes `mean`, `stddev`, `min`, `p50`, `p90`,
 `p95`, `p99`, `p999` and `max`. Percentiles are linearly interpolated between the closest ranks
-(NumPy's default). All times are in ms. Lower is better except for `throughput_x`,
-`e2e_detected` and the load duties.
+(NumPy's default). All times are in ms. Lower is better except for the metrics a report lists in
+a run's `higher_is_better`: `throughput_x`, `e2e_detected`, the load duties, speaker similarity,
+DNSMOS, the compare margins and `autotune_fidelity`.
 
 | Mode | Distributions | Scalars |
 |---|---|---|
 | offline | `block_ms`, `model_ms`, `rtf` | `blocks`, `over_budget_ratio`, `model_errors`, `algorithmic_latency_ms`, `engine_load_ms`, `harness_init_ms`, `cpu_cores`, `worker_cpu_cores`, `vram_engine_mb`, `throughput_x` |
 | paced | the offline ones, plus `latency_ms`, `block_age_ms` | the offline scalars except `throughput_x`, plus `underruns`, `underrun_ms`, `dropped_ms`, `drop_events`, `overflow_ms`, `backlog_max_ms`, `backlog_over_budget_ms`, `stall_recovery_blocks`, `stall_latency_recovery_ms`, `output_trimmed_ms`, `gpu_load_duty`, `cpu_load_duty` |
 | e2e_loopback | `e2e_ms` | `e2e_detected`, `e2e_missed`, `e2e_timebase_jitter_ms` |
+| quality | the offline ones | see **quality** above |
+| contention | the paced ones | the paced ones |
+| compare | - | `sigil_dnsmos_ovrl` / `_sig` / `_bak`, `sigil_gross_pitch_error`, `sigil_f0_rmse_cents`, `sigil_vuv_error`, `sigil_speaker_cosine`, `sigil_latency_ms`, `sigil_artifact_events_per_min`, `best_competitor_dnsmos_ovrl`, `dnsmos_ovrl_margin`, `min_competitor_gross_pitch_error`, `gross_pitch_error_margin`, `best_competitor_latency_ms`, `latency_ratio`, `candidates`, `candidates_scored` |
+| autotune | - | `autotune_block_ms`, `autotune_extra_context_ms`, `autotune_rtf_p99`, `autotune_compute_ms_p95`, `autotune_latency_ms_p50` / `_p99`, `autotune_fidelity`, `autotune_gpu`, `autotune_candidates`, `autotune_seconds` |
+| live_record | `latency_ms`, `block_ms`, `model_ms`, `backlog_ms`, `queued_out_ms` | see **live_record** above |
+
+Template voices built directly (`build: direct`) add `content_ms_*`, `f0_ms_*`, `enc_ms_*` and
+`flowdec_ms_*` to offline and paced runs.
 
 Notes on specific metrics:
 - `algorithmic_latency_ms` is the harness's own delay: block accumulation, the input resampler,
@@ -294,6 +431,24 @@ The details:
   about runs that are new since the baseline.
 - It writes `gate-summary.md` and `gate-summary.json`.
 
+`-Profile p3` (`scripts/bench/profiles/p3.json`) runs the stub specs as they are and materializes
+the real-voice templates in `scripts/bench/specs/p3/` with `-Slot` (an imported voice folder),
+`-Clip` (a speech WAV) and `-AppData` (the store with the models), then checks the plan's
+T-targets: `gate: true` rows fail the gate when missed or unmeasured (the P3 exit rows: T2, T3,
+T5, T7, T9 on H2 with the load simulator, T4 streamer), `gate: false` rows are reported only
+(provisional H1 / H3 rows, CUDA with the GPU levers on). Templates whose variables are missing are
+skipped with a warning (`-Strict`: an error). `-Var NAME=value` overrides a template variable
+(`-Var 'LEVERS_JSON={"cuda_graphs":"on"}'`, `-Var PITCH=swiftf0`).
+
+```powershell
+pwsh scripts/bench/run-perf-gate.ps1 -Profile p3 -Exe <release sigil.exe> -AppData <app data> `
+    -Slot <app data>/voice-changer/models/default -Clip C:/clips/speech.wav -OutRoot bench-results/p3
+```
+
+`scripts/bench/run-matrix.ps1` runs one voice through EP × F0 method × block × precision × context
+× levers cells (one after the other, never in parallel) and tabulates compute, RTF, latency, VRAM,
+CPU, load time and the per-component breakdown in `matrix.md` / `matrix.csv`.
+
 ## Inputs: synthetic clips and the corpus
 
 - `python scripts/bench/make-test-clips.py --out <dir>` writes the synthetic signals as WAV files.
@@ -305,11 +460,23 @@ The details:
   `scripts/bench/corpus.example.json` is the manifest template. IPC specs reference clips as
   `{"kind": "wav", "path": "corpus/clips/speech-01.wav"}`.
 
+## Competitors and listening tests
+
+`scripts/vc-bench/` holds offline drivers for RVC WebUI realtime and Applio realtime (they run in
+the user's own Python environment for those apps; nothing installs a competitor) and a
+play-and-record helper for live apps such as w-okada VCClient, whose output a `compare` run scores.
+`tools/listening-test/` builds a blind A/B page from the same WAVs (`make_test.py`) and scores the
+answers with Wilson intervals (`score.py`): plan T6's preference test.
+
 ## Specs in the repo
 
 | Spec | What it checks |
 |---|---|
 | `scripts/bench/specs/stub-smoke.json` | Plumbing: stub offline, a wall-clock paced run under a light CPU and ONNX Runtime load, and a 3 s stall on the virtual clock. Its thresholds only catch broken plumbing, and they hold on a busy PC and in debug builds. |
+| `scripts/bench/specs/p3/stub-p3.json` | P3 plumbing without models or devices: a fixed-block stub (40 ms, like the voice engine) against its own offline ceiling (an identity model is at its ceiling: the MCD, F0 and click gates must hold), and the stall profile on the simulated clock (recovery within two blocks, backlog within budget). |
+| `scripts/bench/specs/p3/sve-gpu.template.json` | Profile template: a template voice on a GPU EP (40 ms engine blocks on the 512-frame device block, 64 ms context, Low latency): offline, paced (wall clock), `h2_load70`, `h1_vrchat_obs` and fidelity. |
+| `scripts/bench/specs/p3/sve-cpu.template.json` | Profile template: the same voice on the CPU (Streamer, 80 ms blocks): offline, paced, `h3_cpu_game` and fidelity. |
+| `scripts/bench/specs/p3/matrix.template.json` | One `run-matrix.ps1` cell: offline plus a virtual-clock paced run. |
 
 ## First measurements (dev rig, 2026-09-28)
 

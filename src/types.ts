@@ -42,7 +42,7 @@ export const TextEventSchema = z.object({
    * are dropped (`.catch(undefined)`) instead of rejecting the whole event.
    */
   /**
-   * Stable id of one spoken segment (`<pipelineId>:<epoch>:<segmentId>` from `speech:*` events):
+   * Stable id of one spoken segment (`<pipelineId>-<process nonce>:<epoch>:<segmentId>` from `speech:*` events):
    * interims and finals with the same `segmentId` describe the same speech, the higher `revision`
    * replacing the lower (two-pass finals replace partials).
    */
@@ -53,6 +53,15 @@ export const TextEventSchema = z.object({
   lang: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/).optional().catch(undefined),
   /** Smart Turn: the speaker probably finished their turn after this final (commit hint only). */
   turnEnd: z.boolean().optional().catch(undefined),
+  /**
+   * Revising text (P4-S0; set on `text.translation` interims by the LocalAgreement-2 pipeline, P4-C): the first
+   * `stableLength` UTF-16 code units of `value` are committed for this `segmentId`'s interims (the committed part
+   * only grows; the count excludes trailing whitespace); the rest is a tentative tail that may still be revised.
+   * Absent = unknown (treat an interim as fully tentative). The final, translated from the complete source, is fully
+   * stable but may replace the committed interim text once (quality first: forcing the prefix hurts e.g. ja→en word
+   * order). Captions animate only what follows the common prefix (P4-G).
+   */
+  stableLength: z.number().int().min(0).max(100_000).optional().catch(undefined),
 });
 
 export type TextEvent = z.infer<typeof TextEventSchema>;
@@ -869,4 +878,250 @@ export interface RustOpenAiSpeechRequest {
   /** Extra JSON members merged into the request body. */
   extra?: Record<string, unknown> | null;
   timeoutMs?: number;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * P4 translation contracts (P4-S0). Change only through an INTEGRATE step, together with the Rust side
+ * named in each comment. Wire format camelCase; interfaces may gain members.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Argument `config` of `plugin:llm-server|llm_server_start` / `llm_server_plan` (Rust `llm_server::LlmServerConfig`). */
+export interface RustLlmServerConfig {
+  /** Catalog id (`mt/hy-mt2-1.8b-q4_k_m`), `"auto"` (the VRAM governor chooses) or an absolute `.gguf` path. */
+  model?: string;
+  /** Runtime pack variant. */
+  variant?: "auto" | "vulkan" | "cuda13" | "cpu";
+  /** `-c` (default 4096). */
+  ctxSize?: number | null;
+  /** `-ngl`; null = from the VRAM plan. */
+  gpuLayers?: number | null;
+  /** `-fa` (default `auto`). */
+  flashAttn?: "auto" | "on" | "off" | null;
+  /** Start even when the governor refuses the plan. */
+  allowOverBudget?: boolean;
+}
+
+export type RustLlmServerState = "stopped" | "starting" | "ready" | "restarting" | "failed";
+
+/** `plugin:llm-server|llm_server_status` and payload of `llm_server:state` (never contains the key). */
+export interface RustLlmServerStatus {
+  state: RustLlmServerState;
+  model: string | null;
+  variant: string | null;
+  gpuLayers: number | null;
+  ctxSize: number | null;
+  flashAttn: string | null;
+  /** `http://127.0.0.1:<port>/v1` while running. */
+  baseUrl: string | null;
+  vramMb: number;
+  restarts: number;
+  error: string | null;
+}
+
+/** Where to reach the running server (`llm_server_endpoint`, `llm_server_start`); command replies only. */
+export interface RustLlmServerEndpoint {
+  /** OpenAI-compatible base URL (`http://127.0.0.1:<port>/v1`; raw `/completion` is at the root). */
+  baseUrl: string;
+  /** Bearer key for every request. */
+  apiKey: string;
+  /** Model name to send (`--alias`). */
+  model: string;
+}
+
+/** Reply of `plugin:llm-server|llm_server_start`. */
+export interface RustLlmServerStarted {
+  status: RustLlmServerStatus;
+  endpoint: RustLlmServerEndpoint;
+}
+
+/** Reply of `plugin:llm-server|llm_server_plan` (dry run of the VRAM governor's decision). */
+export interface RustLlmServerPlan {
+  model: string;
+  variant: string;
+  gpuLayers: number;
+  ctxSize: number;
+  flashAttn: string;
+  device: "gpu" | "cpu" | (string & {});
+  vramMb: number;
+  availableMb: number;
+  allowed: boolean;
+  /** `resources` policy reason codes: `fits`, `vc_running`, `small_gpu`, `no_gpu`, `gpu_full`, `low_memory`, ... */
+  reasonCode: string;
+  reason: string;
+  /** Catalog ids to install first (model, runtime pack): feed them to `<ModelRequirement ids>`. */
+  missing: string[];
+}
+
+/** Row of `plugin:llm-server|list_llm_models` (catalog family `mt-llm`). */
+export interface RustLlmModelInfo {
+  id: string;
+  title: string;
+  /** A `TranslationPromptFormat` value (`hy-mt2`, `translategemma`, `milmmt`, `seed-x`, `generic`, ...). */
+  promptFormat: string;
+  sizeBytes: number;
+  vramMb: number;
+  installed: boolean;
+  /** Opt-in specialist (CAT-Translate, Shisa, VNTL, Sakura/GalTransl, MADLAD). */
+  specialist: boolean;
+  /** Canonical BCP-47 languages it targets; empty = broadly multilingual. */
+  languages: string[];
+  /** The governor's current choice for `model: "auto"`. */
+  recommended: boolean;
+  /** P4-B: `default`, `challenger`, `alternative`, `high_gpu`, `ab` (offered for comparison) or `specialist` (opt-in). */
+  role?: "default" | "challenger" | "alternative" | "high_gpu" | "ab" | "specialist" | (string & {});
+  /** P4-B: `needs_runtime_update` (Sigil's llama.cpp cannot run it yet), `experimental` (may not work) or `ok`. */
+  availability?: "ok" | "needs_runtime_update" | "experimental" | (string & {});
+  /** P4-B: supported pairs when narrower than `languages` (e.g. VNTL: ja → en only). */
+  directions?: { from: string; to: string }[];
+  /** P4-B: the model authors' recommended sampler (Rust `LlmSamplingPreset`; `topK` -1 = disabled). */
+  sampling?: {
+    temperature?: number | null;
+    topP?: number | null;
+    topK?: number | null;
+    repetitionPenalty?: number | null;
+  } | null;
+  /** P4-B: catalog description (English). */
+  description?: string | null;
+  /** P4-B: license fact from the catalog. */
+  license?: string;
+}
+
+/** Argument `request` of `plugin:llm-server|llm_proxy_chat` (the webview's HTTP proxy for LAN / CORS-blocked hosts). */
+export interface RustLlmProxyRequest {
+  /** Caller id for `llm_proxy_cancel({ requestId })`. */
+  requestId: string;
+  /** Absolute http(s) URL. No redirects are followed. */
+  url: string;
+  method?: "GET" | "POST";
+  /** Includes the auth header; never logged. */
+  headers?: Record<string, string>;
+  /** JSON body text. */
+  body?: string | null;
+  /** Forward the body as it arrives (SSE) instead of one chunk. */
+  stream?: boolean;
+  /** Overall deadline; the proxy always applies a 30 s stall timeout. */
+  timeoutMs?: number | null;
+}
+
+/** Events of the `onEvent` Channel of `llm_proxy_chat`: `response`, then `chunk`s, then `done` (or one `error`). */
+export type RustLlmProxyEvent =
+  | { kind: "response"; status: number; headers: Record<string, string> }
+  | { kind: "chunk"; data: string }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
+
+/** Rejection value of every `plugin:llm-server|*` command (Rust `LlmServerError`). */
+export interface RustLlmServerError {
+  kind: "not_installed" | "refused" | "start_failed" | "not_running" | "cancelled" | "invalid_input" | "network" | "runtime" | "not_implemented";
+  message: string;
+  /** Catalog ids to install (`not_installed`). */
+  missing: string[];
+}
+
+export const LLM_SERVER_EVENTS = {
+  /** Payload `RustLlmServerStatus`. */
+  state: "llm_server:state",
+} as const;
+
+export type RustMtKind = "interim" | "final";
+
+/** Argument `request` of `plugin:mt-local|nllb_translate` / `bergamot_translate` (Rust `mt_local::MtRequest`). */
+export interface RustMtRequest {
+  text: string;
+  /** Canonical BCP-47 source language (`translation/languages.ts`); "" = unknown. */
+  source: string;
+  /** Canonical BCP-47 target language. */
+  target: string;
+  kind: RustMtKind;
+  /** For `nllb_cancel` / `bergamot_cancel` (the pipeline uses `<segmentId>#<revision>`). */
+  requestId?: string | null;
+  /** Catalog id; null = the engine's default / loaded model. */
+  model?: string | null;
+  /** NLLB beam width (1 = greedy). */
+  beam?: number | null;
+  /** Worker threads (default 2, max 4). */
+  threads?: number | null;
+}
+
+/** Reply of the `*_translate` commands. */
+export interface RustMtResponse {
+  text: string;
+  engine: "nllb" | "bergamot" | (string & {});
+  model: string;
+  elapsedMs: number;
+  /** Translated through an English pivot. */
+  pivot: boolean;
+}
+
+export type RustMtEngineState = "idle" | "loading" | "ready" | "error";
+
+/** `*_status`, `nllb_load` / `bergamot_start` replies and payload of `mt_local:status`. */
+export interface RustMtEngineStatus {
+  engine: "nllb" | "bergamot" | (string & {});
+  state: RustMtEngineState;
+  model: string | null;
+  device: string | null;
+  threads: number | null;
+  detail: string | null;
+}
+
+/** Row of `plugin:mt-local|bergamot_pairs`. */
+export interface RustMtPair {
+  source: string;
+  target: string;
+  /** Catalog ids of this direction (two when it pivots through English). */
+  ids: string[];
+  installed: boolean;
+  pivot: boolean;
+}
+
+/** Rejection value of every `plugin:mt-local|*` command (Rust `mt_local::MtError`). */
+export interface RustMtError {
+  kind: "not_installed" | "unsupported_pair" | "cancelled" | "busy" | "invalid_input" | "runtime" | "not_implemented";
+  message: string;
+  missing: string[];
+}
+
+export const MT_LOCAL_EVENTS = {
+  /** Payload `RustMtEngineStatus`. */
+  status: "mt_local:status",
+} as const;
+
+/** DeepL host choice (Rust `translate::deepl::DeeplPlan`): `auto` = Free for keys ending in `:fx`. */
+export type RustDeeplPlan = "auto" | "free" | "pro";
+
+/** Argument `request` of `plugin:translate|deepl_translate`. Errors are strings (`"DeepL translation: HTTP 456 ..."`). */
+export interface RustDeeplTranslateRequest {
+  text: string;
+  /** DeepL source code (`EN`, `JA`); null = detect. */
+  source?: string | null;
+  /** DeepL target code (`JA`, `EN-US`, `PT-BR`, `ZH-HANS`). */
+  target: string;
+  /** Sent only as `Authorization: DeepL-Auth-Key <key>`. */
+  apiKey: string;
+  plan?: RustDeeplPlan;
+  formality?: "default" | "more" | "less" | "prefer_more" | "prefer_less" | null;
+  /** Earlier lines (not translated, not billed). */
+  context?: string | null;
+  modelType?: "latency_optimized" | "quality_optimized" | "prefer_quality_optimized" | null;
+  timeoutMs?: number | null;
+}
+
+export interface RustDeeplTranslateResponse {
+  text: string;
+  detectedSource: string | null;
+  billedCharacters: number | null;
+}
+
+/** Reply of `plugin:translate|deepl_usage({ apiKey, plan })`. */
+export interface RustDeeplUsage {
+  characterCount: number;
+  characterLimit: number;
+}
+
+/** Row of `plugin:translate|deepl_languages({ apiKey, plan, kind: "source" | "target" })`. */
+export interface RustDeeplLanguage {
+  code: string;
+  name: string;
+  supportsFormality: boolean;
 }

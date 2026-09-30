@@ -7,3 +7,7 @@ get_languages
 translate
 detect_language
 check_availability
+# DeepL (P4-S0 stubs in services/translate/deepl.rs; owned by P4-D)
+deepl_translate
+deepl_usage
+deepl_languages

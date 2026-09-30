@@ -9,6 +9,8 @@ vi.mock("react-toastify", () => ({
 }));
 vi.mock("../../systemLog", () => ({ pushSystemLog: vi.fn() }));
 vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
+// Line ids start at a random per-process base in the app; pin it so the expected ids stay readable.
+vi.mock("@/utils/processNonce", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/utils/processNonce")>()), PROCESS_ID_BASE: 0 }));
 
 import { toast } from "react-toastify";
 import Service_Transform, { TRANSFORM_TIMEOUT_MS, TransformEngineMap } from "../index";

@@ -1,0 +1,243 @@
+# Sigil MT smoke corpus: 24 casual stream / VRChat lines, English <-> ja, de, es, zh (Simplified), ko.
+# Written for scripts/mt-bench (single references by the P4-D author, not professional translations): a
+# harness smoke test, not a quality benchmark. The P7 campaign uses consented real caption logs.
+{"id": "en-ja:1", "source": "en", "target": "ja", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "みなさん、今夜は配信に来てくれてありがとう！"}
+{"id": "en-ja:2", "source": "en", "target": "ja", "src": "Can you hear me okay, or is my mic too quiet?", "ref": "声はちゃんと聞こえますか？それともマイクの音が小さすぎますか？"}
+{"id": "en-ja:3", "source": "en", "target": "ja", "src": "I'll be right back, I need to grab some water.", "ref": "すぐ戻ります、ちょっと水を取ってきます。"}
+{"id": "en-ja:4", "source": "en", "target": "ja", "src": "That boss fight was way harder than I expected.", "ref": "あのボス戦は思っていたよりずっと難しかった。"}
+{"id": "en-ja:5", "source": "en", "target": "ja", "src": "Let's meet at the main plaza in five minutes.", "ref": "5分後にメインの広場で会いましょう。"}
+{"id": "en-ja:6", "source": "en", "target": "ja", "src": "Does anyone know how to get to the next area?", "ref": "次のエリアへの行き方を知っている人はいますか？"}
+{"id": "en-ja:7", "source": "en", "target": "ja", "src": "I think my internet is lagging a little bit.", "ref": "ネットが少しラグっている気がします。"}
+{"id": "en-ja:8", "source": "en", "target": "ja", "src": "Thank you so much for the follow, welcome!", "ref": "フォローありがとうございます、ようこそ！"}
+{"id": "en-ja:9", "source": "en", "target": "ja", "src": "We should take a group photo before we leave.", "ref": "帰る前にみんなで集合写真を撮ろうよ。"}
+{"id": "en-ja:10", "source": "en", "target": "ja", "src": "Sorry, I didn't catch that. Could you say it again?", "ref": "ごめん、聞き取れなかった。もう一度言ってもらえますか？"}
+{"id": "en-ja:11", "source": "en", "target": "ja", "src": "This world has really beautiful music.", "ref": "このワールドは音楽が本当にきれいですね。"}
+{"id": "en-ja:12", "source": "en", "target": "ja", "src": "I'm going to switch avatars, give me a second.", "ref": "アバターを変えるので、ちょっと待ってください。"}
+{"id": "en-ja:13", "source": "en", "target": "ja", "src": "Watch out, there's someone behind you!", "ref": "気をつけて、後ろに誰かいるよ！"}
+{"id": "en-ja:14", "source": "en", "target": "ja", "src": "My favorite food is ramen, especially in winter.", "ref": "好きな食べ物はラーメンで、特に冬に食べるのが好きです。"}
+{"id": "en-ja:15", "source": "en", "target": "ja", "src": "It's almost midnight here, so I should go to sleep soon.", "ref": "こっちはもうすぐ夜中の12時なので、そろそろ寝ないと。"}
+{"id": "en-ja:16", "source": "en", "target": "ja", "src": "Can you invite me to your instance?", "ref": "あなたのインスタンスに招待してもらえますか？"}
+{"id": "en-ja:17", "source": "en", "target": "ja", "src": "The new update added a lot of cool features.", "ref": "新しいアップデートでかっこいい機能がたくさん追加された。"}
+{"id": "en-ja:18", "source": "en", "target": "ja", "src": "I've been learning Japanese for about two years.", "ref": "日本語を勉強して2年くらいになります。"}
+{"id": "en-ja:19", "source": "en", "target": "ja", "src": "Please be kind to each other in the chat.", "ref": "チャットではお互いに優しくしてください。"}
+{"id": "en-ja:20", "source": "en", "target": "ja", "src": "Let's try again, I'm sure we can win this time.", "ref": "もう一回やってみよう、今度はきっと勝てるよ。"}
+{"id": "en-ja:21", "source": "en", "target": "ja", "src": "What time is it where you live?", "ref": "あなたの住んでいるところは今何時ですか？"}
+{"id": "en-ja:22", "source": "en", "target": "ja", "src": "I really like your outfit, where did you get it?", "ref": "その服すごくいいね、どこで手に入れたの？"}
+{"id": "en-ja:23", "source": "en", "target": "ja", "src": "The event starts tomorrow at eight in the evening.", "ref": "イベントは明日の夜8時に始まります。"}
+{"id": "en-ja:24", "source": "en", "target": "ja", "src": "Good night everyone, see you next time!", "ref": "みなさんおやすみなさい、また次回！"}
+{"id": "ja-en:1", "source": "ja", "target": "en", "src": "みなさん、今夜は配信に来てくれてありがとう！", "ref": "Hey everyone, thanks for joining the stream tonight!"}
+{"id": "ja-en:2", "source": "ja", "target": "en", "src": "声はちゃんと聞こえますか？それともマイクの音が小さすぎますか？", "ref": "Can you hear me okay, or is my mic too quiet?"}
+{"id": "ja-en:3", "source": "ja", "target": "en", "src": "すぐ戻ります、ちょっと水を取ってきます。", "ref": "I'll be right back, I need to grab some water."}
+{"id": "ja-en:4", "source": "ja", "target": "en", "src": "あのボス戦は思っていたよりずっと難しかった。", "ref": "That boss fight was way harder than I expected."}
+{"id": "ja-en:5", "source": "ja", "target": "en", "src": "5分後にメインの広場で会いましょう。", "ref": "Let's meet at the main plaza in five minutes."}
+{"id": "ja-en:6", "source": "ja", "target": "en", "src": "次のエリアへの行き方を知っている人はいますか？", "ref": "Does anyone know how to get to the next area?"}
+{"id": "ja-en:7", "source": "ja", "target": "en", "src": "ネットが少しラグっている気がします。", "ref": "I think my internet is lagging a little bit."}
+{"id": "ja-en:8", "source": "ja", "target": "en", "src": "フォローありがとうございます、ようこそ！", "ref": "Thank you so much for the follow, welcome!"}
+{"id": "ja-en:9", "source": "ja", "target": "en", "src": "帰る前にみんなで集合写真を撮ろうよ。", "ref": "We should take a group photo before we leave."}
+{"id": "ja-en:10", "source": "ja", "target": "en", "src": "ごめん、聞き取れなかった。もう一度言ってもらえますか？", "ref": "Sorry, I didn't catch that. Could you say it again?"}
+{"id": "ja-en:11", "source": "ja", "target": "en", "src": "このワールドは音楽が本当にきれいですね。", "ref": "This world has really beautiful music."}
+{"id": "ja-en:12", "source": "ja", "target": "en", "src": "アバターを変えるので、ちょっと待ってください。", "ref": "I'm going to switch avatars, give me a second."}
+{"id": "ja-en:13", "source": "ja", "target": "en", "src": "気をつけて、後ろに誰かいるよ！", "ref": "Watch out, there's someone behind you!"}
+{"id": "ja-en:14", "source": "ja", "target": "en", "src": "好きな食べ物はラーメンで、特に冬に食べるのが好きです。", "ref": "My favorite food is ramen, especially in winter."}
+{"id": "ja-en:15", "source": "ja", "target": "en", "src": "こっちはもうすぐ夜中の12時なので、そろそろ寝ないと。", "ref": "It's almost midnight here, so I should go to sleep soon."}
+{"id": "ja-en:16", "source": "ja", "target": "en", "src": "あなたのインスタンスに招待してもらえますか？", "ref": "Can you invite me to your instance?"}
+{"id": "ja-en:17", "source": "ja", "target": "en", "src": "新しいアップデートでかっこいい機能がたくさん追加された。", "ref": "The new update added a lot of cool features."}
+{"id": "ja-en:18", "source": "ja", "target": "en", "src": "日本語を勉強して2年くらいになります。", "ref": "I've been learning Japanese for about two years."}
+{"id": "ja-en:19", "source": "ja", "target": "en", "src": "チャットではお互いに優しくしてください。", "ref": "Please be kind to each other in the chat."}
+{"id": "ja-en:20", "source": "ja", "target": "en", "src": "もう一回やってみよう、今度はきっと勝てるよ。", "ref": "Let's try again, I'm sure we can win this time."}
+{"id": "ja-en:21", "source": "ja", "target": "en", "src": "あなたの住んでいるところは今何時ですか？", "ref": "What time is it where you live?"}
+{"id": "ja-en:22", "source": "ja", "target": "en", "src": "その服すごくいいね、どこで手に入れたの？", "ref": "I really like your outfit, where did you get it?"}
+{"id": "ja-en:23", "source": "ja", "target": "en", "src": "イベントは明日の夜8時に始まります。", "ref": "The event starts tomorrow at eight in the evening."}
+{"id": "ja-en:24", "source": "ja", "target": "en", "src": "みなさんおやすみなさい、また次回！", "ref": "Good night everyone, see you next time!"}
+{"id": "en-de:1", "source": "en", "target": "de", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "Hallo zusammen, danke, dass ihr heute Abend beim Stream dabei seid!"}
+{"id": "en-de:2", "source": "en", "target": "de", "src": "Can you hear me okay, or is my mic too quiet?", "ref": "Könnt ihr mich gut hören, oder ist mein Mikro zu leise?"}
+{"id": "en-de:3", "source": "en", "target": "de", "src": "I'll be right back, I need to grab some water.", "ref": "Ich bin gleich zurück, ich muss mir kurz Wasser holen."}
+{"id": "en-de:4", "source": "en", "target": "de", "src": "That boss fight was way harder than I expected.", "ref": "Der Bosskampf war viel schwerer, als ich erwartet hatte."}
+{"id": "en-de:5", "source": "en", "target": "de", "src": "Let's meet at the main plaza in five minutes.", "ref": "Lass uns in fünf Minuten auf dem Hauptplatz treffen."}
+{"id": "en-de:6", "source": "en", "target": "de", "src": "Does anyone know how to get to the next area?", "ref": "Weiß jemand, wie man zum nächsten Bereich kommt?"}
+{"id": "en-de:7", "source": "en", "target": "de", "src": "I think my internet is lagging a little bit.", "ref": "Ich glaube, mein Internet laggt ein bisschen."}
+{"id": "en-de:8", "source": "en", "target": "de", "src": "Thank you so much for the follow, welcome!", "ref": "Vielen Dank fürs Folgen, willkommen!"}
+{"id": "en-de:9", "source": "en", "target": "de", "src": "We should take a group photo before we leave.", "ref": "Wir sollten ein Gruppenfoto machen, bevor wir gehen."}
+{"id": "en-de:10", "source": "en", "target": "de", "src": "Sorry, I didn't catch that. Could you say it again?", "ref": "Entschuldigung, das habe ich nicht verstanden. Kannst du das noch einmal sagen?"}
+{"id": "en-de:11", "source": "en", "target": "de", "src": "This world has really beautiful music.", "ref": "Diese Welt hat wirklich schöne Musik."}
+{"id": "en-de:12", "source": "en", "target": "de", "src": "I'm going to switch avatars, give me a second.", "ref": "Ich wechsle meinen Avatar, gib mir eine Sekunde."}
+{"id": "en-de:13", "source": "en", "target": "de", "src": "Watch out, there's someone behind you!", "ref": "Pass auf, hinter dir ist jemand!"}
+{"id": "en-de:14", "source": "en", "target": "de", "src": "My favorite food is ramen, especially in winter.", "ref": "Mein Lieblingsessen ist Ramen, besonders im Winter."}
+{"id": "en-de:15", "source": "en", "target": "de", "src": "It's almost midnight here, so I should go to sleep soon.", "ref": "Hier ist es fast Mitternacht, also sollte ich bald schlafen gehen."}
+{"id": "en-de:16", "source": "en", "target": "de", "src": "Can you invite me to your instance?", "ref": "Kannst du mich in deine Instanz einladen?"}
+{"id": "en-de:17", "source": "en", "target": "de", "src": "The new update added a lot of cool features.", "ref": "Das neue Update hat viele coole Funktionen hinzugefügt."}
+{"id": "en-de:18", "source": "en", "target": "de", "src": "I've been learning Japanese for about two years.", "ref": "Ich lerne seit ungefähr zwei Jahren Japanisch."}
+{"id": "en-de:19", "source": "en", "target": "de", "src": "Please be kind to each other in the chat.", "ref": "Bitte seid im Chat nett zueinander."}
+{"id": "en-de:20", "source": "en", "target": "de", "src": "Let's try again, I'm sure we can win this time.", "ref": "Lass es uns noch einmal versuchen, diesmal gewinnen wir bestimmt."}
+{"id": "en-de:21", "source": "en", "target": "de", "src": "What time is it where you live?", "ref": "Wie spät ist es bei dir?"}
+{"id": "en-de:22", "source": "en", "target": "de", "src": "I really like your outfit, where did you get it?", "ref": "Mir gefällt dein Outfit total, wo hast du es her?"}
+{"id": "en-de:23", "source": "en", "target": "de", "src": "The event starts tomorrow at eight in the evening.", "ref": "Das Event beginnt morgen um acht Uhr abends."}
+{"id": "en-de:24", "source": "en", "target": "de", "src": "Good night everyone, see you next time!", "ref": "Gute Nacht zusammen, bis zum nächsten Mal!"}
+{"id": "de-en:1", "source": "de", "target": "en", "src": "Hallo zusammen, danke, dass ihr heute Abend beim Stream dabei seid!", "ref": "Hey everyone, thanks for joining the stream tonight!"}
+{"id": "de-en:2", "source": "de", "target": "en", "src": "Könnt ihr mich gut hören, oder ist mein Mikro zu leise?", "ref": "Can you hear me okay, or is my mic too quiet?"}
+{"id": "de-en:3", "source": "de", "target": "en", "src": "Ich bin gleich zurück, ich muss mir kurz Wasser holen.", "ref": "I'll be right back, I need to grab some water."}
+{"id": "de-en:4", "source": "de", "target": "en", "src": "Der Bosskampf war viel schwerer, als ich erwartet hatte.", "ref": "That boss fight was way harder than I expected."}
+{"id": "de-en:5", "source": "de", "target": "en", "src": "Lass uns in fünf Minuten auf dem Hauptplatz treffen.", "ref": "Let's meet at the main plaza in five minutes."}
+{"id": "de-en:6", "source": "de", "target": "en", "src": "Weiß jemand, wie man zum nächsten Bereich kommt?", "ref": "Does anyone know how to get to the next area?"}
+{"id": "de-en:7", "source": "de", "target": "en", "src": "Ich glaube, mein Internet laggt ein bisschen.", "ref": "I think my internet is lagging a little bit."}
+{"id": "de-en:8", "source": "de", "target": "en", "src": "Vielen Dank fürs Folgen, willkommen!", "ref": "Thank you so much for the follow, welcome!"}
+{"id": "de-en:9", "source": "de", "target": "en", "src": "Wir sollten ein Gruppenfoto machen, bevor wir gehen.", "ref": "We should take a group photo before we leave."}
+{"id": "de-en:10", "source": "de", "target": "en", "src": "Entschuldigung, das habe ich nicht verstanden. Kannst du das noch einmal sagen?", "ref": "Sorry, I didn't catch that. Could you say it again?"}
+{"id": "de-en:11", "source": "de", "target": "en", "src": "Diese Welt hat wirklich schöne Musik.", "ref": "This world has really beautiful music."}
+{"id": "de-en:12", "source": "de", "target": "en", "src": "Ich wechsle meinen Avatar, gib mir eine Sekunde.", "ref": "I'm going to switch avatars, give me a second."}
+{"id": "de-en:13", "source": "de", "target": "en", "src": "Pass auf, hinter dir ist jemand!", "ref": "Watch out, there's someone behind you!"}
+{"id": "de-en:14", "source": "de", "target": "en", "src": "Mein Lieblingsessen ist Ramen, besonders im Winter.", "ref": "My favorite food is ramen, especially in winter."}
+{"id": "de-en:15", "source": "de", "target": "en", "src": "Hier ist es fast Mitternacht, also sollte ich bald schlafen gehen.", "ref": "It's almost midnight here, so I should go to sleep soon."}
+{"id": "de-en:16", "source": "de", "target": "en", "src": "Kannst du mich in deine Instanz einladen?", "ref": "Can you invite me to your instance?"}
+{"id": "de-en:17", "source": "de", "target": "en", "src": "Das neue Update hat viele coole Funktionen hinzugefügt.", "ref": "The new update added a lot of cool features."}
+{"id": "de-en:18", "source": "de", "target": "en", "src": "Ich lerne seit ungefähr zwei Jahren Japanisch.", "ref": "I've been learning Japanese for about two years."}
+{"id": "de-en:19", "source": "de", "target": "en", "src": "Bitte seid im Chat nett zueinander.", "ref": "Please be kind to each other in the chat."}
+{"id": "de-en:20", "source": "de", "target": "en", "src": "Lass es uns noch einmal versuchen, diesmal gewinnen wir bestimmt.", "ref": "Let's try again, I'm sure we can win this time."}
+{"id": "de-en:21", "source": "de", "target": "en", "src": "Wie spät ist es bei dir?", "ref": "What time is it where you live?"}
+{"id": "de-en:22", "source": "de", "target": "en", "src": "Mir gefällt dein Outfit total, wo hast du es her?", "ref": "I really like your outfit, where did you get it?"}
+{"id": "de-en:23", "source": "de", "target": "en", "src": "Das Event beginnt morgen um acht Uhr abends.", "ref": "The event starts tomorrow at eight in the evening."}
+{"id": "de-en:24", "source": "de", "target": "en", "src": "Gute Nacht zusammen, bis zum nächsten Mal!", "ref": "Good night everyone, see you next time!"}
+{"id": "en-es:1", "source": "en", "target": "es", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "¡Hola a todos, gracias por unirse al stream esta noche!"}
+{"id": "en-es:2", "source": "en", "target": "es", "src": "Can you hear me okay, or is my mic too quiet?", "ref": "¿Me escuchan bien, o mi micrófono está demasiado bajo?"}
+{"id": "en-es:3", "source": "en", "target": "es", "src": "I'll be right back, I need to grab some water.", "ref": "Ahora vuelvo, tengo que ir por un poco de agua."}
+{"id": "en-es:4", "source": "en", "target": "es", "src": "That boss fight was way harder than I expected.", "ref": "Esa pelea contra el jefe fue mucho más difícil de lo que esperaba."}
+{"id": "en-es:5", "source": "en", "target": "es", "src": "Let's meet at the main plaza in five minutes.", "ref": "Nos vemos en la plaza principal en cinco minutos."}
+{"id": "en-es:6", "source": "en", "target": "es", "src": "Does anyone know how to get to the next area?", "ref": "¿Alguien sabe cómo llegar a la siguiente zona?"}
+{"id": "en-es:7", "source": "en", "target": "es", "src": "I think my internet is lagging a little bit.", "ref": "Creo que mi internet va un poco lento."}
+{"id": "en-es:8", "source": "en", "target": "es", "src": "Thank you so much for the follow, welcome!", "ref": "¡Muchas gracias por el follow, bienvenido!"}
+{"id": "en-es:9", "source": "en", "target": "es", "src": "We should take a group photo before we leave.", "ref": "Deberíamos tomarnos una foto de grupo antes de irnos."}
+{"id": "en-es:10", "source": "en", "target": "es", "src": "Sorry, I didn't catch that. Could you say it again?", "ref": "Perdón, no te entendí. ¿Puedes repetirlo?"}
+{"id": "en-es:11", "source": "en", "target": "es", "src": "This world has really beautiful music.", "ref": "Este mundo tiene una música realmente hermosa."}
+{"id": "en-es:12", "source": "en", "target": "es", "src": "I'm going to switch avatars, give me a second.", "ref": "Voy a cambiar de avatar, dame un segundo."}
+{"id": "en-es:13", "source": "en", "target": "es", "src": "Watch out, there's someone behind you!", "ref": "¡Cuidado, hay alguien detrás de ti!"}
+{"id": "en-es:14", "source": "en", "target": "es", "src": "My favorite food is ramen, especially in winter.", "ref": "Mi comida favorita es el ramen, sobre todo en invierno."}
+{"id": "en-es:15", "source": "en", "target": "es", "src": "It's almost midnight here, so I should go to sleep soon.", "ref": "Aquí ya es casi medianoche, así que debería irme a dormir pronto."}
+{"id": "en-es:16", "source": "en", "target": "es", "src": "Can you invite me to your instance?", "ref": "¿Me puedes invitar a tu instancia?"}
+{"id": "en-es:17", "source": "en", "target": "es", "src": "The new update added a lot of cool features.", "ref": "La nueva actualización añadió muchas funciones geniales."}
+{"id": "en-es:18", "source": "en", "target": "es", "src": "I've been learning Japanese for about two years.", "ref": "Llevo unos dos años aprendiendo japonés."}
+{"id": "en-es:19", "source": "en", "target": "es", "src": "Please be kind to each other in the chat.", "ref": "Por favor, sean amables unos con otros en el chat."}
+{"id": "en-es:20", "source": "en", "target": "es", "src": "Let's try again, I'm sure we can win this time.", "ref": "Intentémoslo otra vez, seguro que esta vez ganamos."}
+{"id": "en-es:21", "source": "en", "target": "es", "src": "What time is it where you live?", "ref": "¿Qué hora es donde vives?"}
+{"id": "en-es:22", "source": "en", "target": "es", "src": "I really like your outfit, where did you get it?", "ref": "Me encanta tu ropa, ¿dónde la conseguiste?"}
+{"id": "en-es:23", "source": "en", "target": "es", "src": "The event starts tomorrow at eight in the evening.", "ref": "El evento empieza mañana a las ocho de la noche."}
+{"id": "en-es:24", "source": "en", "target": "es", "src": "Good night everyone, see you next time!", "ref": "¡Buenas noches a todos, nos vemos la próxima vez!"}
+{"id": "es-en:1", "source": "es", "target": "en", "src": "¡Hola a todos, gracias por unirse al stream esta noche!", "ref": "Hey everyone, thanks for joining the stream tonight!"}
+{"id": "es-en:2", "source": "es", "target": "en", "src": "¿Me escuchan bien, o mi micrófono está demasiado bajo?", "ref": "Can you hear me okay, or is my mic too quiet?"}
+{"id": "es-en:3", "source": "es", "target": "en", "src": "Ahora vuelvo, tengo que ir por un poco de agua.", "ref": "I'll be right back, I need to grab some water."}
+{"id": "es-en:4", "source": "es", "target": "en", "src": "Esa pelea contra el jefe fue mucho más difícil de lo que esperaba.", "ref": "That boss fight was way harder than I expected."}
+{"id": "es-en:5", "source": "es", "target": "en", "src": "Nos vemos en la plaza principal en cinco minutos.", "ref": "Let's meet at the main plaza in five minutes."}
+{"id": "es-en:6", "source": "es", "target": "en", "src": "¿Alguien sabe cómo llegar a la siguiente zona?", "ref": "Does anyone know how to get to the next area?"}
+{"id": "es-en:7", "source": "es", "target": "en", "src": "Creo que mi internet va un poco lento.", "ref": "I think my internet is lagging a little bit."}
+{"id": "es-en:8", "source": "es", "target": "en", "src": "¡Muchas gracias por el follow, bienvenido!", "ref": "Thank you so much for the follow, welcome!"}
+{"id": "es-en:9", "source": "es", "target": "en", "src": "Deberíamos tomarnos una foto de grupo antes de irnos.", "ref": "We should take a group photo before we leave."}
+{"id": "es-en:10", "source": "es", "target": "en", "src": "Perdón, no te entendí. ¿Puedes repetirlo?", "ref": "Sorry, I didn't catch that. Could you say it again?"}
+{"id": "es-en:11", "source": "es", "target": "en", "src": "Este mundo tiene una música realmente hermosa.", "ref": "This world has really beautiful music."}
+{"id": "es-en:12", "source": "es", "target": "en", "src": "Voy a cambiar de avatar, dame un segundo.", "ref": "I'm going to switch avatars, give me a second."}
+{"id": "es-en:13", "source": "es", "target": "en", "src": "¡Cuidado, hay alguien detrás de ti!", "ref": "Watch out, there's someone behind you!"}
+{"id": "es-en:14", "source": "es", "target": "en", "src": "Mi comida favorita es el ramen, sobre todo en invierno.", "ref": "My favorite food is ramen, especially in winter."}
+{"id": "es-en:15", "source": "es", "target": "en", "src": "Aquí ya es casi medianoche, así que debería irme a dormir pronto.", "ref": "It's almost midnight here, so I should go to sleep soon."}
+{"id": "es-en:16", "source": "es", "target": "en", "src": "¿Me puedes invitar a tu instancia?", "ref": "Can you invite me to your instance?"}
+{"id": "es-en:17", "source": "es", "target": "en", "src": "La nueva actualización añadió muchas funciones geniales.", "ref": "The new update added a lot of cool features."}
+{"id": "es-en:18", "source": "es", "target": "en", "src": "Llevo unos dos años aprendiendo japonés.", "ref": "I've been learning Japanese for about two years."}
+{"id": "es-en:19", "source": "es", "target": "en", "src": "Por favor, sean amables unos con otros en el chat.", "ref": "Please be kind to each other in the chat."}
+{"id": "es-en:20", "source": "es", "target": "en", "src": "Intentémoslo otra vez, seguro que esta vez ganamos.", "ref": "Let's try again, I'm sure we can win this time."}
+{"id": "es-en:21", "source": "es", "target": "en", "src": "¿Qué hora es donde vives?", "ref": "What time is it where you live?"}
+{"id": "es-en:22", "source": "es", "target": "en", "src": "Me encanta tu ropa, ¿dónde la conseguiste?", "ref": "I really like your outfit, where did you get it?"}
+{"id": "es-en:23", "source": "es", "target": "en", "src": "El evento empieza mañana a las ocho de la noche.", "ref": "The event starts tomorrow at eight in the evening."}
+{"id": "es-en:24", "source": "es", "target": "en", "src": "¡Buenas noches a todos, nos vemos la próxima vez!", "ref": "Good night everyone, see you next time!"}
+{"id": "en-zh:1", "source": "en", "target": "zh", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "大家好，谢谢你们今晚来看直播！"}
+{"id": "en-zh:2", "source": "en", "target": "zh", "src": "Can you hear me okay, or is my mic too quiet?", "ref": "你们能听清楚我说话吗？还是我的麦克风声音太小了？"}
+{"id": "en-zh:3", "source": "en", "target": "zh", "src": "I'll be right back, I need to grab some water.", "ref": "我马上回来，我去拿点水。"}
+{"id": "en-zh:4", "source": "en", "target": "zh", "src": "That boss fight was way harder than I expected.", "ref": "那场Boss战比我想象的难多了。"}
+{"id": "en-zh:5", "source": "en", "target": "zh", "src": "Let's meet at the main plaza in five minutes.", "ref": "我们五分钟后在主广场见吧。"}
+{"id": "en-zh:6", "source": "en", "target": "zh", "src": "Does anyone know how to get to the next area?", "ref": "有人知道怎么去下一个区域吗？"}
+{"id": "en-zh:7", "source": "en", "target": "zh", "src": "I think my internet is lagging a little bit.", "ref": "我觉得我的网有点卡。"}
+{"id": "en-zh:8", "source": "en", "target": "zh", "src": "Thank you so much for the follow, welcome!", "ref": "非常感谢关注，欢迎！"}
+{"id": "en-zh:9", "source": "en", "target": "zh", "src": "We should take a group photo before we leave.", "ref": "我们走之前应该拍张合影。"}
+{"id": "en-zh:10", "source": "en", "target": "zh", "src": "Sorry, I didn't catch that. Could you say it again?", "ref": "抱歉，我没听清。你能再说一遍吗？"}
+{"id": "en-zh:11", "source": "en", "target": "zh", "src": "This world has really beautiful music.", "ref": "这个世界的音乐真的很好听。"}
+{"id": "en-zh:12", "source": "en", "target": "zh", "src": "I'm going to switch avatars, give me a second.", "ref": "我要换个模型，等我一下。"}
+{"id": "en-zh:13", "source": "en", "target": "zh", "src": "Watch out, there's someone behind you!", "ref": "小心，你后面有人！"}
+{"id": "en-zh:14", "source": "en", "target": "zh", "src": "My favorite food is ramen, especially in winter.", "ref": "我最喜欢的食物是拉面，尤其是在冬天。"}
+{"id": "en-zh:15", "source": "en", "target": "zh", "src": "It's almost midnight here, so I should go to sleep soon.", "ref": "我这边快半夜了，所以我应该快去睡觉了。"}
+{"id": "en-zh:16", "source": "en", "target": "zh", "src": "Can you invite me to your instance?", "ref": "你能邀请我去你的房间吗？"}
+{"id": "en-zh:17", "source": "en", "target": "zh", "src": "The new update added a lot of cool features.", "ref": "新的更新加了很多很酷的功能。"}
+{"id": "en-zh:18", "source": "en", "target": "zh", "src": "I've been learning Japanese for about two years.", "ref": "我学日语大概两年了。"}
+{"id": "en-zh:19", "source": "en", "target": "zh", "src": "Please be kind to each other in the chat.", "ref": "请大家在聊天里互相友善一点。"}
+{"id": "en-zh:20", "source": "en", "target": "zh", "src": "Let's try again, I'm sure we can win this time.", "ref": "我们再试一次吧，我相信这次一定能赢。"}
+{"id": "en-zh:21", "source": "en", "target": "zh", "src": "What time is it where you live?", "ref": "你那边现在几点？"}
+{"id": "en-zh:22", "source": "en", "target": "zh", "src": "I really like your outfit, where did you get it?", "ref": "我很喜欢你的衣服，你在哪里买的？"}
+{"id": "en-zh:23", "source": "en", "target": "zh", "src": "The event starts tomorrow at eight in the evening.", "ref": "活动明天晚上八点开始。"}
+{"id": "en-zh:24", "source": "en", "target": "zh", "src": "Good night everyone, see you next time!", "ref": "大家晚安，下次见！"}
+{"id": "zh-en:1", "source": "zh", "target": "en", "src": "大家好，谢谢你们今晚来看直播！", "ref": "Hey everyone, thanks for joining the stream tonight!"}
+{"id": "zh-en:2", "source": "zh", "target": "en", "src": "你们能听清楚我说话吗？还是我的麦克风声音太小了？", "ref": "Can you hear me okay, or is my mic too quiet?"}
+{"id": "zh-en:3", "source": "zh", "target": "en", "src": "我马上回来，我去拿点水。", "ref": "I'll be right back, I need to grab some water."}
+{"id": "zh-en:4", "source": "zh", "target": "en", "src": "那场Boss战比我想象的难多了。", "ref": "That boss fight was way harder than I expected."}
+{"id": "zh-en:5", "source": "zh", "target": "en", "src": "我们五分钟后在主广场见吧。", "ref": "Let's meet at the main plaza in five minutes."}
+{"id": "zh-en:6", "source": "zh", "target": "en", "src": "有人知道怎么去下一个区域吗？", "ref": "Does anyone know how to get to the next area?"}
+{"id": "zh-en:7", "source": "zh", "target": "en", "src": "我觉得我的网有点卡。", "ref": "I think my internet is lagging a little bit."}
+{"id": "zh-en:8", "source": "zh", "target": "en", "src": "非常感谢关注，欢迎！", "ref": "Thank you so much for the follow, welcome!"}
+{"id": "zh-en:9", "source": "zh", "target": "en", "src": "我们走之前应该拍张合影。", "ref": "We should take a group photo before we leave."}
+{"id": "zh-en:10", "source": "zh", "target": "en", "src": "抱歉，我没听清。你能再说一遍吗？", "ref": "Sorry, I didn't catch that. Could you say it again?"}
+{"id": "zh-en:11", "source": "zh", "target": "en", "src": "这个世界的音乐真的很好听。", "ref": "This world has really beautiful music."}
+{"id": "zh-en:12", "source": "zh", "target": "en", "src": "我要换个模型，等我一下。", "ref": "I'm going to switch avatars, give me a second."}
+{"id": "zh-en:13", "source": "zh", "target": "en", "src": "小心，你后面有人！", "ref": "Watch out, there's someone behind you!"}
+{"id": "zh-en:14", "source": "zh", "target": "en", "src": "我最喜欢的食物是拉面，尤其是在冬天。", "ref": "My favorite food is ramen, especially in winter."}
+{"id": "zh-en:15", "source": "zh", "target": "en", "src": "我这边快半夜了，所以我应该快去睡觉了。", "ref": "It's almost midnight here, so I should go to sleep soon."}
+{"id": "zh-en:16", "source": "zh", "target": "en", "src": "你能邀请我去你的房间吗？", "ref": "Can you invite me to your instance?"}
+{"id": "zh-en:17", "source": "zh", "target": "en", "src": "新的更新加了很多很酷的功能。", "ref": "The new update added a lot of cool features."}
+{"id": "zh-en:18", "source": "zh", "target": "en", "src": "我学日语大概两年了。", "ref": "I've been learning Japanese for about two years."}
+{"id": "zh-en:19", "source": "zh", "target": "en", "src": "请大家在聊天里互相友善一点。", "ref": "Please be kind to each other in the chat."}
+{"id": "zh-en:20", "source": "zh", "target": "en", "src": "我们再试一次吧，我相信这次一定能赢。", "ref": "Let's try again, I'm sure we can win this time."}
+{"id": "zh-en:21", "source": "zh", "target": "en", "src": "你那边现在几点？", "ref": "What time is it where you live?"}
+{"id": "zh-en:22", "source": "zh", "target": "en", "src": "我很喜欢你的衣服，你在哪里买的？", "ref": "I really like your outfit, where did you get it?"}
+{"id": "zh-en:23", "source": "zh", "target": "en", "src": "活动明天晚上八点开始。", "ref": "The event starts tomorrow at eight in the evening."}
+{"id": "zh-en:24", "source": "zh", "target": "en", "src": "大家晚安，下次见！", "ref": "Good night everyone, see you next time!"}
+{"id": "en-ko:1", "source": "en", "target": "ko", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "여러분, 오늘 밤 방송에 와 주셔서 감사합니다!"}
+{"id": "en-ko:2", "source": "en", "target": "ko", "src": "Can you hear me okay, or is my mic too quiet?", "ref": "제 목소리 잘 들리세요, 아니면 마이크 소리가 너무 작나요?"}
+{"id": "en-ko:3", "source": "en", "target": "ko", "src": "I'll be right back, I need to grab some water.", "ref": "금방 올게요, 물 좀 가져올게요."}
+{"id": "en-ko:4", "source": "en", "target": "ko", "src": "That boss fight was way harder than I expected.", "ref": "그 보스전은 생각했던 것보다 훨씬 어려웠어요."}
+{"id": "en-ko:5", "source": "en", "target": "ko", "src": "Let's meet at the main plaza in five minutes.", "ref": "5분 후에 중앙 광장에서 만나요."}
+{"id": "en-ko:6", "source": "en", "target": "ko", "src": "Does anyone know how to get to the next area?", "ref": "다음 구역으로 가는 방법 아는 사람 있어요?"}
+{"id": "en-ko:7", "source": "en", "target": "ko", "src": "I think my internet is lagging a little bit.", "ref": "인터넷이 조금 렉 걸리는 것 같아요."}
+{"id": "en-ko:8", "source": "en", "target": "ko", "src": "Thank you so much for the follow, welcome!", "ref": "팔로우 정말 감사합니다, 환영해요!"}
+{"id": "en-ko:9", "source": "en", "target": "ko", "src": "We should take a group photo before we leave.", "ref": "떠나기 전에 단체 사진 찍어요."}
+{"id": "en-ko:10", "source": "en", "target": "ko", "src": "Sorry, I didn't catch that. Could you say it again?", "ref": "죄송해요, 잘 못 들었어요. 다시 말해 줄 수 있어요?"}
+{"id": "en-ko:11", "source": "en", "target": "ko", "src": "This world has really beautiful music.", "ref": "이 월드는 음악이 정말 아름다워요."}
+{"id": "en-ko:12", "source": "en", "target": "ko", "src": "I'm going to switch avatars, give me a second.", "ref": "아바타 바꿀게요, 잠깐만요."}
+{"id": "en-ko:13", "source": "en", "target": "ko", "src": "Watch out, there's someone behind you!", "ref": "조심해요, 뒤에 누가 있어요!"}
+{"id": "en-ko:14", "source": "en", "target": "ko", "src": "My favorite food is ramen, especially in winter.", "ref": "제가 제일 좋아하는 음식은 라멘이에요, 특히 겨울에요."}
+{"id": "en-ko:15", "source": "en", "target": "ko", "src": "It's almost midnight here, so I should go to sleep soon.", "ref": "여기는 거의 자정이라서 곧 자러 가야 해요."}
+{"id": "en-ko:16", "source": "en", "target": "ko", "src": "Can you invite me to your instance?", "ref": "당신 인스턴스에 초대해 줄 수 있어요?"}
+{"id": "en-ko:17", "source": "en", "target": "ko", "src": "The new update added a lot of cool features.", "ref": "새 업데이트에 멋진 기능이 많이 추가됐어요."}
+{"id": "en-ko:18", "source": "en", "target": "ko", "src": "I've been learning Japanese for about two years.", "ref": "일본어를 배운 지 2년 정도 됐어요."}
+{"id": "en-ko:19", "source": "en", "target": "ko", "src": "Please be kind to each other in the chat.", "ref": "채팅에서는 서로 친절하게 대해 주세요."}
+{"id": "en-ko:20", "source": "en", "target": "ko", "src": "Let's try again, I'm sure we can win this time.", "ref": "다시 해 봐요, 이번에는 분명 이길 수 있어요."}
+{"id": "en-ko:21", "source": "en", "target": "ko", "src": "What time is it where you live?", "ref": "사시는 곳은 지금 몇 시예요?"}
+{"id": "en-ko:22", "source": "en", "target": "ko", "src": "I really like your outfit, where did you get it?", "ref": "옷 정말 예쁘네요, 어디서 샀어요?"}
+{"id": "en-ko:23", "source": "en", "target": "ko", "src": "The event starts tomorrow at eight in the evening.", "ref": "이벤트는 내일 저녁 8시에 시작해요."}
+{"id": "en-ko:24", "source": "en", "target": "ko", "src": "Good night everyone, see you next time!", "ref": "다들 잘 자요, 다음에 봐요!"}
+{"id": "ko-en:1", "source": "ko", "target": "en", "src": "여러분, 오늘 밤 방송에 와 주셔서 감사합니다!", "ref": "Hey everyone, thanks for joining the stream tonight!"}
+{"id": "ko-en:2", "source": "ko", "target": "en", "src": "제 목소리 잘 들리세요, 아니면 마이크 소리가 너무 작나요?", "ref": "Can you hear me okay, or is my mic too quiet?"}
+{"id": "ko-en:3", "source": "ko", "target": "en", "src": "금방 올게요, 물 좀 가져올게요.", "ref": "I'll be right back, I need to grab some water."}
+{"id": "ko-en:4", "source": "ko", "target": "en", "src": "그 보스전은 생각했던 것보다 훨씬 어려웠어요.", "ref": "That boss fight was way harder than I expected."}
+{"id": "ko-en:5", "source": "ko", "target": "en", "src": "5분 후에 중앙 광장에서 만나요.", "ref": "Let's meet at the main plaza in five minutes."}
+{"id": "ko-en:6", "source": "ko", "target": "en", "src": "다음 구역으로 가는 방법 아는 사람 있어요?", "ref": "Does anyone know how to get to the next area?"}
+{"id": "ko-en:7", "source": "ko", "target": "en", "src": "인터넷이 조금 렉 걸리는 것 같아요.", "ref": "I think my internet is lagging a little bit."}
+{"id": "ko-en:8", "source": "ko", "target": "en", "src": "팔로우 정말 감사합니다, 환영해요!", "ref": "Thank you so much for the follow, welcome!"}
+{"id": "ko-en:9", "source": "ko", "target": "en", "src": "떠나기 전에 단체 사진 찍어요.", "ref": "We should take a group photo before we leave."}
+{"id": "ko-en:10", "source": "ko", "target": "en", "src": "죄송해요, 잘 못 들었어요. 다시 말해 줄 수 있어요?", "ref": "Sorry, I didn't catch that. Could you say it again?"}
+{"id": "ko-en:11", "source": "ko", "target": "en", "src": "이 월드는 음악이 정말 아름다워요.", "ref": "This world has really beautiful music."}
+{"id": "ko-en:12", "source": "ko", "target": "en", "src": "아바타 바꿀게요, 잠깐만요.", "ref": "I'm going to switch avatars, give me a second."}
+{"id": "ko-en:13", "source": "ko", "target": "en", "src": "조심해요, 뒤에 누가 있어요!", "ref": "Watch out, there's someone behind you!"}
+{"id": "ko-en:14", "source": "ko", "target": "en", "src": "제가 제일 좋아하는 음식은 라멘이에요, 특히 겨울에요.", "ref": "My favorite food is ramen, especially in winter."}
+{"id": "ko-en:15", "source": "ko", "target": "en", "src": "여기는 거의 자정이라서 곧 자러 가야 해요.", "ref": "It's almost midnight here, so I should go to sleep soon."}
+{"id": "ko-en:16", "source": "ko", "target": "en", "src": "당신 인스턴스에 초대해 줄 수 있어요?", "ref": "Can you invite me to your instance?"}
+{"id": "ko-en:17", "source": "ko", "target": "en", "src": "새 업데이트에 멋진 기능이 많이 추가됐어요.", "ref": "The new update added a lot of cool features."}
+{"id": "ko-en:18", "source": "ko", "target": "en", "src": "일본어를 배운 지 2년 정도 됐어요.", "ref": "I've been learning Japanese for about two years."}
+{"id": "ko-en:19", "source": "ko", "target": "en", "src": "채팅에서는 서로 친절하게 대해 주세요.", "ref": "Please be kind to each other in the chat."}
+{"id": "ko-en:20", "source": "ko", "target": "en", "src": "다시 해 봐요, 이번에는 분명 이길 수 있어요.", "ref": "Let's try again, I'm sure we can win this time."}
+{"id": "ko-en:21", "source": "ko", "target": "en", "src": "사시는 곳은 지금 몇 시예요?", "ref": "What time is it where you live?"}
+{"id": "ko-en:22", "source": "ko", "target": "en", "src": "옷 정말 예쁘네요, 어디서 샀어요?", "ref": "I really like your outfit, where did you get it?"}
+{"id": "ko-en:23", "source": "ko", "target": "en", "src": "이벤트는 내일 저녁 8시에 시작해요.", "ref": "The event starts tomorrow at eight in the evening."}
+{"id": "ko-en:24", "source": "ko", "target": "en", "src": "다들 잘 자요, 다음에 봐요!", "ref": "Good night everyone, see you next time!"}

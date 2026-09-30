@@ -52,6 +52,9 @@ let published: { topic: string; type: TextEventType; value: string }[];
 function makeService(patch: (s: Translation_State) => void = () => {}) {
   const data = proxy(Service_Translation_Schema.parse({}));
   data.inputField = true;
+  // These tests describe sequencing with raw interims; LocalAgreement and throttling have their own tests below.
+  data.partials.localAgreement = false;
+  data.partials.throttleMs = 0;
   patch(data);
   handlers = {};
   published = [];
@@ -273,6 +276,31 @@ describe("Service_Translation", () => {
     await flush();
     expect(out()).toEqual([]);
     expect(vi.mocked(toast)).not.toHaveBeenCalled();
+  });
+
+  it("publishes agreed interims and finals with the line id, revision and target language (default settings)", async () => {
+    await started((s) => {
+      s.partials.localAgreement = true;
+      s.backend = Translation_Backends.llm;
+      s.targetLanguage = "es";
+    });
+    const meta = { segmentId: "mic:1:7", lang: "en" };
+    handlers[TextEventSource.stt]({ type: TextEventType.interim, value: "good morning", ...meta, revision: 1 } as never);
+    engine().call("good morning").resolve("Buenos días");
+    await flush();
+    handlers[TextEventSource.stt]({ type: TextEventType.interim, value: "good morning all", ...meta, revision: 2 } as never);
+    engine().call("good morning all").resolve("Buenos días a todos");
+    await flush();
+    handlers[TextEventSource.stt]({ type: TextEventType.final, value: "Good morning, all.", ...meta, revision: 3 } as never);
+    expect(engine().call("Good morning, all.").request).toMatchObject({ from: "en", to: "es", kind: "final" });
+    engine().call("Good morning, all.").resolve("Buenos días a todos.");
+    await flush();
+    expect(out()).toEqual(["interim:Buenos días", "final:Buenos días a todos."]);
+    const sent = vi.mocked(window.ApiShared.pubsub.publishText).mock.calls.map((c) => c[1]);
+    expect(sent.map((e) => [e.segmentId, e.revision, e.lang, e.stableLength])).toEqual([
+      ["mic:1:7", 1, "es", 11],
+      ["mic:1:7", 2, "es", undefined],
+    ]);
   });
 
   it("auto-starts from settings", async () => {

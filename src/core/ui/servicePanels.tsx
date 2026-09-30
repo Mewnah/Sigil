@@ -26,9 +26,7 @@ const Inspector_Twitch = lazy(() => import("./inspector/inspector_twitch"));
 const Inspector_Discord = lazy(() => import("./inspector/inspector_discord"));
 const Inspector_Kick = lazy(() => import("./inspector/inspector_kick"));
 const Inspector_OBS = lazy(() => import("./inspector/inspector_obs"));
-const Inspector_VoiceChanger = lazy(() =>
-  import("./inspector/inspector_voice_changer").then((m) => ({ default: m.Inspector_VoiceChanger }))
-);
+const Inspector_VoiceChanger = lazy(() => import("./inspector/voice_changer"));
 
 export type ServiceNavGroup = "live" | "integrations";
 

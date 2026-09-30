@@ -1,0 +1,371 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@70ed563897504c756ec94067c12c902c4fd42025 Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; unpublished (installed by local import or SIGIL_LOCAL_ASSETS). Written by scripts/assets/vc_catalog.py.",
+    "Contract: audio [1,N] f32 16 kHz (raw, not normalised) -> feats [1,T,C] f32, T = (N - 400) // 320 + 1 (400-sample receptive field, 320 hop, checked per checkpoint); C = 768 (256 for contentvec-256). The contract rvc.rs feeds BYO encoders.",
+    "embedder.json in each entry: the contract, parity per variant and device class (CPU: ONNX Runtime CPU; GPU: DirectML) and the recommended variant per class. fp16 = transformer in fp16 (the conv front end stays fp32); it misses the fp16 gate on DirectML for contentvec and hubert-ja (those run fp32 on GPUs). int8 (CPU, VNNI) ships only for contentvec / contentvec-256: dynamic int8 of the other encoders misses its gate (activation outliers).",
+    "vc/embedder-spin is an addition to the frozen ids (Applio's first SPIN embedder, embedder_model \"spin\"); the engine's EmbedderKind needs a variant for it (P3-C1)."
+  ],
+  "entries": [
+    {
+      "id": "vc/embedder-contentvec",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "ContentVec (768)",
+      "description": "Content encoder for RVC v2 voices (HuBERT-base ContentVec, layer 12). The default for most voices.",
+      "license": "MIT",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "243eef5ee2eb0419a38b622195ac274435ce5bd240493a4784785da3badcaf77",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.int8.onnx",
+          "size": 291946517,
+          "sha256": "cf8250cbb4f7b425b8ca971cd290e83fa12eeb8f16689cf3652be3427b282a65",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.int8.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1518,
+          "sha256": "01a90b378704c5a9d8d106cc0d36ba95b97447fcf0e363401e5fcdd7f67ab462",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-contentvec-256",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "ContentVec (256, RVC v1)",
+      "description": "Content encoder for RVC v1 voices (ContentVec layer 9 through its 256-channel projection).",
+      "license": "MIT",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 293401793,
+          "sha256": "14c857ed89814d899e767f33b5d392396d07b6d58fa0370255cd0595a09b5a57",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 155194474,
+          "sha256": "9f15609e5bb092cd8deb6ba4a341dbc052b90da5f0c947d745b998097f39a9a0",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.int8.onnx",
+          "size": 228190338,
+          "sha256": "b0a118dffbad6d2ef177a6abbd2957ef1c588960ee69facca6dce2df2a22442f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.int8.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1524,
+          "sha256": "b3b1dec9a66520667c043364e083c4d4c78ac67651bb1d2bab589bbbae5fc5ce",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-spin-v2",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "SPIN v2",
+      "description": "Content encoder for voices trained with Applio's SPIN v2 embedder.",
+      "license": "MIT",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "556ae152e4eca645610d8c3f5c527a45ff3c37745e569402131ca8d27091f9bb",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "994af6d7d39c4ab3f8c605dc36ddd6d683c33968e28c0224c7921e690104350d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1380,
+          "sha256": "1889b4c661a05a1423785f95f21811c5846446af07fc1359ffadb771eb6e1b0a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-spin",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "SPIN",
+      "description": "Content encoder for voices trained with Applio's SPIN embedder.",
+      "license": "MIT",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "11c07b99f34fb88e28939ddb7d8405ba6567f4d9e5e1ddd70c734864523dad65",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "0211e7cfab2e6fef28ec412e34715456003575ba874b66e04813fcd9a62b425c",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1371,
+          "sha256": "f310ffdd8d42814193fc27727f9845941c39aef7c2bde52047148679c308ef71",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-hubert-ja",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "Japanese HuBERT",
+      "description": "Content encoder for voices trained with the Japanese HuBERT base embedder (rinna).",
+      "license": "Apache-2.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "58d73b54efaa70fff7a617644cdb923e1029160a0c8b220aee5d08df7e86393e",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "a9d8f560c69cfd65c2855ca0264c70b4dacac73f6f182cb72ad2abf23acc211c",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1397,
+          "sha256": "c1339e9df110734a8c22a27e1880544ba325cce69d416e44cb7b71fedcecbebc",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-hubert-ko",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "Korean HuBERT",
+      "description": "Content encoder for voices trained with the Korean HuBERT base embedder (team-lucid).",
+      "license": "Apache-2.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "f19064f4479c9a2ab2ba1a3603f19515b2519c47695f60f57a841a66c7c47b45",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "5424552a33c8b20e8d74f21ff4f6307e76eaa37a369f6a0b8e19719000bbf3d7",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1395,
+          "sha256": "81b05016c1232b70b14ff2d542f625c7363f8cbe98612d2d9f66b02cc83a5d61",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/embedder-hubert-zh",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "Chinese HuBERT",
+      "description": "Content encoder for voices trained with the Chinese HuBERT base embedder (TencentGameMate).",
+      "license": "MIT",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.fp32.onnx",
+          "size": 377722808,
+          "sha256": "dd324de8a06cc338d7f59d57687aadd692be267286a49e2abb238df628a86679",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp32.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model.fp16.onnx",
+          "size": 197381937,
+          "sha256": "5e4d3319aaac8e340554671a63aa5ea0d0940eca13a43d76602c8f120ee90a45",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "embedder.json",
+          "size": 1396,
+          "sha256": "f3ec150e9a004bb5fd977c6609f63e4fc190fa7aaaf567cf941efccd15dc33ee",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-embedder.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

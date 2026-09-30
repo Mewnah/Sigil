@@ -315,9 +315,13 @@ All results are from the H2 dev rig (Windows 11 Pro 26200, Rust 1.94.0, debug bu
 
   After a restart the port can change (only when the old one was taken), so clients re-read
   `handle(name)`.
-- **The key stays in Rust.** `HelperHandle.api_key` is never serialized, and `list_helpers`, the
-  state event and `get_helper_logs` never carry it. P4-B's Rust LLM proxy (`llm_proxy_chat`) adds
-  the header. The webview never holds the key.
+- **The key stays out of every status surface.** `HelperHandle.api_key` is never serialized, and
+  `list_helpers`, the state event and `get_helper_logs` never carry it. *Superseded in part by P4:*
+  the frozen llm-server contract (P4-S0) returns the key to TypeScript through
+  `llm_server_endpoint` / `llm_server_start`, so the webview can call the loopback server directly
+  (LAN and CORS-blocked hosts still go through `llm_proxy_chat`, which adds headers in Rust). The key
+  is random per session, the server listens on `127.0.0.1` only, and `llm_server_status` never
+  contains it.
 - **P3-B** runs the import worker with `run_worker` (for example `memory_limit_mb: 4096`,
   `timeout_ms: 120_000`).
 - **P4-E** (Bergamot) uses `stdio: protocol` and `take_stdio`. **P5-E / P6-E** use HTTP specs like
@@ -331,6 +335,33 @@ All results are from the H2 dev rig (Windows 11 Pro 26200, Rust 1.94.0, debug bu
   at a user-run Ollama or LM Studio (plan fallback). If `NtResumeProcess` were ever unavailable, the
   host spawns without `CREATE_SUSPENDED` and assigns immediately, which reopens a microsecond-scale
   race.
+- **P4 update (P4-B, recorded by P4-I0).** `services/llm_server` is built on this ADR:
+  - Flags checked against the b11146 `--help` output: every launch adds `--no-webui -fit off
+    --reasoning off --log-colors off`, plus `--poll 0` on full GPU offload and `--device none` on the
+    CPU pack. The recipe's own flags (`--host`, `--port`, `-m`, `-c`, `-np`, `-ngl`, `-fa`, `-t`,
+    `--alias`) all exist in b11146.
+  - **Multi-GPU pinning.** With more than one hardware GPU the server is pinned to the primary one:
+    `--device <name>` from `llama-server --list-devices`, else `-sm none`. The dev PC lists its
+    RTX 4090 and its AMD integrated GPU as Vulkan0 / Vulkan1; that output is the parser's fixture.
+  - The server holds a `claim_external_vram` sized to the plan, then resized to the device buffers
+    llama-server logs (plus 100 MB Vulkan / 400 MB CUDA base). If the log format differs, the claim
+    stays at the plan estimate.
+  - A fake llama-server built into the test binary runs through the real start path
+    (`server::start_launch` → `process_host::spawn`): start, ready, reuse, replace, stop during a slow
+    load, and a crash loop ending `failed` with the claim released (`cargo test llm_server`).
+  - **The live llama-server + Hy-MT2 1.8B smoke is still manual.** The P4 session's permission
+    classifier refused to run llama-server with a model. The verified GGUF (sha256 `dc5f44fc…c06699`)
+    and the b11146 Vulkan zip are in `%LOCALAPPDATA%\sigil-dev-cache\p4b-local-assets`. Run it with
+    the P4-B test (the older `llama_server_smoke` above still works for the bare recipe):
+
+    ```powershell
+    $env:SIGIL_TEST_LLM_RUNTIME = '<folder containing llama-server.exe>'
+    $env:SIGIL_TEST_LLM_GGUF    = "$env:LOCALAPPDATA\sigil-dev-cache\p4b-local-assets\Hy-MT2-1.8B-Q4_K_M.gguf"
+    cargo test --manifest-path src-tauri/Cargo.toml real_model_end_to_end -- --ignored --nocapture
+    ```
+
+    Then the in-app check: Translation → AI model (LLM) → Local model server, Test load, translate a
+    line, end `Sigil.exe` in Task Manager and confirm `llama-server.exe` is gone.
 - **Known limits:**
   - The exposure audit runs once, after the helper becomes ready. Sockets a helper opens later are
     not re-audited (a periodic audit in the supervisor is a cheap follow-up).

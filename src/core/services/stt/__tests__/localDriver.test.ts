@@ -75,6 +75,10 @@ import {
   type SegmentClock,
 } from "../services/local";
 import { SttMuteState, type ISTTReceiver, type ISTTService, type SttTextMeta } from "../types";
+import { PROCESS_NONCE } from "@/utils/processNonce";
+
+/** Stream part of the driver's segment ids (`mic-<nonce>:<epoch>:<n>`). */
+const MIC = `mic-${PROCESS_NONCE}`;
 
 beforeAll(async () => {
   await i18n.init({ lng: "en", resources: { en: { translation: {} } } });
@@ -118,6 +122,7 @@ function publisher(twoPass: boolean) {
   const holding: boolean[] = [];
   const pub = new SegmentPublisher({
     pipelineId: "mic",
+    stream: "mic",
     epoch: 3,
     twoPass,
     clock,
@@ -139,6 +144,21 @@ function publisher(twoPass: boolean) {
 }
 
 describe("SegmentPublisher", () => {
+  it("defaults the id stream to the pipeline id plus a per-process nonce", () => {
+    expect(PROCESS_NONCE).toMatch(/^[0-9a-z]{6}$/);
+    const out: SttTextMeta[] = [];
+    const pub = new SegmentPublisher({
+      pipelineId: "mic",
+      epoch: 1,
+      twoPass: false,
+      clock: new FakeClock(),
+      sink: { interim: (_t, meta) => out.push(meta), final: (_t, meta) => out.push(meta), abandon: (meta) => out.push(meta) },
+    });
+    pub.partial({ segmentId: 1, revision: 0, text: "hi", lang: "en" });
+    expect(out.map((m) => m.segmentId)).toEqual([`mic-${PROCESS_NONCE}:1:1`]);
+    expect(out[0].segmentId).toMatch(/^[A-Za-z0-9._-]+:\d+:\d+$/);
+  });
+
   it("publishes partials as interims and a single-pass final, with segment metadata", () => {
     const p = publisher(false);
     p.partial(7, 0, "hel");
@@ -600,12 +620,12 @@ describe("STT_LocalService", () => {
     h.emit("speech:partial", { pipelineId: "mic", epoch: e - 1, segmentId: 1, revision: 1, text: "stale session", lang: "en" });
     h.emit("speech:partial", { pipelineId: "loopback", epoch: e, segmentId: 1, revision: 1, text: "other pipeline", lang: "en" });
     expect(h.receiver.onInterim).toHaveBeenCalledTimes(1);
-    expect(h.receiver.onInterim).toHaveBeenCalledWith("hello", { segmentId: `mic:${e}:1`, revision: 0, lang: "en" });
+    expect(h.receiver.onInterim).toHaveBeenCalledWith("hello", { segmentId: `${MIC}:${e}:1`, revision: 0, lang: "en" });
     const final = { pipelineId: "mic", epoch: e, segmentId: 1, tags: [], engine: "sherpa-offline", model: PARAKEET, startMs: 0, endMs: 900, forced: false, latencyMs: 10, turnEnd: null, lang: "en" };
     h.emit("speech:final", { ...final, revision: 1, text: "Hello", pass: "first" });
     expect(h.receiver.onFinal).not.toHaveBeenCalled(); // held for the two-pass replacement
     h.emit("speech:final", { ...final, revision: 2, text: "Hello!", pass: "second" });
-    expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello!", { segmentId: `mic:${e}:1`, revision: 2, lang: "en" });
+    expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello!", { segmentId: `${MIC}:${e}:1`, revision: 2, lang: "en" });
 
     const interims = h.receiver.onInterim.mock.calls.length;
     await h.svc.stop();
@@ -738,7 +758,7 @@ describe("STT_LocalService", () => {
     h.emit("speech:final", { pipelineId: "mic", epoch: first, segmentId: 3, revision: 0, text: "Held words.", lang: "en", tags: [], pass: "first", engine: "sherpa-online", model: NEMOTRON, startMs: 0, endMs: 1_000, forced: false, latencyMs: 0, turnEnd: null });
     expect(h.receiver.onFinal).not.toHaveBeenCalled();
     h.emit("speech:status", { pipelineId: "mic", epoch: first, state: "error", code: "capture_error", detail: "device lost", progress: null, level: "error", modelId: null, engine: null, device: null });
-    expect(h.receiver.onFinal).toHaveBeenCalledWith("Held words.", expect.objectContaining({ segmentId: `mic:${first}:3` }));
+    expect(h.receiver.onFinal).toHaveBeenCalledWith("Held words.", expect.objectContaining({ segmentId: `${MIC}:${first}:3` }));
     expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_restarting", { level: "warning" });
     expect(h.receiver.onStop).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
@@ -747,7 +767,7 @@ describe("STT_LocalService", () => {
     expect(second).toBeGreaterThan(first);
     expect(localSpeechState.restarts).toBe(1);
     h.emit("speech:partial", { pipelineId: "mic", epoch: second, segmentId: 4, revision: 0, text: "back", lang: "en" });
-    expect(h.receiver.onInterim).toHaveBeenLastCalledWith("back", expect.objectContaining({ segmentId: `mic:${second}:4` }));
+    expect(h.receiver.onInterim).toHaveBeenLastCalledWith("back", expect.objectContaining({ segmentId: `${MIC}:${second}:4` }));
     await h.svc.stop();
   });
 
@@ -862,11 +882,11 @@ describe("STT_LocalService", () => {
     const final = { pipelineId: "mic", epoch: e, segmentId: 1, tags: [], engine: "sherpa-online", model: NEMOTRON, startMs: 0, endMs: 2_000, forced: false, latencyMs: 0, turnEnd: null, lang: "en" };
     h.emit("speech:utterance", { kind: "utterance", pipelineId: "mic", epoch: e, segmentId: 1, startMs: 0, endMs: 2_000, samples: 32_000, forced: false });
     h.emit("speech:final", { ...final, revision: 1, text: "Hello everyone.", pass: "first" });
-    expect(h.receiver.onInterim).toHaveBeenLastCalledWith("Hello everyone.", expect.objectContaining({ segmentId: `mic:${e}:1`, revision: 1 }));
+    expect(h.receiver.onInterim).toHaveBeenLastCalledWith("Hello everyone.", expect.objectContaining({ segmentId: `${MIC}:${e}:1`, revision: 1 }));
     expect(h.receiver.onFinal).not.toHaveBeenCalled();
     h.svc.commitPending();
     expect(h.receiver.onFinal).toHaveBeenCalledTimes(1);
-    expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello everyone.", { segmentId: `mic:${e}:1`, revision: 1, lang: "en" });
+    expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello everyone.", { segmentId: `${MIC}:${e}:1`, revision: 1, lang: "en" });
     h.emit("speech:final", { ...final, revision: 2, text: "Hello, everyone!", pass: "second" });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(h.receiver.onFinal).toHaveBeenCalledTimes(1);
@@ -929,6 +949,7 @@ class FakeEngine implements ISTTService {
 function twoPassEngine(engine: FakeEngine, epoch = 5) {
   const pub = new SegmentPublisher({
     pipelineId: "mic",
+    stream: "mic",
     epoch,
     twoPass: true,
     sink: {

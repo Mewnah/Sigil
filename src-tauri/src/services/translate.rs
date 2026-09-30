@@ -13,6 +13,12 @@
 //!
 //! Every call has a per-request timeout (health 10 s, lists 20 s, translate 20 s + 10 ms/char up to
 //! 60 s), so a hung server can no longer block a caption for the shared client's 2 h download cap.
+//!
+//! DeepL API Free / Pro (P4-D): `deepl_translate { request }`, `deepl_usage { apiKey, plan? }` and
+//! `deepl_languages { apiKey, plan?, kind }` live in [`deepl`] (`translate/deepl.rs`): the key only in the
+//! `Authorization: DeepL-Auth-Key` header, the Free host for `:fx` keys, a per-request timeout.
+
+pub mod deepl;
 
 use crate::services::http_client::{
     api_url, describe_api_error, describe_request_error, http_client, non_empty_key,
@@ -278,7 +284,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_languages,
             translate,
             detect_language,
-            check_availability
+            check_availability,
+            deepl::deepl_translate,
+            deepl::deepl_usage,
+            deepl::deepl_languages
         ])
         .build()
 }

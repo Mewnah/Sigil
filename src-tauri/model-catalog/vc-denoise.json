@@ -1,0 +1,93 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Voice-changer input denoisers (owned by P3-A; ids in vc/assets.rs). Upstream ONNX files, pinned; checks and contracts: scripts/vc-templates/export_denoise.py (reports/denoise.json). Written by scripts/assets/vc_catalog.py.",
+    "vc/denoise-gtcrn: GTCRN streaming (16 kHz): mix [1,257,1,2] (512-point STFT frame of a sqrt-Hann window, hop 256) + conv_cache [2,1,16,16,33], tra_cache [2,3,1,1,16], inter_cache [2,1,33,16] -> enh [1,257,1,2] + the next caches.",
+    "vc/denoise-dfn3: DeepFilterNet3 (48 kHz, 960-point STFT, hop 480): enc.onnx, erb_dec.onnx, df_dec.onnx and config.ini (every DSP constant), extracted from the upstream tar.gz (two leading folders stripped).",
+    "vc/denoise-dpdfnet: DPDFNet-2 48 kHz HR: spec [1,1,481,2] (960-point STFT frame at 48 kHz, hop 480) + state_in [56436] -> spec_e [1,1,481,2] + state_out."
+  ],
+  "entries": [
+    {
+      "id": "vc/denoise-gtcrn",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "GTCRN denoiser",
+      "description": "Removes background noise from the voice changer's input with almost no CPU. About 0.5 MB.",
+      "license": "MIT",
+      "status": "published",
+      "files": [
+        {
+          "path": "model.onnx",
+          "size": 535190,
+          "sha256": "b4718df6228e7bdf1a8a435cf98f838636eb2fd331acabf86ba87c5192ebcb87",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://raw.githubusercontent.com/Xiaobin-Rong/gtcrn/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73/stream/onnx_models/gtcrn_simple.onnx",
+              "revision": "502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/denoise-dfn3",
+      "family": "vc",
+      "kind": "model",
+      "version": "3",
+      "title": "DeepFilterNet3 denoiser",
+      "description": "High-quality noise removal for the voice changer's input (48 kHz). About 8 MB.",
+      "license": "MIT OR Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "DeepFilterNet3_onnx.tar.gz",
+          "size": 7983136,
+          "sha256": "c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/d375b2d8309e0935d165700c91da9de862a99c31/models/DeepFilterNet3_onnx.tar.gz",
+              "revision": "d375b2d8309e0935d165700c91da9de862a99c31"
+            }
+          ],
+          "archive": {
+            "format": "tar.gz",
+            "strip": 2,
+            "include": [
+              "enc.onnx",
+              "erb_dec.onnx",
+              "df_dec.onnx",
+              "config.ini"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "vc/denoise-dpdfnet",
+      "family": "vc",
+      "kind": "model",
+      "version": "2-48k-hr",
+      "title": "DPDFNet denoiser",
+      "description": "High-quality streaming noise removal for the voice changer's input (48 kHz). About 10 MB.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "model.onnx",
+          "size": 10493337,
+          "sha256": "7f0575a5cec0ba4ffd8f8bd657e06d007e4ccdd955d76faab922b9d3291dc14b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Ceva-IP/DPDFNet/resolve/dd6818d00f50c836fed43a6243ebe49116de5964/onnx/dpdfnet2_48khz_hr.onnx",
+              "revision": "dd6818d00f50c836fed43a6243ebe49116de5964"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

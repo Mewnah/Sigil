@@ -12,3 +12,19 @@ voice_changer_push_aux_pcm
 voice_changer_push_aux_wav
 capture_voice_changer_debug
 list_voice_changer_model_slots
+# P3 (added by P3-S0): capabilities (scaffold), import and slot store (P3-B), autotune and live record (P3-F)
+voice_changer_get_capabilities
+voice_changer_import
+voice_changer_cancel_import
+voice_changer_list_slots
+voice_changer_rename_slot
+voice_changer_delete_slot
+voice_changer_duplicate_slot
+voice_changer_set_active_slot
+voice_changer_merge_slots
+voice_changer_import_default_voice
+voice_changer_autotune
+voice_changer_cancel_autotune
+voice_changer_get_autotune
+voice_changer_live_record_start
+voice_changer_live_record_stop

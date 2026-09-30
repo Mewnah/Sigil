@@ -1,0 +1,44 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "The sigil-bergamot helper: Mozilla's Bergamot translation engine (the inference/ tree of mozilla/translations, i.e. bergamot-translator with Mozilla's marian fork, intgemm int8) behind a JSON-lines stdio protocol, run by process_host (recipes::bergamot, StdioMode::Protocol) and driven by mt_local/bergamot.rs. Owned by P4-E; decision record docs/adr/0008-bergamot.md. Upstream pin: scripts/runtime-packs/bergamot/helper/UPSTREAM.json.",
+    "Built locally by scripts/runtime-packs/bergamot/build.ps1 (MSVC, static CRT, AVX2 by default) and kept 'unpublished' (asset hosting is local only): install it by local import in Models & Runtimes, or SIGIL_LOCAL_ASSETS (the zip is found by file name). Unpinned while unpublished; pin size and sha256 from the build's .zip.sha256 when publishing.",
+    "The zip holds sigil-bergamot.exe, sigil-pack.json (arch, protocol, sha256 of every file; mt_local/bergamot.rs checks arch and protocol before starting it) and the license texts. The models are the mt-bergamot/* entries (mt-bergamot.json), which require this pack.",
+    "Upgrade: bump UPSTREAM.json (and its shim_revision), then this entry's version and zip name together."
+  ],
+  "entries": [
+    {
+      "id": "runtime/bergamot",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "69455ac-s1",
+      "title": "Firefox Translations engine (Bergamot)",
+      "description": "Mozilla's offline translation engine from Firefox, run by Sigil as a small helper process on the processor (no graphics memory; needs AVX2). Translates caption lines in tens of milliseconds with the Firefox Translations models.",
+      "license": "MPL-2.0 AND MIT",
+      "status": "unpublished",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sigil-bergamot-69455ac-s1-cpu.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-bergamot-69455ac-s1-cpu.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "sigil-bergamot.exe",
+              "sigil-pack.json",
+              "LICENSE*",
+              "THIRD-PARTY-NOTICES*"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

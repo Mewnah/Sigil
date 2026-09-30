@@ -1,0 +1,116 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "NLLB-200 distilled machine translation (~200 languages, any direction) on Sigil's own ONNX Runtime, CPU background profile (owned by P4-D; engine src-tauri/src/services/mt_local/nllb.rs, ids mt_local::NLLB_DEFAULT_MODEL / NLLB_LARGE_MODEL, TS NLLB_MODELS).",
+    "Each entry is one folder: encoder_model_quantized.onnx (input_ids, attention_mask -> last_hidden_state), decoder_model_merged_quantized.onnx (Optimum's merged decoder with KV cache and use_cache_branch), tokenizer.json (Hugging Face tokenizers, SentencePiece BPE plus the FLORES-200 language tokens), config.json and generation_config.json. The engine also accepts the other Optimum names (encoder_model.onnx, decoder_model_merged.onnx, *_int8 / *_uint8, an onnx/ subfolder) for local folders.",
+    "600M: Xenova's transformers.js export (8-bit dynamic quantization of every MatMul and the embeddings), pinned to a repo commit with the LFS sha256 by scripts/models/pin-catalog.mjs --fragment src-tauri/model-catalog/mt-nllb.json --only mt/nllb-200-distilled-600m --write (the 1.3B entry has no release to look up while unpublished).",
+    "1.3B: no maintained ONNX export exists on Hugging Face, so it is Sigil-built by scripts/mt-bench/export_nllb.py (Optimum export plus the same 8-bit quantization, zipped) and stays 'unpublished' (asset hosting is local only): install it by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS. Pin size and sha256 from the script's .sha256 file when publishing."
+  ],
+  "entries": [
+    {
+      "id": "mt/nllb-200-distilled-600m-int8",
+      "family": "mt",
+      "kind": "model",
+      "version": "261c31d",
+      "title": "NLLB-200 600M (offline translation, 200 languages)",
+      "description": "Meta's No Language Left Behind translator: about 200 languages in any direction, fully offline on the processor (no graphics memory). Best for languages the other offline translators do not cover. About 0.9 GB download.",
+      "license": "CC-BY-NC-4.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "encoder_model_quantized.onnx",
+          "size": 419120483,
+          "sha256": "5cde664eacba07a62f198857ec6c06e09572b1ebb77c8137f1fa99ac604a3a28",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/261c31d1a5732c67cdd16d80e8d6088507c7ccea/onnx/encoder_model_quantized.onnx",
+              "revision": "261c31d1a5732c67cdd16d80e8d6088507c7ccea"
+            }
+          ]
+        },
+        {
+          "path": "decoder_model_merged_quantized.onnx",
+          "size": 475505771,
+          "sha256": "dd66608c2a4194e78f95548fa0e64f24302303698c5b09fa8e1f9e16ec00676b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/261c31d1a5732c67cdd16d80e8d6088507c7ccea/onnx/decoder_model_merged_quantized.onnx",
+              "revision": "261c31d1a5732c67cdd16d80e8d6088507c7ccea"
+            }
+          ]
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 17331224,
+          "sha256": "8ac789ad7dabea44d41537822d48c516ba358374c51813e2cba78c006e150c94",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/261c31d1a5732c67cdd16d80e8d6088507c7ccea/tokenizer.json",
+              "revision": "261c31d1a5732c67cdd16d80e8d6088507c7ccea"
+            }
+          ]
+        },
+        {
+          "path": "config.json",
+          "size": 873,
+          "git_oid": "6a498b9686cbb3a8f4bdb7b9111579a8b68d9a77",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/261c31d1a5732c67cdd16d80e8d6088507c7ccea/config.json",
+              "revision": "261c31d1a5732c67cdd16d80e8d6088507c7ccea"
+            }
+          ]
+        },
+        {
+          "path": "generation_config.json",
+          "size": 189,
+          "git_oid": "e4e63ec8f93739e46bbed52cca2bde4477cf32b2",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/261c31d1a5732c67cdd16d80e8d6088507c7ccea/generation_config.json",
+              "revision": "261c31d1a5732c67cdd16d80e8d6088507c7ccea"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mt/nllb-200-distilled-1.3b-int8",
+      "family": "mt",
+      "kind": "model",
+      "version": "1",
+      "title": "NLLB-200 1.3B (offline translation, 200 languages, higher quality)",
+      "description": "The larger NLLB-200 translator: better translations than the 600M model for the same 200 languages, still offline on the processor, about twice as slow. About 1.9 GB download.",
+      "license": "CC-BY-NC-4.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "nllb-200-distilled-1.3b-int8.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/nllb-200-distilled-1.3b-int8.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "encoder_model_quantized.onnx",
+              "decoder_model_merged_quantized.onnx",
+              "tokenizer.json",
+              "config.json",
+              "generation_config.json"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -46,6 +46,42 @@ P2 fragments:
 - `stt-whisper.json` (P2-A): empty; the `whisper/*` and `vosk/*` entries stay in `stt-legacy.json`
   (ids are forever, so they do not move).
 
+P3 fragments (created empty by P3-S0; ids and the in-entry file layout, `model.onnx` or
+`model.<fp32|fp16|int8>.onnx`, are frozen in `src/services/neural_audio/vc/assets.rs`):
+
+- `vc-bases.json` (P3-A): pitch models `vc/pitch-{rmvpe,fcpe,swiftf0,crepe-tiny,pesto}` and the MIT
+  default voice `vc/voice-default` (`default.pth`).
+- `vc-embedders.json` (P3-A): content encoders `vc/embedder-{contentvec,contentvec-256,spin-v2,hubert-ja,hubert-ko,hubert-zh}`.
+- `vc-denoise.json` (P3-A): `vc/denoise-{gtcrn,dfn3,dpdfnet}`.
+- `bench-models.json` (P3-A): benchmark-only `bench/campplus`, `bench/dnsmos-p835` (kind `bench`).
+- `runtime-trt-rtx.json` (P3-C2): `runtime/tensorrt-rtx`.
+
+Sigil-exported files stay `unpublished` (asset hosting is local only: local import or
+`SIGIL_LOCAL_ASSETS`).
+
+P4 fragments (translation):
+
+- `llm-gguf.json` (P4-B): 15 family `mt-llm` GGUF translation models for the bundled llama-server,
+  every file pinned to a Hugging Face commit with its LFS sha256: Hy-MT2 1.8B Q4_K_M (the default,
+  `mt/hy-mt2-1.8b-q4_k_m`) and 1.25-bit, Hy-MT2 7B and 30B-A3B, MiLMMT-46 4B and 12B, TranslateGemma
+  4B and 12B, Seed-X-PPO-7B, LMT-60 4B, and the opt-in specialists CAT-Translate 7B, Shisa V2.1 8B,
+  VNTL, GalTransl v4 4B and MADLAD-400 3B. Its top-level `routing.models` table (prompt format, role,
+  availability, languages, directions, KV size, recommended sampler) is read by
+  `llm_server::catalog`; the footprints of the ids `resources::policy` recommends equal the policy's
+  values (a test keeps them in step).
+- `mt-nllb.json` (P4-D): `mt/nllb-200-distilled-600m-int8` (published, Xenova's ONNX export at
+  commit `261c31d`, 912 MB, LFS-pinned) and `mt/nllb-200-distilled-1.3b-int8` (unpublished: built
+  by `scripts/mt-bench/export_nllb.py` and installed by local import or `SIGIL_LOCAL_ASSETS`).
+  Engine: `mt_local::nllb`. Dry-run the pin script with `--only mt/nllb-200-distilled-600m`.
+- `mt-bergamot.json` (P4-E): **generated** by `scripts/runtime-packs/bergamot/gen-catalog.mjs` from
+  Mozilla's model registry (106 directions to and from English, pinned with the registry's size and
+  sha256, published). Ids are `mt-bergamot/<src>_<tgt>` in Sigil's canonical codes (`zh` Simplified,
+  `zh-hant` Traditional), family `mt-bergamot`; every entry requires `runtime/bergamot`. Regenerate
+  with `gen-catalog.mjs --fetch --write`; `--check` verifies the committed file.
+- `runtime-bergamot.json` (P4-E): `runtime/bergamot`, unpublished: build
+  `sigil-bergamot-<commit>-s1-cpu.zip` with `scripts/runtime-packs/bergamot/build.ps1` and import it
+  (ADR 0008).
+
 ## Fragment format
 
 ```json
