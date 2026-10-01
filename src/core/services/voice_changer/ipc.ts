@@ -10,6 +10,11 @@
  *
  * Owners: capabilities (scaffold), import / slot store (P3-B), autotune / live record (P3-F), TensorRT
  * progress (P3-C2); the UI is P3-G's. Pure module: no Tauri, DOM or `window`.
+ *
+ * P5-S0 (frozen; change only through INTEGRATE): the voice families (`VC_FAMILIES`, Rust
+ * `vc::families`), `VcCapabilities.families`, the P5 `VcSlotInfo` fields, the family slot commands
+ * (`createFamilySlot`, `setFamilyOptions`) and each family's options object (`VcFamilyOptions`,
+ * stored as `manifest.family`; Rust `families::<family>::*Options`). The family UI is P5-G's.
  */
 import {
     BASELINE_DENOISERS,
@@ -63,6 +68,9 @@ export const VC_COMMANDS = {
     getAutotune: `${P}voice_changer_get_autotune`,
     liveRecordStart: `${P}voice_changer_live_record_start`,
     liveRecordStop: `${P}voice_changer_live_record_stop`,
+    // P5 (P5-S0): voice-family slots (progress: `importProgress`; cancel: `cancelImport`)
+    createFamilySlot: `${P}voice_changer_create_family_slot`,
+    setFamilyOptions: `${P}voice_changer_set_family_options`,
 } as const;
 
 /** Every `voice-changer` event. */
@@ -109,6 +117,169 @@ export interface BenchProgress {
 // Capabilities
 // ---------------------------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------------------------
+// Voice families (P5-S0; Rust `vc::families`, `params_contract.json` `families`)
+// ---------------------------------------------------------------------------------------------
+
+/** Every P5 voice family id (Rust `FamilyKind::as_str`). */
+export const VC_FAMILIES = ["ddsp_svc", "sigil_zs", "meanvc", "sovits", "sidecar_v2"] as const;
+export type VcFamilyId = (typeof VC_FAMILIES)[number];
+
+/** `manifest.format` of each family's slots. */
+export const VC_FAMILY_FORMATS: Readonly<Record<VcFamilyId, string>> = {
+    ddsp_svc: "ddsp-svc-6.3",
+    sigil_zs: "sigil-zs-1",
+    meanvc: "meanvc-2",
+    sovits: "sovits-4.1",
+    sidecar_v2: "sidecar-v2",
+};
+
+/** How a family's slots are made: from a library voice, by importing a file, or from a sidecar recipe / URL. */
+export const VC_FAMILY_CREATION = ["reference", "import", "sidecar"] as const;
+export type VcFamilyCreation = (typeof VC_FAMILY_CREATION)[number];
+
+/** Hot voice controls a family may answer (`VcFamilyCapability.controls`); the inspector hides the others. */
+export const VC_FAMILY_CONTROLS = ["pitch", "formant", "rms_mix", "index", "protect", "speaker", "noise_scale", "silence_db"] as const;
+export type VcFamilyControl = (typeof VC_FAMILY_CONTROLS)[number];
+
+/** One family in `VcCapabilities.families` (Rust `capabilities::FamilyCapability`: `FamilyInfo` + `available`). */
+export interface VcFamilyCapability {
+    family: VcFamilyId;
+    /** `manifest.format` of its slots. */
+    format: string;
+    /** This build runs it. */
+    available: boolean;
+    /** Labelled experimental. */
+    experimental: boolean;
+    /** Converts toward a voice-library reference (`referenceVoiceId`, per voice). */
+    zero_shot: boolean;
+    /** A singing family. */
+    singing: boolean;
+    /** EP ladder rungs it runs on (`cuda`, `dml`, `cpu`), best first. */
+    execution_providers: string[];
+    needs_pitch: boolean;
+    needs_content_encoder: boolean;
+    creation: VcFamilyCreation;
+    /** File extensions it imports (lower case, with the dot). */
+    import_extensions: string[];
+    controls: VcFamilyControl[];
+    /** Model-store ids it needs installed. */
+    requires: string[];
+}
+
+/** The family of a `manifest.format` (or a family id), else `null` (RVC voices). */
+export function familyOfFormat(format: unknown): VcFamilyId | null {
+    if (typeof format !== "string") return null;
+    const f = format.trim().toLowerCase();
+    return VC_FAMILIES.find((id) => id === f || VC_FAMILY_FORMATS[id] === f) ?? null;
+}
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** Keep the known families (one entry each, in `VC_FAMILIES` order) with well-typed fields. */
+export function normalizeFamilyCapabilities(raw: unknown): VcFamilyCapability[] {
+    if (!Array.isArray(raw)) return [];
+    const byId = new Map<VcFamilyId, VcFamilyCapability>();
+    for (const r of raw) {
+        if (!r || typeof r !== "object") continue;
+        const o = r as Record<string, unknown>;
+        const family = familyOfFormat(o.family);
+        if (!family || byId.has(family)) continue;
+        const creation = (VC_FAMILY_CREATION as readonly unknown[]).includes(o.creation) ? (o.creation as VcFamilyCreation) : "reference";
+        byId.set(family, {
+            family,
+            format: VC_FAMILY_FORMATS[family],
+            available: o.available === true,
+            experimental: o.experimental === true,
+            zero_shot: o.zero_shot === true,
+            singing: o.singing === true,
+            execution_providers: strList(o.execution_providers).filter((e) => e === "cuda" || e === "dml" || e === "cpu"),
+            needs_pitch: o.needs_pitch === true,
+            needs_content_encoder: o.needs_content_encoder === true,
+            creation,
+            import_extensions: strList(o.import_extensions).map((e) => e.toLowerCase()),
+            controls: strList(o.controls).filter((c): c is VcFamilyControl => (VC_FAMILY_CONTROLS as readonly string[]).includes(c)),
+            requires: strList(o.requires),
+        });
+    }
+    return VC_FAMILIES.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+}
+
+/** `options` of DDSP-SVC voices (Rust `families::ddsp_svc::DdspSvcOptions`). Unset = the preset's. */
+export interface VcDdspSvcOptions {
+    preset?: "sigil_singing" | "sigil_singing_fast" | "upstream_gui";
+    /** Reflow Euler steps (1..50). */
+    steps?: number | null;
+    /** Flow start between the DDSP mel and noise (0..1; default 0.7). */
+    t_start?: number | null;
+}
+
+/** `options` of Sigil-ZS voices (Rust `families::sigil_zs::SigilZsOptions`). Unset = the preset's. */
+export interface VcSigilZsOptions {
+    preset?: "sigil_low" | "sigil_lean" | "upstream_readme";
+    /** Diffusion steps (1..30). */
+    steps?: number | null;
+    /** Classifier-free guidance (0..1; 0 = off). */
+    cfg_rate?: number | null;
+    /** Longest reference prompt in seconds (0.5..10). */
+    prompt_s?: number | null;
+    /** fp16 XLS-R (off by default). */
+    fp16_xlsr?: boolean;
+    /** fp16 DiT (off by default; fails waveform parity, so it stays behind this switch). */
+    fp16_dit?: boolean;
+    /** fp16 HiFT decoder (`null` = the benchmark-decided default). */
+    fp16_vocoder?: boolean | null;
+}
+
+/** `options` of MeanVC2 voices (Rust `families::meanvc::MeanVcOptions`). */
+export interface VcMeanVcOptions {
+    /** Mean-flow steps: 1 or 2 (default 2). */
+    steps?: 1 | 2;
+    /** Tick length: 80 or 160 ms (default 80). */
+    tick_ms?: 80 | 160;
+}
+
+/** `options` of so-vits-svc voices (Rust `families::sovits::SovitsOptions`). */
+export interface VcSovitsOptions {
+    /** Feature-retrieval mix 0..1 (default 0 = off). */
+    cluster_ratio?: number;
+}
+
+/** `options` of sidecar v2 voices (Rust `families::sidecar_v2::SidecarV2Options`). */
+export interface VcSidecarV2Options {
+    recipe?: "custom" | "xvc" | "streamvoiceanon" | "seedvc";
+    /** `custom`: `ws://127.0.0.1:<port>/...` (loopback only: 127.0.0.1, localhost or [::1]). */
+    url?: string;
+    /** Recipes: the Python interpreter (`""` = the recipe's default). */
+    python?: string;
+    /** Recipes: the model folder (`""` = the recipe's default). */
+    model_dir?: string;
+    args?: string[];
+    /** Per-frame timeout in ms (`null` = the latency budget). */
+    timeout_ms?: number | null;
+}
+
+/** The options object of each family (`manifest.family`). */
+export interface VcFamilyOptions {
+    ddsp_svc: VcDdspSvcOptions;
+    sigil_zs: VcSigilZsOptions;
+    meanvc: VcMeanVcOptions;
+    sovits: VcSovitsOptions;
+    sidecar_v2: VcSidecarV2Options;
+}
+
+/** `voice_changer_create_family_slot { request }` -> `VcImportResult` (`cached` is always false). */
+export interface VcFamilySlotRequest<F extends VcFamilyId = VcFamilyId> {
+    family: F;
+    name?: string | null;
+    /** The library voice a zero-shot voice starts with (stored in its `slot.json`). */
+    reference_voice_id?: string | null;
+    /** The file (or folder) to import, for `import` families. */
+    source?: string | null;
+    options?: VcFamilyOptions[F] | null;
+    activate?: boolean;
+}
+
 /** `voice_changer_get_capabilities`: the values this build runs. The UI offers only these. */
 export interface VcCapabilities {
     pitch_extractors: PitchExtractorId[];
@@ -125,6 +296,8 @@ export interface VcCapabilities {
     autotune: boolean;
     live_record: boolean;
     max_hot_slots: number;
+    /** P5 voice families: every family, with whether this build runs it. */
+    families: VcFamilyCapability[];
 }
 
 /** What every build runs (used before the reply arrives, or without a desktop backend). */
@@ -140,6 +313,7 @@ export const BASELINE_CAPABILITIES: VcCapabilities = {
     autotune: false,
     live_record: false,
     max_hot_slots: 1,
+    families: [],
 };
 
 function uniq<T>(values: T[]): T[] {
@@ -169,6 +343,7 @@ export function normalizeCapabilities(raw: unknown): VcCapabilities {
             typeof r.max_hot_slots === "number" && Number.isFinite(r.max_hot_slots) && r.max_hot_slots >= 1
                 ? Math.floor(r.max_hot_slots)
                 : 1,
+        families: normalizeFamilyCapabilities(r.families),
     };
 }
 
@@ -223,6 +398,15 @@ export interface VcSlotInfo {
     created_unix_ms: number | null;
     /** Why the slot cannot run in this build, if it cannot. */
     problem: string | null;
+    // Additive (P5-S0): optional on the wire.
+    /** Family of a P5 family voice (`null` / absent for RVC voices). */
+    family?: VcFamilyId | null;
+    /** The family is labelled experimental. */
+    experimental?: boolean;
+    /** The family's options (`manifest.family`). */
+    family_options?: Record<string, unknown> | null;
+    /** The voice's reference voice (its `slot.json`), when it has one. */
+    reference_voice_id?: string | null;
 }
 
 /** `voice_changer_import { request }`. */

@@ -160,6 +160,11 @@ impl RmvpePitchExtractor {
 
     /// Build the extractor around a session of `path` (shared by the loaders).
     fn from_session(session: Session, path: &str) -> Result<Self, String> {
+        // w-okada's fused `rmvpe2_silence.onnx`, a content encoder or a voice set as the RMVPE model
+        // is named for what it is (P5-D's graph identification; load time only).
+        if let Some(why) = super::rvc::foreign_graph_problem(&session, std::path::Path::new(path), "an RMVPE pitch model", &[super::rvc::GraphKind::PitchModel]) {
+            return Err(format!("RMVPE: {why}"));
+        }
         let inputs = PitchInputs::inspect(&session, "RMVPE", path, WAVEFORM_EXPORT_THRESHOLD)?;
         let mel = match inputs.main {
             MainInput::Waveform { .. } => None,

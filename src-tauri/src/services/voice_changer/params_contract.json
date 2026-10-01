@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Frozen P0 IPC contract between the Rust voice-changer plugin (P0-A) and the TS VoiceChangerService (P0-B), written by P0-S0; extended for the Sigil Voice Engine by P3-S0 ('p3_new' entries and the *_p3_* sections).",
+    "Frozen P0 IPC contract between the Rust voice-changer plugin (P0-A) and the TS VoiceChangerService (P0-B), written by P0-S0; extended for the Sigil Voice Engine by P3-S0 ('p3_new' entries and the *_p3_* sections) and for the voice families by P5-S0 (the *_p5_* sections and 'families').",
     "Rust reads it in its tests (include_str!) and src/core/services/voice_changer/__tests__/params.test.ts reads it, so the normalize lists on both sides match (no silent option remapping).",
     "'existing' = what Rust accepts today (set_voice_changer_params). 'p0_new' = fields P0-A adds to VoiceChangerParams / VoiceChangerMetrics and P0-B sends / shows; until P0-A lands, Rust ignores unknown params fields and TS must treat the new metrics fields as optional.",
     "'baseline' = the values every build runs; the other values of an enum run once their workstream lands (voice_changer_get_capabilities lists what this build runs; until then a value runs its 'stand_in' / 'base'). The UI offers only baseline values plus what the capabilities list.",
@@ -156,6 +156,10 @@
   },
   "params_p3_hot_fields": ["rms_mix", "formant_semitones", "noise_scale", "silence_db"],
   "slot_json_p3_fields": ["rms_mix", "formant_semitones", "f0_range"],
+  "params_p5_new_fields": {
+    "reference_voice_id": "string, voice-library id of a zero-shot voice's reference ('' = none; an invalid id is stored as ''). Per voice (slot.json); switch: a change loads the voice with that reference in the background"
+  },
+  "slot_json_p5_fields": ["reference_voice_id"],
   "metrics_existing_fields": {
     "buffer_ms": "number, output queue (deque + ring) in ms",
     "process_ms": "number, EMA of per-block processing time",
@@ -178,7 +182,16 @@
   },
   "capabilities": {
     "$comment": "voice_changer_get_capabilities (P3-S0). Every list holds contract values (normalized); the baseline values are always present.",
-    "fields": ["pitch_extractors", "rvc_execution_providers", "rvc_presets", "precisions", "denoisers", "levers", "slot_formats", "importer", "autotune", "live_record", "max_hot_slots"]
+    "fields": ["pitch_extractors", "rvc_execution_providers", "rvc_presets", "precisions", "denoisers", "levers", "slot_formats", "importer", "autotune", "live_record", "max_hot_slots", "families"]
+  },
+  "families": {
+    "$comment": "P5 voice families (P5-S0; vc::families, TS ipc.ts VC_FAMILIES). capabilities.families lists every family: its FamilyInfo fields (flattened) plus available. slot_formats gains the formats of the families this build runs.",
+    "ids": ["ddsp_svc", "sigil_zs", "meanvc", "sovits", "sidecar_v2"],
+    "formats": {"ddsp_svc": "ddsp-svc-6.3", "sigil_zs": "sigil-zs-1", "meanvc": "meanvc-2", "sovits": "sovits-4.1", "sidecar_v2": "sidecar-v2"},
+    "info_fields": ["family", "format", "experimental", "zero_shot", "singing", "execution_providers", "needs_pitch", "needs_content_encoder", "creation", "import_extensions", "controls", "requires", "available"],
+    "creation": ["reference", "import", "sidecar"],
+    "controls": ["pitch", "formant", "rms_mix", "index", "protect", "speaker", "noise_scale", "silence_db"],
+    "slot_info_p5_fields": ["family", "experimental", "family_options", "reference_voice_id"]
   },
   "commands_p3": {
     "$comment": "P3 voice-changer IPC (P3-S0; command names are also in plugin-commands/voice-changer.txt and ipc.ts VC_COMMANDS). Payloads snake_case, arguments camelCase.",
@@ -204,6 +217,11 @@
     "voice_changer:slots_changed": "no payload (P3-B)",
     "voice_changer:autotune_progress": "AutotuneProgress (P3-F)",
     "voice_changer:trt_progress": "TrtProgress (P3-C2)"
+  },
+  "commands_p5": {
+    "$comment": "P5 voice-changer IPC (P5-S0, scaffold; also in plugin-commands/voice-changer.txt and ipc.ts VC_COMMANDS). Payloads snake_case, arguments camelCase. Progress uses voice_changer:import_progress and cancel voice_changer_cancel_import { jobId }.",
+    "voice_changer_create_family_slot": "{ request: FamilySlotRequest { family, name?, reference_voice_id?, source?, options?, activate? } } -> VcImportResult (cached always false)",
+    "voice_changer_set_family_options": "{ id, options } -> SlotInfo (options normalized by the slot's family, stored as manifest.family)"
   },
   "commands": {
     "$comment": "IPC semantics added by P0-A (recorded at P0 INTEGRATE). New voice_changer:error codes: device, monitor_unavailable, sidecar_connect, onnx_load, worker_error (engine stopped, except monitor_unavailable, which only loses the monitor). onnx_infer, sidecar_length, sidecar_exchange and rvc_convert now mean that block was muted, never dry input.",

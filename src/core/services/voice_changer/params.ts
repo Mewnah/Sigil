@@ -108,6 +108,9 @@ export interface VoiceChangerParamsRust {
     denoiser?: string | null;
     hot_slots?: number | null;
     vram_budget_mb?: number | null;
+    // ---- P5 (params_contract.json `params_p5_new_fields`; optional on `set`, absent = keep) ----
+    /** Voice-library id of a zero-shot voice's reference (`""` = none). Per voice; switch. */
+    reference_voice_id?: string | null;
 }
 
 /** State key of every engine lever (Rust snake_case param -> TS camelCase field). */
@@ -181,6 +184,7 @@ export const RUST_PARAM_KEYS: readonly RustParamKey[] = [
     "denoiser",
     "hot_slots",
     "vram_budget_mb",
+    "reference_voice_id",
 ];
 
 /** A finite number, else `fallback` (JSON has no NaN/Infinity: they would fail Rust's deserialize). */
@@ -262,6 +266,7 @@ export function toRustParams(vc: VoiceChangerState): VoiceChangerParamsRust {
         denoiser: str(vc.denoiser),
         hot_slots: uint(vc.hotSlots, R.hot_slots.default),
         vram_budget_mb: uint(vc.vramBudgetMb, R.vram_budget_mb.default),
+        reference_voice_id: str(vc.referenceVoiceId),
     };
 }
 
@@ -368,6 +373,10 @@ const FROM_RUST: { [K in RustParamKey]: (p: Partial<VoiceChangerParamsRust>, pre
     }),
     // P3 fields: absent (older backend) keeps the current value, like the P0 ones.
     slot_id: (p, prev) => ({ slotId: typeof p.slot_id === "string" ? p.slot_id : prev.slotId }),
+    // P5 field: absent (older backend) keeps the current value.
+    reference_voice_id: (p, prev) => ({
+        referenceVoiceId: typeof p.reference_voice_id === "string" ? p.reference_voice_id : prev.referenceVoiceId,
+    }),
     block_ms: (p, prev) => ({ blockMs: clampFinite(p.block_ms, R.block_ms.min, R.block_ms.max, prev.blockMs) }),
     lookahead_ms: (p, prev) => ({
         lookaheadMs: clampFinite(p.lookahead_ms, R.lookahead_ms.min, R.lookahead_ms.max, prev.lookaheadMs),

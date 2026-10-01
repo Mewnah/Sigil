@@ -1,7 +1,7 @@
 // Voice-changer inspector (P3-S0 split of inspector_voice_changer.tsx; owned by P3-G).
 //
-// Layout: index (status, TensorRT builds, metrics, mode) -> RvcSection (voice library, preset, voice settings,
-// timing, engine, base models, benchmark / tuning) / SidecarSection / OnnxSection (per mode) -> DevicesSection ->
+// Layout: index (status, TensorRT builds, metrics, mode) -> RvcSection (voice library, the selected voice's family
+// section (P5-G), preset, voice settings, timing, engine, base models, benchmark / tuning) / SidecarSection / OnnxSection (per mode) -> DevicesSection ->
 // SoundSection -> LevelsSection (with the input denoiser) -> TimingSection, plus the RVC ConsentDialog. Shared
 // building blocks are in common.tsx. What this build runs comes from `voice_changer_get_capabilities`
 // (src/core/services/voice_changer/ipc.ts), refreshed when the panel opens and when voice-changer models install.

@@ -13,6 +13,9 @@
 //!   (`engine::presets::auto_lever`) → `EffectiveLevers`. A lever that is off, unavailable or not
 //!   applicable to the EP rung falls back to the legacy path; a requested (`on`) one that cannot
 //!   run gets a note.
+//! - P5-S0: `families` lists every P5 voice family (`vc::families`) with its facts and whether this
+//!   build runs it (`FamilyKind::available`); `slot_formats` gains the formats of the families that
+//!   run.
 
 use serde::Serialize;
 use tauri::command;
@@ -26,6 +29,7 @@ use crate::services::neural_audio::gpu;
 use crate::services::neural_audio::vc::engine::{
     self, presets, Accelerator, DenoiserKind, EffectiveLevers, Lever, LeverMode, LeverRequest, LeverSet, PrecisionMode,
 };
+use crate::services::neural_audio::vc::families::{FamilyInfo, FamilyKind};
 use crate::services::neural_audio::vc::import;
 use crate::services::neural_audio::vc::manifest::{LEGACY_RVC_FORMAT, SIGIL_RVC_FORMAT};
 use crate::services::neural_audio::RvcPresetProfile;
@@ -49,6 +53,25 @@ pub struct VcCapabilities {
     /// In-app live-record benchmark (P3-F).
     pub live_record: bool,
     pub max_hot_slots: u32,
+    /// P5 voice families (P5-S0): every family, with whether this build runs it.
+    pub families: Vec<FamilyCapability>,
+}
+
+/// One P5 voice family as the UI sees it (P5-S0, frozen; TS `VcFamilyCapability`): its static facts
+/// (`FamilyInfo`, flattened) and whether this build runs it.
+#[derive(Clone, Debug, Serialize)]
+pub struct FamilyCapability {
+    #[serde(flatten)]
+    pub info: FamilyInfo,
+    pub available: bool,
+}
+
+/// Every P5 family with its availability.
+pub(crate) fn family_capabilities() -> Vec<FamilyCapability> {
+    FamilyKind::ALL
+        .into_iter()
+        .map(|k| FamilyCapability { info: k.info(), available: k.available() })
+        .collect()
 }
 
 /// Whether this build can switch `lever` on at all (EP applicability is [`lever_applies`]).
@@ -110,15 +133,20 @@ pub(crate) fn capabilities() -> VcCapabilities {
             .map(DenoiserKind::as_str)
             .collect(),
         levers: Lever::ALL.into_iter().filter(|&l| lever_available(l)).map(Lever::as_str).collect(),
-        slot_formats: if engine_ok {
-            vec![LEGACY_RVC_FORMAT, SIGIL_RVC_FORMAT]
-        } else {
-            vec![LEGACY_RVC_FORMAT]
+        slot_formats: {
+            let mut formats = if engine_ok {
+                vec![LEGACY_RVC_FORMAT, SIGIL_RVC_FORMAT]
+            } else {
+                vec![LEGACY_RVC_FORMAT]
+            };
+            formats.extend(FamilyKind::ALL.into_iter().filter(|k| k.available()).map(FamilyKind::format));
+            formats
         },
         importer: import::slot::available() && import::worker::available(),
         autotune: crate::services::bench::autotune::available(),
         live_record: crate::services::bench::live_record::available(),
         max_hot_slots: if engine_ok { HOT_SLOTS_RANGE.1 } else { HOT_SLOTS_RANGE.0 },
+        families: family_capabilities(),
     }
 }
 
@@ -212,8 +240,19 @@ mod tests {
         assert!(c.slot_formats.contains(&LEGACY_RVC_FORMAT));
         assert!(c.max_hot_slots >= 1);
         let v = serde_json::to_value(&c).unwrap();
-        for key in ["pitch_extractors", "rvc_execution_providers", "rvc_presets", "precisions", "denoisers", "levers", "slot_formats", "importer", "autotune", "live_record", "max_hot_slots"] {
+        for key in ["pitch_extractors", "rvc_execution_providers", "rvc_presets", "precisions", "denoisers", "levers", "slot_formats", "importer", "autotune", "live_record", "max_hot_slots", "families"] {
             assert!(v.get(key).is_some(), "{key}");
+        }
+        // Every family is listed once, flattened, with its availability; only running ones add a
+        // slot format.
+        let fams = v["families"].as_array().unwrap();
+        assert_eq!(fams.len(), FamilyKind::ALL.len());
+        for (f, k) in fams.iter().zip(FamilyKind::ALL) {
+            assert_eq!(f["family"], k.as_str());
+            assert_eq!(f["format"], k.format());
+            assert_eq!(f["available"], k.available());
+            assert!(f["execution_providers"].is_array() && f["controls"].is_array());
+            assert_eq!(c.slot_formats.contains(&k.format()), k.available());
         }
     }
 

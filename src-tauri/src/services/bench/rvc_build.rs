@@ -33,7 +33,8 @@ use crate::services::neural_audio::vc::engine::{SigilRvcEngine, SigilRvcRequest,
 use crate::services::neural_audio::gpu::GpuLevers;
 use crate::services::neural_audio::vc::f0_fusion::{create_pitch_extractor_with, PitchBankRequest};
 use crate::services::neural_audio::vc::manifest::{load_slot_manifest, SlotFormat};
-use crate::services::neural_audio::vc::traits::{ConversionCtx, PitchExtractor, VoiceControls};
+use crate::services::neural_audio::vc::stream::HarnessContext;
+use crate::services::neural_audio::vc::traits::{ConversionCtx, PitchExtractor, SingingFlags, VoiceControls};
 use crate::services::neural_audio::{RvcModel, RvcPresetProfile, VoiceConversionModel};
 use crate::services::rt_thread::WorkerPriority;
 use crate::services::voice_changer::capabilities::resolve_levers;
@@ -78,6 +79,8 @@ pub(crate) struct RvcPlan {
     pub session: VcSessionOptions,
     pub app_data: Option<PathBuf>,
     pub noise_seed: u64,
+    /// The stream's latency budget (ms; a family's default stall timeout, P5-S0).
+    pub latency_budget_ms: f64,
 }
 
 /// Resolve `spec` for a stream (see the module docs).
@@ -141,6 +144,7 @@ pub(crate) fn plan(spec: &RvcSpec, stream: &StreamSpec, priority: WorkerPriority
         session,
         app_data: diagnostics::app_data_dir(),
         noise_seed,
+        latency_budget_ms: stream.latency_budget_ms,
     })
 }
 
@@ -183,6 +187,23 @@ fn base_info(p: &RvcPlan, format: &str, output_rate: u32, min_context: usize) ->
     info
 }
 
+/// Re-read the EP a family voice runs on after its stream report replaced its outcomes (P5-I0;
+/// families build their GPU sessions when the harness configures their stream): a component that
+/// fell back wins, else one that was asked for the plan's rung, else any.
+pub(crate) fn refresh_active_ep(info: &mut EngineInfo, rung: &str) {
+    let o = &info.ep_outcomes;
+    let pick = o
+        .values()
+        .find(|o| o.fell_back())
+        .or_else(|| o.values().find(|o| o.requested == rung))
+        .or_else(|| o.values().next())
+        .cloned();
+    if let Some(o) = pick {
+        info.execution_provider_active = Some(o.active);
+        info.execution_provider_reason = o.reason;
+    }
+}
+
 fn finish_info(info: &mut EngineInfo, p: &RvcPlan, outcomes: BTreeMap<String, EpOutcome>, prefer: &[&str]) {
     let (active, reason) = match active_outcome(&outcomes, prefer) {
         Some(o) => (o.active, o.reason),
@@ -196,9 +217,13 @@ fn finish_info(info: &mut EngineInfo, p: &RvcPlan, outcomes: BTreeMap<String, Ep
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let label = match (&p.format, info.format.as_deref()) {
+        (SlotFormat::Family(kind), _) => kind.as_str(),
+        (_, Some("sigil-rvc-1")) => "SVE",
+        _ => "RVC",
+    };
     info.description = format!(
-        "{} {voice} ({} preset, {}, {}{})",
-        if info.format.as_deref() == Some("sigil-rvc-1") { "SVE" } else { "RVC" },
+        "{label} {voice} ({} preset, {}, {}{})",
         p.spec.preset,
         p.pitch,
         p.requested_ep,
@@ -210,7 +235,9 @@ fn finish_info(info: &mut EngineInfo, p: &RvcPlan, outcomes: BTreeMap<String, Ep
 pub(crate) fn build(spec: &RvcSpec, stream: &StreamSpec, priority: WorkerPriority) -> Result<BuiltVoice, String> {
     let p = plan(spec, stream, priority)?;
     let mode = spec.build.trim().to_ascii_lowercase();
-    let direct = mode == "direct" || (mode == "auto" && spec.lookahead_ms > 0.0);
+    // Voice families (P5) are built by the factory only (the direct builder is RVC's).
+    let family = p.format.family().is_some();
+    let direct = !family && (mode == "direct" || (mode == "auto" && spec.lookahead_ms > 0.0));
     let (denoiser, in_engine, mut notes) = denoiser_plan(&spec.denoiser, direct);
     let mut built = if direct { build_direct(&p)? } else { build_factory(&p, in_engine)? };
     notes.append(&mut built.info.warnings);
@@ -245,8 +272,9 @@ fn denoiser_plan(requested: &str, direct: bool) -> (DenoiserKind, DenoiserKind, 
     (kind, in_engine, notes)
 }
 
-fn build_factory(p: &RvcPlan, denoiser: DenoiserKind) -> Result<BuiltVoice, String> {
-    let request = EngineRequest {
+/// The engine factory's request for a plan (what the voice changer would ask for).
+fn factory_request(p: &RvcPlan) -> EngineRequest {
+    EngineRequest {
         slot_dir: p.slot.clone(),
         app_data: p.app_data.clone(),
         templates_dir: None,
@@ -269,36 +297,52 @@ fn build_factory(p: &RvcPlan, denoiser: DenoiserKind) -> Result<BuiltVoice, Stri
         lookahead_ms: p.spec.lookahead_ms,
         f0_range: p.f0_range,
         speaker_id: 0,
-    };
+        reference_voice: p.spec.reference_voice.trim().to_string(),
+        reference_clip: explicit(&p.spec.reference_clip),
+        latency_budget_ms: p.latency_budget_ms,
+        cancel: None,
+    }
+}
+
+fn build_factory(p: &RvcPlan, denoiser: DenoiserKind) -> Result<BuiltVoice, String> {
+    let request = factory_request(p);
     let since = unix_ms();
     let created = if denoiser == DenoiserKind::Off {
         factory::create_engine(request)?
     } else {
         factory::create_engine_with(request, denoiser)?
     };
-    let format = match &created.format {
-        SlotFormat::SigilRvc => "sigil-rvc-1",
-        _ => "rvc",
-    };
+    let format = created.format.as_str().to_string();
+    let format = format.as_str();
     let mut info = base_info(p, format, created.output_sample_rate, created.model.min_context_samples());
     info.build = Some("factory".into());
     // The in-engine denoiser delays the audio too (the worker counts both).
     info.model_delay_ms = (created.model_delay_16k + created.denoiser_latency_16k) as f64 / 16.0;
     info.levers = Some(created.levers.clone());
     info.warnings.extend(created.warnings.iter().cloned());
-    let mut outcomes: BTreeMap<String, EpOutcome> = if created.format == SlotFormat::SigilRvc {
+    info.min_output_buffer_ms = created.min_output_buffer_ms.map(|(prefill, queue)| [prefill, queue]);
+    // Template and family voices report their sessions' outcomes (a family's `vc.ddsp`,
+    // `vc.zs.dit`, ...; P5-I0); the legacy generator and content encoder return none (only the
+    // pitch bank does): every session's row comes from the diagnostics log, where the pitch rows are.
+    let reports_outcomes = created.format == SlotFormat::SigilRvc || created.format.family().is_some();
+    let mut outcomes: BTreeMap<String, EpOutcome> = if reports_outcomes {
         created.outcomes.iter().cloned().collect()
     } else {
-        // The legacy generator and content encoder return no outcome (only the pitch bank does):
-        // every session's row comes from the diagnostics log, where the pitch rows are too.
         legacy_outcomes_since(since)
     };
-    if created.format == SlotFormat::SigilRvc {
+    if reports_outcomes {
         add_recorded_outcomes(&mut outcomes, since);
     }
     finish_info(&mut info, p, outcomes, &["vc.flowdec", "vc"]);
+    // The benchmark builds its own harnesses: a family voice gets its reference and singing flags
+    // through the factory's context wrapper (P5-S0).
+    let context = HarnessContext {
+        reference: created.reference.clone(),
+        singing: SingingFlags::from_range(p.f0_range),
+    };
+    let model = if created.format.family().is_some() { factory::with_context(created.model, context) } else { created.model };
     Ok(BuiltVoice {
-        model: created.model,
+        model,
         info,
         plan: p.clone(),
         stats: None,
@@ -492,6 +536,20 @@ pub(crate) fn ceiling_engine(p: &RvcPlan, cfg: &CeilingSpec) -> Result<SigilRvcE
     let extra_16k = (extra * 16.0).round() as usize;
     engine.configure_stream(block, block, extra_16k)?;
     Ok(engine)
+}
+
+/// A second instance of a family voice for the offline ceiling (P5-I0): the factory's build of the
+/// run's voice with silence skip off and no denoiser, handed its reference and singing flags on
+/// every call. Returns the model and its own delay (16 kHz samples).
+pub(crate) fn family_ceiling_model(p: &RvcPlan) -> Result<(Box<dyn VoiceConversionModel>, usize), String> {
+    let mut request = factory_request(p);
+    request.silence_skip = false;
+    let created = factory::create_engine(request)?;
+    let context = HarnessContext {
+        reference: created.reference.clone(),
+        singing: SingingFlags::from_range(p.f0_range),
+    };
+    Ok((factory::with_context(created.model, context), created.model_delay_16k))
 }
 
 /// The ceiling's levers: the run's, minus partial decode when `exact` (it trades decoder context

@@ -490,6 +490,13 @@ pub struct RvcSpec {
     /// per-component compute breakdown and `lookahead_ms`).
     #[serde(default = "default_auto")]
     pub build: String,
+    /// P5-S0: the voice-library voice a zero-shot family converts toward (read from the run's app
+    /// data, `SIGIL_APP_DATA_DIR`); empty = none. Voice families always use the factory build.
+    #[serde(default)]
+    pub reference_voice: String,
+    /// P5-S0: a reference WAV used directly (wins over `reference_voice`; no library needed).
+    #[serde(default)]
+    pub reference_clip: String,
 }
 
 fn default_auto() -> String {

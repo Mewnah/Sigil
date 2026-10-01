@@ -374,7 +374,8 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     let cap_cb = s.capture_callback_frames();
     let out_cb = s.playback_callback_frames();
     let mut input = InputSide::new(r_in, ch_in, block, s.latency_budget_ms);
-    let mut output = OutputSide::new(r_out, ch_out, s.output_prefill_ms, s.output_max_queue_ms, r_in, ch_in, cap_cb * ch_in);
+    let (prefill_ms, max_queue_ms) = p.engine.info.output_buffer_ms(s);
+    let mut output = OutputSide::new(r_out, ch_out, prefill_ms, max_queue_ms, r_in, ch_in, cap_cb * ch_in);
     let budget_frames = input.budget_frames();
 
     let mut sim = Sim {

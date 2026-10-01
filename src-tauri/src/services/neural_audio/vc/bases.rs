@@ -8,11 +8,16 @@
 //!   the engine's own rule ([`resolve_embedder`] runs `engine::content::resolve_encoder_file`: the
 //!   explicit path only for ContentVec, then the model store entry `vc/embedder-*`, then, for
 //!   ContentVec 768 / 256, the legacy `voice-changer/base/` names), so a voice that passes the
-//!   preflight is one the engine can load.
+//!   preflight is one the engine can load;
+//! - P5 family voices (`vc::families`, P5-S0): the family must run in this build and accept the
+//!   slot (`families::slot_problem`); the content encoder is resolved only for families that run it
+//!   (`FamilyInfo::needs_content_encoder`, by the template voices' rule) and the pitch models only
+//!   for families that use the pitch bank (`FamilyInfo::needs_pitch`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::families::{self, FamilyKind};
 use super::manifest::{load_manifest, load_slot_manifest, RvcManifest, RvcVersion, SlotFormat};
 
 /// Known filenames we auto-resolve when inspector paths are empty.
@@ -243,14 +248,17 @@ pub fn preflight_rvc(
     if !slot.is_dir() {
         return Err(format!("RVC model slot folder not found: {}", slot.display()));
     }
-    let template_voice = if slot.join("manifest.json").is_file() {
-        load_slot_manifest(&slot).ok().filter(|m| m.slot_format() == SlotFormat::SigilRvc)
+    let manifest = if slot.join("manifest.json").is_file() {
+        load_slot_manifest(&slot).ok()
     } else {
         None
     };
-    let hubert_path = match &template_voice {
-        Some(m) => preflight_template_voice(&slot, m, hubert)?,
-        None => {
+    let family = manifest.as_ref().and_then(|m| m.slot_format().family());
+    let template_voice = manifest.as_ref().filter(|m| m.slot_format() == SlotFormat::SigilRvc);
+    let hubert_path = match (family, template_voice, manifest.as_ref()) {
+        (Some(kind), _, Some(m)) => preflight_family_voice(&slot, kind, m, hubert)?,
+        (None, Some(m), _) => preflight_template_voice(&slot, m, hubert)?,
+        _ => {
             // Validates manifest.json (or that a generator exists to infer one from); never writes.
             let _manifest = load_or_infer_manifest(&slot)?;
             resolve_hubert(hubert, app_data, &slot).ok_or_else(|| {
@@ -261,6 +269,10 @@ pub fn preflight_rvc(
             })?
         }
     };
+    if family.is_some_and(|k| !k.info().needs_pitch) {
+        // The family brings its own F0 (or none): no pitch model to resolve.
+        return Ok((slot, hubert_path, PathBuf::new(), None));
+    }
     let pitch = pitch_extractor.trim().to_lowercase();
     let fcpe_path = if matches!(pitch.as_str(), "dio" | "rmvpe" | "crepe") {
         PathBuf::new()
@@ -283,6 +295,29 @@ pub fn preflight_rvc(
         resolve_rmvpe(rmvpe, app_data, &slot)
     };
     Ok((slot, hubert_path, fcpe_path, rmvpe_path))
+}
+
+/// First letter upper-case (preflight messages start a sentence).
+fn sentence(mut msg: String) -> String {
+    if let Some(first) = msg.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    msg
+}
+
+/// Preflight of a P5 family voice: the family runs in this build and accepts the slot; its content
+/// encoder resolves when it runs one (the template voices' rule, `contentvec` unless the manifest
+/// names another). Returns the HuBERT / ContentVec path from the settings unchanged (empty when
+/// the family runs no encoder or the shared pool resolves it).
+fn preflight_family_voice(slot: &Path, kind: FamilyKind, m: &RvcManifest, hubert: &str) -> Result<PathBuf, String> {
+    if let Some(problem) = families::slot_problem(kind, slot, m) {
+        return Err(sentence(problem));
+    }
+    if !kind.info().needs_content_encoder {
+        return Ok(PathBuf::new());
+    }
+    resolve_embedder(hubert, Some(m.embedder.as_deref().unwrap_or("contentvec")), m.emb_channels, slot).map_err(sentence)?;
+    Ok(PathBuf::from(hubert.trim()))
 }
 
 /// Preflight of an imported template voice (format `sigil-rvc-1`): the engine runs in this build,

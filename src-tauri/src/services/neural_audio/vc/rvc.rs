@@ -237,6 +237,11 @@ struct GeneratorInputs {
 
 impl GeneratorInputs {
     fn resolve(session: &Session, path: &Path) -> Result<Self, String> {
+        // A graph of another kind (a so-vits-svc export, a content encoder or pitch model from the
+        // wok000 pack, ...) is named before the positional fallback could misread it (P5-D).
+        if let Some(msg) = wrong_graph_message(path, "an RVC generator", &graph_inputs(session), &graph_outputs(session)) {
+            return Err(msg);
+        }
         let inputs = session.inputs();
         let names: Vec<String> = inputs.iter().map(|i| i.name().to_string()).collect();
         let roles: Vec<GenRole> = match names.iter().map(|n| role_for_name(n)).collect() {
@@ -319,11 +324,22 @@ struct ExportMetadata {
     emb_channels: Option<u32>,
     emb_layer: Option<u32>,
     use_final_proj: Option<bool>,
+    /// w-okada's `embedder` (P5-D): `hubert_base` / `contentvec` (ContentVec), `hubert-base-japanese`
+    /// (rinna's Japanese HuBERT), ...
+    embedder: Option<String>,
 }
 
 fn read_export_metadata(session: &Session) -> Option<ExportMetadata> {
     let raw = session.metadata().ok()?.custom("metadata")?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parse_export_metadata(&raw)
+}
+
+/// [`ExportMetadata`] from w-okada's JSON (`None` when it is not a JSON object).
+fn parse_export_metadata(raw: &str) -> Option<ExportMetadata> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    if !v.is_object() {
+        return None;
+    }
     let num = |key: &str| {
         v.get(key)
             .and_then(|x| x.as_f64())
@@ -340,13 +356,325 @@ fn read_export_metadata(session: &Session) -> Option<ExportMetadata> {
         emb_channels: num("embChannels"),
         emb_layer: num("embOutputLayer"),
         use_final_proj: flag("useFinalProj"),
+        embedder: v
+            .get("embedder")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .map(str::to_string),
     })
+}
+
+/// The manifest `embedder` name of a w-okada export's `embedder` metadata (P5-D): `Ok(None)` for
+/// the ContentVec family (picked by feature width, as before), `Ok(Some(name))` for another encoder
+/// Sigil has (`hubert-ja`, ...), and `Err(warning)` for a name Sigil does not know (VCClient's
+/// `whisper`, ...): the voice then runs on the settings' encoder and the caller shows the warning.
+fn wokada_embedder_name(raw: &str) -> Result<Option<&'static str>, String> {
+    let name = raw.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+    Ok(match name.as_str() {
+        // w-okada's `hubert_base` is RVC's hubert_base.pt, i.e. ContentVec; `contentvec` (its ONNX
+        // contentvec-f / -h) gives the same features.
+        "hubert-base" | "hubert" | "contentvec" | "contentvec-onnx" | "content-vec" | "hubert-base-l12" => None,
+        "hubert-base-japanese" | "hubert-base-jp" | "hubert-jp" | "japanese-hubert-base" | "rinna-hubert-base" => {
+            Some(EmbedderKind::HubertJa.as_str())
+        }
+        "hubert-base-korean" | "korean-hubert-base" | "hubert-ko" => Some(EmbedderKind::HubertKo.as_str()),
+        "hubert-base-chinese" | "chinese-hubert-base" | "hubert-zh" => Some(EmbedderKind::HubertZh.as_str()),
+        "spin-v2" | "spinv2" => Some(EmbedderKind::SpinV2.as_str()),
+        "spin" => Some(EmbedderKind::Spin.as_str()),
+        _ => {
+            return Err(format!(
+                "the voice's w-okada metadata says it was trained with the content encoder {:?}, which Sigil does not have; \
+                 using the HuBERT / ContentVec from the settings, so the voice may sound wrong",
+                raw.trim()
+            ))
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// P5-D: what a voice-changer file holds (specific rejections for w-okada / wok000 files)
+// ---------------------------------------------------------------------------------------------
+
+/// A graph input or output as declared: name, element type and dims (`-1` = dynamic).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GraphValue {
+    pub name: String,
+    pub dtype: Option<TensorElementType>,
+    pub dims: Option<Vec<i64>>,
+}
+
+impl GraphValue {
+    /// A declared value (tests and callers that describe graphs by hand).
+    #[cfg(test)]
+    pub(crate) fn new(name: &str, dtype: TensorElementType, dims: &[i64]) -> GraphValue {
+        GraphValue {
+            name: name.to_string(),
+            dtype: Some(dtype),
+            dims: Some(dims.to_vec()),
+        }
+    }
+
+    fn rank(&self) -> Option<usize> {
+        self.dims.as_ref().map(Vec::len)
+    }
+
+    /// The static last dimension, if declared positive.
+    pub(crate) fn last_dim(&self) -> Option<usize> {
+        self.dims
+            .as_ref()
+            .and_then(|d| d.last())
+            .and_then(|&d| usize::try_from(d).ok())
+            .filter(|&d| d > 0)
+    }
+
+    fn is_float(&self) -> bool {
+        matches!(self.dtype, Some(TensorElementType::Float32) | Some(TensorElementType::Float16))
+    }
+
+    fn lower_name(&self) -> String {
+        self.name.to_ascii_lowercase()
+    }
+}
+
+/// The declared inputs of `session`.
+pub(crate) fn graph_inputs(session: &Session) -> Vec<GraphValue> {
+    session
+        .inputs()
+        .iter()
+        .map(|o| GraphValue {
+            name: o.name().to_string(),
+            dtype: o.dtype().tensor_type(),
+            dims: o.dtype().tensor_shape().map(|s| s.to_vec()),
+        })
+        .collect()
+}
+
+/// The declared outputs of `session`.
+pub(crate) fn graph_outputs(session: &Session) -> Vec<GraphValue> {
+    session
+        .outputs()
+        .iter()
+        .map(|o| GraphValue {
+            name: o.name().to_string(),
+            dtype: o.dtype().tensor_type(),
+            dims: o.dtype().tensor_shape().map(|s| s.to_vec()),
+        })
+        .collect()
+}
+
+/// What kind of graph a voice-changer ONNX file holds, from its declared inputs and outputs (P5-D:
+/// the audit of w-okada's VCClient exports and the wok000 `weights_gpl` pack). A loader that gets
+/// the wrong kind says what the file is and where it belongs instead of a bare input mismatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GraphKind {
+    /// An RVC generator (RVC WebUI / Applio / w-okada / RVC realtime input names).
+    RvcGenerator,
+    /// A so-vits-svc 4.0 / 4.1 export (`c`, `f0`, `mel2ph`, `uv`, `noise`, `sid`; the `sovits`
+    /// family runs it).
+    Sovits4,
+    /// A so-vits-svc 3.0 export (`hidden_unit`, `lengths`, `pitch`, `sid`: hubert-soft features).
+    Sovits3,
+    /// A content encoder (HuBERT / ContentVec / w-okada's `contentvec-f`, `hubert-jp-f`).
+    ContentEncoder,
+    /// A pitch model (RMVPE, FCPE, CREPE, SwiftF0 exports).
+    PitchModel,
+    /// w-okada VCClient's fused RMVPE + ContentVec pipeline (wok000 `rmvpe2_silence.onnx`).
+    WokadaPitchPipeline,
+    /// A DDSP-SVC / Diffusion-SVC graph (encoder or reflow / diffusion step).
+    DdspSvc,
+    /// The sampler step of another diffusion / flow-matching converter (Seed-VC's or MeanVC's DiT:
+    /// `x`, `t`, `cond`, ...), one part of a zero-shot family's graph set.
+    FlowStep,
+    /// A vocoder (mel in, waveform out: NSF-HiFiGAN with F0, HiFT, Vocos).
+    Vocoder,
+    /// w-okada's LLVC streaming graph.
+    Llvc,
+    /// An MMVC v1.3 / v1.5 voice from w-okada's MMVC client (`specs`, `lengths`, `sid_src`,
+    /// `sid_tgt`, plus `f0` on v1.5: a linear spectrogram in, many-to-many speaker ids).
+    Mmvc,
+    /// None of the above.
+    Unknown,
+}
+
+/// Feature widths of the content encoders voice models are trained on (ContentVec 256 / 768,
+/// whisper-ppg 1024 / 1280, HuBERT-large 1024).
+const CONTENT_WIDTHS: [usize; 4] = [256, 768, 1024, 1280];
+
+/// Identify a graph from its declared inputs and outputs (see [`GraphKind`]).
+pub(crate) fn identify_graph(inputs: &[GraphValue], outputs: &[GraphValue]) -> GraphKind {
+    let names: Vec<String> = inputs.iter().map(GraphValue::lower_name).collect();
+    let has = |n: &str| names.iter().any(|x| x == n);
+    if has("prevpitchf") || (has("waveform") && (has("upkey") || has("silencefrontsec") || has("pitchlength"))) {
+        return GraphKind::WokadaPitchPipeline;
+    }
+    if has("enc_buf") || has("dec_buf") || has("out_buf") {
+        return GraphKind::Llvc;
+    }
+    if has("specs") && (has("sid_src") || has("sid_tgt")) {
+        return GraphKind::Mmvc;
+    }
+    if (has("mel2ph") && (has("c") || has("hidden_unit"))) || (has("c") && has("uv") && has("f0")) {
+        return GraphKind::Sovits4;
+    }
+    if has("hidden_unit") && has("pitch") && !has("pitchf") {
+        return GraphKind::Sovits3;
+    }
+    if has("volume") && (has("f0") || has("units") || has("hubert")) {
+        return GraphKind::DdspSvc;
+    }
+    if has("x") && has("t") && has("cond") {
+        // DDSP-SVC's reflow / velocity step works on a 128-band mel `[1, 1, 128, T]`; Seed-VC's and
+        // MeanVC's DiT steps take `[B, 80, L]` / `[1, 8, 80]`.
+        let x = inputs.iter().find(|i| i.lower_name() == "x");
+        let ddsp = x.and_then(|x| x.dims.as_deref()).is_some_and(|d| matches!(d, [_, _, 128, _]));
+        return if ddsp { GraphKind::DdspSvc } else { GraphKind::FlowStep };
+    }
+    let roles: Option<Vec<GenRole>> = names.iter().map(|n| role_for_name(n)).collect();
+    if let Some(roles) = roles {
+        if roles.contains(&GenRole::Phone) && roles.contains(&GenRole::PhoneLengths) {
+            return GraphKind::RvcGenerator;
+        }
+    }
+    let audio_out = |o: &GraphValue| {
+        let n = o.lower_name();
+        n.contains("audio") || n.contains("wav")
+    };
+    if has("mel") && outputs.iter().any(audio_out) {
+        return GraphKind::Vocoder;
+    }
+    // One audio input (plus optional scalar settings: a voicing threshold, SwiftF0's F0 range).
+    let audio: Vec<&GraphValue> = inputs
+        .iter()
+        .filter(|i| {
+            let n = i.lower_name();
+            !(n.contains("threshold") || n == "thred" || n == "fmin" || n == "fmax")
+        })
+        .collect();
+    if audio.len() == 1 && audio[0].is_float() {
+        let input = audio[0];
+        let pitch_name = |o: &GraphValue| {
+            let n = o.lower_name();
+            ["f0", "pitch", "salience", "probabilit", "uv"].iter().any(|k| n.contains(k))
+        };
+        let salience = |o: &GraphValue| o.last_dim() == Some(super::pitch_onnx::SALIENCE_BINS);
+        if outputs.iter().any(|o| pitch_name(o) || salience(o)) {
+            return GraphKind::PitchModel;
+        }
+        let features = |o: &GraphValue| o.rank() == Some(3) && o.last_dim().is_some_and(|c| CONTENT_WIDTHS.contains(&c));
+        // A waveform of any length in (a fixed last axis is a vector, such as a speaker embedding).
+        let waveform = matches!(input.rank(), Some(1) | Some(2)) && input.last_dim().is_none();
+        if waveform && !outputs.is_empty() && outputs.iter().all(features) {
+            return GraphKind::ContentEncoder;
+        }
+        // CREPE takes 1024-sample frames `[n, 1024]`.
+        if input.rank() == Some(2) && input.last_dim() == Some(1024) {
+            return GraphKind::PitchModel;
+        }
+        // A 128-band mel spectrogram (RVC's rmvpe.onnx `[1, 128, T]`, a mel FCPE `[1, T, 128]`).
+        let mel = |d: &[i64]| matches!(d, [_, 128, _] | [_, _, 128]);
+        if input.dims.as_deref().is_some_and(mel) {
+            return GraphKind::PitchModel;
+        }
+    }
+    GraphKind::Unknown
+}
+
+/// What a file of `kind` is and where it belongs (completes "<file> is ..."), or `None` for an RVC
+/// generator / an unknown graph.
+pub(crate) fn graph_kind_advice(kind: GraphKind) -> Option<&'static str> {
+    Some(match kind {
+        GraphKind::RvcGenerator | GraphKind::Unknown => return None,
+        GraphKind::Sovits4 => "a so-vits-svc 4.x ONNX export; add it as a so-vits-svc voice (it runs in the sovits voice family, not as an RVC generator)",
+        GraphKind::Sovits3 => "a so-vits-svc 3.0 export (hubert-soft features and coarse pitch), which Sigil does not run; export the voice with so-vits-svc 4.0 or 4.1 and add it as a so-vits-svc voice",
+        GraphKind::ContentEncoder => "a content encoder (HuBERT / ContentVec, such as w-okada's contentvec-f.onnx); set it as the HuBERT / ContentVec model, not as a voice",
+        GraphKind::PitchModel => "a pitch model (RMVPE / FCPE / CREPE); set it as the RMVPE or FCPE model, not as a voice",
+        GraphKind::WokadaPitchPipeline => "w-okada VCClient's fused RMVPE + ContentVec pipeline (wok000 rmvpe2_silence.onnx, inputs waveform / prevPitchf / upKey / threshold / pitchLength / silenceFrontSec), which only VCClient's own pipeline drives; use rmvpe_20231006.onnx or rmvpe_s.onnx from the same pack as the RMVPE model and contentvec-f.onnx as the content encoder",
+        GraphKind::DdspSvc => "a DDSP-SVC / Diffusion-SVC graph; add the DDSP-SVC checkpoint as a DDSP-SVC voice instead",
+        GraphKind::FlowStep => "the sampler step of a diffusion / flow-matching voice converter (such as Seed-VC's or MeanVC's DiT), one part of a zero-shot voice family's graphs, not a voice on its own",
+        GraphKind::Vocoder => "a vocoder (a mel spectrogram in, audio out), one part of another voice converter's graphs, not a voice",
+        GraphKind::Llvc => "w-okada VCClient's LLVC streaming graph, which Sigil does not run",
+        GraphKind::Mmvc => "an MMVC v1.3 / v1.5 voice (w-okada's MMVC client: a spectrogram in, source and target speaker ids), which Sigil does not run; an RVC or so-vits-svc voice of the same speaker works",
+    })
+}
+
+/// "`<file>` is not <expected>: it is <advice>" when the file holds a graph of another kind.
+pub(crate) fn wrong_graph_message(path: &Path, expected: &str, inputs: &[GraphValue], outputs: &[GraphValue]) -> Option<String> {
+    let advice = graph_kind_advice(identify_graph(inputs, outputs))?;
+    Some(format!("{} is not {expected}: it is {advice}", file_label(path)))
+}
+
+/// Why `session` (of `path`) cannot be `expected` (`"an RMVPE pitch model"`, ...): it holds a
+/// graph of another kind than `accepted` (an unknown graph is always left to the caller's own
+/// checks). One call at load for every loader of a voice-changer ONNX file.
+pub(crate) fn foreign_graph_problem(session: &Session, path: &Path, expected: &str, accepted: &[GraphKind]) -> Option<String> {
+    let (inputs, outputs) = (graph_inputs(session), graph_outputs(session));
+    let kind = identify_graph(&inputs, &outputs);
+    if kind == GraphKind::Unknown || accepted.contains(&kind) {
+        return None;
+    }
+    wrong_graph_message(path, expected, &inputs, &outputs)
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Why `path` cannot be an ONNX graph, when its first bytes say it is another known format (a
+/// PyTorch checkpoint, a pickle, a JSON config, a NumPy array, a GGUF model); `None` otherwise
+/// (ONNX Runtime then parses it). Unreadable files are left to the loader's own error.
+pub(crate) fn non_onnx_file_problem(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = [0u8; 16];
+    let n = std::fs::File::open(path).ok()?.read(&mut head).ok()?;
+    non_onnx_bytes_problem(&head[..n]).map(|what| format!("{} is {what}, not an ONNX graph", file_label(path)))
+}
+
+/// The format of `head` when it is a known non-ONNX one (see [`non_onnx_file_problem`]).
+fn non_onnx_bytes_problem(head: &[u8]) -> Option<&'static str> {
+    if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
+        return Some("a zip archive (a PyTorch .pt / .pth checkpoint or a zipped voice)");
+    }
+    if head.len() >= 2 && head[0] == 0x80 && (2..=5).contains(&head[1]) {
+        return Some("a Python pickle (a legacy PyTorch checkpoint)");
+    }
+    if head.starts_with(b"\x93NUMPY") {
+        return Some("a NumPy array (.npy)");
+    }
+    if head.starts_with(b"GGUF") {
+        return Some("a GGUF model");
+    }
+    let text = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    if let Some(&first) = text.iter().find(|b| !b.is_ascii_whitespace()) {
+        if first == b'{' || first == b'[' {
+            return Some("a JSON file (a model's config)");
+        }
+    }
+    None
+}
+
+/// The output of a content encoder that carries `channels`-wide features (P5-D): w-okada's ContentVec
+/// / Japanese-HuBERT exports (wok000 `contentvec-f/-h.onnx`, `hubert-jp-f/-h.onnx`) return three
+/// (`units9` `[1, T, 256]`, `unit12` `[1, T, 768]`, `unit12s`), one encoder for v1 and v2 voices.
+/// The first output whose static last dimension is `channels` wins (its `[1, C, T]` layout too, when
+/// the time axis is dynamic); otherwise the first output, as before.
+pub(crate) fn feature_output_index(outputs: &[GraphValue], channels: usize) -> usize {
+    let wide = |o: &GraphValue| match o.dims.as_deref() {
+        Some([.., c]) if *c == channels as i64 => true,
+        Some([1, c, t]) => *c == channels as i64 && *t < 0,
+        _ => false,
+    };
+    outputs.iter().position(wide).unwrap_or(0)
 }
 
 pub struct RvcModel {
     hubert: Session,
     /// The content encoder takes fp16 audio.
     hubert_half: bool,
+    /// The content encoder output carrying the voice's feature width ([`feature_output_index`]).
+    hubert_output: usize,
     generator: Session,
     gen_inputs: GeneratorInputs,
     pitch: Box<dyn PitchExtractor>,
@@ -363,8 +691,12 @@ pub struct RvcModel {
 
 /// The content encoder of a legacy slot: a file its manifest names (`hubert`, relative to the
 /// slot or absolute), else the encoder its `embedder` names when that is not ContentVec (from the
-/// model store), else the global HuBERT / ContentVec path. A named file that is missing falls back
-/// to the global path with a warning (older manifests carried the field unused).
+/// model store, else w-okada's export of it next to the voice or in `voice-changer/base/`), else
+/// the global HuBERT / ContentVec path. A named file that is missing falls back to the global path
+/// with a warning (older manifests carried the field unused). An inferred manifest (no
+/// `manifest.json`) never has a `hubert` file; its `embedder` comes only from the generator's
+/// w-okada metadata (P5-D), and when that encoder is not found an existing settings path is used
+/// with a warning, as before P5-D (the user may have set their own export of it there).
 fn slot_content_encoder(
     manifest: &RvcManifest,
     inferred: bool,
@@ -373,33 +705,61 @@ fn slot_content_encoder(
     ep_hint: &str,
     warnings: &mut Vec<String>,
 ) -> Result<PathBuf, String> {
-    if !inferred {
-        if let Some(name) = manifest.hubert.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let p = Path::new(name);
-            let p = if p.is_absolute() { p.to_path_buf() } else { slot_dir.join(p) };
-            if p.is_file() {
-                return Ok(p);
-            }
-            warnings.push(format!(
-                "manifest.json names the content encoder {name}, which is not in {}; using the HuBERT / ContentVec from the settings.",
-                slot_dir.display()
-            ));
-        } else if let Some(embedder) = manifest.embedder.as_deref().filter(|s| !s.trim().is_empty()) {
-            match EmbedderKind::from_manifest(Some(embedder), manifest.emb_channels) {
-                Ok(kind) if !matches!(kind, EmbedderKind::ContentVec768 | EmbedderKind::ContentVec256) => {
-                    let gpu = normalize_ep(ep_hint) != "cpu";
-                    return resolve_encoder_file(kind, None, Some(slot_dir), gpu, PrecisionMode::Auto).map(|r| r.path);
+    let settings_ok = !hubert_path.trim().is_empty() && Path::new(hubert_path).is_file();
+    let named = if inferred { None } else { manifest.hubert.as_deref().map(str::trim).filter(|s| !s.is_empty()) };
+    if let Some(name) = named {
+        let p = Path::new(name);
+        let p = if p.is_absolute() { p.to_path_buf() } else { slot_dir.join(p) };
+        if p.is_file() {
+            return Ok(p);
+        }
+        warnings.push(format!(
+            "manifest.json names the content encoder {name}, which is not in {}; using the HuBERT / ContentVec from the settings.",
+            slot_dir.display()
+        ));
+    } else if let Some(embedder) = manifest.embedder.as_deref().filter(|s| !s.trim().is_empty()) {
+        match EmbedderKind::from_manifest(Some(embedder), manifest.emb_channels) {
+            Ok(kind) if !matches!(kind, EmbedderKind::ContentVec768 | EmbedderKind::ContentVec256) => {
+                let gpu = normalize_ep(ep_hint) != "cpu";
+                let found = resolve_encoder_file(kind, None, Some(slot_dir), gpu, PrecisionMode::Auto)
+                    .map(|r| r.path)
+                    .or_else(|e| wokada_encoder_file(kind, slot_dir, gpu).ok_or(e));
+                match found {
+                    Ok(p) => return Ok(p),
+                    Err(e) if inferred && settings_ok => warnings.push(format!(
+                        "The voice's w-okada metadata says it was trained with {} ({e}); using the HuBERT / ContentVec from the settings ({hubert_path}), so the voice sounds wrong unless that is the same encoder.",
+                        kind.as_str()
+                    )),
+                    Err(e) => return Err(e),
                 }
-                Ok(_) => {}
-                // A name Sigil does not know (Applio's `custom`): the settings' encoder, as before.
-                Err(e) => warnings.push(format!("{e}; using the HuBERT / ContentVec from the settings.")),
             }
+            Ok(_) => {}
+            // A name Sigil does not know (Applio's `custom`): the settings' encoder, as before.
+            Err(e) => warnings.push(format!("{e}; using the HuBERT / ContentVec from the settings.")),
         }
     }
-    if hubert_path.trim().is_empty() || !Path::new(hubert_path).is_file() {
+    if !settings_ok {
         return Err(format!("HuBERT / ContentVec missing: {}", hubert_path));
     }
     Ok(PathBuf::from(hubert_path))
+}
+
+/// w-okada's export of a non-ContentVec encoder (the wok000 `weights_gpl` pack's
+/// `hubert-jp-f.onnx` / `hubert-jp-h.onnx`) next to the voice or in `voice-changer/base/` (the
+/// slot's `../../base`), the fp16 one first on GPUs (P5-D). Only rinna's Japanese HuBERT has one.
+fn wokada_encoder_file(kind: EmbedderKind, slot_dir: &Path, gpu: bool) -> Option<PathBuf> {
+    let names: [&str; 2] = match kind {
+        EmbedderKind::HubertJa if gpu => ["hubert-jp-h.onnx", "hubert-jp-f.onnx"],
+        EmbedderKind::HubertJa => ["hubert-jp-f.onnx", "hubert-jp-h.onnx"],
+        _ => return None,
+    };
+    let mut dirs = vec![slot_dir.to_path_buf()];
+    if let Some(root) = slot_dir.parent().and_then(Path::parent) {
+        dirs.push(root.join("base"));
+    }
+    dirs.iter()
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
 }
 
 impl RvcModel {
@@ -416,17 +776,13 @@ impl RvcModel {
         if !gen_path.is_file() {
             return Err(format!("RVC generator missing: {}", gen_path.display()));
         }
+        if let Some(problem) = non_onnx_file_problem(&gen_path) {
+            return Err(format!(
+                "RVC generator: {problem}; a bring-your-own voice needs its ONNX export (add a .pth / .zip voice with Add voice instead)"
+            ));
+        }
         let mut warnings = Vec::new();
-        let hubert_file = slot_content_encoder(&manifest, inferred, slot_dir, hubert_path, ep_hint, &mut warnings)?;
-
-        let hubert = session_builder_for_vc(ep_hint, opts)?
-            .component("vc.content")
-            .commit_from_file(&hubert_file)
-            .map_err(|e| format!("HuBERT load: {}", e))?;
-        let hubert_half = hubert
-            .inputs()
-            .first()
-            .is_some_and(|i| i.dtype().tensor_type() == Some(TensorElementType::Float16));
+        // The generator first (P5-D): its w-okada metadata can name the content encoder.
         let generator = session_builder_for_vc(ep_hint, opts)?
             .component("vc")
             .commit_from_file(&gen_path)
@@ -458,6 +814,16 @@ impl RvcModel {
                         meta_f0,
                         if has_pitch { "include" } else { "do not include" }
                     ));
+                }
+                // w-okada names the content encoder the voice was trained with (P5-D).
+                if let Some(raw) = meta.embedder.as_deref() {
+                    manifest.embedder = match wokada_embedder_name(raw) {
+                        Ok(name) => name.map(str::to_string),
+                        Err(warning) => {
+                            warnings.push(warning);
+                            None
+                        }
+                    };
                 }
             }
             if let Some(dim) = gen_inputs.phone_dim {
@@ -508,6 +874,26 @@ impl RvcModel {
             }
         }
 
+        let hubert_file = slot_content_encoder(&manifest, inferred, slot_dir, hubert_path, ep_hint, &mut warnings)?;
+        if let Some(problem) = non_onnx_file_problem(&hubert_file) {
+            return Err(format!(
+                "HuBERT / ContentVec: {problem}; set the content encoder's ONNX export (w-okada's contentvec-f.onnx works) or clear the path to use the installed one"
+            ));
+        }
+        let hubert = session_builder_for_vc(ep_hint, opts)?
+            .component("vc.content")
+            .commit_from_file(&hubert_file)
+            .map_err(|e| format!("HuBERT load: {}", e))?;
+        let hubert_half = hubert
+            .inputs()
+            .first()
+            .is_some_and(|i| i.dtype().tensor_type() == Some(TensorElementType::Float16));
+        if let Some(msg) = foreign_graph_problem(&hubert, &hubert_file, "a content encoder", &[GraphKind::ContentEncoder]) {
+            return Err(format!("HuBERT / ContentVec: {msg}"));
+        }
+        // w-okada's encoders return one output per feature width (P5-D).
+        let hubert_output = feature_output_index(&graph_outputs(&hubert), manifest.emb_channels as usize);
+
         let emb = manifest.emb_channels as usize;
         let index = match manifest.index_path(slot_dir) {
             Some(path) if path.is_file() => match FaissIndex::load(&path) {
@@ -543,6 +929,7 @@ impl RvcModel {
         let mut model = Self {
             hubert,
             hubert_half,
+            hubert_output,
             generator,
             gen_inputs,
             pitch,
@@ -614,6 +1001,8 @@ impl RvcModel {
             protect: 0.33,
             speaker_id: self.manifest.speaker_id,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         self.convert_inner(&ctx, false).map(|_| ())
     }
@@ -652,7 +1041,8 @@ impl RvcModel {
             .hubert
             .run(ort::inputs![name.as_str() => tensor])
             .map_err(|e| format!("HuBERT run: {}", e))?;
-        let (dims, data) = extract_f32(&outputs[0], "HuBERT")?;
+        let pick = if self.hubert_output < outputs.len() { self.hubert_output } else { 0 };
+        let (dims, data) = extract_f32(&outputs[pick], "HuBERT")?;
 
         // Flatten to [T*C] in time-major order. Accepted shapes: [1,T,C], [T,C], [1,C,T].
         let emb = self.manifest.emb_channels as usize;
@@ -1156,6 +1546,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         let out = model.convert(&ctx).unwrap();
         drop(model);
@@ -1211,6 +1603,560 @@ mod tests {
         let before = warnings.len();
         assert_eq!(slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap(), hubert);
         assert_eq!(warnings.len(), before + 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- P5-D: w-okada / wok000 audit ----
+
+    use TensorElementType::{Bool, Float16 as F16, Float32 as F32, Int32, Int64 as I64};
+
+    fn gv(name: &str, t: TensorElementType, dims: &[i64]) -> GraphValue {
+        GraphValue::new(name, t, dims)
+    }
+
+    /// The wok000 `weights_gpl` pack's ONNX files, as their graphs declare them (read from the
+    /// published files' tails during the P5-D audit), are identified by what they are.
+    #[test]
+    fn the_wok000_pack_is_identified() {
+        let wokada_encoder_out = [gv("units9", F16, &[1, -1, 256]), gv("unit12", F16, &[1, -1, 768]), gv("unit12s", F16, &[1, -1, 768])];
+        // content-vec/contentvec-h.onnx and hubert-jp/hubert-jp-h.onnx (-f: the same in fp32).
+        assert_eq!(identify_graph(&[gv("audio", F16, &[1, -1])], &wokada_encoder_out), GraphKind::ContentEncoder);
+        // rmvpe/rmvpe_20231006.onnx.
+        let rmvpe = [gv("waveform", F32, &[1, -1]), gv("threshold", F32, &[1])];
+        assert_eq!(identify_graph(&rmvpe, &[gv("pitchf", F32, &[-1, -1])]), GraphKind::PitchModel);
+        // rmvpe/rmvpe_s.onnx.
+        let rmvpe_s = [gv("waveform", F32, &[1, -1]), gv("threshold", F32, &[])];
+        let outs = [gv("f0", F32, &[1, -1]), gv("uv", Bool, &[1, -1]), gv("f0_s", F32, &[1, -1])];
+        assert_eq!(identify_graph(&rmvpe_s, &outs), GraphKind::PitchModel);
+        // rmvpe/rmvpe2_silence.onnx: the fused pipeline.
+        let fused = [
+            gv("waveform", F32, &[1, -1]),
+            gv("prevPitchf", F32, &[1, -1]),
+            gv("upKey", Int32, &[1]),
+            gv("threshold", F32, &[1]),
+            gv("pitchLength", I64, &[1]),
+            gv("silenceFrontSec", F32, &[]),
+        ];
+        let outs = [gv("pitch", Int32, &[-1, -1]), gv("pitchf", F32, &[-1, -1]), gv("feats", F32, &[1, -1, 768])];
+        assert_eq!(identify_graph(&fused, &outs), GraphKind::WokadaPitchPipeline);
+        let msg = wrong_graph_message(Path::new("rmvpe2_silence.onnx"), "an RVC generator", &fused, &outs).unwrap();
+        assert!(msg.contains("rmvpe_20231006.onnx") && msg.contains("VCClient"), "{msg}");
+        // The other pitch exports Sigil knows: RVC's mel RMVPE, the community FCPE, CREPE.
+        assert_eq!(identify_graph(&[gv("input", F32, &[1, 128, -1])], &[gv("output", F32, &[-1, -1, -1])]), GraphKind::PitchModel);
+        assert_eq!(identify_graph(&[gv("audio", F32, &[1, -1, 1])], &[gv("f0_hz", F32, &[-1, -1, 1])]), GraphKind::PitchModel);
+        assert_eq!(identify_graph(&[gv("frames", F32, &[-1, 1024])], &[gv("probabilities", F32, &[-1, 360])]), GraphKind::PitchModel);
+    }
+
+    /// Voices: RVC exports by every known exporter, so-vits-svc 4.x / 3.0, DDSP-SVC, LLVC.
+    #[test]
+    fn voice_graphs_are_identified() {
+        let audio = [gv("audio", F32, &[1, 1, -1])];
+        // w-okada's RVC export (fp16) and RVC WebUI's.
+        let wokada = [gv("feats", F16, &[1, -1, 768]), gv("p_len", I64, &[1]), gv("pitch", I64, &[1, -1]), gv("pitchf", F16, &[1, -1]), gv("sid", I64, &[1])];
+        assert_eq!(identify_graph(&wokada, &audio), GraphKind::RvcGenerator);
+        let nono = [gv("feats", F32, &[1, -1, 256]), gv("p_len", I64, &[1]), gv("sid", I64, &[1])];
+        assert_eq!(identify_graph(&nono, &audio), GraphKind::RvcGenerator);
+        let webui = [
+            gv("phone", F32, &[1, -1, 768]),
+            gv("phone_lengths", I64, &[1]),
+            gv("pitch", I64, &[1, -1]),
+            gv("pitchf", F32, &[1, -1]),
+            gv("ds", I64, &[1]),
+            gv("rnd", F32, &[1, 192, -1]),
+        ];
+        assert_eq!(identify_graph(&webui, &audio), GraphKind::RvcGenerator);
+        let sovits = [
+            gv("c", F32, &[1, -1, 768]),
+            gv("f0", F32, &[1, -1]),
+            gv("mel2ph", I64, &[1, -1]),
+            gv("uv", F32, &[1, -1]),
+            gv("noise", F32, &[1, 192, -1]),
+            gv("sid", I64, &[1]),
+        ];
+        assert_eq!(identify_graph(&sovits, &audio), GraphKind::Sovits4);
+        let sovits3 = [gv("hidden_unit", F32, &[1, -1, 256]), gv("lengths", I64, &[1]), gv("pitch", I64, &[1, -1]), gv("sid", I64, &[1])];
+        assert_eq!(identify_graph(&sovits3, &audio), GraphKind::Sovits3);
+        let ddsp = [gv("units", F32, &[1, -1, 768]), gv("f0", F32, &[1, -1, 1]), gv("volume", F32, &[1, -1, 1]), gv("spk_mix", F32, &[1, -1])];
+        assert_eq!(identify_graph(&ddsp, &audio), GraphKind::DdspSvc);
+        let llvc = [gv("audio", F32, &[1, -1]), gv("enc_buf", F32, &[1, 512, 12]), gv("dec_buf", F32, &[1, 512, 12]), gv("out_buf", F32, &[1, 1, 60])];
+        assert_eq!(identify_graph(&llvc, &audio), GraphKind::Llvc);
+        let vocoder = [gv("mel", F32, &[1, -1, 128]), gv("f0", F32, &[1, -1])];
+        assert_eq!(identify_graph(&vocoder, &audio), GraphKind::Vocoder);
+        // w-okada's MMVC v1.3 and v1.5 exports (v1.5 adds f0).
+        let mmvc13 = [gv("specs", F32, &[1, 257, -1]), gv("lengths", I64, &[1]), gv("sid_src", I64, &[1]), gv("sid_tgt", I64, &[1])];
+        assert_eq!(identify_graph(&mmvc13, &audio), GraphKind::Mmvc);
+        let mut mmvc15 = mmvc13.to_vec();
+        mmvc15.insert(2, gv("f0", F32, &[1, -1]));
+        assert_eq!(identify_graph(&mmvc15, &audio), GraphKind::Mmvc);
+        let msg = wrong_graph_message(Path::new("G_mmvc.onnx"), "an RVC generator", &mmvc15, &audio).unwrap();
+        assert!(msg.starts_with("G_mmvc.onnx is not an RVC generator") && msg.contains("MMVC"), "{msg}");
+        // Unknown names stay unknown (the RVC positional fallback still applies to them).
+        let positional: Vec<GraphValue> = webui.iter().enumerate().map(|(i, v)| GraphValue { name: format!("x.{i}"), ..v.clone() }).collect();
+        assert_eq!(identify_graph(&positional, &audio), GraphKind::Unknown);
+        for kind in [GraphKind::RvcGenerator, GraphKind::Unknown] {
+            assert!(graph_kind_advice(kind).is_none());
+        }
+    }
+
+    /// The other models Sigil ships, exports or benchmarks with, by their real declared I/O
+    /// (captured from the files in the dev cache with ONNX Runtime 1.28; `-1` = a named dynamic
+    /// axis): pitch models, encoders, vocoders, the zero-shot families' parts, denoisers and the
+    /// benchmark's models are each what they are, and never a voice or a content encoder by
+    /// accident (a loader refuses every identified kind it does not accept).
+    #[test]
+    fn real_model_declarations_are_identified() {
+        use TensorElementType::Float64 as F64;
+        let cases: Vec<(&str, Vec<GraphValue>, Vec<GraphValue>, GraphKind)> = vec![
+            (
+                "vc/pitch-swiftf0",
+                vec![gv("audio", F32, &[1, -1]), gv("fmin", F32, &[]), gv("fmax", F32, &[])],
+                vec![gv("pitch", F64, &[1, -1]), gv("confidence", F32, &[1, -1])],
+                GraphKind::PitchModel,
+            ),
+            ("vc/pitch-crepe-tiny", vec![gv("frames", F32, &[-1, 1024])], vec![gv("probabilities", F32, &[-1, 360])], GraphKind::PitchModel),
+            ("rmvpe.onnx", vec![gv("input", F32, &[1, 128, -1])], vec![gv("output", F32, &[-1, -1, 360])], GraphKind::PitchModel),
+            ("fcpe.onnx (community)", vec![gv("audio", F32, &[1, -1, 1])], vec![gv("f0_hz", F32, &[-1, -1, 1])], GraphKind::PitchModel),
+            ("vc/pitch-fcpe", vec![gv("audio", F32, &[1, -1])], vec![gv("f0", F32, &[1, -1])], GraphKind::PitchModel),
+            ("vc/embedder-contentvec", vec![gv("audio", F32, &[1, -1])], vec![gv("feats", F32, &[1, -1, 768])], GraphKind::ContentEncoder),
+            ("vc/embedder-contentvec-256", vec![gv("audio", F32, &[1, -1])], vec![gv("feats", F32, &[1, -1, 256])], GraphKind::ContentEncoder),
+            ("seed_vc/xlsr", vec![gv("wav16k", F32, &[1, -1])], vec![gv("feats", F32, &[1, -1, 1024])], GraphKind::ContentEncoder),
+            (
+                "vc/vocoder-pc-nsf-hifigan-44k",
+                vec![gv("mel", F32, &[1, 128, -1]), gv("f0", F32, &[1, -1]), gv("phase0", F32, &[1])],
+                vec![gv("audio", F32, &[-1, -1])],
+                GraphKind::Vocoder,
+            ),
+            (
+                "seed_vc/hift",
+                vec![gv("mel", F32, &[1, 80, -1]), gv("harm_phase", F32, &[1, 9, 1]), gv("sine_noise", F32, &[1, 9, -1])],
+                vec![gv("audio", F32, &[-1, -1]), gv("f0", F32, &[1, -1])],
+                GraphKind::Vocoder,
+            ),
+            ("meanvc/vocos", vec![gv("mel", F32, &[1, 80, -1])], vec![gv("wav", F32, &[1, -1])], GraphKind::Vocoder),
+            (
+                "ddsp_svc/encoder",
+                vec![
+                    gv("hubert", F32, &[1, -1, 768]),
+                    gv("mel2ph", I64, &[1, -1]),
+                    gv("f0", F32, &[1, -1]),
+                    gv("volume", F32, &[1, -1]),
+                    gv("randn", F32, &[1, -1]),
+                ],
+                vec![gv("x", F32, &[-1, 1, 128, -1]), gv("cond", F32, &[-1, 128, -1])],
+                GraphKind::DdspSvc,
+            ),
+            (
+                "ddsp_svc/velocity",
+                vec![gv("x", F32, &[1, 1, 128, -1]), gv("t", I64, &[1]), gv("cond", F32, &[1, 128, -1])],
+                vec![gv("o", F32, &[1, 1, 128, -1])],
+                GraphKind::DdspSvc,
+            ),
+            (
+                "seed_vc/dit_step",
+                vec![
+                    gv("x", F32, &[1, 80, -1]),
+                    gv("prompt_x", F32, &[1, 80, -1]),
+                    gv("cond", F32, &[1, -1, 384]),
+                    gv("style", F32, &[1, 192]),
+                    gv("t", F32, &[1]),
+                    gv("dt", F32, &[1]),
+                    gv("cfg_rate", F32, &[1]),
+                    gv("prompt_len", I64, &[1]),
+                ],
+                vec![gv("x_next", F32, &[1, 80, -1])],
+                GraphKind::FlowStep,
+            ),
+            (
+                "meanvc/dit",
+                vec![
+                    gv("x", F32, &[1, 8, 80]),
+                    gv("t", F32, &[1]),
+                    gv("r", F32, &[1]),
+                    gv("cond", F32, &[1, 8, 256]),
+                    gv("spks", F32, &[1, 256]),
+                    gv("k_mem", F32, &[1, 32, 256]),
+                    gv("v_mem", F32, &[1, 32, 256]),
+                    gv("offset", I64, &[1]),
+                    gv("n_valid", I64, &[1]),
+                    gv("cache", F32, &[4, 2, 2, 12, 64]),
+                ],
+                vec![gv("u", F32, &[1, 8, 80]), gv("cache_out", F32, &[4, 2, 2, 12, 64])],
+                GraphKind::FlowStep,
+            ),
+            // A speaker vector in, not audio: never a content encoder although its outputs are
+            // 256-wide.
+            ("meanvc/gtm", vec![gv("spks", F32, &[1, 256])], vec![gv("k_mem", F32, &[1, 32, 256]), gv("v_mem", F32, &[1, 32, 256])], GraphKind::Unknown),
+            ("meanvc/fbank", vec![gv("wav16k", F32, &[1, -1])], vec![gv("fbank", F32, &[1, -1, 80])], GraphKind::Unknown),
+            ("seed_vc/mel", vec![gv("wav22k", F32, &[1, -1])], vec![gv("mel", F32, &[1, 80, -1])], GraphKind::Unknown),
+            ("seed_vc/lr", vec![gv("feats", F32, &[1, -1, 1024]), gv("n_frames", I64, &[1])], vec![gv("cond", F32, &[1, -1, 384])], GraphKind::Unknown),
+            ("bench/campplus", vec![gv("x", F32, &[-1, -1, 80])], vec![gv("embedding", F32, &[-1, 192])], GraphKind::Unknown),
+            ("bench/dnsmos-p835", vec![gv("input_1", F32, &[-1, 144_160])], vec![gv("Identity:0", F32, &[-1, 3])], GraphKind::Unknown),
+            ("bench/gpu-load", vec![gv("x", F32, &[1, 32, -1, -1])], vec![gv("y", F32, &[1, 32, -1, -1])], GraphKind::Unknown),
+            (
+                "vc/denoise-dpdfnet",
+                vec![gv("spec", F32, &[1, 1, 481, 2]), gv("state_in", F32, &[56_436])],
+                vec![gv("spec_e", F32, &[1, 1, 481, 2]), gv("state_out", F32, &[56_436])],
+                GraphKind::Unknown,
+            ),
+            (
+                "vc/denoise-gtcrn",
+                vec![
+                    gv("mix", F32, &[1, 257, 1, 2]),
+                    gv("conv_cache", F32, &[2, 1, 16, 16, 33]),
+                    gv("tra_cache", F32, &[2, 3, 1, 1, 16]),
+                    gv("inter_cache", F32, &[2, 1, 33, 16]),
+                ],
+                vec![gv("enh", F32, &[1, 257, 1, 2])],
+                GraphKind::Unknown,
+            ),
+            ("vad/smart-turn", vec![gv("input_features", F32, &[-1, 80, 800])], vec![gv("logits", F32, &[-1, 1])], GraphKind::Unknown),
+        ];
+        for (file, inputs, outputs, want) in &cases {
+            assert_eq!(identify_graph(inputs, outputs), *want, "{file}");
+        }
+        // A step graph that is not DDSP-SVC's says so.
+        let (_, i, o, _) = cases.iter().find(|c| c.0 == "seed_vc/dit_step").unwrap();
+        let msg = wrong_graph_message(Path::new("dit_step.onnx"), "an RVC generator", i, o).unwrap();
+        assert!(msg.contains("flow-matching") && !msg.contains("DDSP"), "{msg}");
+    }
+
+    /// Dev rig: the real files behind [`real_model_declarations_are_identified`] (and every other
+    /// voice-changer ONNX in the dev cache) open in ONNX Runtime and identify the same way.
+    /// `SIGIL_TEST_MODELS_DIR=%LOCALAPPDATA%\sigil-dev-cache cargo test real_dev_cache_graphs -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs SIGIL_TEST_MODELS_DIR (the dev cache with vc-assets, upstream-assets and vc-families)"]
+    fn real_dev_cache_graphs_are_identified() {
+        use crate::services::neural_audio::ort_session::{build_session, ModelSource};
+        let Some(root) = std::env::var_os("SIGIL_TEST_MODELS_DIR").map(PathBuf::from) else {
+            eprintln!("SIGIL_TEST_MODELS_DIR not set; skipped");
+            return;
+        };
+        let cases: [(&str, GraphKind); 24] = [
+            ("vc-assets/vc/pitch-swiftf0/model.onnx", GraphKind::PitchModel),
+            ("vc-assets/vc/pitch-crepe-tiny/model.onnx", GraphKind::PitchModel),
+            ("vc-assets/vc/pitch-fcpe/model.onnx", GraphKind::PitchModel),
+            ("upstream-assets/rmvpe/rmvpe.onnx", GraphKind::PitchModel),
+            ("upstream-assets/fcpe/fcpe.onnx", GraphKind::PitchModel),
+            ("vc-assets/vc/embedder-contentvec/model.fp32.onnx", GraphKind::ContentEncoder),
+            ("vc-assets/vc/embedder-contentvec-256/model.fp32.onnx", GraphKind::ContentEncoder),
+            ("vc-assets/vc/embedder-hubert-ja/model.fp16.onnx", GraphKind::ContentEncoder),
+            ("vc-assets/vc/embedder-spin-v2/model.fp32.onnx", GraphKind::ContentEncoder),
+            ("vc-assets/vc/vocoder-pc-nsf-hifigan-44k/model.onnx", GraphKind::Vocoder),
+            ("vc-families/ddsp_svc/encoder.onnx", GraphKind::DdspSvc),
+            ("vc-families/ddsp_svc/ddsp.onnx", GraphKind::DdspSvc),
+            ("vc-families/ddsp_svc/velocity.onnx", GraphKind::DdspSvc),
+            ("vc-families/ddsp_svc/reflow_step.onnx", GraphKind::DdspSvc),
+            ("vc-families/ddsp_svc/vocoder.onnx", GraphKind::Vocoder),
+            ("vc-families/seed_vc/dit_step.onnx", GraphKind::FlowStep),
+            ("vc-families/seed_vc/hift.onnx", GraphKind::Vocoder),
+            ("vc-families/meanvc/dit_step.onnx", GraphKind::FlowStep),
+            ("vc-families/meanvc/gtm.onnx", GraphKind::Unknown),
+            ("vc-families/meanvc/vocos.onnx", GraphKind::Vocoder),
+            ("vc-assets/bench/campplus/model.onnx", GraphKind::Unknown),
+            ("vc-assets/vc/denoise-dpdfnet/model.onnx", GraphKind::Unknown),
+            ("vc-assets/vc/denoise-gtcrn/model.onnx", GraphKind::Unknown),
+            ("smart-turn/smart-turn-v3.2-cpu.onnx", GraphKind::Unknown),
+        ];
+        let mut checked = 0;
+        for (rel, want) in cases {
+            let path = root.join(rel);
+            if !path.is_file() {
+                eprintln!("{rel}: not in the dev cache; skipped");
+                continue;
+            }
+            let (session, _) = build_session(None, "cpu", &VcSessionOptions::default(), ModelSource::File(&path)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            let kind = identify_graph(&graph_inputs(&session), &graph_outputs(&session));
+            eprintln!("{rel}: {kind:?}");
+            assert_eq!(kind, want, "{rel}");
+            checked += 1;
+        }
+        assert!(checked > 0, "no dev-cache model found under {}", root.display());
+    }
+
+    #[test]
+    fn content_encoder_outputs_are_chosen_by_width() {
+        let outs = [gv("units9", F16, &[1, -1, 256]), gv("unit12", F16, &[1, -1, 768]), gv("unit12s", F16, &[1, -1, 768])];
+        assert_eq!(feature_output_index(&outs, 768), 1);
+        assert_eq!(feature_output_index(&outs, 256), 0);
+        assert_eq!(feature_output_index(&outs, 1024), 0, "no match: the first, as before");
+        // Channel-major with a dynamic time axis.
+        assert_eq!(feature_output_index(&[gv("a", F32, &[1, -1, 256]), gv("b", F32, &[1, 768, -1])], 768), 1);
+        assert_eq!(feature_output_index(&[gv("feats", F32, &[1, -1, -1])], 768), 0);
+    }
+
+    #[test]
+    fn non_onnx_files_are_named() {
+        assert!(non_onnx_bytes_problem(b"PK\x03\x04....").unwrap().contains("PyTorch"));
+        assert!(non_onnx_bytes_problem(b"\x80\x02}q\x00").unwrap().contains("pickle"));
+        assert!(non_onnx_bytes_problem(b"\x93NUMPY\x01\x00").unwrap().contains("NumPy"));
+        assert!(non_onnx_bytes_problem(b"GGUF\x03\x00").unwrap().contains("GGUF"));
+        assert!(non_onnx_bytes_problem(b"\xEF\xBB\xBF  {\"a\": 1}").unwrap().contains("JSON"));
+        // An ONNX ModelProto starts with its ir_version field.
+        assert_eq!(non_onnx_bytes_problem(&[0x08, 0x07, 0x12, 0x0a]), None);
+        assert_eq!(non_onnx_bytes_problem(&[]), None);
+    }
+
+    #[test]
+    fn wokada_metadata_names_the_content_encoder() {
+        let meta = parse_export_metadata(
+            r#"{"application":"VC_CLIENT","version":"2.1","modelType":"pyTorchRVCv2","samplingRate":40000,"f0":true,
+                "embChannels":768,"embedder":"hubert-base-japanese","embOutputLayer":12,"useFinalProj":false}"#,
+        )
+        .unwrap();
+        assert_eq!((meta.sample_rate, meta.emb_channels, meta.if_f0), (Some(40_000), Some(768), Some(true)));
+        assert_eq!(meta.embedder.as_deref(), Some("hubert-base-japanese"));
+        assert_eq!(wokada_embedder_name("hubert-base-japanese"), Ok(Some("hubert-ja")));
+        assert_eq!(wokada_embedder_name("hubert_base"), Ok(None), "RVC's hubert_base is ContentVec");
+        assert_eq!(wokada_embedder_name("contentvec"), Ok(None));
+        // A name Sigil does not know is a warning that names it (P5-D review).
+        let warning = wokada_embedder_name(" whisper ").unwrap_err();
+        assert!(warning.contains("\"whisper\"") && warning.contains("settings"), "{warning}");
+        assert!(parse_export_metadata("[1]").is_none());
+        assert!(parse_export_metadata("not json").is_none());
+    }
+
+    /// ModelProto `metadata_props` (field 14) appended to `bytes` (protobuf fields may come in any
+    /// order).
+    fn with_metadata(mut bytes: Vec<u8>, key: &str, value: &str) -> Vec<u8> {
+        fn varint(out: &mut Vec<u8>, mut v: u64) {
+            while v >= 0x80 {
+                out.push((v as u8) | 0x80);
+                v >>= 7;
+            }
+            out.push(v as u8);
+        }
+        let mut entry = vec![0x0A];
+        varint(&mut entry, key.len() as u64);
+        entry.extend_from_slice(key.as_bytes());
+        entry.push(0x12);
+        varint(&mut entry, value.len() as u64);
+        entry.extend_from_slice(value.as_bytes());
+        bytes.push(0x72);
+        varint(&mut bytes, entry.len() as u64);
+        bytes.extend_from_slice(&entry);
+        bytes
+    }
+
+    /// w-okada's content encoder layout (fp16 audio in; `units9` 256 / `unit12` 768 / `unit12s` out,
+    /// all fp16): one conv front end, a 768 → 256 projection.
+    fn wokada_encoder() -> Vec<u8> {
+        let emb = test_models::EMB as u64;
+        let w: Vec<f32> = (0..test_models::EMB * 400).map(|i| ((i % 7) as f32 - 3.0) * 1e-3).collect();
+        let proj: Vec<f32> = (0..test_models::EMB * 256).map(|i| ((i % 5) as f32 - 2.0) * 1e-3).collect();
+        let mut g = Graph::new();
+        g.input("audio", FLOAT16, &[Dim::Fixed(1), Dim::Named("n")])
+            .output("units9", FLOAT16, &[Dim::Fixed(1), Dim::Named("t"), Dim::Fixed(256)])
+            .output("unit12", FLOAT16, &[Dim::Fixed(1), Dim::Named("t"), Dim::Fixed(emb)])
+            .output("unit12s", FLOAT16, &[Dim::Fixed(1), Dim::Named("t"), Dim::Fixed(emb)])
+            .init_i64("axes1", &[1], &[1])
+            .init_f32("conv_w", &[emb, 1, 400], &w)
+            .init_f32("proj", &[emb, 256], &proj)
+            .init_f32("half", &[1], &[0.5])
+            .node("Cast", &["audio"], &["a32"], &[Attr::Int("to", FLOAT as i64)])
+            .node("Unsqueeze", &["a32", "axes1"], &["x3"], &[])
+            .node(
+                "Conv",
+                &["x3", "conv_w"],
+                &["c"],
+                &[Attr::Ints("strides", vec![320]), Attr::Ints("kernel_shape", vec![400]), Attr::Int("group", 1)],
+            )
+            .node("Transpose", &["c"], &["f12"], &[Attr::Ints("perm", vec![0, 2, 1])])
+            .node("MatMul", &["f12", "proj"], &["f9"], &[])
+            .node("Mul", &["f12", "half"], &["f12s"], &[])
+            .node("Cast", &["f9"], &["units9"], &[Attr::Int("to", FLOAT16 as i64)])
+            .node("Cast", &["f12"], &["unit12"], &[Attr::Int("to", FLOAT16 as i64)])
+            .node("Cast", &["f12s"], &["unit12s"], &[Attr::Int("to", FLOAT16 as i64)]);
+        g.model_bytes(13)
+    }
+
+    /// The fake generator with `emb`-wide features (w-okada names: feats / p_len / pitch / pitchf /
+    /// sid) and optional w-okada metadata.
+    fn wokada_generator(emb: u64, metadata: Option<&str>) -> Vec<u8> {
+        let mut g = Graph::new();
+        g.input("feats", FLOAT, &[Dim::Fixed(1), Dim::Named("t"), Dim::Fixed(emb)])
+            .input("p_len", INT64, &[Dim::Fixed(1)])
+            .input("pitch", INT64, &[Dim::Fixed(1), Dim::Named("t")])
+            .input("pitchf", FLOAT, &[Dim::Fixed(1), Dim::Named("t")])
+            .input("sid", INT64, &[Dim::Fixed(1)])
+            .output("audio", FLOAT, &[Dim::Fixed(1), Dim::Fixed(1), Dim::Named("s")])
+            .init_i64("axes2", &[1], &[2])
+            .init_i64("repeats", &[3], &[1, 1, test_models::HOP as i64])
+            .init_i64("flat", &[3], &[1, 1, -1])
+            .init_f32("gain", &[1], &[test_models::GAIN])
+            .node("Unsqueeze", &["pitchf", "axes2"], &["p3"], &[])
+            .node("Tile", &["p3", "repeats"], &["tiled"], &[])
+            .node("Reshape", &["tiled", "flat"], &["r"], &[])
+            .node("Mul", &["r", "gain"], &["audio"], &[]);
+        let bytes = g.model_bytes(13);
+        match metadata {
+            Some(m) => with_metadata(bytes, "metadata", m),
+            None => bytes,
+        }
+    }
+
+    fn load_slot(slot: &Path, hubert: &str) -> Result<RvcModel, String> {
+        RvcModel::load(slot, hubert, Box::new(DioPitchExtractor::new()), "cpu", &VcSessionOptions::default(), false)
+    }
+
+    fn convert_tone(model: &mut RvcModel) -> Vec<f32> {
+        let audio: Vec<f32> = (0..16_000).map(|i| 0.3 * (std::f32::consts::TAU * 150.0 * i as f32 / 16_000.0).sin()).collect();
+        let ctx = ConversionCtx {
+            mono_16k: &audio,
+            new_frames: 1_600,
+            pitch_shift_semitones: 0.0,
+            index_rate: 0.0,
+            protect: 0.33,
+            speaker_id: 0,
+            stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
+        };
+        model.convert(&ctx).unwrap()
+    }
+
+    /// Empty the fake slot of `test_models::write_slot`.
+    fn empty_slot(slot: &Path) {
+        for entry in std::fs::read_dir(slot).unwrap().flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+
+    /// w-okada's three-output fp16 ContentVec serves a v2 voice (its `unit12`) and a v1 voice (its
+    /// `units9`); before P5-D the legacy path always read output 0 (`units9`) and refused v2 voices.
+    #[test]
+    fn wokada_content_encoders_serve_v1_and_v2_voices() {
+        for (tag, emb) in [("wokada-v2", 768u64), ("wokada-v1", 256)] {
+            let (root, slot, _) = test_models::write_slot(tag);
+            empty_slot(&slot);
+            std::fs::write(slot.join("gen.onnx"), wokada_generator(emb, Some(r#"{"samplingRate": 40000}"#))).unwrap();
+            let encoder = root.join("contentvec-h.onnx");
+            std::fs::write(&encoder, wokada_encoder()).unwrap();
+            let mut model = load_slot(&slot, encoder.to_str().unwrap()).unwrap_or_else(|e| panic!("{tag}: {e}"));
+            assert_eq!(model.hubert_output, if emb == 768 { 1 } else { 0 }, "{tag}");
+            let out = convert_tone(&mut model);
+            assert_eq!(out.len(), 4_000, "{tag}");
+            let near = out.iter().filter(|x| (**x - 0.15).abs() < 0.05).count();
+            assert!(near > 2_000, "{tag}: {near}");
+            drop(model);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// A w-okada export whose metadata names the Japanese HuBERT runs on w-okada's `hubert-jp`
+    /// export next to it (or the installed `vc/embedder-hubert-ja`), not the settings' ContentVec.
+    #[test]
+    fn wokada_jp_voices_use_the_japanese_encoder() {
+        use crate::services::neural_audio::vc::assets::{model_file, EMBEDDER_HUBERT_JA};
+        let (root, slot, _) = test_models::write_slot("wokada-jp");
+        empty_slot(&slot);
+        let meta = r#"{"samplingRate": 40000, "f0": true, "embChannels": 768, "embedder": "hubert-base-japanese", "embOutputLayer": 12}"#;
+        std::fs::write(slot.join("gen.onnx"), wokada_generator(768, Some(meta))).unwrap();
+        // Without the Japanese encoder anywhere, the error names what to install.
+        let installed = [None, Some("fp32"), Some("fp16")].iter().any(|v| model_file(EMBEDDER_HUBERT_JA, *v).is_some());
+        if !installed {
+            let err = load_slot(&slot, "").err().expect("no Japanese encoder");
+            assert!(err.contains("hubert-ja"), "{err}");
+            // A settings path that exists (the user's own Japanese HuBERT export) is used, with a
+            // warning, as before P5-D (P5-D review).
+            let own = root.join("japanese-hubert.onnx");
+            std::fs::write(&own, test_models::content_encoder_bytes()).unwrap();
+            let mut model = load_slot(&slot, own.to_str().unwrap()).expect("the settings' encoder serves an inferred JP voice");
+            assert!(model.warnings.iter().any(|w| w.contains("hubert-ja") && w.contains("settings")), "{:?}", model.warnings);
+            assert_eq!(convert_tone(&mut model).len(), 4_000);
+        }
+        std::fs::write(slot.join("hubert-jp-f.onnx"), test_models::content_encoder_bytes()).unwrap();
+        let mut model = load_slot(&slot, "").expect("the slot's hubert-jp export is used, the settings' path is empty");
+        assert_eq!(convert_tone(&mut model).len(), 4_000);
+        drop(model);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A manifest.json that names the Japanese HuBERT keeps refusing to run on the settings'
+    /// encoder when it is not installed (only inferred slots fall back; P5-D review).
+    #[test]
+    fn manifest_named_encoders_do_not_fall_back() {
+        use crate::services::neural_audio::vc::assets::{model_file, EMBEDDER_HUBERT_JA};
+        let installed = [None, Some("fp32"), Some("fp16")].iter().any(|v| model_file(EMBEDDER_HUBERT_JA, *v).is_some());
+        if installed {
+            eprintln!("vc/embedder-hubert-ja is installed on this PC; the missing-encoder path is not reachable");
+            return;
+        }
+        let (root, slot, hubert) = test_models::write_slot("jp-manifest");
+        let m = RvcManifest { embedder: Some("hubert-ja".into()), emb_channels: 768, ..RvcManifest::default() };
+        let mut warnings = Vec::new();
+        let err = slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap_err();
+        assert!(err.contains("hubert-ja"), "{err}");
+        // The same embedder from w-okada metadata (an inferred slot) falls back with a warning.
+        let p = slot_content_encoder(&m, true, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap();
+        assert_eq!(p, hubert);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        // ... but never to an empty or missing settings path.
+        assert!(slot_content_encoder(&m, true, &slot, "", "cpu", &mut warnings).unwrap_err().contains("hubert-ja"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An inferred w-okada export naming a content encoder Sigil does not know runs on the settings'
+    /// encoder and says so (P5-D review: it used to load silently).
+    #[test]
+    fn unknown_wokada_embedders_are_a_warning() {
+        let (root, slot, hubert) = test_models::write_slot("wokada-whisper");
+        empty_slot(&slot);
+        let meta = r#"{"samplingRate": 40000, "f0": true, "embChannels": 768, "embedder": "whisper"}"#;
+        std::fs::write(slot.join("gen.onnx"), wokada_generator(768, Some(meta))).unwrap();
+        let model = load_slot(&slot, hubert.to_str().unwrap()).expect("the settings' encoder");
+        assert!(model.warnings.iter().any(|w| w.contains("\"whisper\"")), "{:?}", model.warnings);
+        assert_eq!(model.manifest.embedder, None);
+        drop(model);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A so-vits-svc export, a content encoder and a PyTorch file in an RVC slot are refused by what
+    /// they are, and so are a checkpoint or a pitch model set as the HuBERT / ContentVec path.
+    #[test]
+    fn foreign_files_in_an_rvc_slot_are_refused_specifically() {
+        let (root, slot, hubert) = test_models::write_slot("foreign");
+        let gen = slot.join("fake_v2_40k.onnx");
+        let sovits = {
+            let mut g = Graph::new();
+            g.input("c", FLOAT, &[Dim::Fixed(1), Dim::Named("s"), Dim::Fixed(768)])
+                .input("f0", FLOAT, &[Dim::Fixed(1), Dim::Named("t")])
+                .input("mel2ph", INT64, &[Dim::Fixed(1), Dim::Named("t")])
+                .input("uv", FLOAT, &[Dim::Fixed(1), Dim::Named("t")])
+                .input("noise", FLOAT, &[Dim::Fixed(1), Dim::Fixed(192), Dim::Named("t")])
+                .input("sid", INT64, &[Dim::Fixed(1)])
+                .output("audio", FLOAT, &[Dim::Fixed(1), Dim::Named("t")])
+                .node("Identity", &["f0"], &["audio"], &[]);
+            g.model_bytes(13)
+        };
+        std::fs::write(&gen, sovits).unwrap();
+        let err = load_slot(&slot, hubert.to_str().unwrap()).err().expect("a so-vits-svc export is not an RVC generator");
+        assert!(err.contains("so-vits-svc") && err.contains("not an RVC generator"), "{err}");
+        std::fs::write(&gen, test_models::content_encoder_bytes()).unwrap();
+        let err = load_slot(&slot, hubert.to_str().unwrap()).err().expect("a content encoder is not a voice");
+        assert!(err.contains("content encoder"), "{err}");
+        std::fs::write(&gen, b"PK\x03\x04 torch").unwrap();
+        let err = load_slot(&slot, hubert.to_str().unwrap()).err().expect("a PyTorch file is not ONNX");
+        assert!(err.contains("PyTorch") && err.contains("Add voice"), "{err}");
+        // The settings' HuBERT path holding a checkpoint or a pitch model.
+        std::fs::write(&gen, test_models::generator_bytes()).unwrap();
+        let pt = root.join("checkpoint_best_legacy_500.pt");
+        std::fs::write(&pt, b"PK\x03\x04 fairseq").unwrap();
+        let err = load_slot(&slot, pt.to_str().unwrap()).err().expect("a PyTorch content encoder");
+        assert!(err.starts_with("HuBERT / ContentVec") && err.contains("PyTorch"), "{err}");
+        let crepe = {
+            let mut g = Graph::new();
+            g.input("frames", FLOAT, &[Dim::Named("n"), Dim::Fixed(1024)])
+                .output("probabilities", FLOAT, &[Dim::Named("n"), Dim::Fixed(360)])
+                .init_i64("axes", &[1], &[1])
+                .init_i64("starts", &[1], &[0])
+                .init_i64("ends", &[1], &[360])
+                .node("Slice", &["frames", "starts", "ends", "axes"], &["probabilities"], &[]);
+            g.model_bytes(13)
+        };
+        let p = root.join("tiny.onnx");
+        std::fs::write(&p, crepe).unwrap();
+        let err = load_slot(&slot, p.to_str().unwrap()).err().expect("a pitch model is not a content encoder");
+        assert!(err.contains("pitch model"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

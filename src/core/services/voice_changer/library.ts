@@ -12,6 +12,10 @@
  *   which would race a sync in flight.
  * - Errors keep the importer's stable code (`"<code>: <message>"`, `ipc.ts` `importErrorCode`) for a
  *   translated explanation; the message itself is shown too.
+ * - P5 family voices (P5-G): `createFamilyVoice` runs `voice_changer_create_family_slot` as a job of
+ *   the same queue (Rust holds one slot operation at a time and reports it on the same progress event
+ *   with a job id, cancelled with `voice_changer_cancel_import`), so its progress never mixes with an
+ *   import's. `setFamilyOptions` stores a family voice's options (`manifest.family`).
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -27,6 +31,9 @@ import {
     type VcImportProgress,
     type VcImportRequest,
     type VcImportResult,
+    type VcFamilyId,
+    type VcFamilyOptions,
+    type VcFamilySlotRequest,
     type VcImportStage,
     type VcMergeRequest,
     type VcSlotInfo,
@@ -47,14 +54,17 @@ import {
 export interface VoiceLibraryHost {
     /** The selected voice folder (`rvc_slot_dir`). */
     selectedVoiceDir(): string;
-    /** Select a voice through the params sync (hot switch while RVC runs). */
-    selectVoice(voice: { id: string; path: string }): Promise<boolean>;
+    /**
+     * Select a voice through the params sync (hot switch while RVC runs). `reference_voice_id`: the voice's own
+     * zero-shot reference as listed (`null` = none), so it never inherits the previous voice's.
+     */
+    selectVoice(voice: { id: string; path: string; reference_voice_id?: string | null }): Promise<boolean>;
     /** Clear the voice selection (after its folder was deleted). */
     clearVoice(): Promise<boolean>;
     isRunning(): boolean;
 }
 
-export type ImportJobKind = "file" | "default_voice";
+export type ImportJobKind = "file" | "default_voice" | "family";
 
 /** One import in the library's queue (queued, running or finished). */
 export interface VcImportJob {
@@ -79,9 +89,14 @@ export interface VcImportJob {
     warnings: string[];
     /** A cancel was asked for (sent once the Rust job id is known). */
     cancelRequested: boolean;
+    /** `family` jobs: the family and the request sent (`activate` is always false). */
+    family: VcFamilyId | null;
+    request: VcFamilySlotRequest | null;
+    /** Select the new voice when the job is done (else only when no voice is selected yet). */
+    selectWhenDone: boolean;
 }
 
-export type SlotOperation = "rename" | "duplicate" | "delete" | "merge";
+export type SlotOperation = "rename" | "duplicate" | "delete" | "merge" | "options";
 
 export interface VoiceLibraryState {
     /** The voices (Rust order: by name); `null` until listed once. */
@@ -93,6 +108,12 @@ export interface VoiceLibraryState {
     jobs: VcImportJob[];
     /** A rename / duplicate / delete / merge in flight, by slot id. */
     busy: Record<string, SlotOperation>;
+    /**
+     * Family voices whose options were saved while the engine ran, by slot id. A loaded voice keeps its old
+     * options (also in the hot-voice cache, which is not keyed by them) until the engine restarts, so the
+     * inspector keeps offering the restart for them; cleared when the engine stops.
+     */
+    optionsReloadPending: Record<string, true>;
 }
 
 function errorText(e: unknown): string {
@@ -118,6 +139,7 @@ export class VoiceLibrary {
         slotStore: true,
         jobs: [],
         busy: {},
+        optionsReloadPending: {},
     });
 
     private unlisteners: UnlistenFn[] = [];
@@ -208,6 +230,19 @@ export class VoiceLibrary {
         return plan;
     }
 
+    /**
+     * Queue a new P5 family voice (`voice_changer_create_family_slot`). `select`: use it once it is
+     * made (through the host's params sync; Rust's own `activate` is never sent). Returns the queued job.
+     */
+    createFamilyVoice(request: VcFamilySlotRequest, opts: { select?: boolean } = {}): VcImportJob {
+        const job = this.newJob("family", request.source?.trim() ?? "", null);
+        job.family = request.family;
+        job.request = { ...request, activate: false };
+        job.fileName = request.name?.trim() || (request.source?.trim() ? fileNameOf(request.source) : "");
+        job.selectWhenDone = opts.select === true;
+        return this.enqueue(job);
+    }
+
     /** Install (one download through the model store) and import the MIT default voice. */
     importDefaultVoice(): VcImportJob {
         const pending = this.state.jobs.find((j) => j.kind === "default_voice" && !isFinished(j.stage));
@@ -263,6 +298,9 @@ export class VoiceLibrary {
             cached: false,
             warnings: [],
             cancelRequested: false,
+            family: null,
+            request: null,
+            selectWhenDone: false,
         };
     }
 
@@ -313,11 +351,16 @@ export class VoiceLibrary {
     private async runJob(job: VcImportJob) {
         job.stage = "reading";
         job.message = "";
-        const autoSelect = !this.hasSelectedVoice();
+        const autoSelect = job.selectWhenDone || !this.hasSelectedVoice();
         try {
             let raw: unknown;
             if (job.kind === "default_voice") {
                 raw = await invoke<unknown>(VC_COMMANDS.importDefaultVoice);
+            } else if (job.kind === "family") {
+                if (!job.request) throw new Error("job: the voice request is missing");
+                // A plain copy: the queued job (and its nested options) live in the valtio state as proxies.
+                const request = JSON.parse(JSON.stringify(job.request)) as VcFamilySlotRequest;
+                raw = await invoke<unknown>(VC_COMMANDS.createFamilySlot, { request: { ...request, activate: false } });
             } else {
                 const request: VcImportRequest = { source: job.source, activate: false };
                 if (job.index) request.index = job.index;
@@ -337,7 +380,8 @@ export class VoiceLibrary {
             // Nothing selected yet (first voice, or the default voice on first run): use it. The
             // import itself succeeded either way; a failed selection was shown to the user already.
             if (autoSelect && !result.slot.problem) {
-                await this.host.selectVoice({ id: result.slot.id, path: result.slot.path }).catch((e: unknown) => {
+                const slot = result.slot;
+                await this.host.selectVoice({ id: slot.id, path: slot.path, reference_voice_id: slot.reference_voice_id ?? null }).catch((e: unknown) => {
                     devLog("[VoiceChanger] Could not select the imported voice:", e);
                     return false;
                 });
@@ -425,6 +469,43 @@ export class VoiceLibrary {
             if (wasSelected) await this.host.clearVoice();
             await this.refresh();
         });
+    }
+
+    /**
+     * Store a family voice's options (`manifest.family`; Rust normalizes them with the voice's family
+     * and refuses invalid ones). A loaded voice keeps its old options until the engine restarts (it may
+     * sit in the hot-voice cache), so a save while the engine runs marks the voice in
+     * `optionsReloadPending`. Returns the updated row (also patched into the list right away).
+     */
+    async setFamilyOptions<F extends VcFamilyId>(id: string, options: VcFamilyOptions[F]): Promise<VcSlotInfo | null> {
+        return this.withBusy(id, "options", async () => {
+            const info = normalizeSlotInfo(await invoke<unknown>(VC_COMMANDS.setFamilyOptions, { id, options }));
+            if (info && this.state.slots) {
+                const i = this.state.slots.findIndex((s) => s.id === info.id);
+                if (i >= 0) this.state.slots[i] = info;
+            }
+            if (this.host.isRunning()) this.state.optionsReloadPending[id] = true;
+            return info;
+        });
+    }
+
+    /** The engine stopped: every voice loads with its saved options again. */
+    onEngineStopped() {
+        if (Object.keys(this.state.optionsReloadPending).length > 0) this.state.optionsReloadPending = {};
+    }
+
+    /**
+     * The selected voice's reference changed (Rust saved it to the voice's `slot.json` without a
+     * `slots_changed` event): show it in the voice's row too, which is what the row shows once another
+     * voice is selected. Only family rows carry a reference.
+     */
+    noteReference(dir: string, referenceVoiceId: string) {
+        const slots = this.state.slots;
+        if (!slots) return;
+        const i = slots.findIndex((s) => sameSlotPath(s.path, dir));
+        if (i < 0 || !slots[i].family) return;
+        const next = referenceVoiceId.trim() || null;
+        if (slots[i].reference_voice_id !== next) slots[i].reference_voice_id = next;
     }
 
     /** Weighted merge of two voices of one template into a new voice. */

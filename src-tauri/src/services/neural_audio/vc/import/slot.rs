@@ -22,6 +22,12 @@
 //! [`validate_slot_id`], [`slot_dir`], [`list_slots`], [`slot_info`], [`rename_slot`],
 //! [`delete_slot`], [`duplicate_slot`], [`find_cached`], [`MergeSpec`], [`merge_slots`],
 //! [`write_manifest`].
+//!
+//! # Added by P5-S0
+//! P5 family slots (`vc::families`) are listed with their family, options and reference voice
+//! (`SlotInfo::{family, experimental, family_options, reference_voice_id}`); their `problem` is the
+//! family's (`families::slot_problem`). Rename, duplicate and delete work on them like on any
+//! voice; merge stays RVC-template-only.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::services::neural_audio::vc::bases::{find_generator_onnx, find_index_file};
+use crate::services::neural_audio::vc::families;
 use crate::services::neural_audio::vc::manifest::{
     load_slot_manifest, RvcManifest, RvcVersion, SlotFormat, LEGACY_RVC_FORMAT, SIGIL_RVC_FORMAT,
 };
@@ -84,6 +91,30 @@ pub struct SlotInfo {
     pub created_unix_ms: Option<u64>,
     /// Why the slot cannot run in this build (unknown format, missing template), if it cannot.
     pub problem: Option<String>,
+    // ---- P5 (P5-S0; additive) ----
+    /// Family id of a P5 family slot (`ddsp_svc`, `sigil_zs`, `meanvc`, `sovits`, `sidecar_v2`);
+    /// `None` for RVC voices.
+    pub family: Option<String>,
+    /// The family is labelled experimental (`FamilyInfo::experimental`).
+    pub experimental: bool,
+    /// The family's options (`manifest.family`).
+    pub family_options: Option<serde_json::Value>,
+    /// The voice's reference voice (`reference_voice_id` in its `slot.json`), when it has one.
+    pub reference_voice_id: Option<String>,
+}
+
+/// Per-voice settings file of the voice changer (`voice_changer::persist::SLOT_SETTINGS_FILE`).
+const SLOT_SETTINGS_FILE: &str = "slot.json";
+
+/// The `reference_voice_id` stored in a voice's `slot.json` (non-empty), if any.
+fn stored_reference_voice(dir: &Path) -> Option<String> {
+    let path = dir.join(SLOT_SETTINGS_FILE);
+    let meta = std::fs::metadata(&path).ok()?;
+    if meta.len() > 1 << 20 {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    v.get("reference_voice_id")?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
 fn job(msg: impl Into<String>) -> String {
@@ -379,8 +410,18 @@ fn info_for(models_dir: &Path, id: &str, templates: Option<&Path>, ids: &mut Tem
             let g = m.generator.trim();
             (!safe_file_name(g) || !dir.join(g).is_file()).then(|| format!("the generator {g} is missing"))
         }
+        SlotFormat::Family(kind) => {
+            // RVC's version and f0 flag do not describe a family voice.
+            info.version = None;
+            info.f0 = None;
+            info.family = Some(kind.as_str().to_string());
+            info.experimental = kind.info().experimental;
+            info.family_options = Some(families::options_of(&m));
+            families::slot_problem(kind, &dir, &m)
+        }
         SlotFormat::Unknown(f) => Some(format!("unsupported voice format {f:?}")),
     };
+    info.reference_voice_id = stored_reference_voice(&dir);
     info
 }
 
@@ -853,6 +894,7 @@ pub fn write_manifest(slot_dir: &Path, record: &ImportRecord, name: &str) -> Res
         source_sha256: Some(record.source.sha256.clone()).filter(|s| !s.is_empty()),
         import_record: Some(IMPORT_RECORD.into()),
         created_unix_ms: Some(record.created_unix_ms),
+        family: None,
     };
     let json = serde_json::to_vec_pretty(&m).map_err(|e| ImportError::new(ErrorCode::Io, e.to_string()))?;
     write_atomic(&slot_dir.join(MANIFEST_FILE), &json)?;

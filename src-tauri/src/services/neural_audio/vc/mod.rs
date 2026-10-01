@@ -5,6 +5,10 @@
 //! (template voices, P3-C1 / P3-D / P3-E); [`assets`] freezes the model-store ids of the base
 //! assets; the pitch bank adds [`swiftf0`], [`crepe`], [`pesto`], [`f0_fusion`], [`autokey`] and
 //! [`formant`] (P3-D); [`import`] is the importer and slot store (P3-B).
+//!
+//! P5 (P5-S0 scaffold): [`families`] holds the voice-conversion families beyond RVC (DDSP-SVC,
+//! Sigil-ZS, MeanVC2, so-vits-svc, sidecar v2) and the shared zero-shot reference types; the engine
+//! factory (`voice_changer::factory`) dispatches to them by `manifest.format`.
 
 pub mod assets;
 pub mod autokey;
@@ -16,6 +20,8 @@ pub mod f0_fusion;
 pub mod faiss;
 pub mod fcpe;
 pub mod f0_post;
+/// Voice-conversion families beyond RVC (P5; registry and reference types by P5-S0).
+pub mod families;
 pub mod formant;
 /// RVC .pth/.zip importer: allow-list unpickler, weight_norm fold, template weights writer and the
 /// isolated `--headless vc-import-worker` (P1-G3 spike, P3-B production; scaffolded by P1-S0b).

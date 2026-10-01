@@ -176,6 +176,9 @@ fn prepare(spec: &BenchSpec) -> Result<Prepared, String> {
     let vram0 = process_vram_mb();
     let priority = crate::services::rt_thread::WorkerPriority::from_str_lossy(&s.worker_priority);
     let mut engine = build_engine(&spec.engine, s, priority, spec.seed)?;
+    if engine.rvc.as_ref().is_some_and(|p| p.format.family().is_some()) {
+        configure_family_stream(&mut engine, s);
+    }
     let vram1 = process_vram_mb();
     if let Some(note) = spec::device_block_note(s) {
         engine.info.warnings.push(note);
@@ -196,6 +199,48 @@ fn prepare(spec: &BenchSpec) -> Result<Prepared, String> {
             _ => None,
         },
     })
+}
+
+/// Family voices build their sessions when a harness configures their stream (P5-I0): build one
+/// harness at the stream's shape (warm-up included) before the VRAM is read, as the voice changer
+/// measures a voice after its harness, and report what the model runs after it (a family can
+/// re-plan its sessions there). A failure is left to the runs, which build the same harness.
+fn configure_family_stream(engine: &mut Engine, s: &spec::StreamSpec) {
+    let times = std::sync::Arc::new(std::sync::Mutex::new(engine::ModelTimes::default()));
+    let built = crate::services::neural_audio::vc::VcStreamHarness::new(
+        engine.handle(times),
+        s.input_rate,
+        s.output_rate,
+        usize::from(s.input_channels),
+        usize::from(s.output_channels),
+        s.extra_samples_16k(),
+        s.crossfade_samples(engine.info.output_rate),
+        s.block_frames as usize,
+    );
+    if built.is_err() {
+        return;
+    }
+    drop(built);
+    if let Some(report) = engine.with_model(|m| m.stream_report()) {
+        // As the voice changer folds a model's stream report into its voice (`factory.rs`).
+        engine.info.ep_outcomes.extend(report.outcomes);
+        let levers = engine.info.levers.get_or_insert_with(Default::default);
+        levers.levers = report.levers.levers;
+        levers.accelerator = report.levers.accelerator;
+        for note in report.levers.notes {
+            if !levers.notes.contains(&note) {
+                levers.notes.push(note);
+            }
+        }
+        for warning in report.warnings {
+            if !engine.info.warnings.contains(&warning) {
+                engine.info.warnings.push(warning);
+            }
+        }
+        if let Some(rung) = engine.rvc.as_ref().map(|p| p.ep) {
+            rvc_build::refresh_active_ep(&mut engine.info, rung);
+        }
+    }
 }
 
 /// Write a run's extra files; returns their names.

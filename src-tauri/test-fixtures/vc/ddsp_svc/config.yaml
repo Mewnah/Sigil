@@ -1,0 +1,57 @@
+data:
+  f0_extractor: rmvpe
+  f0_min: 65
+  f0_max: 800
+  sampling_rate: 44100
+  volume_smooth_size: 1024
+  block_size: 32
+  duration: 2
+  encoder: contentvec768l12tta2x
+  cnhubertsoft_gate: 10
+  encoder_sample_rate: 16000
+  encoder_hop_size: 160
+  encoder_out_channels: 8
+  encoder_ckpt: pretrain/contentvec/pytorch_model.bin
+  train_path: data/train
+  valid_path: data/val
+  extensions:
+  - wav
+model:
+  type: RectifiedFlow
+  win_length: 64
+  n_aux_layers: 1
+  n_aux_chans: 8
+  n_layers: 1
+  n_chans: 8
+  t_start: 0.0
+  use_norm: true
+  use_attention: false
+  use_pitch_aug: true
+  n_spk: 1
+device: cuda
+vocoder:
+  type: nsf-hifigan
+  ckpt: pretrain/nsf_hifigan/model
+infer:
+  infer_step: 50
+  method: euler
+env:
+  expdir: exp/reflow-test
+  gpu_id: 0
+train:
+  num_workers: 2
+  amp_dtype: fp16
+  batch_size: 48
+  cache_all_data: true
+  cache_device: cpu
+  cache_fp16: true
+  epochs: 100000
+  interval_log: 1
+  interval_val: 2000
+  interval_force_save: 10000
+  lr: 0.0005
+  decay_step: 4000
+  gamma: 0.9
+  weight_decay: 0.1
+  lambda_ddsp: 1
+  save_opt: false

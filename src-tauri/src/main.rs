@@ -135,6 +135,9 @@ fn main() {
         // (NLLB on ORT, the Bergamot helper).
         .plugin(services::llm_server::init())
         .plugin(services::mt_local::init())
+        // P5 voice-changer families (P5-S0): the shared reference-voice library (zero-shot voices
+        // and TTS cloning).
+        .plugin(services::voice_library::init())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {

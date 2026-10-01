@@ -33,6 +33,10 @@
 //! - [`cmd_import`]: `.pth` / `.zip` import and slot-store IPC (P3-B).
 //! - [`cmd_bench`]: autotune and live-record IPC (P3-F).
 //!
+//! P5 (scaffolded by P5-S0): [`cmd_family`] creates voice-family slots and edits their options
+//! (`vc::families`); the factory dispatches family formats to `vc::families::create`; the per-voice
+//! `reference_voice_id` param selects a zero-shot voice's library reference.
+//!
 //! The IPC command list lives in `src-tauri/plugin-commands/voice-changer.txt`, and the frozen P0
 //! Rust <-> TS parameter / metrics contract in `params_contract.json` next to this file.
 
@@ -40,6 +44,7 @@ mod aux_feed;
 pub(crate) mod budget;
 pub(crate) mod capabilities;
 mod cmd_bench;
+mod cmd_family;
 mod cmd_import;
 mod commands;
 mod debug;
@@ -113,6 +118,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             cmd_bench::voice_changer_get_autotune,
             cmd_bench::voice_changer_live_record_start,
             cmd_bench::voice_changer_live_record_stop,
+            // P5 (P5-S0 scaffold): voice-family slots
+            cmd_family::voice_changer_create_family_slot,
+            cmd_family::voice_changer_set_family_options,
         ])
         .build()
 }

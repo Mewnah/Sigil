@@ -89,6 +89,10 @@ impl CrepePitchExtractor {
             ModelSource::File(std::path::Path::new(path)),
         )
         .map_err(|e| format!("Failed to load CREPE-tiny ONNX {path}: {e}"))?;
+        // Another kind of graph set as the CREPE model is named for what it is (P5-D, load only).
+        if let Some(why) = super::rvc::foreign_graph_problem(&session, std::path::Path::new(path), "a CREPE pitch model", &[super::rvc::GraphKind::PitchModel]) {
+            return Err(format!("CREPE: {why}"));
+        }
         let inputs = session.inputs();
         let [input] = inputs else {
             return Err(format!(

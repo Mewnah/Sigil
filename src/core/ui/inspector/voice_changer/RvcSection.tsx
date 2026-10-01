@@ -2,7 +2,8 @@
 // RVC mode (the Sigil Voice Engine): the voice library, the models the setup uses, the preset,
 // the per-voice settings, timing, the engine's expert settings, base model paths, and benchmark /
 // tuning. Only values this build runs are offered (`voice_changer_get_capabilities`); a stored value
-// it cannot run stays visible with what runs instead.
+// it cannot run stays visible with what runs instead. P5-G: a P5 family voice (zero-shot, singing,
+// sidecar, ...) gets its family section under the library and only the controls its family answers.
 import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
 import {
     F0_RANGES,
@@ -11,10 +12,11 @@ import {
     type PitchExtractorId,
     type RvcProfileId,
 } from "@/core/services/voice_changer/contract";
-import type { VcSlotInfo } from "@/core/services/voice_changer/ipc";
+import { showsControl } from "@/core/services/voice_changer/families";
+import type { VcFamilyControl, VcSlotInfo } from "@/core/services/voice_changer/ipc";
 import { pitchExtractorOptions, profileOptions } from "@/core/services/voice_changer/options";
 import { voiceModelIds } from "@/core/services/voice_changer/requirements";
-import { findSlot, isTemplateSlot } from "@/core/services/voice_changer/slots";
+import { isTemplateSlot } from "@/core/services/voice_changer/slots";
 import { FC } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
@@ -22,16 +24,11 @@ import { ModelRequirement } from "../components/ModelRequirement";
 import { BenchmarkPanel } from "./BenchmarkPanel";
 import { VcChoiceSelect, VcDetails, VcNote, VcNumberSlider, VcPathField, VcSliderField, VcSubHeader } from "./common";
 import { BlockMsSelect, EngineSection, LookaheadMsSelect } from "./EngineSection";
+import { FamilySection } from "./FamilySection";
+import { useSelectedVoice, useVoiceFamily } from "./hooks";
 import { VoiceLibrary } from "./VoiceLibrary";
 
 const R = VC_NUMBER_RANGES;
-
-/** The selected voice, when it is a listed slot. */
-function useSelectedVoice(): VcSlotInfo | undefined {
-    const lib = useSnapshot(window.ApiServer.voiceChanger.library.state);
-    const dir = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger.rvcSlotDir;
-    return lib.slots ? (findSlot(lib.slots as VcSlotInfo[], dir) as VcSlotInfo | undefined) : undefined;
-}
 
 /** Preset select (Streamer / Low latency / Quality / Studio-TRT). */
 const PresetSelect: FC = () => {
@@ -124,20 +121,35 @@ const VoiceRequirements: FC<{ voice: VcSlotInfo | undefined }> = ({ voice }) => 
     return <ModelRequirement ids={ids} reason={t("voice_changer.voice_models_reason")} hideWhenReady />;
 };
 
-/** Settings saved with the selected voice (`slot.json`): F0, range, speaker, index, protect, envelope, variation. */
+/**
+ * Settings saved with the selected voice (`slot.json`): F0, range, speaker, index, protect, envelope, variation.
+ * A family voice shows only what its family answers (`VcFamilyCapability.controls`, F0 only when it tracks pitch).
+ */
 const VoiceSettings: FC<{ voice: VcSlotInfo | undefined }> = ({ voice }) => {
     const { t } = useTranslation();
     const snap = useSnapshot(window.ApiServer.voiceChanger.state);
     const lib = useSnapshot(window.ApiServer.voiceChanger.library.state);
     const vc = snap.voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
+    const { kind, controls } = useVoiceFamily(voice);
+    const family = kind === "family";
     const template = voice ? isTemplateSlot(voice) : false;
     const noIndex = !!voice && lib.slotStore && !voice.has_index;
     const speakers = voice?.speaker_count ?? null;
+    const shows = (c: VcFamilyControl) => showsControl(controls, c);
+    // RVC voices track pitch unless trained without it; family voices when their family does.
+    const tracksPitch = family ? !!controls?.needsPitch : voice?.f0 !== false;
+    if (family) {
+        const any =
+            tracksPitch ||
+            (["index", "protect", "rms_mix", "noise_scale"] as const).some(shows) ||
+            (shows("speaker") && speakers != null && speakers > 1);
+        if (!any) return <VcNote>{t("voice_changer.family_voice_settings_none")}</VcNote>;
+    }
     return (
         <>
-            {voice?.f0 !== false ? <PitchSelect /> : <VcNote>{t("voice_changer.voice_no_pitch_note")}</VcNote>}
-            {voice?.f0 !== false ? (
+            {tracksPitch ? <PitchSelect /> : family ? null : <VcNote>{t("voice_changer.voice_no_pitch_note")}</VcNote>}
+            {tracksPitch ? (
                 <VcChoiceSelect
                     labelKey="voice_changer.f0_range"
                     infoKey="voice_changer.f0_range_info"
@@ -146,7 +158,7 @@ const VoiceSettings: FC<{ voice: VcSlotInfo | undefined }> = ({ voice }) => {
                     onChange={(v) => void vcApi.update({ f0Range: v as F0Range })}
                 />
             ) : null}
-            {speakers != null && speakers > 1 ? (
+            {shows("speaker") && speakers != null && speakers > 1 ? (
                 <VcChoiceSelect
                     labelKey="voice_changer.speaker"
                     value={String(vc.speakerId)}
@@ -158,43 +170,51 @@ const VoiceSettings: FC<{ voice: VcSlotInfo | undefined }> = ({ voice }) => {
                     onChange={(v) => void vcApi.update({ speakerId: Number(v) })}
                 />
             ) : null}
-            <VcNumberSlider
-                labelKey="voice_changer.index_rate"
-                infoKey="voice_changer.index_rate_info"
-                value={vc.indexRate}
-                min={R.index_rate.min}
-                max={R.index_rate.max}
-                step={0.01}
-                inactive={noIndex}
-                lowLabelKey="voice_changer.label_own_timbre"
-                highLabelKey="voice_changer.label_voice_timbre"
-                onChange={(v) => void vcApi.update({ indexRate: v })}
-            />
-            {noIndex ? <VcNote>{t("voice_changer.index_rate_no_index")}</VcNote> : null}
-            <VcNumberSlider
-                labelKey="voice_changer.protect"
-                infoKey="voice_changer.protect_info"
-                value={vc.protect}
-                min={R.protect.min}
-                max={R.protect.max}
-                step={0.01}
-                lowLabelKey="voice_changer.label_protect_more"
-                highLabelKey="voice_changer.label_protect_off"
-                onChange={(v) => void vcApi.update({ protect: v })}
-            />
-            <VcNumberSlider
-                labelKey="voice_changer.rms_mix"
-                infoKey="voice_changer.rms_mix_info"
-                value={vc.rmsMix}
-                min={R.rms_mix.min}
-                max={R.rms_mix.max}
-                step={0.01}
-                lowLabelKey="voice_changer.label_follow_your_voice"
-                highLabelKey="voice_changer.label_model_envelope"
-                resetTo={R.rms_mix.default}
-                onChange={(v) => void vcApi.update({ rmsMix: v })}
-            />
-            {template || !voice ? (
+            {shows("index") ? (
+                <>
+                    <VcNumberSlider
+                        labelKey="voice_changer.index_rate"
+                        infoKey="voice_changer.index_rate_info"
+                        value={vc.indexRate}
+                        min={R.index_rate.min}
+                        max={R.index_rate.max}
+                        step={0.01}
+                        inactive={noIndex}
+                        lowLabelKey="voice_changer.label_own_timbre"
+                        highLabelKey="voice_changer.label_voice_timbre"
+                        onChange={(v) => void vcApi.update({ indexRate: v })}
+                    />
+                    {noIndex ? <VcNote>{t("voice_changer.index_rate_no_index")}</VcNote> : null}
+                </>
+            ) : null}
+            {shows("protect") ? (
+                <VcNumberSlider
+                    labelKey="voice_changer.protect"
+                    infoKey="voice_changer.protect_info"
+                    value={vc.protect}
+                    min={R.protect.min}
+                    max={R.protect.max}
+                    step={0.01}
+                    lowLabelKey="voice_changer.label_protect_more"
+                    highLabelKey="voice_changer.label_protect_off"
+                    onChange={(v) => void vcApi.update({ protect: v })}
+                />
+            ) : null}
+            {shows("rms_mix") ? (
+                <VcNumberSlider
+                    labelKey="voice_changer.rms_mix"
+                    infoKey="voice_changer.rms_mix_info"
+                    value={vc.rmsMix}
+                    min={R.rms_mix.min}
+                    max={R.rms_mix.max}
+                    step={0.01}
+                    lowLabelKey="voice_changer.label_follow_your_voice"
+                    highLabelKey="voice_changer.label_model_envelope"
+                    resetTo={R.rms_mix.default}
+                    onChange={(v) => void vcApi.update({ rmsMix: v })}
+                />
+            ) : null}
+            {(family ? shows("noise_scale") : template || !voice) ? (
                 <VcNumberSlider
                     labelKey="voice_changer.noise_scale"
                     infoKey="voice_changer.noise_scale_info"
@@ -202,7 +222,7 @@ const VoiceSettings: FC<{ voice: VcSlotInfo | undefined }> = ({ voice }) => {
                     min={R.noise_scale.min}
                     max={R.noise_scale.max}
                     step={0.01}
-                    inactive={!template}
+                    inactive={!template && !family}
                     lowLabelKey="voice_changer.label_steadier"
                     highLabelKey="voice_changer.label_more_variation"
                     resetTo={R.noise_scale.default}
@@ -225,6 +245,7 @@ export const RvcSection: FC<{ crossfadeMaxMs: number; crossfadeShownMs: number; 
     const voiceChanger = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
     const voice = useSelectedVoice();
+    const { kind } = useVoiceFamily(voice);
     const template = voice ? isTemplateSlot(voice) : false;
     /** Extra context and crossfade are read at harness construction: restart once per committed change. */
     const commitHarnessParams = () => void vcApi.commitHarnessParams();
@@ -233,6 +254,7 @@ export const RvcSection: FC<{ crossfadeMaxMs: number; crossfadeShownMs: number; 
             <VcSubHeader titleKey="voice_changer.section_voices" infoKey="voice_changer.section_voices_info" />
             <VoiceLibrary />
             <VoiceRequirements voice={voice} />
+            <FamilySection voice={voice} />
 
             <VcSubHeader titleKey="voice_changer.section_preset" infoKey="voice_changer.section_preset_info" />
             <PresetSelect />
@@ -245,8 +267,8 @@ export const RvcSection: FC<{ crossfadeMaxMs: number; crossfadeShownMs: number; 
                 infoKey="voice_changer.section_rvc_tuning_info"
                 defaultOpen={voiceChanger.rvcProfile === "quality"}
             >
-                <BlockMsSelect template={template || !voice} />
-                <LookaheadMsSelect template={template || !voice} />
+                <BlockMsSelect template={kind !== "legacy"} family={kind === "family"} />
+                <LookaheadMsSelect template={kind !== "legacy"} family={kind === "family"} />
                 <VcSliderField
                     labelKey="voice_changer.extra_context_ms"
                     controlsRow={

@@ -269,6 +269,18 @@ Sidebar → **Voice Changer**.
 
 Field-by-field reference: [RVC voices (Sigil Voice Engine)](../OPERATOR_REFERENCE.md#rvc-voices-sigil-voice-engine).
 
+### Zero-shot, singing and other voices
+
+**New voice…** in the voice list makes voices that are not RVC voices; they run on the same engine, with the same hotkeys, switching and TTS mixing.
+
+- **Sigil-ZS (zero-shot):** sounds like anyone from a 5–10 s clip of them speaking, with no training. Record or import the clip once in the **reference voice** picker (Sigil trims the silence and evens out the level); you can switch the reference while the voice changer runs. Needs an NVIDIA (CUDA) or DirectML graphics card; about 250 ms of delay on a fast card.
+- **DDSP-SVC (singing):** import a trained DDSP-SVC 6.3 voice (`model_*.pt` with its `config.yaml`, or a `.zip`). It follows your pitch up to D#7; new singing voices start in the **Singing** pitch range with CREPE.
+- **MeanVC2** (experimental): zero-shot on the processor, leaving the graphics card to your game.
+- **so-vits-svc** (experimental): a so-vits-svc 4.x voice exported to ONNX.
+- **Sidecar** (experimental): research engines (X-VC, StreamVoiceAnon, seed-vc-realtime) or your own server, run as a separate program on this PC; a late block is dropped, so a stalled engine never stalls your voice.
+
+Some of these need models you import under **Models & Runtimes** first; the voice shows what is missing. Details and measured delays: [Zero-shot, singing and sidecar voices](../OPERATOR_REFERENCE.md#zero-shot-singing-and-sidecar-voices-voice-families).
+
 ### Status, latency and priority
 
 - The status area shows the device the model **actually** runs on (**CUDA**, **DirectML** or **CPU**). If a GPU could not be used, a warning box explains why (for example the NVIDIA GPU runtime is not installed; install it under **Models & Runtimes** or **Settings → GPU & diagnostics**).

@@ -92,3 +92,13 @@ describe("changed params", () => {
         expect(changedParamKeys(a, { ...b, protect: 0.1, precision: "fp16" })).toEqual(["protect", "precision"]);
     });
 });
+
+describe("P5 param apply rules (P5-S0)", () => {
+    it("a zero-shot voice's reference switches the voice in RVC mode and is idle in the others", () => {
+        for (const key of [...contract.slot_json_p5_fields, ...Object.keys(contract.params_p5_new_fields)] as RustParamKey[]) {
+            expect(paramApply(key, "rvc"), key).toBe("switch");
+            expect(restartNeeded([key], "rvc"), key).toBe(false);
+            for (const mode of ["classic", "onnx", "sidecar"] as const) expect(paramApply(key, mode), `${key} ${mode}`).toBe("idle");
+        }
+    });
+});

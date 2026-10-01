@@ -546,6 +546,65 @@ describe("P3: settings changes while running (restart only when the engine shape
         expect(calls("stop_voice_changer")).toBe(0);
     });
 
+    it("a zero-shot voice's reference switches without a restart; ids the library never holds are refused", async () => {
+        const s = await runningRvc();
+        expect(await s.setReferenceVoice(" alice ")).toBe(true);
+        expect(stored.reference_voice_id).toBe("alice");
+        expect(s.state.voiceChanger.referenceVoiceId).toBe("alice");
+        const sets = setCalls().length;
+        expect(await s.setReferenceVoice("alice")).toBe(true);
+        expect(setCalls()).toHaveLength(sets);
+        expect(await s.setReferenceVoice("../Alice")).toBe(false);
+        expect(stored.reference_voice_id).toBe("alice");
+        expect(await s.setReferenceVoice("")).toBe(true);
+        expect(stored.reference_voice_id).toBe("");
+        expect(calls("stop_voice_changer")).toBe(0);
+    });
+
+    it("another voice starts from its own listed reference, never the previous voice's; the same voice keeps its live one", async () => {
+        const s = await runningRvc();
+        await s.setReferenceVoice("alice");
+        await s.selectVoice({ id: "bass", path: "C:/m/bass", reference_voice_id: null });
+        expect(stored).toMatchObject({ rvc_slot_dir: "C:/m/bass", reference_voice_id: "" });
+        await s.selectVoice({ id: "zs", path: "C:/m/zs", reference_voice_id: "bob" });
+        expect(stored.reference_voice_id).toBe("bob");
+        await s.setReferenceVoice("carol");
+        // A stale listing of the selected voice does not undo the reference just picked.
+        await s.selectVoice({ id: "zs", path: "C:\\m\\zs\\", reference_voice_id: "bob" });
+        expect(stored.reference_voice_id).toBe("carol");
+        // Rows without the P5 field leave it alone.
+        await s.selectVoice({ id: "alto", path: "C:/m/alto" });
+        expect(stored.reference_voice_id).toBe("carol");
+        expect(calls("stop_voice_changer")).toBe(0);
+    });
+
+    it("a reference picked for the selected voice updates its row, so it shows after another voice is selected", async () => {
+        slotRows = [
+            { id: "alto", path: "C:/m/alto", format: "sigil-zs-1", family: "sigil_zs", reference_voice_id: "alice" },
+            { id: "zs2", path: "C:/m/zs2", format: "sigil-zs-1", family: "sigil_zs", reference_voice_id: "carol" },
+        ];
+        const s = await runningRvc();
+        await s.library.refresh();
+        expect(await s.setReferenceVoice("bob")).toBe(true);
+        expect(s.library.slotById("alto")?.reference_voice_id).toBe("bob");
+        await s.selectVoice(s.library.slotById("zs2")!);
+        expect(stored.reference_voice_id).toBe("carol");
+        expect(s.library.slotById("alto")?.reference_voice_id).toBe("bob");
+        // A refused reference leaves the row alone.
+        expect(await s.setReferenceVoice("../x")).toBe(false);
+        expect(s.library.slotById("zs2")?.reference_voice_id).toBe("carol");
+    });
+
+    it("family options saved while running wait for a restart until the engine stops", async () => {
+        const s = await runningRvc();
+        s.library.state.optionsReloadPending = { zs: true };
+        await s.restartIfRunning();
+        expect(s.library.state.optionsReloadPending).toEqual({});
+        s.library.state.optionsReloadPending = { zs: true };
+        emit("voice_changer:stopped", null);
+        expect(s.library.state.optionsReloadPending).toEqual({});
+    });
+
     it("an engine-shape change restarts the running engine once", async () => {
         const s = await runningRvc();
         await s.update({ precision: "fp16" });

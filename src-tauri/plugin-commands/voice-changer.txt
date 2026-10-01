@@ -28,3 +28,6 @@ voice_changer_cancel_autotune
 voice_changer_get_autotune
 voice_changer_live_record_start
 voice_changer_live_record_stop
+# P5 (added by P5-S0): voice-family slots (scaffold)
+voice_changer_create_family_slot
+voice_changer_set_family_options

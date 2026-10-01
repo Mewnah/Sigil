@@ -1,0 +1,35 @@
+{
+  "$comment": "Perf-gate profile of phase P5 (run-perf-gate.ps1 -Profile p5): the in-engine voice families. Templates are materialized with the variables below (-Var NAME=value or SIGIL_BENCH_<NAME>); a template whose variables are missing is skipped with a warning. SLOT_ZS is a Sigil-ZS slot folder (manifest.json {\"format\": \"sigil-zs-1\", \"family\": {\"preset\": \"sigil_low\"}}) and REFERENCE a reference clip (5-10 s of one speaker); SLOT_DDSP a DDSP-SVC 6.3 slot imported with `Sigil.exe --headless vc-import-worker job.json` (family ddsp_svc) or the voice library's New voice; SWEEP the WAV from scripts/bench/singing_sweep.py. The app data (-AppData) needs vc/zs-seed-vc, vc/ddsp-svc-6.3 and vc/vocoder-pc-nsf-hifigan-44k installed (Models tab Import, or SIGIL_LOCAL_ASSETS), plus the content encoder and CREPE-tiny. T10 is the plan's target (docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md, 'VC best engine' > Targets): the zero-shot delay rows are measured on H2 here (H1 is the target rig, scheduled with a friend's live-record); speaker similarity against upstream offline and the singing range against the intended notes need their own scripts (the family's ignored real-model tests, scripts/bench/score_singing.py), so the profile gates on the delay and fidelity rows the benchmark measures.",
+  "schema": "sigil-bench-profile/1",
+  "name": "p5",
+  "description": "P5 voice families: Sigil-ZS zero-shot (sigil_low) and DDSP-SVC singing on CUDA and DirectML, each with offline compute, paced latency, the load simulators and fidelity against its offline ceiling.",
+  "specs": [],
+  "vars": {
+    "CLIP": "",
+    "SLOT_ZS": "",
+    "REFERENCE": "",
+    "SLOT_DDSP": "",
+    "SWEEP": "",
+    "SEMITONES": "12",
+    "PITCH_SINGING": "crepe"
+  },
+  "templates": [
+    {"file": "specs/p5/zs-gpu.template.json", "name": "zs-cuda", "requires": ["SLOT_ZS", "REFERENCE", "CLIP"], "vars": {"EP": "cuda"}},
+    {"file": "specs/p5/zs-gpu.template.json", "name": "zs-dml", "requires": ["SLOT_ZS", "REFERENCE", "CLIP"], "vars": {"EP": "dml"}},
+    {"file": "specs/p5/ddsp-singing.template.json", "name": "ddsp-cuda", "requires": ["SLOT_DDSP", "SWEEP"], "vars": {"EP": "cuda"}},
+    {"file": "specs/p5/ddsp-singing.template.json", "name": "ddsp-dml", "requires": ["SLOT_DDSP", "SWEEP"], "vars": {"EP": "dml"}}
+  ],
+  "metrics": ["*_p95"],
+  "targets": [
+    {"id": "T10", "label": "Sigil-ZS end-to-end p95 <= 300 ms idle (engine-added, paced; H2 here, H1 is the target rig)", "spec": "zs-cuda", "run": "paced-stable", "metric": "latency_ms_p95", "max": 300, "gate": true},
+    {"id": "T10", "label": "Sigil-ZS end-to-end p95 <= 300 ms idle on DirectML", "spec": "zs-dml", "run": "paced-stable", "metric": "latency_ms_p95", "max": 300, "gate": true},
+    {"id": "T10", "label": "Sigil-ZS p99 <= 450 ms under load (H2 load simulator)", "spec": "zs-cuda", "run": "h2-load70", "metric": "latency_ms_p99", "max": 450, "gate": true},
+    {"id": "T10", "label": "Sigil-ZS p99 <= 450 ms under the H1 simulation (provisional H1)", "spec": "zs-cuda", "run": "h1-sim", "metric": "latency_ms_p99", "max": 450, "gate": false},
+    {"id": "T10", "label": "Sigil-ZS p99 <= 450 ms under load on DirectML (H2 load simulator)", "spec": "zs-dml", "run": "h2-load70", "metric": "latency_ms_p99", "max": 450, "gate": true},
+    {"id": "T9", "label": "zero-shot voice from a reference in <= 5 s (load, reference included)", "spec": "zs-cuda", "run": "offline", "metric": "engine_load_ms", "max": 5000, "gate": true},
+    {"id": "T10", "label": "Sigil-ZS stream vs its offline ceiling: CAM++ cosine (reported)", "spec": "zs-cuda", "run": "fidelity", "metric": "speaker_cosine", "min": 0.8, "gate": false},
+    {"id": "T10", "label": "DDSP-SVC singing stream vs its offline ceiling: F0 gross error <= 2 % (CREPE analyzer)", "spec": "ddsp-cuda", "run": "fidelity", "metric": "gross_pitch_error", "max": 0.02, "gate": false},
+    {"id": "T10", "label": "DDSP-SVC singing on DirectML vs its offline ceiling: F0 gross error <= 2 % (CREPE analyzer)", "spec": "ddsp-dml", "run": "fidelity", "metric": "gross_pitch_error", "max": 0.02, "gate": false},
+    {"id": "T7", "label": "DDSP-SVC backlog never above budget + one block (H1 simulation with a 3 s stall)", "spec": "ddsp-cuda", "run": "h1-sim", "metric": "backlog_over_budget_ms", "max": 0, "gate": true}
+  ]
+}

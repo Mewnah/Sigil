@@ -559,3 +559,20 @@ describe("adopting Rust's effective params", () => {
         expect(sameParamValue(false, 0)).toBe(false);
     });
 });
+
+describe("P5 params (P5-S0)", () => {
+    it("every P5 params field is sent and hydrated under its contract name", () => {
+        const sent = toRustParams(defaults());
+        for (const key of Object.keys(contract.params_p5_new_fields)) {
+            expect(RUST_PARAM_KEYS, `key list has ${key}`).toContain(key);
+            expect(sent[key as keyof VoiceChangerParamsRust], `sent ${key}`).not.toBeUndefined();
+        }
+        expect(sent.reference_voice_id).toBe("");
+        const got = applyRustParams(defaults(), { ...sent, reference_voice_id: "alice" });
+        expect(got.referenceVoiceId).toBe("alice");
+        // An older backend without the field keeps the current value.
+        const old = { ...sent } as Partial<VoiceChangerParamsRust>;
+        delete old.reference_voice_id;
+        expect(applyRustParams({ ...defaults(), referenceVoiceId: "bob" }, old as VoiceChangerParamsRust).referenceVoiceId).toBe("bob");
+    });
+});

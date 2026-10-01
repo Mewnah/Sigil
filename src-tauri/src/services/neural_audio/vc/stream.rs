@@ -30,11 +30,20 @@
 //! is (the deficit bounds come from the rates at construction; zero cushion when the device block
 //! is the model block). The lowest latency comes from a device block equal to the model block.
 //! Every length-accounting guarantee above holds unchanged.
+//!
+//! **Per-voice context** (P5-S0): the harness hands every model call (its warm-ups included) the
+//! voice's [`HarnessContext`]: the zero-shot reference embedding (`ConversionCtx::reference`) and
+//! the singing flags (`ConversionCtx::singing`). [`VcStreamHarness::with_context`] sets them before
+//! the warm-up; [`VcStreamHarness::set_reference`] / [`VcStreamHarness::set_singing`] change them
+//! between ticks. [`VcStreamHarness::new`] is `with_context` with the neutral context (no
+//! reference, speech), so every RVC path is unchanged.
+
+use std::sync::Arc;
 
 use rubato::{calculate_cutoff, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
 use super::engine::governor::QualityLevel;
-use super::traits::{ConversionCtx, StreamReport, VoiceControls, VoiceConversionModel};
+use super::traits::{ConversionCtx, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, VoiceConversionModel};
 
 /// Frames per output-side resampler call, at the model output rate.
 const OUT_RESAMPLE_CHUNK: usize = 64;
@@ -329,6 +338,20 @@ pub struct VcStreamHarness {
     last_owed_frames: usize,
     /// Fixed-block mode (see the module docs); `None` = the legacy per-device-block feed.
     fixed: Option<FixedFeed>,
+    /// The voice's zero-shot reference (P5-S0; `ConversionCtx::reference`).
+    reference: Option<Arc<ReferenceEmbedding>>,
+    /// The voice's singing flags (P5-S0; `ConversionCtx::singing`).
+    singing: SingingFlags,
+}
+
+/// What the harness passes to every model call besides the audio and the per-tick controls (P5-S0,
+/// frozen; may gain fields, the default stays neutral).
+#[derive(Clone, Debug, Default)]
+pub struct HarnessContext {
+    /// The voice's zero-shot reference embedding (`ConversionCtx::reference`).
+    pub reference: Option<Arc<ReferenceEmbedding>>,
+    /// The voice's singing flags (`ConversionCtx::singing`).
+    pub singing: SingingFlags,
 }
 
 /// State of fixed-block mode.
@@ -447,8 +470,35 @@ fn warmup_tone(len: usize, sample_rate: u32) -> Vec<f32> {
 }
 
 impl VcStreamHarness {
+    /// [`Self::with_context`] with the neutral context (no reference, speech).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        model: Box<dyn VoiceConversionModel>,
+        device_in_sr: u32,
+        device_out_sr: u32,
+        ch_in: usize,
+        ch_out: usize,
+        extra_samples: usize,
+        crossfade_samples: usize,
+        process_frames: usize,
+    ) -> Result<Self, String> {
+        Self::with_context(
+            model,
+            device_in_sr,
+            device_out_sr,
+            ch_in,
+            ch_out,
+            extra_samples,
+            crossfade_samples,
+            process_frames,
+            HarnessContext::default(),
+        )
+    }
+
+    /// Build the harness around `model` and warm it at the live shape; `context` (the voice's
+    /// reference and singing flags) is passed to the warm-up and to every later call.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_context(
         mut model: Box<dyn VoiceConversionModel>,
         device_in_sr: u32,
         device_out_sr: u32,
@@ -457,6 +507,7 @@ impl VcStreamHarness {
         extra_samples: usize,
         crossfade_samples: usize,
         process_frames: usize,
+        context: HarnessContext,
     ) -> Result<Self, String> {
         let device_in_sr = device_in_sr.max(1);
         let device_out_sr = device_out_sr.max(1);
@@ -489,12 +540,12 @@ impl VcStreamHarness {
                 // One shape for the whole stream: the model sizes its context for this block and
                 // SOLA tail, then is warmed once at exactly that shape.
                 let want = block + sola_tail_in;
-                let context = model
+                let context_len = model
                     .configure_stream(block, want, extra_samples)?
                     .max(want)
                     .max(min_context)
                     .max(block);
-                let tone = warmup_tone(context, model_in_sr);
+                let tone = warmup_tone(context_len, model_in_sr);
                 let warm_ctx = ConversionCtx {
                     mono_16k: &tone,
                     new_frames: want,
@@ -503,9 +554,11 @@ impl VcStreamHarness {
                     protect: 0.33,
                     speaker_id: 0,
                     stream_pos_16k: 0,
+                    reference: context.reference.as_deref(),
+                    singing: context.singing,
                 };
                 if let Err(e) = model.warmup_at(&warm_ctx) {
-                    tracing::warn!("voice changer: warm-up at the fixed shape ({context} samples) failed: {e}");
+                    tracing::warn!("voice changer: warm-up at the fixed shape ({context_len} samples) failed: {e}");
                 }
                 let mut acc = Vec::with_capacity(block + new_hi + FIXED_LEAD_16K + 16);
                 acc.resize(FIXED_LEAD_16K, 0.0);
@@ -515,7 +568,7 @@ impl VcStreamHarness {
                 // steady context and `stream_pos_16k` stays on the model's block grid.
                 let feed = FixedFeed {
                     block_16k: block,
-                    context_16k: context,
+                    context_16k: context_len,
                     acc,
                     hold_back,
                     deficit_max: deficit_max.max(deficit_min),
@@ -524,7 +577,7 @@ impl VcStreamHarness {
                     blocks_total: 0,
                     owed_total: 0,
                 };
-                (context - block, Some(feed))
+                (context_len - block, Some(feed))
             }
             None => {
                 // Warm the model at the steady-state input shape (same ring trim and `want` as
@@ -550,6 +603,8 @@ impl VcStreamHarness {
                         protect: 0.33,
                         speaker_id: 0,
                         stream_pos_16k: 0,
+                        reference: context.reference.as_deref(),
+                        singing: context.singing,
                     };
                     if let Err(e) = model.warmup_at(&warm_ctx) {
                         tracing::warn!("voice changer: warm-up at the live shape ({steady_ring} samples) failed: {e}");
@@ -637,6 +692,8 @@ impl VcStreamHarness {
             pending_cap,
             last_owed_frames: 0,
             fixed,
+            reference: context.reference,
+            singing: context.singing,
         })
     }
 
@@ -672,7 +729,7 @@ impl VcStreamHarness {
 
     /// The model's outcomes, levers and warnings after this harness configured its stream
     /// ([`VoiceConversionModel::stream_report`]; `None` when the model reports nothing new). Read by
-    /// `voice_changer::factory` (`LoadedVoice::load`) to refresh what a voice reports.
+    /// `voice_changer::factory` (`LoadedVoice::load_cancellable`) to refresh what a voice reports.
     pub fn model_report(&self) -> Option<StreamReport> {
         self.model.stream_report()
     }
@@ -698,6 +755,25 @@ impl VcStreamHarness {
     /// Tell the model its stream had a gap or restarted (it drops caches keyed to the old timeline).
     pub fn reset_model_stream(&mut self) {
         self.model.reset_stream();
+    }
+
+    /// The voice's zero-shot reference from the next call on (P5-S0; `ConversionCtx::reference`).
+    /// Call between ticks.
+    #[allow(dead_code)] // P5-S0 frozen API: hot reference switching (the factory sets it at load).
+    pub fn set_reference(&mut self, reference: Option<Arc<ReferenceEmbedding>>) {
+        self.reference = reference;
+    }
+
+    /// The voice's zero-shot reference (P5-S0).
+    #[allow(dead_code)] // P5-S0 frozen API.
+    pub fn reference(&self) -> Option<&Arc<ReferenceEmbedding>> {
+        self.reference.as_ref()
+    }
+
+    /// The voice's singing flags from the next call on (P5-S0; `ConversionCtx::singing`).
+    #[allow(dead_code)] // P5-S0 frozen API (the factory sets them at load).
+    pub fn set_singing(&mut self, singing: SingingFlags) {
+        self.singing = singing;
     }
 
     /// Convert one tick of capture audio; returns exactly the device frames owed for it
@@ -815,6 +891,8 @@ impl VcStreamHarness {
             protect: self.protect,
             speaker_id: self.speaker_id,
             stream_pos_16k: self.ring_end_16k - self.ring_16k.len() as u64,
+            reference: self.reference.as_deref(),
+            singing: self.singing,
         };
         let result = self.model.convert(&ctx).and_then(|chunk| {
             // NaN / inf would poison the SOLA tail, the output resampler's filter state and the
@@ -1820,6 +1898,58 @@ mod tests {
             // two model blocks plus a device block.
             let bound = (2 * block) as f64 * f64::from(r_out) / 16_000.0 + frames as f64 * f64::from(r_out) / f64::from(r_in) + 400.0;
             assert!((lag as f64) < bound, "{r_in}->{r_out} frames {frames} block {block}: lag {lag} >= {bound}");
+        }
+    }
+
+    /// P5-S0: the voice's context reaches the warm-up and every call, and the setters change it
+    /// between ticks; `new` passes the neutral context.
+    #[test]
+    fn the_voice_context_reaches_every_call() {
+        type Seen = Arc<Mutex<Vec<(&'static str, Option<String>, bool)>>>;
+        struct Probe(Seen, Option<usize>);
+        impl VoiceConversionModel for Probe {
+            fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+                self.0.lock().unwrap().push(("convert", ctx.reference.map(|r| r.voice_id.clone()), ctx.singing.singing));
+                Ok(vec![0.0; ctx.new_frames])
+            }
+            fn warmup_at(&mut self, ctx: &ConversionCtx<'_>) -> Result<(), String> {
+                self.0.lock().unwrap().push(("warm", ctx.reference.map(|r| r.voice_id.clone()), ctx.singing.singing));
+                Ok(())
+            }
+            fn input_sample_rate(&self) -> u32 {
+                16_000
+            }
+            fn output_sample_rate(&self) -> u32 {
+                16_000
+            }
+            fn fixed_block(&self) -> Option<usize> {
+                self.1
+            }
+        }
+        for fixed in [None, Some(640)] {
+            let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+            let context = HarnessContext {
+                reference: Some(Arc::new(ReferenceEmbedding { voice_id: "alice".into(), ..Default::default() })),
+                singing: SingingFlags { singing: true },
+            };
+            let mut h = VcStreamHarness::with_context(Box::new(Probe(seen.clone(), fixed)), 48_000, 48_000, 1, 1, 1_024, 320, 960, context).unwrap();
+            assert!(h.reference().is_some());
+            for _ in 0..4 {
+                h.push_and_convert(&[0.1; 960]).unwrap();
+            }
+            h.set_reference(None);
+            h.set_singing(SingingFlags::SPEECH);
+            for _ in 0..4 {
+                h.push_and_convert(&[0.1; 960]).unwrap();
+            }
+            let seen = seen.lock().unwrap();
+            assert!(seen.iter().any(|s| s.0 == "warm"), "{fixed:?}: warmed");
+            let first_convert = seen.iter().position(|s| s.0 == "convert").expect("converted");
+            assert!(seen[..first_convert].iter().all(|s| s.1.as_deref() == Some("alice") && s.2), "{fixed:?}: warm-up has the context");
+            assert_eq!(seen[first_convert].1.as_deref(), Some("alice"));
+            assert!(seen.last().is_some_and(|s| s.0 == "convert" && s.1.is_none() && !s.2), "{fixed:?}: the setters apply");
+            let plain = VcStreamHarness::new(Box::new(Probe(Arc::new(Mutex::new(Vec::new())), fixed)), 48_000, 48_000, 1, 1, 0, 320, 960).unwrap();
+            assert!(plain.reference().is_none());
         }
     }
 }

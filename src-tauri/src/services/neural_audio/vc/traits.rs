@@ -16,11 +16,23 @@
 //!   the incremental F0 cache (`engine::f0_cache`);
 //! - [`VoiceConversionModel::stream_report`] / [`StreamReport`]: the outcomes and levers after the
 //!   harness's `configure_stream` re-planned the sessions.
+//!
+//! P5-S0 added (frozen; change only through INTEGRATE; additive, neutral defaults):
+//! - [`ConversionCtx::reference`]: the zero-shot reference embedding of the voice
+//!   (`families::reference::ReferenceEmbedding`), installed in the harness by the engine factory
+//!   (`VcStreamHarness::with_context` / `set_reference`), so warm-ups and every tick see it;
+//!   `None` for every family without a reference.
+//! - [`ConversionCtx::singing`] / [`SingingFlags`]: the voice's singing flags (`f0_range =
+//!   singing`), from `VcStreamHarness::with_context` / `set_singing`; speech by default.
+//! - A wrapper that rebuilds a context (the denoiser harness, the engine's own warm-up) forwards
+//!   both fields unchanged; one-off contexts (warm-ups, tests) use `reference: None` and
+//!   `singing: Default::default()`.
 
 use crate::services::diagnostics::EpOutcome;
 
 use super::engine::governor::QualityLevel;
-use super::engine::options::EffectiveLevers;
+use super::engine::options::{EffectiveLevers, F0Range};
+pub use super::families::reference::ReferenceEmbedding;
 
 /// RVC's flow prior noise scale (`noise_scale` default).
 pub const DEFAULT_NOISE_SCALE: f32 = 0.66666;
@@ -59,6 +71,33 @@ pub struct ConversionCtx<'a> {
     /// silence counts), so engines can anchor noise, F0 caches and NSF phase to time. `0` for
     /// one-off conversions and warm-ups.
     pub stream_pos_16k: u64,
+    /// The zero-shot reference this tick converts toward (P5-S0): the embedding the voice's family
+    /// computed for its reference voice (`FamilyEngine::reference`), installed by the engine
+    /// factory in the voice's harness, so the harness's own warm-up and every tick carry it.
+    /// `None` for every family without a reference and for one-off conversions. A family keys its
+    /// prepared state on [`ReferenceEmbedding::same_source`].
+    pub reference: Option<&'a ReferenceEmbedding>,
+    /// The voice's singing flags (P5-S0). Neutral (speech) unless the harness was given others.
+    pub singing: SingingFlags,
+}
+
+/// Singing flags of a voice (P5-S0, frozen; may gain fields, the default stays neutral).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SingingFlags {
+    /// Singing mode: the voice runs with `f0_range = singing` (its pitch extractor covers E2–D#7
+    /// with no coarse clamp). A family with speech-only F0 smoothing (octave gate, median) keeps
+    /// vibrato and slides when it is set.
+    pub singing: bool,
+}
+
+impl SingingFlags {
+    /// Speech (the neutral flags).
+    pub const SPEECH: SingingFlags = SingingFlags { singing: false };
+
+    /// The flags of a voice with this F0 range.
+    pub fn from_range(range: F0Range) -> SingingFlags {
+        SingingFlags { singing: range == F0Range::Singing }
+    }
 }
 
 /// Per-voice controls applied while running (the hot SVE params). The defaults are neutral: a

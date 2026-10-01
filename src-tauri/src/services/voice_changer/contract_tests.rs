@@ -323,3 +323,57 @@ fn import_error_codes_match_contract() {
     }
     assert_eq!(strs(&contract()["import_error_codes"]), all.map(|c| c.as_str().to_string()));
 }
+
+/// P5 (P5-S0): the reference voice travels as a per-voice param (stored only as a valid library id),
+/// the families' ids, formats, info fields, creation kinds and controls are the contract's, and the
+/// P5 commands are listed for the ACL.
+#[test]
+fn p5_families_and_reference_param_match_contract() {
+    use crate::services::neural_audio::vc::families::{FamilyKind, CONTROL_IDS};
+    let c = contract();
+    let got = serde_json::to_value(VoiceChangerState::new().snapshot_params()).unwrap();
+    for key in c["params_p5_new_fields"].as_object().unwrap().keys() {
+        assert!(!got[key].is_null(), "params field {key} missing from get_voice_changer_params");
+    }
+    assert_eq!(got["reference_voice_id"], "");
+    let slot = serde_json::to_value(VoiceChangerState::new().slot_settings()).unwrap();
+    for key in strs(&c["slot_json_p5_fields"]) {
+        assert!(!slot[&key].is_null(), "slot.json field {key}");
+    }
+    let st = VoiceChangerState::new();
+    for (sent, stored) in [(" alice ", "alice"), ("../evil", ""), ("Bob", ""), ("", "")] {
+        let p = VoiceChangerParams { reference_voice_id: Some(sent.into()), ..st.snapshot_params() };
+        let (effective, _) = st.update_params(p);
+        assert_eq!(effective.reference_voice_id.as_deref(), Some(stored), "{sent:?}");
+    }
+
+    let fam = &c["families"];
+    assert_eq!(strs(&fam["ids"]), FamilyKind::ALL.map(|k| k.as_str().to_string()));
+    for k in FamilyKind::ALL {
+        assert_eq!(fam["formats"][k.as_str()], k.format(), "{}", k.as_str());
+    }
+    assert_eq!(strs(&fam["controls"]), CONTROL_IDS.map(str::to_string));
+    let caps = serde_json::to_value(capabilities::capabilities()).unwrap();
+    let creation = strs(&fam["creation"]);
+    for entry in caps["families"].as_array().unwrap() {
+        let mut keys: Vec<String> = entry.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        let mut want = strs(&fam["info_fields"]);
+        want.sort();
+        assert_eq!(keys, want);
+        assert!(creation.contains(&entry["creation"].as_str().unwrap().to_string()));
+    }
+    let listed: Vec<&str> = include_str!("../../../plugin-commands/voice-changer.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    for key in c["commands_p5"].as_object().unwrap().keys().filter(|k| !k.starts_with('$')) {
+        assert!(listed.contains(&key.as_str()), "{key} missing from plugin-commands/voice-changer.txt");
+    }
+    // SlotInfo carries the P5 fields.
+    let info = serde_json::to_value(crate::services::neural_audio::vc::import::slot::SlotInfo::default()).unwrap();
+    for key in strs(&fam["slot_info_p5_fields"]) {
+        assert!(info.get(&key).is_some(), "SlotInfo field {key}");
+    }
+}

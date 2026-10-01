@@ -1,0 +1,41 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "Sigil-ZS zero-shot (P5-B) on ${EP}: the slot in ${SLOT_ZS} (manifest format sigil-zs-1, family options e.g. {\"preset\": \"sigil_low\"}) converting toward the reference clip ${REFERENCE} (a library voice can be named with engine.reference_voice instead). The family runs its own fixed 100 ms (180 ms for upstream_readme) blocks and plays with at least the Stable output buffer (80 ms prefill, 150 ms queue; the family's minimum, applied by the voice changer and by paced runs). Offline compute, a wall-clock paced run (T10 idle), the H2 load simulator and the H1 simulation (T10 under load), and fidelity against the offline ceiling (the voice's one-off conversion of the recorded stream; P5-I0). Needs the vc/zs-seed-vc model-store entry in the app data (Models tab Import, or SIGIL_LOCAL_ASSETS = the export folder). Materialized by run-perf-gate.ps1 -Profile p5.",
+  "seed": 20261001,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": {
+    "input_rate": 48000,
+    "output_rate": 48000,
+    "input_channels": 1,
+    "output_channels": 2,
+    "block_frames": 512,
+    "extra_context_ms": 64,
+    "output_prefill_ms": 80,
+    "output_max_queue_ms": 150
+  },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT_ZS}",
+    "execution_provider": "${EP}",
+    "preset": "low_latency",
+    "precision": "auto",
+    "levers": {},
+    "build": "factory",
+    "reference_clip": "${REFERENCE}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": 2 },
+    { "mode": "paced", "name": "paced-stable", "seconds": 20, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h2-load70", "profile": "h2_load70", "seconds": 20, "warmup_s": 1 },
+    { "mode": "contention", "name": "h1-sim", "profile": "h1_vrchat_obs", "seconds": 30, "warmup_s": 1 },
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1,
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu", "speaker_reference": "${REFERENCE}" }
+    }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": false, "write_audio": true }
+}

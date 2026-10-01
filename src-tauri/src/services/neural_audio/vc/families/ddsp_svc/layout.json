@@ -1,0 +1,2659 @@
+{
+ "format": "sigil-ddsp-layout",
+ "format_version": 1,
+ "template": "ddsp-svc-6.3",
+ "source": "yxlllc/DDSP-SVC@d6dd52fc (6.3) architecture; Sigil export (scripts/vc-families/ddsp_svc/export_templates.py)",
+ "arch": {
+  "sampling_rate": 44100,
+  "block_size": 512,
+  "win_length": 2048,
+  "encoder_out_channels": 768,
+  "n_aux_layers": 6,
+  "n_aux_chans": 512,
+  "n_layers": 6,
+  "n_chans": 1024,
+  "use_attention": false,
+  "out_dims": 128
+ },
+ "vocoder": {
+  "sampling_rate": 44100,
+  "hop_size": 512,
+  "num_mels": 128,
+  "n_fft": 2048,
+  "win_size": 2048,
+  "fmin": 40.0,
+  "fmax": 16000.0
+ },
+ "spec_min": -12.0,
+ "spec_max": 2.0,
+ "graphs": {
+  "ddsp": {
+   "file": "ddsp.onnx",
+   "inputs": [
+    "hubert",
+    "mel2ph",
+    "f0",
+    "volume",
+    "randn",
+    "spk",
+    "formant_shift",
+    "start_frame"
+   ],
+   "outputs": [
+    "x",
+    "cond"
+   ],
+   "bytes": 34225100,
+   "sha256": "04e9cf95dfa9610954a42ec4dfe3935356f69865fac4924dca18d10f49915f6d"
+  },
+  "reflow_step": {
+   "file": "reflow_step.onnx",
+   "inputs": [
+    "x",
+    "t",
+    "dt",
+    "cond"
+   ],
+   "outputs": [
+    "x_next"
+   ],
+   "bytes": 39469,
+   "sha256": "ad3e95917f836075df859a0095e4ee36331908dc2455ece9dbfd2628532c5874"
+  }
+ },
+ "weights": {
+  "file": "weights.f32.bin",
+  "alignment": 64,
+  "bytes": 219626048,
+  "weights_id": "da4b761565ff4f441d98eb1ddc1ca7a1dae7e03dd51856cf77f512c6f0fdd73b",
+  "sections": {
+   "ddsp": {
+    "offset": 0,
+    "bytes": 57673792,
+    "location": "ddsp.weights"
+   },
+   "reflow_step": {
+    "offset": 57673792,
+    "bytes": 161952256,
+    "location": "reflow_step.weights"
+   }
+  },
+  "tensors": [
+   {
+    "name": "m.unit2ctrl.volume_embed.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 0,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.volume_embed.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 2048,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     768,
+     3
+    ],
+    "offset": 4096,
+    "bytes": 4718592,
+    "source": {
+     "weight_norm": {
+      "g": "ddsp_model.unit2ctrl.stack.0.weight_g",
+      "v": "ddsp_model.unit2ctrl.stack.0.weight_v",
+      "dim": 0
+     }
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     768,
+     3
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 4722688,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512,
+     3
+    ],
+    "offset": 4724736,
+    "bytes": 3145728,
+    "source": {
+     "weight_norm": {
+      "g": "ddsp_model.unit2ctrl.stack.2.weight_g",
+      "v": "ddsp_model.unit2ctrl.stack.2.weight_v",
+      "dim": 0
+     }
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     512,
+     3
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack2.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 7870464,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack2.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack2.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024,
+     3
+    ],
+    "offset": 7872512,
+    "bytes": 6291456,
+    "source": {
+     "weight_norm": {
+      "g": "ddsp_model.unit2ctrl.stack2.0.weight_g",
+      "v": "ddsp_model.unit2ctrl.stack2.0.weight_v",
+      "dim": 0
+     }
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1024,
+     3
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack2.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 14163968,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack2.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.stack2.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512,
+     3
+    ],
+    "offset": 14166016,
+    "bytes": 3145728,
+    "source": {
+     "weight_norm": {
+      "g": "ddsp_model.unit2ctrl.stack2.2.weight_g",
+      "v": "ddsp_model.unit2ctrl.stack2.2.weight_v",
+      "dim": 0
+     }
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     512,
+     3
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17311744,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17313792,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17315840,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17379328,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17381376,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17385472,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.0.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17389568,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17391616,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17393664,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17395712,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17459200,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17461248,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17465344,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.1.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17469440,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17471488,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17473536,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17475584,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17539072,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17541120,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17545216,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.2.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17549312,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17551360,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17553408,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17555456,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17618944,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17620992,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17625088,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.3.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17629184,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17631232,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17633280,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17635328,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17698816,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17700864,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17704960,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.4.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17709056,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.0.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17711104,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.0.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17713152,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.2.weight",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1,
+     31
+    ],
+    "offset": 17715200,
+    "bytes": 63488,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.2.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17778688,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.4.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17780736,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.6.bias",
+    "graph": "ddsp",
+    "shape": [
+     1024
+    ],
+    "offset": 17784832,
+    "bytes": 4096,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.decoder.encoder_layers.5.conformer.net.8.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17788928,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.norm.weight",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17790976,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.norm.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.norm.bias",
+    "graph": "ddsp",
+    "shape": [
+     512
+    ],
+    "offset": 17793024,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.norm.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "m.unit2ctrl.dense_out.bias",
+    "graph": "ddsp",
+    "shape": [
+     4100
+    ],
+    "offset": 17795072,
+    "bytes": 16400,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.dense_out.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     4100
+    ]
+   },
+   {
+    "name": "onnx::PRelu_1063",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1
+    ],
+    "offset": 17811520,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack.1.weight"
+    },
+    "transform": "reshape",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "onnx::PRelu_1064",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1
+    ],
+    "offset": 17813568,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.stack2.1.weight"
+    },
+    "transform": "reshape",
+    "source_shape": [
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1065",
+    "graph": "ddsp",
+    "shape": [
+     1,
+     512
+    ],
+    "offset": 17815616,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.volume_embed.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     1
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1066",
+    "graph": "ddsp",
+    "shape": [
+     1,
+     512
+    ],
+    "offset": 17817664,
+    "bytes": 2048,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.aug_shift_embed.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     1
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1067",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 17819712,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1068",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 19916864,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1069",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 22014016,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.0.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1070",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 23062592,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1071",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 25159744,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1072",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 27256896,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.1.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1073",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 28305472,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1074",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 30402624,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1075",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 32499776,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.2.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1076",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 33548352,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1077",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 35645504,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1078",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 37742656,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.3.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1079",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 38791232,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1080",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 40888384,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1081",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 42985536,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.4.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1082",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 44034112,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1083",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     1024
+    ],
+    "offset": 46131264,
+    "bytes": 2097152,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1084",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     512
+    ],
+    "offset": 48228416,
+    "bytes": 1048576,
+    "source": {
+     "key": "ddsp_model.unit2ctrl.decoder.encoder_layers.5.conformer.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     512,
+     512
+    ]
+   },
+   {
+    "name": "onnx::MatMul_1085",
+    "graph": "ddsp",
+    "shape": [
+     512,
+     4100
+    ],
+    "offset": 49276992,
+    "bytes": 8396800,
+    "source": {
+     "weight_norm": {
+      "g": "ddsp_model.unit2ctrl.dense_out.weight_g",
+      "v": "ddsp_model.unit2ctrl.dense_out.weight_v",
+      "dim": 0
+     }
+    },
+    "transform": "transpose",
+    "source_shape": [
+     4100,
+     512
+    ]
+   },
+   {
+    "name": "v.input_projection.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 0,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.input_projection.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.conditioner_projection.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 4096,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.conditioner_projection.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.diffusion_embedding.1.weight",
+    "graph": "reflow_step",
+    "shape": [
+     4096,
+     1024
+    ],
+    "offset": 8192,
+    "bytes": 16777216,
+    "source": {
+     "key": "reflow_model.velocity_fn.diffusion_embedding.1.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     4096,
+     1024
+    ]
+   },
+   {
+    "name": "v.diffusion_embedding.1.bias",
+    "graph": "reflow_step",
+    "shape": [
+     4096
+    ],
+    "offset": 16785408,
+    "bytes": 16384,
+    "source": {
+     "key": "reflow_model.velocity_fn.diffusion_embedding.1.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     4096
+    ]
+   },
+   {
+    "name": "v.diffusion_embedding.3.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     4096
+    ],
+    "offset": 16801792,
+    "bytes": 16777216,
+    "source": {
+     "key": "reflow_model.velocity_fn.diffusion_embedding.3.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     4096
+    ]
+   },
+   {
+    "name": "v.diffusion_embedding.3.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33579008,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.diffusion_embedding.3.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33583104,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33587200,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 33591296,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33718272,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 33722368,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 33730560,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.0.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33738752,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33742848,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33746944,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 33751040,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33878016,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 33882112,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 33890304,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.1.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33898496,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33902592,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 33906688,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 33910784,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34037760,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34041856,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34050048,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.2.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34058240,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34062336,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34066432,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 34070528,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34197504,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34201600,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34209792,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.3.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34217984,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34222080,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34226176,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 34230272,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34357248,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34361344,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34369536,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.4.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34377728,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.0.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34381824,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.0.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.0.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34385920,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.0.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.2.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1,
+     31
+    ],
+    "offset": 34390016,
+    "bytes": 126976,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.2.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024,
+     1,
+     31
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.2.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34516992,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.2.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.4.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34521088,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.4.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.6.bias",
+    "graph": "reflow_step",
+    "shape": [
+     2048
+    ],
+    "offset": 34529280,
+    "bytes": 8192,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.6.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     2048
+    ]
+   },
+   {
+    "name": "v.residual_layers.5.net.8.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34537472,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.8.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.norm.weight",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34541568,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.norm.weight"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.norm.bias",
+    "graph": "reflow_step",
+    "shape": [
+     1024
+    ],
+    "offset": 34545664,
+    "bytes": 4096,
+    "source": {
+     "key": "reflow_model.velocity_fn.norm.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     1024
+    ]
+   },
+   {
+    "name": "v.output_projection.bias",
+    "graph": "reflow_step",
+    "shape": [
+     128
+    ],
+    "offset": 34549760,
+    "bytes": 512,
+    "source": {
+     "key": "reflow_model.velocity_fn.output_projection.bias"
+    },
+    "transform": "identity",
+    "source_shape": [
+     128
+    ]
+   },
+   {
+    "name": "onnx::MatMul_274",
+    "graph": "reflow_step",
+    "shape": [
+     128,
+     1024
+    ],
+    "offset": 34550272,
+    "bytes": 524288,
+    "source": {
+     "key": "reflow_model.velocity_fn.input_projection.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     128
+    ]
+   },
+   {
+    "name": "onnx::MatMul_275",
+    "graph": "reflow_step",
+    "shape": [
+     128,
+     1024
+    ],
+    "offset": 35074560,
+    "bytes": 524288,
+    "source": {
+     "key": "reflow_model.velocity_fn.conditioner_projection.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     128
+    ]
+   },
+   {
+    "name": "onnx::MatMul_276",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 35598848,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_277",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 43987456,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_278",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 52376064,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.0.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_279",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 56570368,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_280",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 64958976,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_281",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 73347584,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.1.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_282",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 77541888,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_283",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 85930496,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_284",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 94319104,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.2.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_285",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 98513408,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_286",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 106902016,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_287",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 115290624,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.3.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_288",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 119484928,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_289",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 127873536,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_290",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 136262144,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.4.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_291",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 140456448,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.4.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_292",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     2048
+    ],
+    "offset": 148845056,
+    "bytes": 8388608,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.6.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     2048,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_293",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     1024
+    ],
+    "offset": 157233664,
+    "bytes": 4194304,
+    "source": {
+     "key": "reflow_model.velocity_fn.residual_layers.5.net.8.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     1024,
+     1024
+    ]
+   },
+   {
+    "name": "onnx::MatMul_294",
+    "graph": "reflow_step",
+    "shape": [
+     1024,
+     128
+    ],
+    "offset": 161427968,
+    "bytes": 524288,
+    "source": {
+     "key": "reflow_model.velocity_fn.output_projection.weight"
+    },
+    "transform": "transpose",
+    "source_shape": [
+     128,
+     1024
+    ]
+   }
+  ]
+ },
+ "optional_zero": [
+  "ddsp_model.unit2ctrl.aug_shift_embed.weight"
+ ],
+ "speakers": {
+  "key": "ddsp_model.unit2ctrl.spk_embed.weight",
+  "dim": 512
+ },
+ "ignored_keys": [
+  "ddsp_model.sampling_rate",
+  "ddsp_model.block_size",
+  "ddsp_model.win_length",
+  "ddsp_model.window",
+  "ddsp_model.unit2ctrl.f0_embed.weight",
+  "ddsp_model.unit2ctrl.f0_embed.bias",
+  "ddsp_model.unit2ctrl.phase_embed.weight",
+  "ddsp_model.unit2ctrl.phase_embed.bias"
+ ]
+}

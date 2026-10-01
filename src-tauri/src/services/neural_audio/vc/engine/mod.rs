@@ -770,6 +770,8 @@ impl SigilRvcEngine {
                 protect: 0.33,
                 speaker_id: 0,
                 stream_pos_16k: (k * self.plan.block_16k) as u64,
+                reference: None,
+                singing: Default::default(),
             };
             let out = self.convert_inner(&ctx, false)?;
             if out.iter().any(|x| !x.is_finite()) {
@@ -1105,6 +1107,8 @@ impl VoiceConversionModel for SigilRvcEngine {
             protect: ctx.protect,
             speaker_id: ctx.speaker_id,
             stream_pos_16k: ctx.stream_pos_16k + self.plan.block_16k as u64,
+            reference: ctx.reference,
+            singing: ctx.singing,
         };
         let second = self.convert_inner(&shifted, false).map(|_| ());
         self.reset_stream();
@@ -1373,6 +1377,8 @@ mod tests {
                     protect: 0.33,
                     speaker_id: 0,
                     stream_pos_16k: pos as u64,
+                    reference: None,
+                    singing: Default::default(),
                 };
                 let out = e.convert(&ctx).unwrap();
                 assert_eq!(out.len(), p.out_samples());
@@ -1413,6 +1419,8 @@ mod tests {
                 protect: 0.33,
                 speaker_id: 0,
                 stream_pos_16k: tick * p.block_16k as u64,
+                reference: None,
+                singing: Default::default(),
             };
             let out = e.convert(&ctx).unwrap();
             assert_eq!(out.len(), p.out_samples());
@@ -1432,6 +1440,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 100 * p.block_16k as u64,
+            reference: None,
+            singing: Default::default(),
         };
         for _ in 0..5 {
             e.convert(&ctx).unwrap();
@@ -1465,6 +1475,8 @@ mod tests {
                     protect: 0.33,
                     speaker_id: 0,
                     stream_pos_16k: pos as u64,
+                    reference: None,
+                    singing: Default::default(),
                 };
                 let out = e.convert(&ctx).unwrap();
                 assert_eq!(out.len(), p.out_samples());
@@ -1525,6 +1537,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         assert_eq!(e.convert(&ctx).unwrap().len(), p.out_samples());
         // A plan at another output rate cannot be built for this template: the error is returned
@@ -1561,6 +1575,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 2,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         assert_eq!(e.convert(&ctx).unwrap().len(), after.out_samples());
         assert!(e.configure_stream(320, 1_000, 0).is_err());
@@ -1598,6 +1614,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         assert_eq!(e.convert(&ctx).unwrap().len(), p.out_samples());
         let mut h = VcStreamHarness::new(Box::new(e), 48_000, 48_000, 1, 1, 1_600, 320, 1_920).unwrap();
@@ -1627,6 +1645,8 @@ mod tests {
             protect: 0.2,
             speaker_id: 1,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         let blended = e.convert(&ctx).unwrap();
         e.set_speaker_blend(None).unwrap();
@@ -2029,6 +2049,8 @@ mod tests {
                             protect: 0.33,
                             speaker_id: 0,
                             stream_pos_16k: (tick * p.block_16k) as u64,
+                            reference: None,
+                            singing: Default::default(),
                         };
                         let started = Instant::now();
                         e.convert(&ctx).unwrap();

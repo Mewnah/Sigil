@@ -1,0 +1,104 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "MeanVC2 graphs for vc::families::meanvc (P5-C): Sigil's export of ASLP-lab/MeanVC2@13acf84c (40 ms model; HF ASLP-lab/MeanVC2 @39cdd195 meanvc2_40ms_40ms.safetensors, fastu2pp_80ms.pt, vocos.pt) by scripts/vc-families/meanvc/export.py (fbank, asr, gtm, dit_step, vocos; sha256 as measured in scripts/vc-families/reports/meanvc_cpu.json). Unpublished (asset hosting is local only): install with the Models tab's Import or SIGIL_LOCAL_ASSETS=<the export folder>.",
+    "vc/meanvc2-speaker is the speaker encoder (WavLM-Large + the fine-tuned ECAPA-TDNN of upstream runtime/src/speaker.py) as one model.onnx: input the 16 kHz mono reference clip [1, N] in -1..1, first output the raw 256-value embedding. Its fine-tuned weights (wavlm_large_finetune.pth) are a manual Google Drive download, so the entry is import-only and unpinned until a maintainer exports it. A voice folder's speaker.npy (upstream preprocess/extract_spk_emb.py) works without it."
+  ],
+  "entries": [
+    {
+      "id": "vc/meanvc2",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "MeanVC2 voice graphs",
+      "description": "Zero-shot voice conversion on the CPU (MeanVC2, experimental): the content encoder, the DiT and the vocoder. About 182 MB.",
+      "license": "Apache-2.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "fbank.onnx",
+          "size": 906697,
+          "sha256": "9d5ab6bb30f6e4a50a97fdfe2834d018584f5737c9b583718e453f3878dacc61",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-fbank.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "asr.onnx",
+          "size": 75781551,
+          "sha256": "f15e38fd3aee130d3eeab7a8eceb628bdef916cf813ddfbcfacc2fddb5fe50a4",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-asr.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "gtm.onnx",
+          "size": 17441981,
+          "sha256": "eb6b2974bf039cd416e5a07f25c6add819264eace2a82058c4564854c08bb565",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-gtm.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "dit_step.onnx",
+          "size": 53539573,
+          "sha256": "623713a15c704d98385ebc192ade35c70377460c84ed09ce4b93d18efe04f036",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-dit_step.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "vocos.onnx",
+          "size": 34849583,
+          "sha256": "7fcf85deeb5e56a973f596e82f5fa37d154ac030a1434f6c9b893fe6c871f21a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-vocos.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/meanvc2-speaker",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "MeanVC2 speaker encoder",
+      "description": "Analyses a reference voice for MeanVC2 voices (WavLM-Large + ECAPA-TDNN). Import a model.onnx exported from the fine-tuned weights. About 1.2 GB.",
+      "license": "MIT AND Apache-2.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.onnx",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-speaker-model.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

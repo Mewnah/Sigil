@@ -176,14 +176,17 @@ pub struct VoiceChangerState {
     pub(super) params_commit: Arc<Mutex<()>>,
 }
 
-/// What of the RVC params selects a voice: its folder, F0 method and F0 range (the worker compares
-/// it every tick without allocating; a change is a voice switch).
+/// What of the RVC params selects a voice: its folder, F0 method, F0 range and (P5) zero-shot
+/// reference voice (the worker compares it every tick without allocating; a change is a voice
+/// switch).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct VoiceSelection {
     /// Trimmed slot folder.
     pub(super) slot_dir: String,
     pub(super) pitch_extractor: String,
     pub(super) f0_range: F0Range,
+    /// Voice-library id of the reference (`""` = none; P5-S0).
+    pub(super) reference_voice: String,
 }
 
 impl VoiceSelection {
@@ -192,11 +195,15 @@ impl VoiceSelection {
             slot_dir: s.slot_dir.trim().to_string(),
             pitch_extractor: s.pitch_extractor.clone(),
             f0_range: s.f0_range,
+            reference_voice: s.reference_voice_id.clone(),
         }
     }
 
     pub(super) fn matches(&self, s: &RvcParamsState) -> bool {
-        self.slot_dir == s.slot_dir.trim() && self.pitch_extractor == s.pitch_extractor && self.f0_range == s.f0_range
+        self.slot_dir == s.slot_dir.trim()
+            && self.pitch_extractor == s.pitch_extractor
+            && self.f0_range == s.f0_range
+            && self.reference_voice == s.reference_voice_id
     }
 }
 
@@ -460,6 +467,7 @@ impl VoiceChangerState {
             rms_mix: Some(h.rms_mix),
             formant_semitones: Some(h.formant_semitones),
             f0_range: Some(rvc.f0_range.as_str().to_string()),
+            reference_voice_id: Some(rvc.reference_voice_id.clone()),
         }
     }
 
@@ -495,6 +503,9 @@ impl VoiceChangerState {
         }
         if let Some(v) = s.f0_range.as_deref() {
             rvc.f0_range = F0Range::from_str_lossy(v);
+        }
+        if let Some(v) = s.reference_voice_id.as_deref() {
+            rvc.reference_voice_id = super::params::normalize_reference_voice_id(v);
         }
     }
 
@@ -551,6 +562,7 @@ impl VoiceChangerState {
         p.rvc_slot_dir = playing.slot_dir.clone();
         p.pitch_extractor = playing.pitch_extractor.clone();
         p.f0_range = Some(playing.f0_range.as_str().to_string());
+        p.reference_voice_id = Some(playing.reference_voice.clone());
         p.pitch_semitones = tuning.pitch_semitones;
         p.formant_shift = tuning.formant_shift;
         p.index_rate = tuning.index_rate;
@@ -592,7 +604,13 @@ impl VoiceChangerState {
                 });
             }
             if in_rvc && !slot.is_empty() {
-                if let Some(file) = self.load_slot_settings(Path::new(&slot)) {
+                let file = self.load_slot_settings(Path::new(&slot));
+                // A voice without its own reference never inherits the previous voice's (P5-I0:
+                // `apply_slot_settings` applies only the fields a `slot.json` has).
+                if file.as_ref().and_then(|f| f.reference_voice_id.as_ref()).is_none() {
+                    lock(&self.rvc).reference_voice_id.clear();
+                }
+                if let Some(file) = file {
                     self.apply_slot_settings(&file);
                 }
             }
@@ -866,6 +884,31 @@ mod tests {
         st.update_params(classic);
         st.flush_settings();
         assert_eq!(std::fs::read(slot_settings_path(&a)).unwrap(), before);
+    }
+
+    /// Entering a voice whose `slot.json` names no reference clears the previous voice's (P5-I0):
+    /// a zero-shot voice's reference never leaks into an RVC voice, or into another zero-shot voice
+    /// made without one.
+    #[test]
+    fn a_voice_without_a_reference_does_not_inherit_one() {
+        let dir = temp_dir("reference");
+        let (zs, plain) = (dir.0.join("zero-shot"), dir.0.join("plain"));
+        std::fs::create_dir_all(&zs).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(slot_settings_path(&zs), br#"{"version":1,"reference_voice_id":"alice"}"#).unwrap();
+        let st = VoiceChangerState::new();
+        st.attach_persistence(&dir.0.join("app"));
+        let (eff, _) = st.update_params(rvc_params(&zs, 0.0, 0.33));
+        assert_eq!(eff.reference_voice_id.as_deref(), Some("alice"));
+        // The UI still carries the zero-shot voice's reference when it selects the plain voice.
+        let mut to_plain = rvc_params(&plain, 0.0, 0.33);
+        to_plain.reference_voice_id = Some("alice".into());
+        let (eff, adjusted) = st.update_params(to_plain);
+        assert_eq!(eff.reference_voice_id.as_deref(), Some(""));
+        assert!(adjusted, "the UI adopts the cleared reference");
+        // Back to the zero-shot voice: its own reference again.
+        let (eff, _) = st.update_params(rvc_params(&zs, 0.0, 0.33));
+        assert_eq!(eff.reference_voice_id.as_deref(), Some("alice"));
     }
 
     fn rvc_params(slot: &Path, pitch: f32, protect: f32) -> VoiceChangerParams {

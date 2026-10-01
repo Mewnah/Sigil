@@ -1,0 +1,4 @@
+# Exact bytes (ONNX graphs, a torch checkpoint, float32 arrays): never convert line endings.
+*.onnx binary
+*.pt binary
+*.bin binary

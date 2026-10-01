@@ -13,6 +13,7 @@
  */
 import { effectivePitchExtractor, rvcBaseEp, type Denoiser, type PitchExtractorId, type RvcExecutionProviderId, type VcMode } from "./contract";
 import type { VcCapabilities, VcSlotInfo } from "./ipc";
+import { voiceFamilyCapability, voiceKind } from "./families";
 import { effectiveDenoiser } from "./options";
 import { EMBEDDER_CATALOG_IDS, embedderOf, isTemplateSlot } from "./slots";
 
@@ -58,7 +59,14 @@ export interface VoiceRequirementInput {
     capabilities: VcCapabilities;
 }
 
-/** Store entries the RVC voice and its F0 method use (deduplicated, stable order; none outside RVC mode). */
+/**
+ * Store entries the RVC voice and its F0 method use (deduplicated, stable order; none outside RVC mode).
+ *
+ * A P5 family voice (`families.ts`) needs what its family lists (`VcFamilyCapability.requires`), its
+ * content encoder only when the family runs one (`needs_content_encoder`: the voice's `embedder`,
+ * ContentVec when unnamed, as the start preflight resolves it) and the pitch models only when it
+ * tracks pitch (`needs_pitch`). A family this build does not run lists nothing (the voice shows why).
+ */
 export function voiceModelIds(input: VoiceRequirementInput): string[] {
     const ids: string[] = [];
     const add = (id: string | undefined) => {
@@ -66,19 +74,35 @@ export function voiceModelIds(input: VoiceRequirementInput): string[] {
     };
     if (input.mode !== "rvc") return ids;
     const voice = input.voice;
-    if (voice && isTemplateSlot(voice) && !voice.problem) {
-        const kind = embedderOf(voice.embedder, voice.version);
-        if (kind) add(EMBEDDER_CATALOG_IDS[kind]);
-    }
-    // A voice trained without pitch (nof0) runs no F0 extractor.
-    if (voice?.f0 !== false) {
+    const addPitch = () => {
         const run = effectivePitchExtractor(input.pitchExtractor, input.rvcExecutionProvider, input.capabilities.pitch_extractors);
         for (const method of pitchParts(run.extractor, rvcBaseEp(input.rvcExecutionProvider))) {
             if (method === "fcpe" && input.fcpePath.trim()) continue;
             if (method === "rmvpe" && input.rmvpePath.trim()) continue;
             add(PITCH_MODEL_IDS[method]);
         }
+    };
+    if (voiceKind(voice) === "family") {
+        const fam = voiceFamilyCapability(input.capabilities, voice);
+        if (!fam || !fam.available) return ids;
+        const encoders: readonly string[] = Object.values(EMBEDDER_CATALOG_IDS);
+        let encoder: string | null = null;
+        if (fam.needs_content_encoder) {
+            const kind = embedderOf(voice?.embedder, null);
+            encoder = kind ? EMBEDDER_CATALOG_IDS[kind] : null;
+            add(encoder ?? undefined);
+        }
+        // The family's static list names its usual encoder; a voice that names another one needs only its own.
+        for (const id of fam.requires) if (!(fam.needs_content_encoder && encoders.includes(id) && id !== encoder)) add(id);
+        if (fam.needs_pitch) addPitch();
+        return ids;
     }
+    if (voice && isTemplateSlot(voice) && !voice.problem) {
+        const kind = embedderOf(voice.embedder, voice.version);
+        if (kind) add(EMBEDDER_CATALOG_IDS[kind]);
+    }
+    // A voice trained without pitch (nof0) runs no F0 extractor.
+    if (voice?.f0 !== false) addPitch();
     return ids;
 }
 

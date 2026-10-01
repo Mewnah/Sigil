@@ -1,0 +1,11 @@
+{
+  "identifier": "voice-library",
+  "description": "IPC for the voice-library plugin (shared reference-voice recorder and library for zero-shot voice conversion and TTS cloning) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "voice-library:default"
+  ]
+}

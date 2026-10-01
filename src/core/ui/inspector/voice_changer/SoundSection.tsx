@@ -1,12 +1,15 @@
 // Voice-changer inspector (P3-S0 split of inspector_voice_changer.tsx; owned by P3-G).
-// Pitch, formant and the classic phase vocoder.
+// Pitch, formant and the classic phase vocoder. P5-G: in RVC mode a P5 family voice that does not answer pitch or
+// formant (`VcFamilyCapability.controls`) says so instead of offering a control that changes nothing.
 import { VC_NUMBER_RANGES } from "@/core/services/voice_changer/contract";
+import { formantShiftOn, hiddenFormantBlocksTilt, showsControl } from "@/core/services/voice_changer/families";
 import type { VoiceChangerState } from "@/core/services/voice_changer/schema";
 import { FC } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { InputSelect } from "../components/input";
 import { InspectorInfoButton, VcDetails, VcNote, VcNumberSlider, VcSliderField, VcSubHeader } from "./common";
+import { useSelectedVoice, useVoiceFamily } from "./hooks";
 
 const FORMANT = VC_NUMBER_RANGES.formant_semitones;
 
@@ -16,8 +19,18 @@ export const SoundSection: FC = () => {
     const vcApi = window.ApiServer.voiceChanger;
     const isClassic = voiceChanger.mode === "classic";
     const isRvc = voiceChanger.mode === "rvc";
-    /** RVC mode: the classic tilt applies to converted audio only while the true formant shift is off. */
-    const tiltInactive = isRvc && voiceChanger.formantSemitones !== 0;
+    const { controls } = useVoiceFamily(useSelectedVoice());
+    /** RVC mode with a family voice: the controls its family answers (every one for RVC voices). */
+    const familyControls = isRvc ? controls : null;
+    const pitchIgnored = !showsControl(familyControls, "pitch");
+    const formantShown = isRvc && showsControl(familyControls, "formant");
+    /**
+     * RVC mode: the classic tilt applies to converted audio only while the true formant shift is off (Rust
+     * `rvc_output_tilt`, for every voice, also one whose family ignores the shift and hides its slider).
+     */
+    const tiltInactive = isRvc && formantShiftOn(voiceChanger.formantSemitones);
+    /** The family hides Formant, but a value is set (e.g. from the previous voice): offer to reset it. */
+    const hiddenFormant = isRvc && hiddenFormantBlocksTilt(familyControls, voiceChanger.formantSemitones);
     const handleVocoderOversampleChange = (value: string) => {
         const n = parseInt(value, 10) as VoiceChangerState["vocoderOversample"];
         if (n === 1 || n === 2 || n === 4 || n === 8 || n === 16 || n === 32) {
@@ -29,6 +42,7 @@ export const SoundSection: FC = () => {
             <VcSubHeader titleKey="voice_changer.section_sound" infoKey="voice_changer.section_sound_info" />
             <VcSliderField
                 labelKey="voice_changer.pitch"
+                inactive={pitchIgnored}
                 controlsRow={
                     <>
                         <input
@@ -66,7 +80,8 @@ export const SoundSection: FC = () => {
                 lowLabelKey="voice_changer.label_deeper"
                 highLabelKey="voice_changer.label_higher"
             />
-            {isRvc ? (
+            {pitchIgnored ? <VcNote>{t("voice_changer.family_pitch_ignored")}</VcNote> : null}
+            {formantShown ? (
                 <VcNumberSlider
                     labelKey="voice_changer.formant_semitones"
                     infoKey="voice_changer.formant_semitones_info"
@@ -110,7 +125,18 @@ export const SoundSection: FC = () => {
                 lowLabelKey="voice_changer.label_darker"
                 highLabelKey="voice_changer.label_bright"
             />
-            {tiltInactive ? <VcNote>{t("voice_changer.formant_tilt_rvc_note")}</VcNote> : null}
+            {hiddenFormant ? (
+                <div className="flex flex-wrap items-center gap-2">
+                    <VcNote tone="warn" className="min-w-0 flex-1">
+                        {t("voice_changer.family_formant_hidden_note", { value: voiceChanger.formantSemitones.toFixed(1) })}
+                    </VcNote>
+                    <button type="button" className="btn btn-xs" onClick={() => void vcApi.update({ formantSemitones: FORMANT.default })}>
+                        {t("voice_changer.family_formant_reset")}
+                    </button>
+                </div>
+            ) : tiltInactive ? (
+                <VcNote>{t("voice_changer.formant_tilt_rvc_note")}</VcNote>
+            ) : null}
             {isClassic && (
                 <VcDetails
                     titleKey="voice_changer.section_tone_vocoder"

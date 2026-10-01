@@ -373,6 +373,7 @@ What the engine does that other real-time RVC clients do not (each part can be s
 | Voices without pitch guidance (v1 or v2) | Not yet: refused as "not supported yet" (the templates ship; the engine support is a follow-up) |
 | Applio RefineGAN and MRF HiFi-GAN voices (v2, 24–48 kHz) | Not yet, as above |
 | RVC v1 at 24 kHz, and RefineGAN / MRF on v1 or without pitch | No trainer produces these |
+| DDSP-SVC 6.3, so-vits-svc 4.x ONNX exports, zero-shot voices, sidecar engines | As voice families: **New voice…** ([below](#zero-shot-singing-and-sidecar-voices-voice-families)) |
 
 Content encoders: **ContentVec** (768 channels for v2, 256 for v1), **SPIN**, **SPIN v2**, and the **Japanese**, **Korean** and **Chinese HuBERT**; Sigil picks the one the voice was trained with (Applio's `embedder_model`). A voice trained with a custom encoder is refused, because it would play back as the wrong words.
 
@@ -456,6 +457,72 @@ On imported voices, extra context is cheap (only new audio is analysed and only 
 - **Autotune** (Quick or Full): tries execution providers, block sizes, F0 methods, precision, context, the GPU levers (under a simulated game load) and, on the CPU, the number of threads, on a test clip; it picks the lowest-latency configuration that stays real time with headroom (p99 real-time factor ≤ 0.5) and full quality, and stores the result for this PC and driver. **Apply these settings** changes only the fields the tuner may set (it can also set the RVC preset and worker priority for the CPU thread policy).
 - **Benchmark this PC:** a paced run of the selected voice with your current settings on a simulated microphone and speaker (48 kHz), showing speed, steadiness, latency, CPU and VRAM.
 - **Live recording:** records how the running voice changer performs during a real session (up to 10 minutes; no audio, no file paths) into `app_data/bench/results/live-<time>/`, to share as evidence from other PCs.
+
+### Zero-shot, singing and sidecar voices (voice families)
+
+Besides RVC voices, **RVC voices** mode runs other kinds of voices on the same engine, with the same latency budget, metrics, hotkeys, TTS mixing and hot-voice switching. In the voice library, **New voice…** (shown when this build runs at least one family) opens a form per family; each family is labelled with what it is (**Zero-shot**, **Singing**, **Experimental**) and the execution providers it runs on. A voice that cannot run on the selected provider says so and offers **Use CUDA / DirectML / CPU**. Family options are saved with the voice and apply the next time it loads (the panel offers **Restart now** while the engine runs). Measured delays and quality: [docs/benchmarks/VC_BENCHMARKS.md → P5 voice families](benchmarks/VC_BENCHMARKS.md#p5-voice-families).
+
+| Family | What it is | Made from | Runs on | Delay (measured on an RTX 4090) |
+|---|---|---|---|---|
+| **Sigil-ZS** | Sounds like any voice from a short clip, no training (Seed-VC real-time inside Sigil's engine) | A reference voice from the voice library | CUDA, DirectML (about 1.1–1.4 GB VRAM) | Low delay about 250 ms; Upstream about 350 ms |
+| **DDSP-SVC 6.3** | A trained singing voice; follows your pitch from E2 to D#7 | Its `model_*.pt` with `config.yaml` | CUDA, DirectML | Singing about 185–215 ms; Upstream about 615 ms |
+| **MeanVC2** (experimental) | Zero-shot on the CPU, leaving the GPU free (16 kHz, trained on Mandarin) | A reference voice plus a speaker embedding | CPU (on any provider setting) | 80 ms tick about 290 ms; 160 ms tick about 350 ms |
+| **so-vits-svc 4.0 / 4.1** (experimental) | A so-vits-svc voice exported to ONNX | Its `.onnx` export | CUDA, DirectML, CPU | Your block size (no partial decode: more context costs more) |
+| **Sidecar** (experimental) | X-VC, StreamVoiceAnon, seed-vc-realtime or your own server, as a separate program on this PC | A recipe or a `ws://` address on this PC | Your Python environment's GPU | Seed-VC Low delay about 300 ms; its default about 420 ms |
+
+The delays are engine-added (microphone block in to converted audio out, including the output buffer these voices need), on an otherwise idle fast GPU; a slower GPU adds its compute time. Families that compute a whole block at once play with at least the output buffer that block needs, whatever the output buffer setting says, because a smaller buffer runs dry while the block computes: DDSP-SVC 70 ms (80 ms on DirectML, 100–150 ms for Upstream), Sigil-ZS 80–95 ms (Low delay: 95 ms on CUDA, 85 ms on DirectML; Lean: 80 ms, the **Stable** buffer; Upstream 120–125 ms), MeanVC2 80 ms with the 160 ms tick. The latency readout includes it.
+
+#### Reference voices (voice library)
+
+Zero-shot voices (Sigil-ZS, MeanVC2, sidecar recipes that take a reference) convert toward a **reference voice** from the shared voice library, which TTS voice cloning will use too. Record one from the picker (**Add a voice…**) or import a WAV, FLAC, Ogg or MP3 file:
+
+- Speak 5–10 s in a quiet room, one speaker, no music; Sigil-ZS uses the 4 s with the most speech (quiet ends are ignored). Recording stops by itself at 12 s.
+- Silence at the ends is trimmed, long pauses are shortened and the level is evened out (−20 LUFS). The recorder shows the level, clipping and how much speech it heard; a take with no speech or too little speech cannot be saved, other issues (clipping, noise) are warnings.
+- A transcript is made in the background with the speech-to-text models already installed (nothing is downloaded); you can edit it, and your edit wins.
+- **Re-record** replaces the clip in place and keeps the voice's id, so voices using it pick up the new clip. Deleting a reference voice leaves the voices that used it asking for another one.
+- Clips live in `%AppData%/com.sigil.app/voices/<id>/` (`ref.wav`, `meta.json`, and per-engine caches of what was computed from the clip).
+- A voice's reference can be switched while the voice changer runs (the voice reloads in the background and crossfades).
+
+#### Sigil-ZS (zero-shot)
+
+- **Install** `vc/zs-seed-vc` under Models & Runtimes (**Import** from a local export folder, `scripts/vc-families/seed_vc/export.py`; it is not downloadable yet), then **New voice… → Sigil-ZS** and pick or record the reference voice.
+- **Presets:** **Low delay** (default: 100 ms blocks, 6 diffusion steps with guidance, 4 s of the reference; matched or beat upstream Seed-VC's offline speaker similarity on our test clips), **Lean** (4 steps, no guidance, 3 s: lighter, for slower GPUs, less similar), **Upstream** (180 ms blocks, 10 steps; more delay, chosen by hand only). Steps, guidance and reference length can be set per voice.
+- Runs on CUDA or DirectML, not the CPU. Half-precision switches exist but change the sound (the fp16 diffusion model does not match the full-precision audio); keep them off unless the GPU cannot keep up.
+- **Tip:** when no game is running, an idle NVIDIA GPU lowers its clocks for this bursty work and blocks can arrive late (playback gaps); setting NVIDIA's **Power management mode** to **Prefer maximum performance** for Sigil.exe avoids it. Sigil never changes driver settings itself.
+
+#### DDSP-SVC singing voices
+
+- **Install** `vc/ddsp-svc-6.3` (Sigil's template graphs), `vc/vocoder-pc-nsf-hifigan-44k` and the ContentVec content encoder (Models & Runtimes, **Import** while they are not downloadable).
+- **Import** a DDSP-SVC 6.3 voice with **New voice… → DDSP-SVC**, or drop its `model_*.pt` on the import box (it opens the DDSP-SVC form): the `.pt` with its `config.yaml` in the same folder, the folder itself, or a `.zip` holding both (the highest training step wins). The checkpoint is read by the same isolated, allow-list reader as RVC voices; nothing in it is executed.
+- A new DDSP-SVC voice starts in the **Singing** pitch range with **CREPE tiny**. Keep a method that reaches the top notes: CREPE, SwiftF0 or Fusion. RMVPE reads notes above about D6 (1.15 kHz) an octave low and FCPE reads them up to two semitones flat; the panel warns about both.
+- **Presets:** **Singing** (100 ms blocks, 10 flow steps; about 185–215 ms), **Singing, fast** (5 steps; barely faster on CUDA), **Upstream** (upstream's 500 ms window, 20 steps; about 615 ms).
+- Runs on CUDA and DirectML, not the CPU (it cannot keep up there).
+
+#### MeanVC2 voices (experimental)
+
+- Zero-shot conversion on the CPU (about 0.2–0.3 of one core), so the GPU stays free for the game. Output is 16 kHz, and the model was trained on Mandarin, so other languages may sound less natural. It follows the reference speaker's intonation rather than yours.
+- **Install** `vc/meanvc2` (a local export from `scripts/vc-families/meanvc/export.py`). The speaker embedding needs one of two manual steps, because the speaker encoder's weights are a Google Drive download Sigil cannot fetch: import a speaker-encoder `model.onnx` as `vc/meanvc2-speaker`, or download `wavlm_large_finetune.pth`, run upstream's `preprocess/extract_spk_emb.py` on the reference clip and copy the result as `speaker.npy` into the voice's folder (`%AppData%/com.sigil.app/voice-changer/models/<id>/`).
+- **Options:** steps 1 or 2 (default 2); tick 80 ms (default, about 290 ms) or 160 ms (a little less CPU, more delay; it always plays with at least the **Stable** output buffer, 80 / 150 ms; to save CPU without the extra delay use 1 step). Controls: formant, volume envelope (rms_mix; otherwise MeanVC2 speaks at its own level) and the silence threshold.
+
+#### so-vits-svc voices (experimental)
+
+- **New voice… → so-vits-svc** with the `<name>_SoVits.onnx` export (or its folder, or a `.zip`). The training `config.json` and the MoeVS `<name>.json` are picked up from the same folder or one level up; a FAISS `.index` enables **Cluster / index mix**.
+- Runs so-vits-svc 4.0 / 4.1 exports from `onnx_export.py` / MoeVS (including multi-speaker and speaker-mix exports) and w-okada's so-vits 4.0 exports, with `vec768l12` / `vec256l9` content (ContentVec), in fp32. Refused, with the reason: training checkpoints (`G_*.pth`), so-vits 3.0, other speech encoders (hubert-soft, whisper-ppg, …), fp16 exports; `kmeans_*.pt` and `feature_and_index.pkl` are skipped (Python pickles are never read).
+- Controls: pitch, formant, volume envelope, speaker, variation (the default equals so-vits' noise scale 0.4) and the silence threshold. These exports cannot decode partially, so extra context costs compute every block.
+
+#### Sidecar voices (research engines)
+
+- **New voice… → Sidecar** with a recipe: **X-VC** and **StreamVoiceAnon** (privacy mode: makes your voice unrecognizable) need a GPU with 12 GB or more and their checkpoints installed in your own Python environment (several GB; see each script's docstring), **seed-vc-realtime** runs Sigil's Seed-VC export in Python, **Custom** connects to your own protocol v2 server at a `ws://` address on this PC (nothing else is accepted). Recipes take the Python interpreter, the model folder, extra arguments and a per-block timeout.
+- Sigil starts the recipe's script itself (bound to 127.0.0.1 with a random key) and stops it when the last voice using it unloads. Release builds ship the scripts in `resources/neural-sidecar`; a development checkout uses `scripts/neural-sidecar`, and copies in `%AppData%/com.sigil.app/voice-changer/sidecars` win.
+- A sidecar voice never waits: each frame is waited for up to the timeout (by default the latency budget), then muted and cancelled, and its late reply is dropped; after a stall it is back to its normal delay within a pause or two. The older **WebSocket** mode ("Another program over WebSocket") is unchanged and still waits per chunk.
+- Measured with Seed-VC on an RTX 4090: about 300 ms heard with `--preset sigil_low` (100 ms frames), 400–440 ms with the recipe's default upstream preset, on CUDA and DirectML. Wire format: [`scripts/neural-sidecar/PROTOCOL_V2.md`](../scripts/neural-sidecar/PROTOCOL_V2.md).
+
+#### w-okada / wok000 files
+
+- Bring-your-own ONNX RVC exports from w-okada read their metadata's `embedder`: Japanese HuBERT voices use `hubert-jp-{h,f}.onnx` next to the voice or in `voice-changer/base` when `vc/embedder-hubert-ja` is not installed.
+- wok000's `contentvec-f/-h.onnx` and `hubert-jp-f/-h.onnx` serve both v1 (256) and v2 (768) voices as the content encoder; `rmvpe_20231006.onnx` and `rmvpe_s.onnx` work as the RMVPE model.
+- Files of another kind are refused by what they are: VCClient's fused `rmvpe2_silence.onnx`, MMVC and LLVC models, so-vits, DDSP-SVC and Seed-VC / MeanVC parts, vocoders, pitch models set as the content encoder (and the reverse), PyTorch, JSON, NumPy and GGUF files.
+- **FCPE** also accepts mel-input exports (Sigil computes torchfcpe's 128-band log-mel; latent or F0 output) and the community `[1, N, 1]` waveform export; RMVPE exports set as FCPE are refused.
 
 ### Feature parity (conceptual vs VCClient)
 
@@ -636,9 +703,9 @@ An extracted official sherpa-onnx **Kokoro**, **Kitten** or **Piper** (VITS) pac
 
 ## Sidecar scripts (repo)
 
-Example HTTP/WebSocket servers for local development and testing (not shipped with the app):
+Example HTTP/WebSocket servers for local development and testing (the voice changer's sidecar v2 scripts also ship with the app):
 
-- **[`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md)** — WebSocket voice-changer echo, identity ONNX helper, and the reference TTS HTTP server `tts_sidecar.py` (standard library only; `POST /speech`, `GET /health`, a streaming mode that sends a chunked WAV word by word, and OpenAI-compatible `/v1/models`, `/v1/audio/voices`, `/v1/audio/speech`; binds `127.0.0.1` by default and warns otherwise; `--port`, `--rate`, `--chunk-delay`, `--host`).
+- **[`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md)** — the sidecar protocol v2 server and recipes the voice changer's sidecar voices start ([`PROTOCOL_V2.md`](../scripts/neural-sidecar/PROTOCOL_V2.md); shipped with the app since P5), WebSocket voice-changer echo, identity ONNX helper, and the reference TTS HTTP server `tts_sidecar.py` (standard library only; `POST /speech`, `GET /health`, a streaming mode that sends a chunked WAV word by word, and OpenAI-compatible `/v1/models`, `/v1/audio/voices`, `/v1/audio/speech`; binds `127.0.0.1` by default and warns otherwise; `--port`, `--rate`, `--chunk-delay`, `--host`).
 - **[`scripts/translation-sidecar/README.md`](../scripts/translation-sidecar/README.md)** — Docker-oriented LibreTranslate-compatible sidecar for the `translate` plugin.
 
 Full request/response shapes and ports live in those READMEs. The [connectivity audit](DEVELOPER_GUIDE.md#service-and-feature-connectivity-audit) describes how Sigil wires Tauri plugins to these patterns. Neural TTS HTTP, voice-changer WebSocket binary PCM, and LibreTranslate-style translation HTTP contracts are maintained in the script folders above; use them for copy-paste Docker commands and API shapes—this document focuses on inspector fields and backend behavior in the app.

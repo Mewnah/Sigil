@@ -1135,6 +1135,33 @@ pub struct ImportJob {
     /// A retrieval index file to adopt (default: the voice archive's own `added_*.index`).
     #[serde(default)]
     pub index: Option<PathBuf>,
+    /// P5-S0: a voice-family import (family id or `manifest.format`, `vc::families`): the worker
+    /// runs `families::run_import_job` instead of the RVC pipeline. `None` = an RVC voice.
+    #[serde(default)]
+    pub family: Option<String>,
+    /// P5-S0: the family's options for that import (normalized by the family).
+    #[serde(default)]
+    pub family_options: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+impl ImportJob {
+    /// A family job with every other field at its default (registry tests).
+    pub(crate) fn for_family(family: &str) -> ImportJob {
+        ImportJob {
+            version: 1,
+            source: PathBuf::new(),
+            out_dir: PathBuf::new(),
+            templates_dir: None,
+            time_limit_s: None,
+            smoke: true,
+            smoke_fp16: false,
+            name: None,
+            index: None,
+            family: Some(family.to_string()),
+            family_options: None,
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -1250,7 +1277,12 @@ pub fn run_import_worker(job_path: &Path) -> Result<String, String> {
             std::process::exit(1);
         }
     });
-    let result = run_job(&job).map_err(|e| e.to_string());
+    let result = if job.family.is_some() {
+        // P5-S0: a voice-family import (DDSP-SVC checkpoints, ...) under the same limits.
+        super::families::run_import_job(&job)
+    } else {
+        run_job(&job).map_err(|e| e.to_string())
+    };
     drop(done);
     result
 }

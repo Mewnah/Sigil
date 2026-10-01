@@ -55,7 +55,13 @@ beforeEach(() => {
                 return structuredClone(slots);
             case VC_COMMANDS.importVoice:
             case VC_COMMANDS.importDefaultVoice:
+            case VC_COMMANDS.createFamilySlot:
                 return new Promise((resolve, reject) => imports.push({ request: args?.request ?? "default", resolve, reject }));
+            case VC_COMMANDS.setFamilyOptions: {
+                if ((args!.options as Record<string, unknown>).url === "ws://10.0.0.1:1") throw "job: a sidecar URL must be a ws:// address on this PC";
+                slots = slots.map((s) => (s.id === args!.id ? { ...s, family_options: args!.options } : s));
+                return slots.find((s) => s.id === args!.id);
+            }
             case VC_COMMANDS.cancelImport:
                 return null;
             case VC_COMMANDS.renameSlot:
@@ -126,7 +132,7 @@ describe("voice library", () => {
         await flush();
         await flush();
         expect(lib.state.jobs[0]).toMatchObject({ stage: "done", warnings: ["w"] });
-        expect(host.selectVoice).toHaveBeenCalledWith({ id: "a", path: "C:/m/a" });
+        expect(host.selectVoice).toHaveBeenCalledWith({ id: "a", path: "C:/m/a", reference_voice_id: null });
         // The next file starts only now; with a voice selected it is not selected automatically.
         expect(imports).toHaveLength(2);
         imports[1].reject("pickle_rejected: global os.system is not allowed");
@@ -193,5 +199,101 @@ describe("voice library", () => {
         expect(host.clearVoice).toHaveBeenCalledTimes(1);
         expect(lib.state.busy).toEqual({});
         expect(lib.state.slots?.map((s) => s.id)).toEqual(["bass-2", "merged"]);
+    });
+});
+
+describe("voice families (P5-G)", () => {
+    const zsRow = (id: string) => row(id, { format: "sigil-zs-1", family: "sigil_zs", reference_voice_id: "alice" });
+
+    it("a family voice is a job of the same queue: one slot operation at a time, its own progress, never Rust's activate", async () => {
+        selected = "C:/m/old";
+        const lib = await library();
+        lib.importFiles(["C:/v/a.pth"]);
+        const job = lib.createFamilyVoice(
+            { family: "sigil_zs", name: " Alto ", reference_voice_id: "alice", options: { preset: "sigil_lean" }, activate: true },
+            { select: true },
+        );
+        expect(job).toMatchObject({ kind: "family", family: "sigil_zs", fileName: "Alto", stage: "queued", selectWhenDone: true });
+        await flush();
+        // The import runs first; the family voice waits for it.
+        expect(imports).toHaveLength(1);
+        imports[0].resolve({ job_id: "j1", slot: row("a"), cached: false, warnings: [], elapsed_ms: 1 });
+        await flush();
+        await flush();
+        expect(imports).toHaveLength(2);
+        expect(imports[1].request).toEqual({ family: "sigil_zs", name: " Alto ", reference_voice_id: "alice", options: { preset: "sigil_lean" }, activate: false });
+        emit(VC_EVENTS.importProgress, { job_id: "f1", stage: "queued", fraction: 0, message: "Waiting" });
+        emit(VC_EVENTS.importProgress, { job_id: "f1", stage: "writing", fraction: 0.95, message: "Adding the voice" });
+        expect(lib.state.jobs[1]).toMatchObject({ jobId: "f1", stage: "writing" });
+        slots = [row("a"), zsRow("alto")];
+        imports[1].resolve({ job_id: "f1", slot: zsRow("alto"), cached: false, warnings: [], elapsed_ms: 40 });
+        await flush();
+        await flush();
+        expect(lib.state.jobs[1]).toMatchObject({ stage: "done", slot: { id: "alto", family: "sigil_zs", reference_voice_id: "alice" } });
+        // Asked to use it: selected through the host although another voice was selected.
+        expect(host.selectVoice).toHaveBeenCalledWith({ id: "alto", path: "C:/m/alto", reference_voice_id: "alice" });
+        expect(host.selectVoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("a refused family voice keeps the error code; a queued one cancels locally", async () => {
+        const lib = await library();
+        lib.createFamilyVoice({ family: "ddsp_svc", source: "C:/v/model_100.pt" });
+        const second = lib.createFamilyVoice({ family: "meanvc", reference_voice_id: "bob" });
+        expect(lib.state.jobs[0].fileName).toBe("model_100.pt");
+        expect(second.fileName).toBe("");
+        await lib.cancel(second.key);
+        await flush();
+        imports[0].reject("job: the ddsp_svc voice family is not available in this build yet");
+        await flush();
+        expect(lib.state.jobs.map((j) => [j.stage, j.errorCode])).toEqual([
+            ["failed", "job"],
+            ["failed", "job"],
+        ]);
+        expect(imports).toHaveLength(1);
+        expect(host.selectVoice).not.toHaveBeenCalled();
+    });
+
+    it("saves a family voice's options and patches the listed row; a refusal rejects with Rust's error", async () => {
+        slots = [zsRow("zs")];
+        const lib = await library();
+        await lib.refresh();
+        const info = await lib.setFamilyOptions<"sigil_zs">("zs", { preset: "upstream_readme" });
+        expect(invoke).toHaveBeenCalledWith(VC_COMMANDS.setFamilyOptions, { id: "zs", options: { preset: "upstream_readme" } });
+        expect(info?.family_options).toEqual({ preset: "upstream_readme" });
+        expect(lib.state.slots?.[0].family_options).toEqual({ preset: "upstream_readme" });
+        await expect(lib.setFamilyOptions<"sidecar_v2">("zs", { url: "ws://10.0.0.1:1" })).rejects.toMatch(/^job: /);
+        expect(lib.state.busy).toEqual({});
+        // Saved while stopped: nothing waits for a restart.
+        expect(lib.state.optionsReloadPending).toEqual({});
+    });
+
+    it("options saved while the engine runs wait for a restart per voice (the hot-voice cache keeps the old ones) until it stops", async () => {
+        slots = [zsRow("a"), zsRow("b")];
+        let running = true;
+        host.isRunning = () => running;
+        const lib = await library();
+        await lib.refresh();
+        await lib.setFamilyOptions<"sigil_zs">("a", { preset: "sigil_lean" });
+        // Selecting another voice (and back) does not clear it: voice A may come back from the hot cache.
+        expect(lib.state.optionsReloadPending).toEqual({ a: true });
+        await expect(lib.setFamilyOptions<"sidecar_v2">("b", { url: "ws://10.0.0.1:1" })).rejects.toMatch(/^job: /);
+        expect(lib.state.optionsReloadPending).toEqual({ a: true });
+        running = false;
+        lib.onEngineStopped();
+        expect(lib.state.optionsReloadPending).toEqual({});
+    });
+
+    it("a reference picked for the selected voice shows in its row (Rust sends no slots_changed for it)", async () => {
+        slots = [zsRow("zs"), row("rvc")];
+        const lib = await library();
+        await lib.refresh();
+        lib.noteReference("C:\\m\\zs\\", " bob ");
+        expect(lib.slotById("zs")?.reference_voice_id).toBe("bob");
+        lib.noteReference("C:/m/zs", "");
+        expect(lib.slotById("zs")?.reference_voice_id).toBeNull();
+        // RVC rows never carry a reference; unknown folders are ignored.
+        lib.noteReference("C:/m/rvc", "bob");
+        lib.noteReference("C:/m/none", "bob");
+        expect(lib.slotById("rvc")?.reference_voice_id).toBeNull();
     });
 });

@@ -2,11 +2,12 @@
  * RVC voice slots under `app_data/voice-changer/models/`: the slot store's rows
  * (`voice_changer_list_slots`, Rust `vc::import::slot::SlotInfo`, TS `VcSlotInfo`), the legacy
  * folder list (`list_voice_changer_model_slots`), what a dropped file is, which voices can be
- * merged, and the content encoder / vocoder names shown read-only.
+ * merged, and the content encoder / vocoder names shown read-only. Rows of P5 family voices carry
+ * their family, options and reference voice (P5-G reads them; `families.ts` has the family logic).
  *
  * Pure module: no Tauri, DOM or `window`.
  */
-import type { VcSlotInfo } from "./ipc";
+import { familyOfFormat, type VcSlotInfo } from "./ipc";
 
 /** Slot format of voices imported from `.pth` / `.zip` (template voices, the Sigil Voice Engine). */
 export const SIGIL_RVC_FORMAT = "sigil-rvc-1";
@@ -55,11 +56,17 @@ export function normalizeSlotInfo(raw: unknown): VcSlotInfo | null {
     const id = optStr(r.id);
     const path = optStr(r.path);
     if (!id || !path) return null;
+    const format = optStr(r.format) ?? LEGACY_RVC_FORMAT;
+    // P5 family voices (P5-S0 fields): the family is the row's, else the one its format names.
+    const family = familyOfFormat(r.family) ?? familyOfFormat(format);
+    const familyOptions = r.family_options && typeof r.family_options === "object" && !Array.isArray(r.family_options)
+        ? (r.family_options as Record<string, unknown>)
+        : null;
     return {
         id,
         name: optStr(r.name) ?? id,
         path,
-        format: optStr(r.format) ?? LEGACY_RVC_FORMAT,
+        format,
         template: optStr(r.template),
         version: optStr(r.version),
         sample_rate: optNum(r.sample_rate),
@@ -72,6 +79,10 @@ export function normalizeSlotInfo(raw: unknown): VcSlotInfo | null {
         source_sha256: optStr(r.source_sha256),
         created_unix_ms: optNum(r.created_unix_ms),
         problem: optStr(r.problem),
+        family,
+        experimental: family !== null && r.experimental === true,
+        family_options: family !== null ? familyOptions : null,
+        reference_voice_id: optStr(r.reference_voice_id),
     };
 }
 

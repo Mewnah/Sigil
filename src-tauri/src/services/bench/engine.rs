@@ -79,6 +79,11 @@ pub struct EngineInfo {
     pub f0_range: Option<String>,
     /// Model-internal delay on top of the harness's (the engine's lookahead), in ms.
     pub model_delay_ms: f64,
+    // ---- P5-I0 ----
+    /// The voice family's smallest output buffer `[prefill, max queue]` (ms): paced runs play
+    /// with the larger of it and the stream's, as the voice changer does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_output_buffer_ms: Option<[f64; 2]>,
 }
 
 impl EngineInfo {
@@ -107,6 +112,16 @@ impl EngineInfo {
             plan: None,
             f0_range: None,
             model_delay_ms: 0.0,
+            min_output_buffer_ms: None,
+        }
+    }
+
+    /// The output prefill and queue a paced run plays with: `stream`'s, raised to the voice
+    /// family's minimum (`min_output_buffer_ms`) like the voice changer's worker.
+    pub(crate) fn output_buffer_ms(&self, stream: &StreamSpec) -> (f64, f64) {
+        match self.min_output_buffer_ms {
+            Some([p, q]) => (stream.output_prefill_ms.max(p), stream.output_max_queue_ms.max(q)),
+            None => (stream.output_prefill_ms, stream.output_max_queue_ms),
         }
     }
 
@@ -571,6 +586,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         let t0 = Instant::now();
         let results: Vec<_> = (0..6).map(|_| m.convert(&ctx)).collect();
@@ -623,6 +640,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: pos,
+            reference: None,
+            singing: Default::default(),
         };
         h.warmup_at(&ctx(0)).unwrap();
         assert_eq!(h.convert(&ctx(5_000)).unwrap().len(), 800);

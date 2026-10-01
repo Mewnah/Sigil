@@ -5,7 +5,10 @@
 //!   the `anchored_noise` lever feeds its `rnd` input time-anchored noise, and an export with
 //!   `skip_head` / `return_length` decodes only the returned frames);
 //! - `sigil-rvc-1` (imported template voice): the Sigil Voice Engine (`vc::engine`, P3-C1);
-//! - anything else: refused (later families register here, P5).
+//! - a P5 family format (`ddsp-svc-6.3`, `sigil-zs-1`, `meanvc-2`, `sovits-4.1`, `sidecar-v2`):
+//!   `vc::families::create` ([`create_family`]; P5-S0), refused by name while the family is not
+//!   available in the build, on an EP rung it does not run on, or (zero-shot) without a reference;
+//! - anything else: refused.
 //!
 //! The pitch extractor comes from the pitch bank factory (`vc::f0_fusion::create_pitch_extractor_with`,
 //! P3-D) with the voice's GPU levers, so RMVPE (alone or inside the fusion) runs as the pitch bank's
@@ -41,6 +44,26 @@
 //! denoiser_latency_16k}`, [`HarnessSpec`],
 //! [`build_harness`], [`EngineKey`], [`LoadedVoice`], [`VoiceSet`], [`crossfade_into`],
 //! [`noise_seed_for`].
+//!
+//! # Added by P5-S0 (frozen; change only through INTEGRATE)
+//! - `EngineRequest::{reference_voice, reference_clip}`: the zero-shot reference (a voice-library
+//!   id, params `reference_voice_id`; or a WAV, benchmarks only), resolved by [`resolve_reference`].
+//! - `CreatedEngine::reference`: the family's reference embedding; [`LoadedVoice::load_cancellable`] installs
+//!   it, with the voice's singing flags (`f0_range`), in the harness
+//!   ([`build_harness_with`] / `VcStreamHarness::with_context`).
+//! - `EngineKey::reference_voice`: a voice with another reference is another voice (a switch loads
+//!   it in the background; families may share their graphs between such loads).
+//! - [`with_context`]: a wrapper that hands a model its context on every call when no harness of the
+//!   factory's builds it (the benchmark's own harnesses).
+//!
+//! # Added by P5-I0
+//! - `CreatedEngine::min_output_buffer_ms` / `LoadedVoice::min_output_buffer_ms`: the voice's
+//!   smallest output buffer (the loaded voice's `FamilyEngine::min_output_buffer_ms`, else
+//!   `families::min_output_buffer_ms` of its kind, slot options and EP); the worker plays the active
+//!   voice with the larger of it and the user's prefill / queue.
+//! - The in-harness denoiser is skipped (with a warning) for a model whose input is not 16 kHz.
+//! - `EngineRequest::cancel`: a background load ([`VoiceSet`]) and the worker's first load hand the
+//!   family their cancel flag, so a sidecar voice stops waiting for its helper once nobody wants it.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,7 +82,11 @@ use crate::services::neural_audio::vc::manifest::{load_slot_manifest, SlotFormat
 use crate::services::neural_audio::vc::rvc::LegacyNoise;
 use crate::services::neural_audio::vc::engine::governor::QualityLevel;
 use crate::services::neural_audio::vc::engine::post::{PostConfig, PostStage};
-use crate::services::neural_audio::vc::traits::{ConversionCtx, PitchExtractor, StreamReport, VoiceControls, DEFAULT_NOISE_SCALE};
+use crate::services::neural_audio::vc::families::{self, reference::ReferenceClip, FamilyKind, FamilyRequest, CREATION_REFERENCE};
+use crate::services::neural_audio::vc::stream::HarnessContext;
+use crate::services::neural_audio::vc::traits::{
+    ConversionCtx, PitchExtractor, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, DEFAULT_NOISE_SCALE,
+};
 use crate::services::neural_audio::vc::{assets, import, VcStreamHarness, VoiceConversionModel};
 use crate::services::neural_audio::{RvcModel, RvcPresetProfile};
 use crate::services::resources::{self, Subsystem, VramClaim};
@@ -108,6 +135,18 @@ pub(crate) struct EngineRequest {
     /// The speaker at load (each tick carries its own; kept for the benchmark's reports).
     #[allow(dead_code)]
     pub speaker_id: i64,
+    /// P5-S0: the voice-library voice a zero-shot family converts toward (params
+    /// `reference_voice_id`; `""` = none). Ignored by families without a reference.
+    pub reference_voice: String,
+    /// P5-S0: a reference WAV used directly (wins over `reference_voice`; benchmarks and tests).
+    pub reference_clip: Option<PathBuf>,
+    /// P5-S0: the latency budget (ms) when the voice loads: a family's default stall timeout (a
+    /// sidecar's per-frame timeout); the runtime's budget itself stays the worker's.
+    pub latency_budget_ms: f64,
+    /// Set when the voice changer no longer wants this voice (another was selected, or it stopped;
+    /// not persisted): a family that waits on something outside the process (a sidecar helper's
+    /// start or handshake) stops waiting (`FamilyRequest::cancel`). `None` = never called off.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 /// A loaded engine.
@@ -128,6 +167,11 @@ pub(crate) struct CreatedEngine {
     /// Delay the model itself adds (a template voice's lookahead; 16 kHz samples; 0 without), on
     /// top of the harness's algorithmic latency (P3-I0).
     pub model_delay_16k: usize,
+    /// The reference embedding of a zero-shot family voice (P5-S0; installed in its harness).
+    pub reference: Option<Arc<ReferenceEmbedding>>,
+    /// The smallest output buffer (prefill, max queue; ms) the voice plays with
+    /// (`families::min_output_buffer_ms`, P5-I0); `None` = the user's.
+    pub min_output_buffer_ms: Option<(f64, f64)>,
 }
 
 /// Noise seed of a voice: fixed per voice (its source hash, else its folder name), so a restart
@@ -346,6 +390,7 @@ pub(crate) fn create_engine_with(request: EngineRequest, denoiser: DenoiserKind)
     let mut created = match format {
         SlotFormat::LegacyOnnxRvc => create_legacy(&request)?,
         SlotFormat::SigilRvc => create_sigil(&request)?,
+        SlotFormat::Family(kind) => create_family(&request, kind)?,
         SlotFormat::Unknown(f) => return Err(format!("the voice-changer format '{f}' is not supported by this build")),
     };
     if denoiser == DenoiserKind::Gtcrn {
@@ -436,6 +481,8 @@ fn create_legacy(request: &EngineRequest) -> Result<CreatedEngine, String> {
         vram_mb: 0.0,
         denoiser_latency_16k: 0,
         model_delay_16k: 0,
+        reference: None,
+        min_output_buffer_ms: None,
     })
 }
 
@@ -517,12 +564,194 @@ fn create_sigil(request: &EngineRequest) -> Result<CreatedEngine, String> {
         vram_mb: 0.0,
         denoiser_latency_16k: 0,
         model_delay_16k,
+        reference: None,
+        min_output_buffer_ms: None,
     })
 }
 
+/// The reference clip of `request`: its explicit WAV, else its voice-library voice (from
+/// `request.app_data`), else none.
+pub(crate) fn resolve_reference(request: &EngineRequest) -> Result<Option<ReferenceClip>, String> {
+    if let Some(path) = &request.reference_clip {
+        return ReferenceClip::from_wav(path).map(Some);
+    }
+    let id = request.reference_voice.trim();
+    if id.is_empty() {
+        return Ok(None);
+    }
+    let app_data = request
+        .app_data
+        .as_deref()
+        .ok_or("the voice library is not available (no app data folder)")?;
+    crate::services::voice_library::reference_clip(app_data, id).map(Some)
+}
+
+/// A P5 family voice (`vc::families`): its pitch extractor (when the family uses one, with the
+/// governor's light-F0 switch), its reference clip (zero-shot families), then the family's own
+/// loader. Refused by name when the family is not available in this build, does not run on the
+/// request's EP rung, or (made from a reference) has no reference voice.
+fn create_family(request: &EngineRequest, kind: FamilyKind) -> Result<CreatedEngine, String> {
+    if !kind.available() {
+        return Err(format!("the {} voice family is not available in this build yet", kind.as_str()));
+    }
+    let info = kind.info();
+    if !info.execution_providers.contains(&request.ep.as_str()) {
+        return Err(format!(
+            "{} voices run on {} only (this voice changer runs on {}); choose another execution provider",
+            kind.as_str(),
+            info.execution_providers.join(" / "),
+            request.ep
+        ));
+    }
+    let manifest = load_slot_manifest(&request.slot_dir)?;
+    if let Some(problem) = families::slot_problem(kind, &request.slot_dir, &manifest) {
+        return Err(problem);
+    }
+    let reference = if info.zero_shot { resolve_reference(request)? } else { None };
+    if info.creation == CREATION_REFERENCE && reference.is_none() {
+        return Err(format!("choose a reference voice from the voice library for this {} voice", kind.as_str()));
+    }
+    let (pitch, mut warnings, mut outcomes, light_f0, light_note) = if info.needs_pitch {
+        let b = build_pitch(request)?;
+        (Some(b.extractor), b.notes, b.outcomes, b.light_f0, b.light_note)
+    } else {
+        (None, Vec::new(), Vec::new(), None, None)
+    };
+    let noise_seed = noise_seed_for(&request.slot_dir, manifest.source_sha256.as_deref());
+    // The kind's minimum for this slot's options on the request's EP (before the manifest moves);
+    // a loaded voice that knows better (the EP its graphs landed on) overrides it below.
+    let kind_min_output_buffer_ms = families::min_output_buffer_ms(kind, &request.ep, &manifest);
+    let engine = families::create(FamilyRequest {
+        kind,
+        slot_dir: request.slot_dir.clone(),
+        manifest,
+        app_data: request.app_data.clone(),
+        ep: request.ep.clone(),
+        session: request.session.clone(),
+        levers: request.levers.clone(),
+        precision: request.precision,
+        preset: request.preset,
+        block_ms: request.block_ms,
+        chunk_frames: request.chunk_frames,
+        device_rate: request.device_rate,
+        extra_context_ms: request.extra_context_ms,
+        lookahead_ms: request.lookahead_ms,
+        f0_range: request.f0_range,
+        silence_skip: request.silence_skip,
+        noise_seed,
+        pitch,
+        pitch_method: request.pitch_extractor.clone(),
+        content_encoder: opt_path(&request.hubert_path),
+        reference,
+        latency_budget_ms: request.latency_budget_ms,
+        cancel: request.cancel.clone(),
+    })?;
+    warnings.extend(engine.warnings);
+    outcomes.extend(engine.outcomes);
+    let mut levers = engine.levers;
+    levers.notes.extend(light_note);
+    let min_output_buffer_ms = engine.min_output_buffer_ms.or(kind_min_output_buffer_ms);
+    if let Some((prefill, queue)) = min_output_buffer_ms {
+        levers.notes.push(format!(
+            "output buffer: at least {prefill:.0} / {queue:.0} ms for {} voices (each block computes in one burst)",
+            kind.as_str()
+        ));
+    }
+    let output_sample_rate = engine.model.output_sample_rate();
+    Ok(CreatedEngine {
+        model: governed(engine.model, light_f0),
+        format: SlotFormat::Family(kind),
+        output_sample_rate,
+        levers,
+        outcomes,
+        warnings,
+        vram_mb: 0.0,
+        denoiser_latency_16k: 0,
+        model_delay_16k: engine.model_delay_16k,
+        reference: engine.reference,
+        min_output_buffer_ms,
+    })
+}
+
+/// Hands `model` the harness context on every call whose context lacks it (a harness the factory
+/// did not build, such as the benchmark's): the reference when the call has none, the singing flags
+/// when the call has the neutral ones. A harness built with the context passes it already.
+pub(crate) fn with_context(model: Box<dyn VoiceConversionModel>, context: HarnessContext) -> Box<dyn VoiceConversionModel> {
+    if context.reference.is_none() && context.singing == SingingFlags::SPEECH {
+        return model;
+    }
+    Box::new(ContextModel { inner: model, context })
+}
+
+/// See [`with_context`].
+struct ContextModel {
+    inner: Box<dyn VoiceConversionModel>,
+    context: HarnessContext,
+}
+
+impl VoiceConversionModel for ContextModel {
+    fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+        let reference = ctx.reference.or(self.context.reference.as_deref());
+        let singing = if ctx.singing == SingingFlags::SPEECH { self.context.singing } else { ctx.singing };
+        let filled = ConversionCtx { reference, singing, ..*ctx };
+        self.inner.convert(&filled)
+    }
+
+    fn input_sample_rate(&self) -> u32 {
+        self.inner.input_sample_rate()
+    }
+
+    fn output_sample_rate(&self) -> u32 {
+        self.inner.output_sample_rate()
+    }
+
+    fn min_context_samples(&self) -> usize {
+        self.inner.min_context_samples()
+    }
+
+    fn warmup_at(&mut self, ctx: &ConversionCtx<'_>) -> Result<(), String> {
+        let reference = ctx.reference.or(self.context.reference.as_deref());
+        let singing = if ctx.singing == SingingFlags::SPEECH { self.context.singing } else { ctx.singing };
+        let filled = ConversionCtx { reference, singing, ..*ctx };
+        self.inner.warmup_at(&filled)
+    }
+
+    fn set_voice_controls(&mut self, controls: &VoiceControls) {
+        self.inner.set_voice_controls(controls);
+    }
+
+    fn apply_quality(&mut self, level: &QualityLevel) -> bool {
+        self.inner.apply_quality(level)
+    }
+
+    fn reset_stream(&mut self) {
+        self.inner.reset_stream();
+    }
+
+    fn fixed_block(&self) -> Option<usize> {
+        self.inner.fixed_block()
+    }
+
+    fn configure_stream(&mut self, block: usize, want: usize, extra: usize) -> Result<usize, String> {
+        self.inner.configure_stream(block, want, extra)
+    }
+
+    fn stream_report(&self) -> Option<StreamReport> {
+        self.inner.stream_report()
+    }
+}
+
 /// Wrap the model with GTCRN at 16 kHz (CPU, one thread: it is tiny). A denoiser that cannot load
-/// is a warning; the voice runs without it.
+/// is a warning; the voice runs without it. A model whose input is not 16 kHz (a 22.05 kHz
+/// sidecar, P5-I0) runs without it too: the denoiser never takes the model away.
 fn wrap_gtcrn(created: &mut CreatedEngine, request: &EngineRequest) {
+    let rate = created.model.input_sample_rate();
+    if rate != DENOISER_RATE {
+        created.warnings.push(format!(
+            "denoiser: the 16 kHz denoiser cannot run on this voice's {rate} Hz input; the voice runs without it"
+        ));
+        return;
+    }
     let opts = VcSessionOptions {
         intra_threads: Some(1),
         vram_cap_mb: None,
@@ -627,6 +856,9 @@ impl VoiceConversionModel for PostModel {
     }
 }
 
+/// The in-harness denoiser's rate (GTCRN).
+const DENOISER_RATE: u32 = 16_000;
+
 /// Placeholder while the model is being wrapped (never converts).
 struct NullModel;
 
@@ -663,11 +895,18 @@ pub(crate) struct HarnessSpec {
 }
 
 /// Build the stream harness around a created engine (warms it at the live shape).
+#[allow(dead_code)] // P3-E frozen API (voices load through `build_harness_with` since P5-S0).
 pub(crate) fn build_harness(model: Box<dyn VoiceConversionModel>, spec: &HarnessSpec) -> Result<VcStreamHarness, String> {
+    build_harness_with(model, spec, HarnessContext::default())
+}
+
+/// [`build_harness`] with the voice's context (its reference and singing flags), passed to the
+/// warm-up and every call (P5-S0).
+pub(crate) fn build_harness_with(model: Box<dyn VoiceConversionModel>, spec: &HarnessSpec, context: HarnessContext) -> Result<VcStreamHarness, String> {
     let model_out_sr = model.output_sample_rate();
     let extra_samples = ((spec.extra_context_ms / 1000.0) * 16_000.0).round().max(0.0) as usize;
     let crossfade_samples = ((spec.crossfade_ms / 1000.0) * f64::from(model_out_sr)).round().max(0.0) as usize;
-    VcStreamHarness::new(
+    VcStreamHarness::with_context(
         model,
         spec.r_in,
         spec.r_out,
@@ -676,6 +915,7 @@ pub(crate) fn build_harness(model: Box<dyn VoiceConversionModel>, spec: &Harness
         extra_samples,
         crossfade_samples,
         spec.chunk_frames,
+        context,
     )
 }
 
@@ -686,6 +926,8 @@ pub(crate) struct EngineKey {
     pub pitch_extractor: String,
     pub f0_range: F0Range,
     pub denoiser: DenoiserKind,
+    /// P5-S0: the zero-shot reference voice (params `reference_voice_id`, trimmed; `""` = none).
+    pub reference_voice: String,
 }
 
 /// A voice loaded behind its own harness.
@@ -703,6 +945,9 @@ pub(crate) struct LoadedVoice {
     pub model_delay_16k: usize,
     /// The model's input rate (16 kHz for the RVC family), for the switch priming.
     pub model_input_rate: u32,
+    /// The smallest output buffer (prefill, max queue; ms) it plays with (P5-I0; the worker uses
+    /// the larger of it and the user's while this voice is active).
+    pub min_output_buffer_ms: Option<(f64, f64)>,
     /// Resource-governor claim (resized to the measured VRAM; 0 MB on the CPU).
     _claim: VramClaim,
     pub load_ms: f64,
@@ -715,13 +960,10 @@ pub(crate) struct LoadedVoice {
 pub(crate) const LOAD_CANCELLED: &str = "the voice load was cancelled";
 
 impl LoadedVoice {
-    /// Build a voice: engine, harness (warm-up included) and its VRAM claim.
-    pub(crate) fn load(key: EngineKey, request: EngineRequest, spec: &HarnessSpec) -> Result<LoadedVoice, String> {
-        Self::load_cancellable(key, request, spec, &AtomicBool::new(false))
-    }
-
-    /// [`Self::load`] that stops at its next stage (before the sessions, the warm-up at the live
-    /// shape, the VRAM claim) once `cancel` is set, with [`LOAD_CANCELLED`].
+    /// Build a voice: engine, harness (warm-up included) and its VRAM claim. Stops at its next
+    /// stage (before the sessions, the warm-up at the live shape, the VRAM claim) once `cancel` is
+    /// set, with [`LOAD_CANCELLED`] (the worker's first load and every background load pass their
+    /// own flag, also as `request.cancel`).
     pub(crate) fn load_cancellable(key: EngineKey, request: EngineRequest, spec: &HarnessSpec, cancel: &AtomicBool) -> Result<LoadedVoice, String> {
         let check = || if cancel.load(Ordering::Relaxed) { Err(LOAD_CANCELLED.to_string()) } else { Ok(()) };
         check()?;
@@ -729,10 +971,15 @@ impl LoadedVoice {
         let label = format!("vc: {}", key.slot_dir.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         let gpu = request.ep != "cpu";
         let probe = VramProbe::for_rung(&request.ep, request.session.cuda_device_index);
+        let singing = SingingFlags::from_range(request.f0_range);
         let created = create_engine_with(request, key.denoiser)?;
         check()?;
         let model_input_rate = created.model.input_sample_rate();
-        let harness = build_harness(created.model, spec)?;
+        let context = HarnessContext {
+            reference: created.reference.clone(),
+            singing,
+        };
+        let harness = build_harness_with(created.model, spec, context)?;
         check()?;
         // The harness configured the model's stream, which may have rebuilt sessions (a CPU
         // fallback, a CUDA graph that no longer captures): the voice reports what runs now (T7).
@@ -755,6 +1002,7 @@ impl LoadedVoice {
             denoiser_latency_16k: created.denoiser_latency_16k,
             model_delay_16k: created.model_delay_16k,
             model_input_rate,
+            min_output_buffer_ms: created.min_output_buffer_ms,
             _claim: claim,
             load_ms: t0.elapsed().as_secs_f64() * 1000.0,
             warnings_shown: false,
@@ -778,6 +1026,7 @@ impl LoadedVoice {
             denoiser_latency_16k: 0,
             model_delay_16k: 0,
             model_input_rate,
+            min_output_buffer_ms: None,
             _claim: resources::claim_vram(Subsystem::Vc, "test: voice", 0),
             load_ms: 0.0,
             warnings_shown: false,
@@ -1006,7 +1255,10 @@ impl VoiceSet {
         let cancel = Arc::new(AtomicBool::new(false));
         let (load_key, flag, loader) = (key.clone(), cancel.clone(), self.loader.clone());
         let spawned = std::thread::Builder::new().name("sigil-vc-load".into()).spawn(move || {
-            let _ = tx.send(request().and_then(|request| loader(load_key, request, &spec, &flag)));
+            let _ = tx.send(request().and_then(|mut request| {
+                request.cancel = Some(flag.clone());
+                loader(load_key, request, &spec, &flag)
+            }));
         });
         let rx = match spawned {
             Ok(_) => rx,
@@ -1161,6 +1413,8 @@ mod tests {
         .unwrap();
         assert_eq!(slot_format(&dir).unwrap(), SlotFormat::SigilRvc);
         std::fs::write(dir.join("manifest.json"), br#"{"format":"ddsp-svc-6.3"}"#).unwrap();
+        assert_eq!(slot_format(&dir).unwrap(), SlotFormat::Family(FamilyKind::DdspSvc));
+        std::fs::write(dir.join("manifest.json"), br#"{"format":"future-family-9"}"#).unwrap();
         assert!(slot_format(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1203,6 +1457,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A voice whose model does not take 16 kHz (a 22.05 kHz sidecar, P5-E's report) keeps its
+    /// model when the 16 kHz denoiser is on, with a warning (P5-I0: it used to be left with the
+    /// placeholder and play silence).
+    #[test]
+    fn the_denoiser_never_takes_a_non_16k_model_away() {
+        struct At22k;
+        impl VoiceConversionModel for At22k {
+            fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+                Ok(vec![0.5; ctx.new_frames])
+            }
+            fn input_sample_rate(&self) -> u32 {
+                22_050
+            }
+            fn output_sample_rate(&self) -> u32 {
+                22_050
+            }
+        }
+        let mut created = CreatedEngine {
+            model: Box::new(At22k),
+            format: SlotFormat::Family(FamilyKind::SidecarV2),
+            output_sample_rate: 22_050,
+            levers: EffectiveLevers::default(),
+            outcomes: Vec::new(),
+            warnings: Vec::new(),
+            vram_mb: 0.0,
+            denoiser_latency_16k: 0,
+            model_delay_16k: 0,
+            reference: None,
+            min_output_buffer_ms: None,
+        };
+        wrap_gtcrn(&mut created, &test_request(Path::new("C:/nowhere")));
+        assert_eq!(created.model.input_sample_rate(), 22_050, "the model stays");
+        assert_eq!(created.denoiser_latency_16k, 0);
+        assert!(created.warnings.iter().any(|w| w.contains("22050 Hz")), "{:?}", created.warnings);
+        let input = vec![0.0f32; 441];
+        let ctx = ConversionCtx {
+            mono_16k: &input,
+            new_frames: 441,
+            pitch_shift_semitones: 0.0,
+            index_rate: 0.0,
+            protect: 0.33,
+            speaker_id: 0,
+            stream_pos_16k: 0,
+            reference: None,
+            singing: SingingFlags::SPEECH,
+        };
+        assert_eq!(created.model.convert(&ctx).unwrap().len(), 441);
+    }
+
+    /// Family voices that compute a block in one burst carry their output-buffer minimum (P5-I0).
+    #[test]
+    fn burst_families_carry_an_output_buffer_minimum() {
+        let defaults = |k| families::family_manifest(k, "z", serde_json::json!({}));
+        let zs = defaults(FamilyKind::SigilZs);
+        assert_eq!(families::min_output_buffer_ms(FamilyKind::SigilZs, "cuda", &zs), Some((95.0, 165.0)));
+        assert_eq!(families::min_output_buffer_ms(FamilyKind::SigilZs, "dml", &zs), Some((85.0, 155.0)));
+        for ep in ["cuda", "dml", "cpu"] {
+            assert_eq!(families::min_output_buffer_ms(FamilyKind::DdspSvc, ep, &defaults(FamilyKind::DdspSvc)), Some((70.0, 140.0)));
+            assert_eq!(families::min_output_buffer_ms(FamilyKind::MeanVc, ep, &defaults(FamilyKind::MeanVc)), None);
+        }
+        let long_tick = families::family_manifest(FamilyKind::MeanVc, "z", serde_json::json!({"tick_ms": 160}));
+        assert_eq!(families::min_output_buffer_ms(FamilyKind::MeanVc, "cpu", &long_tick), Some((80.0, 150.0)));
+    }
+
     pub(crate) fn test_request(slot: &Path) -> EngineRequest {
         EngineRequest {
             slot_dir: slot.to_path_buf(),
@@ -1226,6 +1544,10 @@ mod tests {
             lookahead_ms: 0.0,
             f0_range: F0Range::Speech,
             speaker_id: 0,
+            reference_voice: String::new(),
+            reference_clip: None,
+            latency_budget_ms: 300.0,
+            cancel: None,
         }
     }
 
@@ -1264,6 +1586,7 @@ mod tests {
             pitch_extractor: "dio".into(),
             f0_range: F0Range::Speech,
             denoiser: DenoiserKind::Off,
+            reference_voice: String::new(),
         }
     }
 
@@ -1280,6 +1603,7 @@ mod tests {
             denoiser_latency_16k: 0,
             model_delay_16k: 0,
             model_input_rate: 16_000,
+            min_output_buffer_ms: None,
             _claim: resources::claim_vram(Subsystem::Vc, "test: voice", 0),
             load_ms: 0.0,
             warnings_shown: false,
@@ -1435,7 +1759,10 @@ mod tests {
         let stopped: Arc<Mutex<Vec<String>>> = Arc::default();
         let loader: VoiceLoader = {
             let (running, most, started, stopped) = (running.clone(), most.clone(), started.clone(), stopped.clone());
-            Arc::new(move |key: EngineKey, _request: EngineRequest, spec: &HarnessSpec, cancel: &AtomicBool| {
+            Arc::new(move |key: EngineKey, request: EngineRequest, spec: &HarnessSpec, cancel: &AtomicBool| {
+                // The family gets the load's own flag (a sidecar stops waiting for its helper).
+                let family_cancel = request.cancel.expect("the request carries the load's cancel flag");
+                assert!(std::ptr::eq(Arc::as_ptr(&family_cancel), cancel));
                 let name = key.slot_dir.file_name().unwrap().to_string_lossy().into_owned();
                 let n = running.fetch_add(1, Ordering::SeqCst) + 1;
                 most.fetch_max(n, Ordering::SeqCst);
@@ -1720,5 +2047,98 @@ mod tests {
         let err = create_engine(req).err().expect("the toy template is not 100 frames per second");
         assert!(err.contains("frames per second"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- P5 families (P5-S0) ----
+
+    fn family_slot(tag: &str, kind: FamilyKind) -> (PathBuf, PathBuf) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("sigil-vc-factory-{tag}-{}-{nanos}", std::process::id()));
+        let slot = root.join(kind.as_str());
+        std::fs::create_dir_all(&slot).unwrap();
+        families::write_family_manifest(&slot, &families::family_manifest(kind, "Fam", serde_json::json!({}))).unwrap();
+        (root, slot)
+    }
+
+    /// A family slot reaches its family through the factory; a stub (not available yet) is refused
+    /// by name before anything loads.
+    #[test]
+    fn family_slots_dispatch_to_their_family() {
+        for kind in FamilyKind::ALL {
+            let (root, slot) = family_slot("dispatch", kind);
+            assert_eq!(slot_format(&slot).unwrap(), SlotFormat::Family(kind));
+            let result = create_engine(test_request(&slot));
+            if !kind.available() {
+                let err = result.err().expect("a stub family does not load");
+                assert!(err.contains(kind.as_str()), "{err}");
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// The reference resolves from an explicit WAV first, then the library; none is `None`.
+    #[test]
+    fn references_resolve_from_a_clip_or_the_library() {
+        let mut req = test_request(Path::new("C:/nowhere"));
+        assert!(resolve_reference(&req).unwrap().is_none());
+        req.reference_voice = "alice".into();
+        assert!(resolve_reference(&req).is_err(), "no app data: the library cannot be read");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("sigil-vc-factory-ref-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("ref.wav");
+        crate::services::bench::signals::write_wav(&wav, &vec![0.1f32; 16_000], 16_000, 1).unwrap();
+        req.reference_clip = Some(wav.clone());
+        let clip = resolve_reference(&req).unwrap().unwrap();
+        assert_eq!((clip.path.as_path(), clip.duration_ms), (wav.as_path(), 1000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The context wrapper hands a model the reference and singing flags its harness lacks, and
+    /// is not added when there is nothing to hand.
+    #[test]
+    fn the_context_wrapper_fills_missing_context() {
+        struct Probe(Arc<std::sync::Mutex<Vec<(bool, bool)>>>);
+        impl VoiceConversionModel for Probe {
+            fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+                self.0.lock().unwrap().push((ctx.reference.is_some(), ctx.singing.singing));
+                Ok(vec![0.0; ctx.new_frames])
+            }
+            fn input_sample_rate(&self) -> u32 {
+                16_000
+            }
+            fn output_sample_rate(&self) -> u32 {
+                16_000
+            }
+        }
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let context = HarnessContext {
+            reference: Some(Arc::new(ReferenceEmbedding { voice_id: "v".into(), ..Default::default() })),
+            singing: SingingFlags { singing: true },
+        };
+        let mut m = with_context(Box::new(Probe(seen.clone())), context);
+        let audio = vec![0.0f32; 320];
+        let ctx = ConversionCtx {
+            mono_16k: &audio,
+            new_frames: 160,
+            pitch_shift_semitones: 0.0,
+            index_rate: 0.0,
+            protect: 0.33,
+            speaker_id: 0,
+            stream_pos_16k: 0,
+            reference: None,
+            singing: SingingFlags::SPEECH,
+        };
+        m.convert(&ctx).unwrap();
+        assert_eq!(seen.lock().unwrap().as_slice(), &[(true, true)]);
+        // Nothing to hand: no wrapper (the model itself comes back).
+        let plain = with_context(Box::new(Level(0.5)), HarnessContext::default());
+        assert_eq!(plain.output_sample_rate(), 16_000);
     }
 }

@@ -18,8 +18,9 @@
 //!   from disk); `outside_rvc` (`{ "pitch_semitones", "formant_shift" }`) holds the other modes'
 //!   pitch and formant while RVC mode (whose voices bring their own) is active.
 //! - `slot.json`: `{ "version": 1, "pitch_semitones", "formant_shift", "index_rate", "protect",
-//!   "pitch_extractor", "speaker_id", "rms_mix", "formant_semitones", "f0_range" }`, every field
-//!   optional (the last three were added by P3-S0; older files simply lack them).
+//!   "pitch_extractor", "speaker_id", "rms_mix", "formant_semitones", "f0_range",
+//!   "reference_voice_id" }`, every field optional (`rms_mix`, `formant_semitones` and `f0_range`
+//!   were added by P3-S0, `reference_voice_id` by P5-S0; older files simply lack them).
 //!
 //! Loading is lenient per field: a field this build does not understand (a newer build's enum
 //! value such as a new `mode`, or a changed type) is dropped and logged, and everything else is
@@ -246,6 +247,10 @@ pub(super) struct SlotSettingsFile {
     pub(super) formant_semitones: Option<f32>,
     #[serde(default)]
     pub(super) f0_range: Option<String>,
+    // ---- P5 per-voice values (P5-S0) ----
+    /// Voice-library id of a zero-shot voice's reference (`""` = none).
+    #[serde(default)]
+    pub(super) reference_voice_id: Option<String>,
 }
 
 /// Where a loaded value came from.

@@ -10,12 +10,18 @@ import contract from "../../../../../src-tauri/src/services/voice_changer/params
 import { BASELINE_PITCH_EXTRACTORS, VC_LEVERS } from "../contract";
 import {
     BASELINE_CAPABILITIES,
+    familyOfFormat,
     IMPORT_ERROR_CODES,
     importErrorCode,
     normalizeCapabilities,
     normalizeEffectiveLevers,
+    normalizeFamilyCapabilities,
     VC_COMMANDS,
     VC_EVENTS,
+    VC_FAMILIES,
+    VC_FAMILY_CONTROLS,
+    VC_FAMILY_CREATION,
+    VC_FAMILY_FORMATS,
 } from "../ipc";
 
 const PREFIX = "plugin:voice-changer|";
@@ -85,5 +91,36 @@ describe("voice-changer IPC contract", () => {
         expect(importErrorCode(new Error("time_limit: the import took longer than 120 s"))).toBe("time_limit");
         expect(importErrorCode("something else broke")).toBeNull();
         expect(importErrorCode(42)).toBeNull();
+    });
+});
+
+describe("voice families (P5-S0)", () => {
+    it("the P5 commands and the families are the frozen contract's", () => {
+        const names = Object.values(VC_COMMANDS).map((c) => c.slice(PREFIX.length));
+        for (const c of Object.keys(contract.commands_p5).filter((k) => !k.startsWith("$"))) expect(names, c).toContain(c);
+        expect([...VC_FAMILIES]).toEqual(contract.families.ids);
+        expect(VC_FAMILY_FORMATS).toEqual(contract.families.formats);
+        expect([...VC_FAMILY_CREATION]).toEqual(contract.families.creation);
+        expect([...VC_FAMILY_CONTROLS]).toEqual(contract.families.controls);
+        expect(contract.capabilities.fields).toContain("families");
+    });
+
+    it("family capabilities keep known families once, in order, with typed fields", () => {
+        const fams = normalizeFamilyCapabilities([
+            { family: "sidecar_v2", available: true, creation: "sidecar", execution_providers: ["cuda", "vulkan"], controls: ["pitch", "warp"] },
+            { family: "sigil_zs", available: "yes", zero_shot: true, creation: "teleport" },
+            { family: "sigil_zs", available: true },
+            { family: "nope" },
+            null,
+        ]);
+        expect(fams.map((f) => f.family)).toEqual(["sigil_zs", "sidecar_v2"]);
+        expect(fams[0]).toMatchObject({ format: "sigil-zs-1", available: false, zero_shot: true, creation: "reference" });
+        expect(fams[1]).toMatchObject({ available: true, execution_providers: ["cuda"], controls: ["pitch"] });
+        expect(normalizeFamilyCapabilities("x")).toEqual([]);
+        expect(normalizeCapabilities({ families: [{ family: "meanvc", available: true }] }).families.map((f) => f.family)).toEqual(["meanvc"]);
+        expect(familyOfFormat("ddsp-svc-6.3")).toBe("ddsp_svc");
+        expect(familyOfFormat(" SOVITS ")).toBe("sovits");
+        expect(familyOfFormat("sigil-rvc-1")).toBeNull();
+        expect(familyOfFormat(undefined)).toBeNull();
     });
 });

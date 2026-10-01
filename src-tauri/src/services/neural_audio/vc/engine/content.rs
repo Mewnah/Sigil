@@ -38,6 +38,7 @@ use crate::services::diagnostics::EpOutcome;
 use crate::services::neural_audio::ort_session::{build_session, normalize_ep, ModelSource, VcSessionOptions};
 use crate::services::neural_audio::vc::assets;
 use crate::services::neural_audio::vc::int8_gate;
+use crate::services::neural_audio::vc::rvc;
 
 use super::options::PrecisionMode;
 
@@ -329,6 +330,9 @@ pub struct ContentEncoder {
     /// The graph takes / returns fp16 (converted here; fp32 on both sides is the normal case).
     half_input: bool,
     half_in: Vec<f16>,
+    /// The output carrying the voice's feature width (`rvc::feature_output_index`: w-okada's
+    /// three-output `contentvec-f/-h` / `hubert-jp-f/-h` serve 256- and 768-wide voices; P5-I0).
+    output: usize,
     outcome: EpOutcome,
     path: PathBuf,
     variant: &'static str,
@@ -339,6 +343,12 @@ impl ContentEncoder {
     pub fn load(kind: EmbedderKind, path: &Path, variant: &'static str, ep: &str, opts: &VcSessionOptions) -> Result<ContentEncoder, String> {
         let (session, outcome) =
             build_session(Some("vc.content"), ep, opts, ModelSource::File(path)).map_err(|e| format!("content encoder {}: {e}", path.display()))?;
+        // A pitch model, a voice or a fused pipeline set as the content encoder is named for what it
+        // is (P5-D's graph identification; load time only).
+        if let Some(why) = rvc::foreign_graph_problem(&session, path, "a content encoder", &[rvc::GraphKind::ContentEncoder]) {
+            return Err(format!("content encoder: {why}"));
+        }
+        let output = rvc::feature_output_index(&rvc::graph_outputs(&session), kind.channels());
         let input = session
             .inputs()
             .first()
@@ -364,6 +374,7 @@ impl ContentEncoder {
             input_rank,
             half_input,
             half_in: Vec::new(),
+            output,
             outcome,
             path: path.to_path_buf(),
             variant,
@@ -417,7 +428,7 @@ impl ContentEncoder {
             .session
             .run(ort::inputs![self.input_name.as_str() => input])
             .map_err(|e| format!("content encoder run: {e}"))?;
-        let value = &outputs[0];
+        let value = &outputs[self.output];
         let c = self.channels;
         let dims: Vec<usize>;
         let flat: Vec<f32>;

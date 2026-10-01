@@ -77,7 +77,7 @@ use crate::services::rt_thread::{self, WorkerPriority};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -219,6 +219,51 @@ impl StopSignal {
             self.stopped = true;
         }
         self.stopped || !self.is_running.load(Ordering::Acquire) || !self.generation.is_current()
+    }
+}
+
+/// Sets `flag` once the run is stopped (`is_running` cleared by Stop) or superseded (a newer
+/// generation), checking every [`LOAD_WATCH_PERIOD`] on a helper thread until dropped. The worker's
+/// first voice load runs before the loop reads its stop message; it hands this flag to the voice
+/// (`EngineRequest::cancel`, `LoadedVoice::load_cancellable`), so Stop during a minutes-long
+/// sidecar start takes effect at once.
+struct LoadStopWatch {
+    done: Arc<AtomicBool>,
+    thread: Option<std::thread::Thread>,
+}
+
+const LOAD_WATCH_PERIOD: Duration = Duration::from_millis(100);
+
+impl LoadStopWatch {
+    fn start(is_running: Arc<AtomicBool>, generation: RunGeneration, flag: Arc<AtomicBool>) -> LoadStopWatch {
+        let done = Arc::new(AtomicBool::new(false));
+        let watching = done.clone();
+        let thread = std::thread::Builder::new()
+            .name("sigil-vc-load-watch".into())
+            .spawn(move || {
+                while !watching.load(Ordering::Acquire) {
+                    if !is_running.load(Ordering::Acquire) || !generation.is_current() {
+                        // Not once the load has ended (a Stop right after it is the loop's).
+                        if !watching.load(Ordering::Acquire) {
+                            flag.store(true, Ordering::Relaxed);
+                        }
+                        return;
+                    }
+                    std::thread::park_timeout(LOAD_WATCH_PERIOD);
+                }
+            })
+            .ok()
+            .map(|h| h.thread().clone());
+        LoadStopWatch { done, thread }
+    }
+}
+
+impl Drop for LoadStopWatch {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        if let Some(t) = &self.thread {
+            t.unpark();
+        }
     }
 }
 
@@ -627,6 +672,9 @@ struct RvcBase {
     chunk_frames: u32,
     device_rate: u32,
     in_harness_denoiser: DenoiserKind,
+    /// The latency budget when the run started (ms; P5-S0: a family's default stall timeout, e.g.
+    /// a sidecar's; a later change applies at the next voice load).
+    latency_budget_ms: f64,
 }
 
 /// The voice a selection names (the key a switch compares), with its effective F0 method.
@@ -637,6 +685,7 @@ fn selection_key(sel: &VoiceSelection, base: &RvcBase) -> EngineKey {
         pitch_extractor: pitch,
         f0_range: sel.f0_range,
         denoiser: base.in_harness_denoiser,
+        reference_voice: sel.reference_voice.clone(),
     }
 }
 
@@ -692,6 +741,11 @@ fn voice_request(mut s: RvcParamsState, base: &RvcBase, levers: &EffectiveLevers
         lookahead_ms: s.lookahead_ms,
         f0_range: s.f0_range,
         speaker_id: s.speaker_id,
+        reference_voice: s.reference_voice_id.clone(),
+        reference_clip: None,
+        latency_budget_ms: base.latency_budget_ms,
+        // A background load sets its own flag (`VoiceSet`); the first load sets the run's.
+        cancel: None,
     })
 }
 
@@ -1060,9 +1114,23 @@ enum Engine {
     Rvc(Box<RvcRun>),
 }
 
-fn port_limits(h: &VoiceChangerHotParams) -> PortLimits {
-    let (prefill_ms, max_queue_ms) = clamp_output_buffer_ms(h.output_prefill_ms, h.output_max_queue_ms);
+/// The output ports' prefill and queue: the user's, raised to the active voice's minimum (a family
+/// whose blocks compute in one burst, `families::min_output_buffer_ms`; P5-I0). The timeline and
+/// the end-to-end metric measure the real queue, so the raised buffer is counted in the latency.
+fn port_limits(h: &VoiceChangerHotParams, voice_min: Option<(f64, f64)>) -> PortLimits {
+    let (prefill_ms, max_queue_ms) = match voice_min {
+        Some((p, q)) => clamp_output_buffer_ms(h.output_prefill_ms.max(p), h.output_max_queue_ms.max(q)),
+        None => clamp_output_buffer_ms(h.output_prefill_ms, h.output_max_queue_ms),
+    };
     PortLimits { prefill_ms, max_queue_ms }
+}
+
+/// The active voice's output-buffer minimum (RVC mode).
+fn voice_output_minimum(engine: &Engine) -> Option<(f64, f64)> {
+    match engine {
+        Engine::Rvc(run) => run.voices.active().min_output_buffer_ms,
+        _ => None,
+    }
 }
 
 fn ns_of_frames(frames: f64, rate: u32) -> i64 {
@@ -1240,6 +1308,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
                 chunk_frames: chunk_frames as u32,
                 device_rate: r_in,
                 in_harness_denoiser,
+                latency_budget_ms: h_init.latency_budget_ms,
             };
             let spec = HarnessSpec {
                 r_in,
@@ -1251,8 +1320,22 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
                 chunk_frames,
             };
             let key = desired_key(&rvc_settings, &base);
-            let request = voice_request(rvc_settings.clone(), &base, &levers).map_err(&rvc_load_err)?;
-            let mut voice = LoadedVoice::load(key, request, &spec).map_err(&rvc_load_err)?;
+            let mut request = voice_request(rvc_settings.clone(), &base, &levers).map_err(&rvc_load_err)?;
+            // Stop (or a newer start) during this load calls it off: the family stops waiting for
+            // a sidecar helper, the factory at its next stage.
+            let cancel = Arc::new(AtomicBool::new(false));
+            request.cancel = Some(cancel.clone());
+            let loaded = {
+                let _watch = LoadStopWatch::start(st.is_running.clone(), generation.clone(), cancel.clone());
+                LoadedVoice::load_cancellable(key, request, &spec, &cancel)
+            };
+            let mut voice = match loaded {
+                Ok(v) => v,
+                // Called off by Stop or a newer start: nothing to report (the epilogue says
+                // `stopped` when this run is still current).
+                Err(_) if cancel.load(Ordering::Relaxed) => return Ok(()),
+                Err(e) => return Err(rvc_load_err(e)),
+            };
             tracing::info!(
                 "voice changer: loaded {} ({:?}) in {:.0} ms, {:.0} MB VRAM",
                 voice.key.slot_dir.display(),
@@ -1379,8 +1462,8 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         .map_err(|e| WorkerError::device(format!("The input device '{}' could not be started: {e}", input.name)))?;
     let mut capbuf = CaptureBuffer::new(r_in, ch_in, chunk_frames, h_init.latency_budget_ms);
     rt_thread::preload();
-    let limits = port_limits(&h_init);
-    let port_setup = |role: DeviceRole, saved: &str, underruns: Option<Arc<AtomicU64>>, which: fn(&super::state::MmcssStatus) -> &MmcssFlag| PortSetup {
+    let limits = port_limits(&h_init, voice_output_minimum(&engine));
+    let port_setup =|role: DeviceRole, saved: &str, underruns: Option<Arc<AtomicU64>>, which: fn(&super::state::MmcssStatus) -> &MmcssFlag| PortSetup {
         role,
         saved: saved.to_string(),
         run_rate: r_out,
@@ -1515,7 +1598,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
 
         // ---- Hot params. ----
         let h = *lock(&st.hot_params);
-        let limits = port_limits(&h);
+        let limits = port_limits(&h, voice_output_minimum(&engine));
         out.set_limits(limits);
         if let Some(m) = monitor.as_mut() {
             m.set_limits(limits);
@@ -1928,6 +2011,40 @@ mod tests {
     use super::*;
     use crate::services::diagnostics::record_ep_outcome;
 
+    /// The first load's watch calls the load off on Stop or a newer start, and never after it is
+    /// dropped (the load finished).
+    #[test]
+    fn the_first_load_is_called_off_by_stop_or_a_newer_start() {
+        let wait_for = |flag: &AtomicBool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !flag.load(Ordering::Relaxed) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            flag.load(Ordering::Relaxed)
+        };
+        let generation = RunGeneration { counter: Arc::new(AtomicU64::new(1)), mine: 1 };
+        // Stop clears `is_running`.
+        let (running, flag) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
+        let watch = LoadStopWatch::start(running.clone(), generation.clone(), flag.clone());
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!flag.load(Ordering::Relaxed), "a running load is left alone");
+        running.store(false, Ordering::Release);
+        assert!(wait_for(&flag), "Stop calls the load off");
+        drop(watch);
+        // A newer start supersedes the run.
+        let flag = Arc::new(AtomicBool::new(false));
+        let _watch = LoadStopWatch::start(Arc::new(AtomicBool::new(true)), generation.clone(), flag.clone());
+        generation.counter.store(2, Ordering::SeqCst);
+        assert!(wait_for(&flag), "a newer start calls the load off");
+        // Dropped (the load ended): a later Stop changes nothing.
+        let (running, flag) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
+        let current = RunGeneration { counter: Arc::new(AtomicU64::new(1)), mine: 1 };
+        drop(LoadStopWatch::start(running.clone(), current, flag.clone()));
+        running.store(false, Ordering::Release);
+        std::thread::sleep(LOAD_WATCH_PERIOD * 2);
+        assert!(!flag.load(Ordering::Relaxed), "the watch ends with the load");
+    }
+
     /// Every way a worker stops by itself carries a code the epilogue shows: a plain `?` on a
     /// helper's `String` error is `worker_error`, device problems are `device`.
     #[test]
@@ -1944,6 +2061,27 @@ mod tests {
         assert_eq!(e.code, "device");
         assert_eq!(e.to_string(), "The input device 'Mic' is not connected. (device)");
         assert_eq!(WorkerError::from("x").code, "worker_error");
+    }
+
+    /// A burst family's minimum raises the user's output buffer, never lowers it (P5-I0).
+    #[test]
+    fn the_active_voice_raises_the_output_buffer_to_its_minimum() {
+        let h = VoiceChangerHotParams {
+            output_prefill_ms: 35.0,
+            output_max_queue_ms: 70.0,
+            ..VoiceChangerHotParams::default()
+        };
+        let l = port_limits(&h, None);
+        assert_eq!((l.prefill_ms, l.max_queue_ms), (35.0, 70.0));
+        let l = port_limits(&h, Some((80.0, 150.0)));
+        assert_eq!((l.prefill_ms, l.max_queue_ms), (80.0, 150.0));
+        let big = VoiceChangerHotParams {
+            output_prefill_ms: 120.0,
+            output_max_queue_ms: 240.0,
+            ..h
+        };
+        let l = port_limits(&big, Some((80.0, 150.0)));
+        assert_eq!((l.prefill_ms, l.max_queue_ms), (120.0, 240.0), "a larger user buffer stays");
     }
 
     #[test]
@@ -2254,6 +2392,7 @@ mod tests {
             chunk_frames: BLOCK as u32,
             device_rate: 48_000,
             in_harness_denoiser: DenoiserKind::Off,
+            latency_budget_ms: 300.0,
         }
     }
 

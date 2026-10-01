@@ -9,6 +9,9 @@
 //!   template (ADR 0004): `weights.f32.bin` + `speakers.f32.bin` + `sigil-import.json`, run by the
 //!   Sigil Voice Engine (`neural_audio::vc::engine`). Written by the slot store (P3-B,
 //!   `vc::import::slot`); read with [`load_slot_manifest`].
+//! - P5 families (`vc::families`: `ddsp-svc-6.3`, `sigil-zs-1`, `meanvc-2`, `sovits-4.1`,
+//!   `sidecar-v2`): [`SlotFormat::Family`]; the family's own options live in [`RvcManifest::family`]
+//!   and the family checks its files itself (`families::slot_problem`).
 //!
 //! # Frozen by P3-S0 (manifest v2; change only through INTEGRATE)
 //! - The v1 fields keep their names, defaults and meaning; every v2 field is optional and omitted
@@ -17,10 +20,22 @@
 //!   `fp16_ok`, `source_sha256`, `import_record`, `created_unix_ms`.
 //! - [`load_manifest`] keeps its P0 contract (legacy ONNX slots only; a template voice is refused
 //!   with a clear message), so the legacy path never tries to run a template slot.
+//!
+//! # Added by P5-S0 (frozen; change only through INTEGRATE)
+//! - [`SlotFormat::Family`] for the formats of `vc::families` (`FamilyKind::format`); every other
+//!   unknown format stays [`SlotFormat::Unknown`].
+//! - v3 field `family`: the family's options object (validated by the family's
+//!   `normalize_options`; omitted when unset). Families use the v1 / v2 fields they need
+//!   (`sample_rate`, `generator`, `weights`, `speaker_count`, `embedder`, `source_sha256`, ...)
+//!   with their usual meaning.
+//! - [`load_slot_manifest`] accepts the family formats (whatever this build runs; availability is
+//!   the family's `available()`).
 
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use super::families::FamilyKind;
 
 /// `format` of a bring-your-own RVC ONNX slot (the only v1 format).
 pub const LEGACY_RVC_FORMAT: &str = "rvc";
@@ -43,7 +58,9 @@ pub enum SlotFormat {
     LegacyOnnxRvc,
     /// Sigil template voice: the Sigil Voice Engine (split graphs, partial decode, P3-C1).
     SigilRvc,
-    /// A format this build does not run (a later family such as so-vits or DDSP-SVC, P5).
+    /// A P5 voice family (`vc::families`): DDSP-SVC, Sigil-ZS, MeanVC2, so-vits-svc, sidecar v2.
+    Family(FamilyKind),
+    /// A format this build does not know.
     Unknown(String),
 }
 
@@ -52,16 +69,27 @@ impl SlotFormat {
         match format.trim() {
             LEGACY_RVC_FORMAT => SlotFormat::LegacyOnnxRvc,
             SIGIL_RVC_FORMAT => SlotFormat::SigilRvc,
-            other => SlotFormat::Unknown(other.to_string()),
+            other => match FamilyKind::from_format(other) {
+                Some(kind) => SlotFormat::Family(kind),
+                None => SlotFormat::Unknown(other.to_string()),
+            },
+        }
+    }
+
+    /// The family of a P5 family slot.
+    pub fn family(&self) -> Option<FamilyKind> {
+        match self {
+            SlotFormat::Family(kind) => Some(*kind),
+            _ => None,
         }
     }
 
     /// The `format` string.
-#[allow(dead_code)] // P3-S0 frozen API; its P3 consumer lands with the owning workstream.
-pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             SlotFormat::LegacyOnnxRvc => LEGACY_RVC_FORMAT,
             SlotFormat::SigilRvc => SIGIL_RVC_FORMAT,
+            SlotFormat::Family(kind) => kind.format(),
             SlotFormat::Unknown(s) => s,
         }
     }
@@ -128,6 +156,11 @@ pub struct RvcManifest {
     pub import_record: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_unix_ms: Option<u64>,
+
+    // ---- v3 (P5-S0): optional, omitted when unset ----
+    /// A P5 family's options object (`vc::families`; e.g. Sigil-ZS's preset, a sidecar's recipe).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<serde_json::Value>,
 }
 
 fn default_format() -> String {
@@ -172,6 +205,7 @@ impl Default for RvcManifest {
             source_sha256: None,
             import_record: None,
             created_unix_ms: None,
+            family: None,
         }
     }
 }
@@ -227,6 +261,14 @@ pub fn load_manifest(slot_dir: &Path) -> Result<RvcManifest, String> {
                 slot_dir.display()
             ))
         }
+        SlotFormat::Family(kind) => {
+            return Err(format!(
+                "{} holds a {} voice ({}); it is not an RVC ONNX generator",
+                slot_dir.display(),
+                kind.as_str(),
+                kind.format()
+            ))
+        }
         SlotFormat::Unknown(f) => return Err(format!("Unsupported voice-changer format '{f}'")),
     }
     if m.generator.trim().is_empty() {
@@ -235,8 +277,9 @@ pub fn load_manifest(slot_dir: &Path) -> Result<RvcManifest, String> {
     Ok(m)
 }
 
-/// Load a slot manifest of any format this build knows (`rvc` or `sigil-rvc-1`), for the engine
-/// factory and the slot store. A `sigil-rvc-1` manifest must name its template and weights.
+/// Load a slot manifest of any format this build knows (`rvc`, `sigil-rvc-1` or a P5 family), for
+/// the engine factory and the slot store. A `sigil-rvc-1` manifest must name its template and
+/// weights; a family checks its own files (`families::slot_problem`).
 pub fn load_slot_manifest(slot_dir: &Path) -> Result<RvcManifest, String> {
     let m = read_manifest(slot_dir)?;
     match m.slot_format() {
@@ -250,6 +293,7 @@ pub fn load_slot_manifest(slot_dir: &Path) -> Result<RvcManifest, String> {
             }
             Ok(m)
         }
+        SlotFormat::Family(_) => Ok(m),
         SlotFormat::Unknown(f) => Err(format!("Unsupported voice-changer format '{f}'")),
     }
 }
@@ -310,9 +354,30 @@ mod tests {
         assert!(load_slot_manifest(&s.0).unwrap_err().contains("template"));
         let s = slot("legacy-no-gen", r#"{"format":"rvc"}"#);
         assert!(load_manifest(&s.0).unwrap_err().contains("generator"));
-        let s = slot("future", r#"{"format":"ddsp-svc-6.3"}"#);
+        let s = slot("future", r#"{"format":"future-family-9"}"#);
         assert!(load_slot_manifest(&s.0).unwrap_err().contains("Unsupported"));
         assert!(load_manifest(&s.0).unwrap_err().contains("Unsupported"));
+    }
+
+    /// P5 family formats load through the slot loader (with their options) and never as a legacy
+    /// ONNX generator; a v2 manifest still round-trips without the v3 key.
+    #[test]
+    fn family_slots_load_only_through_the_slot_loader() {
+        for kind in FamilyKind::ALL {
+            let json = format!(r#"{{"format":"{}","name":"Fam","family":{{"steps":4}}}}"#, kind.format());
+            let s = slot(kind.as_str(), &json);
+            let m = load_slot_manifest(&s.0).unwrap();
+            assert_eq!(m.slot_format(), SlotFormat::Family(kind));
+            assert_eq!(m.slot_format().family(), Some(kind));
+            assert_eq!(m.slot_format().as_str(), kind.format());
+            assert_eq!(m.family, Some(serde_json::json!({"steps": 4})));
+            let err = load_manifest(&s.0).unwrap_err();
+            assert!(err.contains(kind.as_str()), "{err}");
+        }
+        let s = slot("v2-no-family", r#"{"generator":"gen.onnx"}"#);
+        let json = serde_json::to_value(load_manifest(&s.0).unwrap()).unwrap();
+        assert!(json.get("family").is_none());
+        assert_eq!(SlotFormat::LegacyOnnxRvc.family(), None);
     }
 
     #[test]

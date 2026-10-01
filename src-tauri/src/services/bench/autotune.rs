@@ -1693,6 +1693,14 @@ fn tune(req: &AutotuneRequest, mut base: RvcSpec, mut stream: StreamSpec, cancel
     if let SlotFormat::Unknown(f) = &format {
         return Err(format!("slot format '{f}' cannot be tuned"));
     }
+    // The sweeps (F0 method, block, context, levers) are RVC's; a family voice runs its family's
+    // presets (P5-I0: the family stage, e.g. `sigil_zs::tune`, is a P7 item).
+    if let Some(kind) = format.family() {
+        return Err(format!(
+            "the autotuner tunes RVC voices; a {} voice runs its family's presets (choose one in the voice's options)",
+            kind.as_str()
+        ));
+    }
     let quick = req.quick;
     // What every candidate measures with besides the swept knobs (recorded in the result).
     let conditions = TuneConditions::of(&base, &stream);

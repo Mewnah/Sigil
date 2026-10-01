@@ -13,6 +13,10 @@
 //!   the two renditions differ only by what streaming changes (block, context, joins). The first
 //!   block starts where its whole context lies inside the stream; the quality run leads the clip
 //!   with silence (`lead_s`) so every sample of the clip is covered.
+//! - **Voice families** (P5-I0, `family_ceiling`): Sigil-ZS and so-vits-svc voices convert the
+//!   whole stream as a one-off call of the stream's model (each family plans any window); DDSP-SVC
+//!   through a second instance configured for the whole recording; MeanVC2 (its offline path is
+//!   the streaming loop) and sidecar voices have none.
 //!
 //! Stream and ceiling are placed against each other from this timeline (`fidelity.rs`): the
 //! ceiling's first absolute position, where the input entered the recorded stream, and the
@@ -22,11 +26,12 @@ use std::time::Instant;
 
 use serde::Serialize;
 
+use crate::services::neural_audio::vc::families::FamilyKind;
 use crate::services::neural_audio::vc::traits::ConversionCtx;
 use crate::services::neural_audio::VoiceConversionModel;
 
 use super::engine::Engine;
-use super::rvc_build;
+use super::rvc_build::{self, RvcPlan};
 use super::spec::{CeilingSpec, StreamSpec};
 
 /// One model call as the stream recorder saw it.
@@ -124,6 +129,8 @@ fn ctx<'a>(mono: &'a [f32], new_frames: usize, pos: u64, stream: &StreamSpec) ->
         protect: stream.protect,
         speaker_id: stream.speaker_id,
         stream_pos_16k: pos,
+        reference: None,
+        singing: Default::default(),
     }
 }
 
@@ -139,6 +146,9 @@ pub fn ceiling(engine: &Engine, stream: &StreamSpec, rec: &StreamRecorder, cfg: 
         return Err("the ceiling has no input: the stream recorder saw no model call".into());
     }
     let started = Instant::now();
+    if let Some((plan, kind)) = engine.rvc.as_ref().and_then(|p| p.format.family().map(|k| (p, k))) {
+        return family_ceiling(engine, plan, kind, stream, start, data, started);
+    }
     let fixed = engine.fixed_block().is_some();
     match (&engine.rvc, fixed) {
         (Some(plan), true) => {
@@ -189,33 +199,129 @@ pub fn ceiling(engine: &Engine, stream: &StreamSpec, rec: &StreamRecorder, cfg: 
                 notes,
             })
         }
-        _ => {
-            let rate = engine.info.output_rate;
-            let out = engine.with_model(|m| -> Result<Vec<f32>, String> {
-                if data.len() <= WHOLE_MAX_16K {
-                    return m.convert(&ctx(data, data.len(), start, stream));
-                }
-                let mut out = Vec::new();
-                let mut s = 0usize;
-                while s < data.len() {
-                    let e = (s + SEGMENT_16K).min(data.len());
-                    let c0 = s.saturating_sub(SEGMENT_CONTEXT_16K);
-                    out.extend(m.convert(&ctx(&data[c0..e], e - s, start + c0 as u64, stream))?);
-                    s = e;
-                }
-                Ok(out)
-            })?;
-            let method = if data.len() <= WHOLE_MAX_16K { "whole utterance" } else { "20 s segments" };
-            Ok(CeilingOutput {
-                audio: out,
-                rate,
-                start_16k: start,
-                method: method.into(),
-                compute_ms: started.elapsed().as_secs_f64() * 1000.0,
-                notes: vec![format!("ceiling: {method}, one call per piece")],
-            })
-        }
+        _ => whole_utterance(engine, stream, start, data, started),
     }
+}
+
+/// Whole-utterance pieces of `len` samples: one up to 30 s, else 20 s pieces (`(start, end)`).
+fn pieces(len: usize) -> Vec<(usize, usize)> {
+    if len <= WHOLE_MAX_16K {
+        return vec![(0, len)];
+    }
+    let mut out = Vec::new();
+    let mut s = 0usize;
+    while s < len {
+        let e = (s + SEGMENT_16K).min(len);
+        out.push((s, e));
+        s = e;
+    }
+    out
+}
+
+/// Dynamic-shape models: the stream's own model converts the whole recording (one call per piece,
+/// 2 s of context before each later piece).
+fn whole_utterance(engine: &Engine, stream: &StreamSpec, start: u64, data: &[f32], started: Instant) -> Result<CeilingOutput, String> {
+    let rate = engine.info.output_rate;
+    let out = engine.with_model(|m| -> Result<Vec<f32>, String> {
+        let mut out = Vec::new();
+        for (s, e) in pieces(data.len()) {
+            let c0 = s.saturating_sub(SEGMENT_CONTEXT_16K);
+            out.extend(m.convert(&ctx(&data[c0..e], e - s, start + c0 as u64, stream))?);
+        }
+        Ok(out)
+    })?;
+    let method = if data.len() <= WHOLE_MAX_16K { "whole utterance" } else { "20 s segments" };
+    Ok(CeilingOutput {
+        audio: out,
+        rate,
+        start_16k: start,
+        method: method.into(),
+        compute_ms: started.elapsed().as_secs_f64() * 1000.0,
+        notes: vec![format!("ceiling: {method}, one call per piece")],
+    })
+}
+
+/// Voice families (P5-I0): each family's own offline conversion of the recorded stream.
+/// - Sigil-ZS and so-vits-svc convert a one-off window of any length (Sigil-ZS on CPU plans at
+///   that shape, so-vits-svc's generator over the whole window): the stream's model, whole.
+/// - DDSP-SVC plans any shape: a second instance configured for the whole recording
+///   ([`second_instance_whole`]; P5-A's real-model ceiling).
+/// - MeanVC2's offline conversion is the same streaming loop, and a sidecar converts in its own
+///   process: no ceiling (the run reports why).
+fn family_ceiling(
+    engine: &Engine,
+    plan: &RvcPlan,
+    kind: FamilyKind,
+    stream: &StreamSpec,
+    start: u64,
+    data: &[f32],
+    started: Instant,
+) -> Result<CeilingOutput, String> {
+    match kind {
+        FamilyKind::SigilZs | FamilyKind::Sovits => {
+            let mut out = whole_utterance(engine, stream, start, data, started)?;
+            out.method = format!("{} ({} one-off)", out.method, kind.as_str());
+            out.notes.push(format!("ceiling: the {} voice's one-off conversion of the recorded stream", kind.as_str()));
+            Ok(out)
+        }
+        FamilyKind::DdspSvc => second_instance_whole(plan, kind, stream, start, data, started),
+        FamilyKind::MeanVc => Err(
+            "the offline ceiling is not defined for MeanVC2 voices: their offline conversion is the same streaming loop, so the stream is its own ceiling"
+                .into(),
+        ),
+        FamilyKind::SidecarV2 => Err("the offline ceiling is not defined for sidecar voices: the sidecar converts in its own process".into()),
+    }
+}
+
+/// A second instance of the voice (the factory's, silence skip off) configured for each whole
+/// piece (`configure_stream(n, n, context)`), one call per piece. The window ends the model's own
+/// delay after the piece, so the returned samples are the piece's; positions before the recording
+/// are silence (the window's stream position is shifted to stay non-negative).
+fn second_instance_whole(plan: &RvcPlan, kind: FamilyKind, stream: &StreamSpec, start: u64, data: &[f32], started: Instant) -> Result<CeilingOutput, String> {
+    // Families plan whole 10 ms frames.
+    const UNIT_16K: usize = 160;
+    let len = data.len() / UNIT_16K * UNIT_16K;
+    if len == 0 {
+        return Err("the ceiling has no input: the recorded stream is shorter than 10 ms".into());
+    }
+    let (mut m, delay) = rvc_build::family_ceiling_model(plan)?;
+    m.set_voice_controls(&stream.voice_controls());
+    let rate = m.output_sample_rate();
+    let mut out = Vec::with_capacity(len * rate as usize / 16_000 + 1);
+    let mut shift: Option<i64> = None;
+    for (s, e) in pieces(len) {
+        let (s, e) = (s / UNIT_16K * UNIT_16K, e / UNIT_16K * UNIT_16K);
+        let n = e - s;
+        let extra = if s == 0 { 0 } else { SEGMENT_CONTEXT_16K.min(s) };
+        let window_len = m.configure_stream(n, n, extra)?;
+        let window_end = start as i64 + (e + delay) as i64;
+        let window_start = window_end - window_len as i64;
+        let shift = *shift.get_or_insert((-window_start).max(0));
+        let window: Vec<f32> = (0..window_len as i64)
+            .map(|i| {
+                let abs = window_start + i - start as i64;
+                usize::try_from(abs).ok().and_then(|k| data.get(k)).copied().unwrap_or(0.0)
+            })
+            .collect();
+        let got = m.convert(&ctx(&window, n, (window_start + shift).max(0) as u64, stream))?;
+        let want = (n as u64 * u64::from(rate) / 16_000) as usize;
+        if got.len() != want {
+            return Err(format!("ceiling: the {} voice returned {} samples for a {want}-sample piece", kind.as_str(), got.len()));
+        }
+        out.extend_from_slice(&got);
+    }
+    let method = if len <= WHOLE_MAX_16K { "whole utterance" } else { "20 s segments" };
+    Ok(CeilingOutput {
+        audio: out,
+        rate,
+        start_16k: start,
+        method: format!("{method} ({} second instance)", kind.as_str()),
+        compute_ms: started.elapsed().as_secs_f64() * 1000.0,
+        notes: vec![format!(
+            "ceiling: a second {} instance converting the recorded stream as {method} (one call per piece, no streaming)",
+            kind.as_str()
+        )],
+    })
 }
 
 #[cfg(test)]
@@ -242,6 +348,8 @@ mod tests {
                 protect: 0.33,
                 speaker_id: 0,
                 stream_pos_16k: pos,
+                reference: None,
+                singing: Default::default(),
             });
         }
         let (start, data) = r.stream();

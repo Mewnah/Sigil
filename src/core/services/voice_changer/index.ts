@@ -9,6 +9,7 @@ import { proxy } from "valtio";
 import { toast } from "react-toastify";
 
 import type { RustEpOutcomeEntry } from "@/types";
+import { validVoiceId } from "@/core/services/voice_library/contract";
 import { devLog } from "@/utils/devLog";
 
 import { VoiceBench } from "./bench";
@@ -36,7 +37,7 @@ import {
 import { rvcProfilePatch } from "./presets";
 import { changedParamKeys, restartNeeded } from "./restart";
 import { RvcProfile, VoiceChangerState, VoiceChangerStateSchema } from "./schema";
-import { adjacentSlot, normalizeSlots, slotProblem, type VoiceChangerModelSlot } from "./slots";
+import { adjacentSlot, normalizeSlots, sameSlotPath, slotProblem, type VoiceChangerModelSlot } from "./slots";
 import { AUTOTUNE_PARAM_KEYS } from "./tuning";
 
 export type { VoiceChangerMetrics } from "./metrics";
@@ -224,6 +225,7 @@ export class VoiceChangerService {
                 this.startedParams = null;
                 this.clearTrt();
                 this.bench.onEngineStopped();
+                this.library.onEngineStopped();
             }),
             await listen<VoiceChangerConversionErrorPayload>("voice_changer:error", (ev) => this.onError(ev.payload)),
             await listen<unknown>(PARAMS_EVENT, (ev) => void this.onParamsEvent(ev.payload)),
@@ -503,6 +505,7 @@ export class VoiceChangerService {
             // (a worker still loading a model) or never (a restart supersedes that worker).
             this.clearTrt();
             this.bench.onEngineStopped();
+            this.library.onEngineStopped();
             devLog("[VoiceChanger] Stopped");
         } catch (error) {
             console.error("[VoiceChanger] Failed to stop:", error);
@@ -574,10 +577,39 @@ export class VoiceChangerService {
      * Use a voice (a slot-store row, or any folder). While RVC runs this is a hot switch (the voice
      * loads in the background and is crossfaded in). `ensureRvc` also switches the mode to RVC.
      */
-    async selectVoice(voice: { id?: string; path: string }, opts: { ensureRvc?: boolean } = {}): Promise<boolean> {
+    async selectVoice(
+        voice: { id?: string; path: string; reference_voice_id?: string | null },
+        opts: { ensureRvc?: boolean } = {},
+    ): Promise<boolean> {
         const patch: Partial<VoiceChangerState> = { rvcSlotDir: voice.path, slotId: voice.id ?? "" };
         if (opts.ensureRvc && this.state.voiceChanger.mode !== "rvc") patch.mode = "rvc";
+        // P5: Rust applies only the fields a voice's slot.json holds when it enters the voice, so a voice
+        // without a stored reference would keep the previous voice's. Another voice therefore starts from
+        // the reference its listing holds (`""` = none); its slot.json, when it has one, still wins.
+        if ("reference_voice_id" in voice && !sameSlotPath(voice.path, this.state.voiceChanger.rvcSlotDir)) {
+            const ref = (voice.reference_voice_id ?? "").trim();
+            patch.referenceVoiceId = validVoiceId(ref) ? ref : "";
+        }
         return this.update(patch);
+    }
+
+    /**
+     * The selected zero-shot voice's reference (a voice-library id, `""` = none). Saved with the voice
+     * (`slot.json`); while RVC runs the voice reloads with it in the background and is crossfaded in
+     * (`restart.ts`: switch). An id the library would never hold is refused (resolves `false`).
+     */
+    async setReferenceVoice(id: string): Promise<boolean> {
+        const next = id.trim();
+        if (next !== "" && !validVoiceId(next)) return false;
+        if (next === this.state.voiceChanger.referenceVoiceId) return true;
+        const dir = this.state.voiceChanger.rvcSlotDir;
+        const ok = await this.update({ referenceVoiceId: next });
+        // Rust saved it to the voice's slot.json (no `slots_changed` follows): the voice's row shows it too,
+        // unless another voice was selected meanwhile (its reply carried that voice's reference).
+        if (ok && sameSlotPath(this.state.voiceChanger.rvcSlotDir, dir)) {
+            this.library.noteReference(dir, this.state.voiceChanger.referenceVoiceId);
+        }
+        return ok;
     }
 
     /**
@@ -651,7 +683,7 @@ export class VoiceChangerService {
      */
     async selectModelSlot(path: string) {
         const slot = this.library.slotFor(path);
-        await this.selectVoice({ id: slot?.id ?? "", path });
+        await this.selectVoice(slot ? { id: slot.id, path, reference_voice_id: slot.reference_voice_id ?? null } : { id: "", path });
     }
 
     async captureDebug(): Promise<Record<string, unknown> | null> {

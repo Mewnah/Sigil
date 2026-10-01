@@ -1,0 +1,95 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "DDSP-SVC 6.3 singing voices (vc::families::ddsp_svc, P5-A; ADR 0006). Both entries are Sigil exports and stay unpublished (asset hosting is local only): install them with the Models tab's Import or SIGIL_LOCAL_ASSETS (scripts/vc-families/ddsp_svc/export_templates.py --vocoder stages them in %LOCALAPPDATA%/sigil-dev-cache/vc-assets).",
+    "vc/ddsp-svc-6.3: the template graphs without weights (export_templates.py; yxlllc/DDSP-SVC 6.3 @d6dd52fc architecture, MIT). A voice's weights come from its own checkpoint at import; layout.json is also embedded in the engine (src-tauri/src/services/neural_audio/vc/families/ddsp_svc/layout.json): an installed template must carry the same weights_id and graphs (sha256 and size), or voices refuse to load with a reinstall message.",
+    "vc/vocoder-pc-nsf-hifigan-44k: openvpi pc_nsf_hifigan_44.1k_hop512_128bin_2025.02 exported by scripts/vc-families/ddsp_svc/export.py (weights folded, Sigil's phase0 input) plus the release's config.json."
+  ],
+  "entries": [
+    {
+      "id": "vc/ddsp-svc-6.3",
+      "family": "vc",
+      "kind": "template",
+      "version": "1",
+      "title": "DDSP-SVC 6.3 graphs",
+      "description": "Sigil's DDSP-SVC 6.3 graphs without weights (the DDSP synthesiser and one rectified-flow step). Imported DDSP-SVC singing voices run on them.",
+      "license": "MIT",
+      "status": "unpublished",
+      "requires": ["vc/vocoder-pc-nsf-hifigan-44k", "vc/embedder-contentvec"],
+      "files": [
+        {
+          "path": "ddsp.onnx",
+          "size": 34225100,
+          "sha256": "04e9cf95dfa9610954a42ec4dfe3935356f69865fac4924dca18d10f49915f6d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-ddsp.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "reflow_step.onnx",
+          "size": 39469,
+          "sha256": "ad3e95917f836075df859a0095e4ee36331908dc2455ece9dbfd2628532c5874",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-reflow_step.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "layout.json",
+          "size": 51990,
+          "sha256": "4178df6c6c92635cc1f25b7b6cf0d480da87411b50add14c1e34ac12b9394af2",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-layout.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/vocoder-pc-nsf-hifigan-44k",
+      "family": "vc",
+      "kind": "model",
+      "version": "2025.02",
+      "title": "PC-NSF-HiFiGAN 44.1 kHz",
+      "description": "openvpi's pitch-controllable NSF-HiFiGAN vocoder (44.1 kHz, hop 512, 128 mel bins, release 2025.02), exported with a continuous-phase input. The vocoder of DDSP-SVC 6.3 voices.",
+      "license": "CC-BY-NC-SA-4.0",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "model.onnx",
+          "size": 56590562,
+          "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-model.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "config.json",
+          "size": 607,
+          "sha256": "983bb78f45f6790e573033bfab46163743e0182d564fc5eca6938743cca6a2ea",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-config.json",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

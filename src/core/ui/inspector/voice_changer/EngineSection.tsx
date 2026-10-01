@@ -3,7 +3,9 @@
 // every engine lever (auto / on / off, with what this build and EP run and what the running engine
 // really uses), silence gate, hot voices and VRAM budget, GPU index, the legacy VRAM cap, and the
 // debug snapshot. Only values this build runs are offered; a stored value it cannot run stays
-// visible with what runs instead (`options.ts`).
+// visible with what runs instead (`options.ts`). P5-G: a P5 family voice is not a bring-your-own ONNX voice
+// (no legacy notes); its family reports the levers it really uses while it runs, and the silence threshold shows
+// when the family answers it.
 import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
 import {
     LEVER_MODES,
@@ -24,7 +26,7 @@ import {
     nvidiaAdapterPresent,
     precisionOptions,
 } from "@/core/services/voice_changer/options";
-import { isTemplateSlot } from "@/core/services/voice_changer/slots";
+import { showsControl } from "@/core/services/voice_changer/families";
 import { leverStateKey } from "@/core/services/voice_changer/tuning";
 import type { VoiceChangerState } from "@/core/services/voice_changer/schema";
 import classNames from "classnames";
@@ -34,13 +36,15 @@ import { toast } from "react-toastify";
 import { useSnapshot } from "valtio";
 import { InputContainer } from "../components/input";
 import { InspectorInfoButton, VcChoiceSelect, VcDetails, VcDraftNumberInput, VcNote, VcNumberSlider } from "./common";
+import { useVoiceFamily } from "./hooks";
 
 const R = VC_NUMBER_RANGES;
 
 /** SVE blocks offered (ms); 0 = from the chunk size. */
 const BLOCK_MS_CHOICES = [0, 20, 30, 40, 50, 60, 80, 100, 120, 160, 200] as const;
 
-export const BlockMsSelect: FC<{ template: boolean }> = ({ template }) => {
+/** `template`: the voice runs on the engine (not a bring-your-own ONNX voice); `family`: a P5 family voice (its preset may round the block). */
+export const BlockMsSelect: FC<{ template: boolean; family?: boolean }> = ({ template, family }) => {
     const { t } = useTranslation();
     const vc = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
@@ -57,7 +61,7 @@ export const BlockMsSelect: FC<{ template: boolean }> = ({ template }) => {
                 label: ms === 0 ? t("voice_changer.block_ms_auto") : t("voice_changer.block_ms_value", { ms }),
             }))}
             onChange={(v) => void vcApi.update({ blockMs: Number(v) })}
-            note={template ? undefined : t("voice_changer.template_only_note")}
+            note={family ? t("voice_changer.family_block_note") : template ? undefined : t("voice_changer.template_only_note")}
         />
     );
 };
@@ -66,7 +70,7 @@ export const BlockMsSelect: FC<{ template: boolean }> = ({ template }) => {
 const LOOKAHEAD_MS_CHOICES = [0, 10, 20, 40, 60, 80] as const;
 
 /** SVE lookahead (P3-I0): future context decoded into every returned sample, at that much delay. */
-export const LookaheadMsSelect: FC<{ template: boolean }> = ({ template }) => {
+export const LookaheadMsSelect: FC<{ template: boolean; family?: boolean }> = ({ template, family }) => {
     const { t } = useTranslation();
     const vc = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
@@ -83,7 +87,7 @@ export const LookaheadMsSelect: FC<{ template: boolean }> = ({ template }) => {
                 label: ms === 0 ? t("voice_changer.lookahead_ms_off") : t("voice_changer.lookahead_ms_value", { ms }),
             }))}
             onChange={(v) => void vcApi.update({ lookaheadMs: Number(v) })}
-            note={template ? undefined : t("voice_changer.template_only_note")}
+            note={family ? t("voice_changer.family_block_note") : template ? undefined : t("voice_changer.template_only_note")}
         />
     );
 };
@@ -155,8 +159,11 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
     const vcApi = window.ApiServer.voiceChanger;
     const running = snap.isRunning && vc.mode === "rvc";
     const levers = running ? metrics?.levers ?? null : null;
-    const template = voice ? isTemplateSlot(voice) : true;
-    const legacyVoice = !!voice && !template;
+    const { kind, controls } = useVoiceFamily(voice);
+    // No listed voice counts as a template voice (the default setup), like before P5.
+    const template = kind !== "legacy" && kind !== "family";
+    const legacyVoice = kind === "legacy";
+    const familyVoice = kind === "family";
     const base = rvcBaseEp(vc.rvcExecutionProvider);
 
     const epOptions = executionProviderOptions(caps, vc.rvcExecutionProvider);
@@ -225,6 +232,7 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
                     <InspectorInfoButton text={t("voice_changer.levers_info")} />
                 </div>
                 {legacyVoice ? <VcNote>{t("voice_changer.levers_legacy_note")}</VcNote> : null}
+                {familyVoice ? <VcNote>{t("voice_changer.family_levers_note")}</VcNote> : null}
                 {views.map((v, i) => (
                     <LeverRow
                         key={v.lever}
@@ -268,7 +276,7 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
                 />
                 <span className="label-text text-sm">{t("voice_changer.silence_skip")}</span>
             </label>
-            {vc.silenceSkip && template ? (
+            {vc.silenceSkip && (template || (familyVoice && showsControl(controls, "silence_db"))) ? (
                 <VcNumberSlider
                     labelKey="voice_changer.silence_db"
                     infoKey="voice_changer.silence_db_info"

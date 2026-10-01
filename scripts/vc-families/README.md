@@ -54,6 +54,18 @@ here downloads anything.
     fine-tuned weights are a Google Drive download, so parity uses a fixed embedding.
 - **Speech samples**: `models/transcribe/samples/{jfk,ja-short}.wav`.
 
+The in-engine ports (P5, [DEVELOPER_GUIDE → Voice families](../../docs/DEVELOPER_GUIDE.md#voice-families-p5))
+added one script per family that the Rust code is checked against:
+- `ddsp_svc/export_templates.py`: Sigil's DDSP-SVC template graphs without weights (`ddsp`,
+  `reflow_step`) plus `layout.json`; `--vocoder` exports the PC-NSF-HiFiGAN vocoder with its phase
+  input, `--voice` writes a seeded random voice checkpoint for the real-model test, `--tiny` writes
+  the 732 KB CI fixture in `src-tauri/test-fixtures/vc/ddsp_svc/`.
+- `meanvc/rust_reference.py`: the reference output of MeanVC2's streaming loop for the Rust port's
+  parity test (`SIGIL_MEANVC_REFERENCE_DIR`; 85.3 dB at P5).
+- `seed_vc/make_vectors.py`: Sigil-ZS parity vectors from `seed_vc/sampler.py` on the CPU EP
+  (`SIGIL_ZS_VECTORS` for the ignored test `real_model_matches_the_reference_sampler`). The sidecar
+  recipe `seedvc_sidecar.py` loads the same sampler (shipped next to it as `seed_vc_sampler.py`).
+
 ## Running (repo root)
 
 ```bash

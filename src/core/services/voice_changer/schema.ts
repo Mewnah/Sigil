@@ -171,6 +171,10 @@ export const VoiceChangerStateSchema = z.object({
         z.number().int().min(R.vram_budget_mb.min).max(R.vram_budget_mb.max),
         R.vram_budget_mb.default,
     ),
+
+    // ---- P5: voice families (P5-S0; Rust name `reference_voice_id`) ----
+    /** Voice-library id of a zero-shot voice's reference (`""` = none). Per voice; switch. */
+    referenceVoiceId: zSafe(z.string(), ""),
 });
 
 export type VoiceChangerState = z.infer<typeof VoiceChangerStateSchema>;

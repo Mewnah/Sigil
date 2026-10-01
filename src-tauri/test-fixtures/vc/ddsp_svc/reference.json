@@ -1,0 +1,90 @@
+{
+ "frames": 48,
+ "start_frame": 20,
+ "units": 70,
+ "steps": 3,
+ "t_start": 0.7,
+ "formant_shift": 1.5,
+ "arrays": {
+  "hubert": {
+   "offset": 0,
+   "shape": [
+    1,
+    70,
+    8
+   ]
+  },
+  "mel2ph": {
+   "offset": 2240,
+   "shape": [
+    1,
+    48
+   ]
+  },
+  "f0": {
+   "offset": 2432,
+   "shape": [
+    1,
+    48
+   ]
+  },
+  "volume": {
+   "offset": 2624,
+   "shape": [
+    1,
+    48
+   ]
+  },
+  "randn": {
+   "offset": 2816,
+   "shape": [
+    1,
+    1536
+   ]
+  },
+  "spk": {
+   "offset": 8960,
+   "shape": [
+    1,
+    8
+   ]
+  },
+  "z": {
+   "offset": 8992,
+   "shape": [
+    1,
+    1,
+    8,
+    28
+   ]
+  },
+  "x": {
+   "offset": 9888,
+   "shape": [
+    1,
+    1,
+    8,
+    28
+   ]
+  },
+  "cond": {
+   "offset": 10784,
+   "shape": [
+    1,
+    8,
+    28
+   ]
+  },
+  "x_final": {
+   "offset": 11680,
+   "shape": [
+    1,
+    1,
+    8,
+    28
+   ]
+  }
+ },
+ "weights_sha256": "350632c1fdd334ea702c43a33ac5ec31db2d79270ba5451537b5297f8a3f56ae",
+ "note": "export_templates.py --tiny: inputs, the ddsp outputs and the flow after `steps` Euler steps from t_start, ONNX Runtime CPU"
+}

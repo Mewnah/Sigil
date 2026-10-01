@@ -114,6 +114,8 @@ impl VoiceConversionModel for DenoisedModel {
             protect: ctx.protect,
             speaker_id: ctx.speaker_id,
             stream_pos_16k: ctx.stream_pos_16k,
+            reference: ctx.reference,
+            singing: ctx.singing,
         };
         self.inner.convert(&denoised)
     }
@@ -252,6 +254,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: pos,
+            reference: None,
+            singing: Default::default(),
         }
     }
 
@@ -377,6 +381,8 @@ mod tests {
             protect: 0.33,
             speaker_id: 0,
             stream_pos_16k: 0,
+            reference: None,
+            singing: Default::default(),
         };
         m.warmup_at(&warm).unwrap();
         for k in 0..calls {

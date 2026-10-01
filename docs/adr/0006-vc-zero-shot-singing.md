@@ -9,6 +9,10 @@
     keep up live.
   - **MeanVC2:** GO as an experimental CPU family, if P5-C's A/B passes. That A/B needs the speaker
     encoder, which is a manual download.
+- **P5 (2026-10-01):** all three shipped in the engine: Sigil-ZS on CUDA and DirectML (T10 met on
+  H2 with `sigil_low`), DDSP-SVC on CUDA and DirectML (DirectML fixed by P5-A; T10 met with CREPE,
+  SwiftF0 or fusion F0), MeanVC2 as an experimental CPU family (real time on one thread; the
+  listening A/B waits on the manual speaker encoder). See [P5 outcomes](#p5-outcomes).
 - **Date:** 2026-09-30 (evidence re-measured 2026-10-01)
 - **Workstream:** P3-H (the scripts are `scripts/vc-families/`; the evidence is `scripts/vc-families/reports/*.json`)
 - **Plan decisions:** "Zero-shot and singing inside Sigil's engine"; deferred items "Seed-VC realtime
@@ -564,3 +568,52 @@ MeanVC2 on CUDA without graphs (IOBinding, 2 steps): 10.082 ms per chunk (RTF 0.
   T10 feasibility numbers above.
 - **Rollback.** Nothing ships from here. If a P5 port misses T10, the plan's fallback applies:
   sidecar v2 for Seed-VC through seed-vc-realtime, and dropping MeanVC2.
+
+## P5 outcomes
+
+Recorded by P5-I0 (2026-10-01) from the P5-A, P5-B, P5-C and P5-E results. All three families shipped in Sigil's engine as planned; no fallback was needed. Measurements: [VC_BENCHMARKS → P5 voice families](../benchmarks/VC_BENCHMARKS.md#p5-voice-families); code map: [DEVELOPER_GUIDE → Voice families](../DEVELOPER_GUIDE.md#voice-families-p5).
+
+### Sigil-ZS (P5-B): shipped in-engine, T10 met on H2
+
+- **Shipped** as the `sigil_zs` family (`sigil-zs-1`) on CUDA and DirectML at fp32; the CPU is refused. The Rust port matches the reference Python sampler (same graphs and noise, ONNX Runtime CPU): tick mel 127–137 dB, tick audio 83–89 dB (gate 35 dB); reference stage style 102–104 dB, prompt mel 154–155 dB, prompt condition 117–119 dB; resample 142 dB, fbank 112–115 dB.
+- **The prompt is chosen from the clip's speech** (`reference::select_prompt`): upstream takes the clip's first seconds, and the test reference starts with 1.7 s of room tone, so the 1.5 s prompt converted toward nobody (cosine −0.02) and the 3 s prompt held 1.3 s of speech. The function drops quiet ends and takes the prompt-length window with the most speech (`sigil_lean` −0.02 → 0.39–0.54).
+- **Preset prompts set by measurement:** `sigil_low` 3 → 4 s (offline tick 22.0 → 24.7 ms CUDA, 27.0 → 30.2 ms DirectML), `sigil_lean` 1.5 → 3 s (15.1 → 16.0 / 18.2 → 20.0 ms).
+- **Speaker similarity** (exact CAM++ export, three sources, one reference): upstream offline (`inference.py` defaults through our graphs: the whole clip as prompt, 30 steps) 0.559 mean; `sigil_low` (4 s) 0.582; `sigil_low` (5 s) 0.587; `sigil_lean` (3 s) 0.485; `upstream_readme` 0.577. The stream beats its own whole-utterance conversion on every row.
+- **T10 on H2:** `sigil_low` with the Stable output buffer (80 / 150 ms; since the P5 final gate the family's minimum is per preset and EP, 95 / 165 ms for `sigil_low` on CUDA, `sigil_zs::tune::min_output_buffer_ms`): paced latency p95 252–256 ms idle (target 300), p99 248–280 ms under the H2 load simulator (target 450), similarity 0.582 ≥ 0.559 upstream offline: **met**. Upstream's live GUI runs 430–690 ms. H1 is not measured; the 4090 × 3 estimate is a 74 ms tick on CUDA (about 273 ms end to end with a 105 ms buffer) and 89 ms on DirectML, where `tune::choose` would pick `sigil_lean`.
+- `sigil_lean` meets the delay but not the similarity bar; `upstream_readme` meets similarity but not the delay (p95 about 351 ms) and is a manual choice only.
+- **Coherent ticks** as implemented: the block moves the content by 8.91 mel frames, noise is anchored on a 9-frame grid and the phase anchor pairs samples where the grid lines up inside the SOLA search; mean join correlation 0.53–0.65 (two renditions, no audible seam measured; blind listening is P7's).
+- fp16 (vocoder + TF32: 15.8 vs 24.6 ms) moves the mel and the HiFT F0, so it stays opt-in with the fp16 XLS-R and DiT switches. TensorRT-RTX requests run on the CUDA sessions. `gpu_priority` and the governor showed no gain and stay off.
+- **Finding (affects RVC too):** an idle NVIDIA GPU drops to about 900 MHz for one burst per 100 ms; paced ticks then take 1.4–2.4× the offline time with spikes to 80–105 ms, while a game keeps the clocks up. P3's paced RVC numbers likely carry the same effect.
+
+### DDSP-SVC 6.3 (P5-A): shipped in-engine, DirectML now GO, T10 met with CREPE / SwiftF0 / fusion
+
+- **DirectML is GO:** the `ddsp` graph's inverse STFT became a MatMul plus overlap-add (115 dB against the ConvTranspose form): 3.06 ms per call in Python and 4.2 ms in the engine, down from 2.0–4.6 s. DirectML still refuses the pinned shapes, so the graph runs dynamic; a CUDA request that falls back to DirectML now rebuilds with dynamic shapes (before, `ddsp` landed on the CPU at 32 ms per call).
+- **Weights:** per-config template graphs without weights plus `layout.json` and a Rust importer (allow-list unpickler in the import worker): no per-voice export and no Python at import; about 1 s for a 220 MB checkpoint in release.
+- **T10** (sung E2 → D#6 sweep at +0 and +12 st, so the output reaches D#7; pitch path = the F0 the vocoder receives):
+
+  | F0 method | Pitch-path GPE | Accuracy | T10 |
+  |---|---|---|---|
+  | CREPE | 0.00 % | 6.9 cents | met |
+  | SwiftF0 | 0.00 % | 5.9 cents | met |
+  | Fusion | 0.00 % | 4.5 cents | met |
+  | FCPE | 0.00 % | 56 cents (flat at the top) | met on GPE, off-key at the top |
+  | RMVPE | 2.36 % | 13.1 cents | missed: notes above about D6 (1.15 kHz input) come out an octave low |
+
+  With CREPE the output scores 0.00 % GPE on CUDA and DirectML (including the frames at ≥ 2 kHz, pYIN-style Rust tracker and librosa pYIN); the offline ceiling is 0.00 %; stream against ceiling F0 16–17 cents, 0 % gross errors, MCD 2.3–2.4 dB (100 ms presets) and 1.0–1.5 dB (`upstream_gui`). New DDSP-SVC voices therefore start with CREPE in the singing range (P5-I0).
+- **Cost per 100 ms tick** (release, CREPE): `sigil_singing` CUDA 27.9 ms (content encoder × 2 18.1, F0 0.6, ddsp 2.5, flow 4.7, vocoder 1.8), DirectML 28.4 ms; `sigil_singing_fast` 25.6 ms; `upstream_gui` 35.8 ms CUDA / 103.6 ms DirectML per 500 ms block. VRAM 1028 MB on CUDA with CREPE (1540 MB with RMVPE), 703 MB on DirectML.
+- **Delay per preset** (paced): `sigil_singing` about 185 ms p50 with a 35 ms output prefill (which still underruns 0–94 times per 9 s), 215 ms with 70 ms and 0 underruns, so 70 / 140 ms is the family's output-buffer minimum (P5-I0); `upstream_gui` about 614 ms. H1 simulation p99 207–243 ms, 0 blocks over budget.
+- The two pooled ContentVec passes (tta2x) are 65 % of the CUDA tick (about 9 ms per pass against 2.6 ms graph-captured in this ADR's spike): putting the shared encoder on the session-plan path is the largest remaining cost cut, for this family and for RVC's T2.
+- No public DDSP-SVC 6.3 checkpoint exists: every real-model figure uses a seeded random voice (`export_templates.py --voice`). Pitch does not depend on the voice; timbre and the listening check need the user's own trained voice.
+
+### MeanVC2 (P5-C): GO as an experimental CPU family
+
+- Real time on one CPU thread at 0.2–0.3 cores; the Rust loop matches the Python reference at 85.3 dB SNR (`scripts/vc-families/meanvc/rust_reference.py`). Silence costs 0.0098 cores (T4 silent target met).
+- **Split tick:** the 80 ms tick runs as two 40 ms harness blocks, one DiT call per block; latency is unchanged and per-call compute halves (2-step p50 16.6 → 9.6 ms), which removed the output underruns (105 → 0 paced, 243 → 3 under the H3 game load).
+- **A/B against the RVC CPU tier** (paced, interleaved): MeanVC2 2 steps 0.28 cores, 292.5 ms engine-added latency, 0 underruns; RVC Streamer RTF 3.4–4.4 (about 14 s of every 20 s dropped); autotuned RVC CPU 2.85 cores and about 1000 underruns per 20 s. On every performance axis MeanVC2 wins. Quality smoke (synthetic speaker embedding): DNSMOS OVRL 3.01–3.03 against RVC 3.11–3.22, and it does not keep the user's intonation (GPE 5–16 %, F0 RMSE 225–267 cents).
+- **Still manual:** the speaker encoder (WavLM-Large + ECAPA-TDNN, `wavlm_large_finetune.pth`) is a Google Drive download; a voice gets its speaker from `speaker.npy` or an imported encoder graph. The listening and speaker A/B waits on it, so MeanVC2 stays experimental and is not the CPU default.
+- It computes on the CPU on every rung (no CUDA graphs: no VRAM and no GPU context next to a game).
+
+### X-VC and StreamVoiceAnon (P5-E): sidecar protocol v2
+
+- They run only through sidecar protocol v2, wrapped as a voice-family model: frames sent without waiting, a per-frame deadline equal to the budget, cancel, reference upload, pitch per frame. A stalled sidecar never blocks the loop (tests `sidecar_stall_never_blocks_the_loop`, `a_stalled_server_never_blocks_the_caller`, `sidecar_recovers_after_a_stall_and_drops_stale_audio`).
+- Their checkpoints (several GB) were not installed in P5, so the adapters are untested against the real models (manual check). The Seed-VC recipe, measured with the real model: about 300 ms heard with `sigil_low`, 400–440 ms with upstream's preset; pinning the graphs' shapes made DirectML real time (168–243 → 36–64 ms per 100 ms frame).

@@ -1,0 +1,16 @@
+# Tauri IPC commands of the `voice-library` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P5-F (shared reference-voice recorder and library); scaffolded by P5-S0.
+voice_library_list
+voice_library_get
+voice_library_record_start
+voice_library_record_stop
+voice_library_record_cancel
+voice_library_import_clip
+voice_library_read_take
+voice_library_read_clip
+voice_library_discard_take
+voice_library_save_take
+voice_library_update
+voice_library_delete

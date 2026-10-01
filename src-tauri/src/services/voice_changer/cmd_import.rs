@@ -126,7 +126,7 @@ pub struct VcMergeRequest {
 // ---- shared state ---------------------------------------------------------------------------------
 
 /// One slot-changing operation at a time (see the module docs).
-fn slot_lock() -> &'static tokio::sync::Mutex<()> {
+pub(super) fn slot_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
@@ -138,13 +138,13 @@ fn jobs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 }
 
 /// A registered job; unregistered when dropped.
-struct JobTicket {
-    id: String,
-    cancel: Arc<AtomicBool>,
+pub(super) struct JobTicket {
+    pub(super) id: String,
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
 impl JobTicket {
-    fn new() -> JobTicket {
+    pub(super) fn new() -> JobTicket {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let id = format!("vcimp-{:x}-{:x}", import::unix_ms(), COUNTER.fetch_add(1, Ordering::Relaxed));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -152,7 +152,7 @@ impl JobTicket {
         JobTicket { id, cancel }
     }
 
-    fn check(&self) -> Result<(), String> {
+    pub(super) fn check(&self) -> Result<(), String> {
         if self.cancel.load(Ordering::Acquire) {
             Err(ImportError::new(ErrorCode::Job, "the import was cancelled").to_string())
         } else {
@@ -167,16 +167,16 @@ impl Drop for JobTicket {
     }
 }
 
-fn job_err(msg: impl Into<String>) -> String {
+pub(super) fn job_err(msg: impl Into<String>) -> String {
     ImportError::new(ErrorCode::Job, msg).to_string()
 }
 
-fn io_err(msg: impl Into<String>) -> String {
+pub(super) fn io_err(msg: impl Into<String>) -> String {
     ImportError::new(ErrorCode::Io, msg).to_string()
 }
 
 /// `app_data/voice-changer/models` (created).
-fn models_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+pub(super) fn models_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let app_data = app.path().app_data_dir().map_err(|e| io_err(format!("no app data folder: {e}")))?;
     let dir = crate::services::neural_audio::vc::bases::models_dir(&app_data);
     std::fs::create_dir_all(&dir).map_err(|e| io_err(format!("{}: {e}", dir.display())))?;
@@ -185,7 +185,7 @@ fn models_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 
 /// The bundled templates: Tauri's resource folder (registered for the engine factory and the slot
 /// store), else the importer's own probe.
-fn templates_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+pub(super) fn templates_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     if let Ok(res) = app.path().resource_dir() {
         let dir = res.join("resources").join("vc-templates");
         if dir.is_dir() {
@@ -196,19 +196,19 @@ fn templates_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     import::templates_dir()
 }
 
-fn emit_progress<R: Runtime>(app: &AppHandle<R>, job_id: &str, stage: &str, fraction: f64, message: impl Into<String>) {
+pub(super) fn emit_progress<R: Runtime>(app: &AppHandle<R>, job_id: &str, stage: &str, fraction: f64, message: impl Into<String>) {
     let _ = app.emit(
         IMPORT_PROGRESS_EVENT,
         VcImportProgress { job_id: job_id.to_string(), stage: stage.to_string(), fraction, message: message.into() },
     );
 }
 
-fn emit_slots_changed<R: Runtime>(app: &AppHandle<R>) {
+pub(super) fn emit_slots_changed<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.emit(SLOTS_CHANGED_EVENT, ());
 }
 
 /// Run blocking slot-store work off the async runtime.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(super) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tokio::task::spawn_blocking(f).await.map_err(|e| io_err(format!("the slot store task failed: {e}")))?
 }
 
@@ -245,7 +245,7 @@ fn in_use(state: &VoiceChangerState, dir: &Path) -> bool {
 }
 
 /// Select the voice in `dir` (RVC mode), apply its settings, and tell the UI.
-fn activate<R: Runtime>(app: &AppHandle<R>, state: &VoiceChangerState, id: &str, dir: &Path) -> VoiceChangerParams {
+pub(super) fn activate<R: Runtime>(app: &AppHandle<R>, state: &VoiceChangerState, id: &str, dir: &Path) -> VoiceChangerParams {
     let mut p = state.snapshot_params();
     p.rvc_slot_dir = dir.to_string_lossy().into_owned();
     p.slot_id = Some(id.to_string());

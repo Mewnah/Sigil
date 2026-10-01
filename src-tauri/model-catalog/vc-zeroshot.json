@@ -1,0 +1,206 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Sigil-ZS zero-shot graphs for vc::families::sigil_zs (P5-B): Sigil's export of Seed-VC seed-uvit-tat-xlsr-tiny (Plachtaa/seed-vc@51383efd; XLS-R-300M layer 12 from facebook/wav2vec2-xls-r-300m@1a640f32, the DiT from Plachta/Seed-VC@257283f9, CosyVoice-300M HiFT@24c40509, CAM++ campplus_cn_common) by scripts/vc-families/seed_vc/export.py, opset 17, weights inside each graph. The sha256 values are the graphs ADR 0006's reports measured (scripts/vc-families/reports/seed_vc_*.json, 'graphs').",
+    "vc/zs-seed-vc holds every fp32 graph plus the fp16 HiFT decoder (hift_nsf.fp16 / hift.fp16, a switch); vc/zs-seed-vc-fp16 holds the optional fp16 XLS-R and DiT graphs (switches that fail waveform parity; ADR 0006). The bare estimator (dit.onnx) is not shipped: the step graphs run the update on the device.",
+    "Entries stay unpublished (asset hosting is local only): installed with the Models tab's Import or SIGIL_LOCAL_ASSETS (the export folder %LOCALAPPDATA%/sigil-dev-cache/vc-families/seed_vc is a valid local-assets folder: its file names are the in-entry paths; verified with `Sigil.exe --headless fetch vc/zs-seed-vc`). min_vram_mb is P5-B's measurement of one loaded voice (process VRAM delta, CUDA context included: CUDA 1358 MB, DirectML 1117 MB). Owned by P5-B."
+  ],
+  "entries": [
+    {
+      "id": "vc/zs-seed-vc",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "Sigil-ZS zero-shot voice engine (Seed-VC real-time)",
+      "description": "Content encoder, flow-matching DiT, HiFT vocoder and CAM++ speaker encoder for zero-shot voices made from a 3-10 s reference clip. Runs on CUDA or DirectML.",
+      "license": "GPL-3.0 AND Apache-2.0",
+      "status": "unpublished",
+      "min_vram_mb": 1400,
+      "files": [
+        {
+          "path": "xlsr.onnx",
+          "size": 657377439,
+          "sha256": "95017567fb13e6e34d51ee65c5ef7f9c396c129ecf4668c79b46641e0b448886",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-xlsr.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "lr.onnx",
+          "size": 9271813,
+          "sha256": "9050989cfee42cdbc3924d78715d3ee09708158df6d88f45e9e9e9602ad61616",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-lr.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "dit_step.onnx",
+          "size": 77854555,
+          "sha256": "07df97f65c41980600d11de0363a10d79856b9bb76325cff87abf6571dc5fcb5",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-dit_step.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "dit_step1.onnx",
+          "size": 77851587,
+          "sha256": "e2121c2fd4c8809a37e6a0d82a7ee7a9708e11125cfc4626ad5548283375dab9",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-dit_step1.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "hift_f0.onnx",
+          "size": 13090307,
+          "sha256": "d27188a89f20fd399a207ea8a232c48494f3b352c03c31e3e0e9cb010fa8d85f",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_f0.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "hift_nsf.onnx",
+          "size": 68854251,
+          "sha256": "681986131b4c8ab68015d196fde43d96d8c61a6ecfc6ef07ce232249095988e6",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "hift.onnx",
+          "size": 81944369,
+          "sha256": "f1c14e3a487ec56d4ea1c127b25d06cf172ef9d332a6e8d1cd86250f30b9ed11",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "hift_nsf.fp16.onnx",
+          "size": 34557156,
+          "sha256": "99937333ef998c496a719b7b05d905f0df3f1fae463109dd6e4c03caa2434110",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "hift.fp16.onnx",
+          "size": 47647772,
+          "sha256": "0085170c9826455a0e5e0e37b178a27946c754529ca21ba884a5056ad96b706b",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "campplus.onnx",
+          "size": 28154325,
+          "sha256": "ae24d7ce883c1c79dcbf86a939786b46d773d53e48f8f563cb2c8f9b4da7060a",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-campplus.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "mel.onnx",
+          "size": 4370130,
+          "sha256": "e80a4b0554c2db77600ed0fcf3a4c586dcbe9ce8f667aceac1db175a04400e12",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-mel.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vc/zs-seed-vc-fp16",
+      "family": "vc",
+      "kind": "model",
+      "version": "1",
+      "title": "Sigil-ZS fp16 content encoder and DiT",
+      "description": "Optional half-precision XLS-R and DiT graphs for Sigil-ZS voices (less VRAM; their waveform differs from the fp32 graphs).",
+      "license": "GPL-3.0 AND Apache-2.0",
+      "status": "unpublished",
+      "requires": [
+        "vc/zs-seed-vc"
+      ],
+      "files": [
+        {
+          "path": "xlsr.fp16.onnx",
+          "size": 328858192,
+          "sha256": "f6aa3bf0f2cd7f0c19a441c21b930b2957f542bcada0b7fa8fe6634641b078b8",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-xlsr.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "dit_step.fp16.onnx",
+          "size": 41374711,
+          "sha256": "7b8cca883cb44517b012db15575631fd738ca8f02a6cd6ca5f8b1b5644eeef14",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "dit_step1.fp16.onnx",
+          "size": 41370969,
+          "sha256": "82202641fbbadf61ad939ef3f72fc58f708207d5722a5add25827d73114a9956",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step1.fp16.onnx",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

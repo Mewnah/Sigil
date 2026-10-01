@@ -78,12 +78,30 @@ pub struct WorkerJob {
     /// A retrieval index file to adopt (`None`: the voice archive's own).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<PathBuf>,
+    /// P5-S0: a voice-family import (`import::ImportJob::family`; `vc::families::run_import_job`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// P5-S0: the family's options for that import.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family_options: Option<serde_json::Value>,
 }
 
 impl WorkerJob {
     /// A job with the defaults: smoke decode on, fp16 smoke off.
     pub fn new(source: PathBuf, out_dir: PathBuf, templates_dir: Option<PathBuf>) -> WorkerJob {
-        WorkerJob { version: 1, source, out_dir, templates_dir, time_limit_s: None, smoke: true, smoke_fp16: false, name: None, index: None }
+        WorkerJob {
+            version: 1,
+            source,
+            out_dir,
+            templates_dir,
+            time_limit_s: None,
+            smoke: true,
+            smoke_fp16: false,
+            name: None,
+            index: None,
+            family: None,
+            family_options: None,
+        }
     }
 }
 

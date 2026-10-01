@@ -19,7 +19,15 @@
     },
     "longDescription": "",
     "resources": {
-      "resources/vc-templates": "resources/vc-templates"
+      "resources/vc-templates": "resources/vc-templates",
+      "../scripts/neural-sidecar/sigil_vc_v2.py": "resources/neural-sidecar/sigil_vc_v2.py",
+      "../scripts/neural-sidecar/xvc_sidecar.py": "resources/neural-sidecar/xvc_sidecar.py",
+      "../scripts/neural-sidecar/streamvoiceanon_sidecar.py": "resources/neural-sidecar/streamvoiceanon_sidecar.py",
+      "../scripts/neural-sidecar/seedvc_sidecar.py": "resources/neural-sidecar/seedvc_sidecar.py",
+      "../scripts/neural-sidecar/vc_sidecar.py": "resources/neural-sidecar/vc_sidecar.py",
+      "../scripts/neural-sidecar/PROTOCOL_V2.md": "resources/neural-sidecar/PROTOCOL_V2.md",
+      "../scripts/neural-sidecar/README.md": "resources/neural-sidecar/README.md",
+      "../scripts/vc-families/seed_vc/sampler.py": "resources/neural-sidecar/seed_vc_sampler.py"
     },
     "shortDescription": "",
     "linux": {

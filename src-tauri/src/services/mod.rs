@@ -33,6 +33,7 @@ pub mod tts_sink;
 pub mod uberduck_tts;
 pub mod uwu;
 pub mod voice_changer;
+pub mod voice_library;
 pub mod vosk_stt;
 pub mod web;
 pub mod whisper;

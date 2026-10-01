@@ -149,7 +149,13 @@ after block with no crossfade: `ceiling.block_ms` (200), `ceiling.extra_context_
 less than the run's), `ceiling.lookahead_ms` (80) and `ceiling.exact` (true: full decode instead
 of partial decode; the F0 cache, anchored noise and phase0 stay, see
 [VC_BENCHMARKS.md](VC_BENCHMARKS.md#the-offline-ceiling)). Its time-anchored noise is keyed to the
-same absolute frames, so the two renditions differ only by what streaming changes. The stream is
+same absolute frames, so the two renditions differ only by what streaming changes. Voice families
+(P5-I0) use their own ceiling: Sigil-ZS and so-vits-svc voices convert the whole recording as a
+one-off call of the stream's model, DDSP-SVC through a second instance configured for the whole
+recording; MeanVC2 (its offline path is the streaming loop) and sidecar voices have none, and the
+run says why. A family voice's paced runs play with at least the family's output buffer
+(`engine.min_output_buffer_ms` in the report: Sigil-ZS 80 / 150 ms, DDSP-SVC 70 / 140 ms), as the
+voice changer does, and its `vram_engine_mb` is read after one harness build. The stream is
 placed against the ceiling from the timeline (the ceiling's absolute start, where the input
 entered the recorded stream, the probed harness latency) and cross-checked on energy envelopes;
 a search is used only when the timeline cannot be derived. Scored over the ceiling's speech (100 ms
@@ -496,6 +502,12 @@ pwsh scripts/bench/run-perf-gate.ps1 -Profile p3 -Exe <release sigil.exe> -AppDa
     -Slot <app data>/voice-changer/models/default -Clip C:/clips/speech.wav -OutRoot bench-results/p3
 ```
 
+`-Profile p5` (`scripts/bench/profiles/p5.json`) materializes the voice-family templates in
+`scripts/bench/specs/p5/` (Sigil-ZS with `-Var SLOT_ZS=<slot> -Var REFERENCE=<clip> -Clip <input>`,
+DDSP-SVC singing with `-Var SLOT_DDSP=<slot> -Var SWEEP=<wav from scripts/bench/singing_sweep.py>`)
+and checks T10's delay rows and the families' fidelity; score the singing output against the
+intended notes with `python scripts/bench/score_singing.py <out>/offline.output.wav 12`.
+
 `scripts/bench/run-matrix.ps1` runs one voice through EP × F0 method × block × precision × context
 × levers cells (one after the other, never in parallel) and tabulates compute, RTF, latency, VRAM,
 CPU, load time and the per-component breakdown in `matrix.md` / `matrix.csv`.
@@ -528,6 +540,8 @@ answers with Wilson intervals (`score.py`): plan T6's preference test.
 | `scripts/bench/specs/p3/sve-gpu.template.json` | Profile template: a template voice on a GPU EP (40 ms engine blocks on the 512-frame device block, 64 ms context, Low latency): offline, paced (wall clock), `h2_load70`, `h1_vrchat_obs` and fidelity. |
 | `scripts/bench/specs/p3/sve-cpu.template.json` | Profile template: the same voice on the CPU (Streamer, 80 ms blocks): offline, paced, `h3_cpu_game` and fidelity. |
 | `scripts/bench/specs/p3/matrix.template.json` | One `run-matrix.ps1` cell: offline plus a virtual-clock paced run. |
+| `scripts/bench/specs/p5/zs-gpu.template.json` | Profile template: a Sigil-ZS voice with a reference clip on a GPU EP: offline, paced (wall clock), `h2_load70`, `h1_vrchat_obs` and fidelity against its one-off ceiling. |
+| `scripts/bench/specs/p5/ddsp-singing.template.json` | Profile template: a DDSP-SVC voice on the sung sweep at `SEMITONES` (default +12, so the output reaches D#7), CREPE in the singing range: offline, paced (virtual clock), `h1_vrchat_obs` and fidelity (CREPE analyzer). |
 
 ## First measurements (dev rig, 2026-09-28)
 

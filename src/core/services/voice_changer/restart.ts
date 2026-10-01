@@ -6,7 +6,7 @@
  *   index rate / protect / speaker, and the P3 voice controls (`params_contract.json`
  *   `params_p3_hot_fields`: rms_mix, formant_semitones, noise_scale, silence_db).
  * - `switch`: RVC mode swaps the voice without a restart when the selection changes (voice folder,
- *   F0 method, F0 range): the incoming voice loads in the background and is crossfaded in over one
+ *   F0 method, F0 range, a zero-shot voice's reference): the incoming voice loads in the background and is crossfaded in over one
  *   block (`VoiceSet`, plan T9), so these never restart the engine.
  * - `restart`: read only when the engine starts (devices, block size, the mode's model / bridge,
  *   the RVC engine shape: EP, preset, precision, block, context, levers, hot slots, VRAM, denoiser).
@@ -54,6 +54,8 @@ const RULES: Record<RustParamKey, Rule> = {
     monitor_output_device: ALL_RESTART,
     monitor_gain: ALL_HOT,
     rvc_slot_dir: RVC_SWITCH,
+    // P5: a zero-shot voice's reference selects the voice (loaded in the background, crossfaded in).
+    reference_voice_id: RVC_SWITCH,
     rvc_hubert_path: RVC_RESTART,
     rvc_fcpe_path: RVC_RESTART,
     rvc_rmvpe_path: RVC_RESTART,

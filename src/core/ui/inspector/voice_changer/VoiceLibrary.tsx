@@ -9,8 +9,11 @@
 // - First run: one card installs the base models and the default voice (the download is the
 //   user's click; the default voice is imported as soon as it is installed).
 // - "Other folder…" keeps bring-your-own ONNX voices anywhere on disk working.
-import type { VcSlotInfo } from "@/core/services/voice_changer/ipc";
-import { importErrorCode } from "@/core/services/voice_changer/ipc";
+// - P5-G: voices of the P5 families (zero-shot, singing, so-vits-svc, sidecars) are listed with their family,
+//   experimental label, reference voice and where they run; "New voice…" makes one (`FamilyCreator.tsx`), and a
+//   dropped file that only a family imports (e.g. a DDSP-SVC `.pt`) opens that family's form.
+import { familyForImportFile, familyRunsOnEp, referenceName, voiceFamilyCapability } from "@/core/services/voice_changer/families";
+import type { VcFamilyId, VcFamilySlotRequest, VcSlotInfo } from "@/core/services/voice_changer/ipc";
 import { isFinished, type VcImportJob } from "@/core/services/voice_changer/library";
 import { DEFAULT_VOICE_ID, starterModelIds } from "@/core/services/voice_changer/requirements";
 import {
@@ -24,12 +27,12 @@ import {
     vocoderDisplayName,
     VOICE_FILE_EXTENSIONS,
 } from "@/core/services/voice_changer/slots";
+import { voiceLibraryUi } from "@/core/services/voice_library";
 import { isTauri } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import classNames from "classnames";
-import type { TFunction } from "i18next";
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -49,21 +52,20 @@ import { useSnapshot } from "valtio";
 import Tooltip from "../../dropdown/Tooltip";
 import { ModelRequirement } from "../components/ModelRequirement";
 import { VcDetails, VcNote, VcPathField } from "./common";
+import { importErrorText } from "./errors";
+import { FamilyCreator } from "./FamilyCreator";
+import { FamilyBadges, familyEpList, familyName, familyShortName } from "./FamilyLabels";
+import { useVcCapabilities, useVoiceLibraryHost } from "./hooks";
 import { VoiceHotkeys } from "./VoiceHotkeys";
 
-/** A translated explanation of an importer / slot-store error (`"<code>: <message>"`), plus the message. */
-export function importErrorText(t: TFunction, error: unknown): string {
-    const text = typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
-    const code = importErrorCode(text);
-    if (!code) return text;
-    const message = text.slice(code.length + 1).trim();
-    const explanation = t(`voice_changer.import_error_${code}`);
-    return message ? `${explanation} (${message})` : explanation;
-}
+export { importErrorText } from "./errors";
 
 /** Read-only facts of a voice as small badges. */
 const VoiceFacts: FC<{ slot: VcSlotInfo }> = ({ slot }) => {
     const { t } = useTranslation();
+    const caps = useVcCapabilities();
+    const fam = voiceFamilyCapability(caps, slot);
+    if (slot.family) return <FamilyVoiceFacts slot={slot} family={slot.family} fam={fam} />;
     const template = isTemplateSlot(slot);
     const facts: string[] = [];
     facts.push(template ? t("voice_changer.voice_engine_sigil") : t("voice_changer.voice_engine_onnx"));
@@ -85,6 +87,35 @@ const VoiceFacts: FC<{ slot: VcSlotInfo }> = ({ slot }) => {
                     {f}
                 </span>
             ))}
+        </span>
+    );
+};
+
+/** Facts of a P5 family voice: its family, labels, reference voice and sample rate. */
+const FamilyVoiceFacts: FC<{ slot: VcSlotInfo; family: VcFamilyId; fam: ReturnType<typeof voiceFamilyCapability> }> = ({ slot, family, fam }) => {
+    const { t } = useTranslation();
+    const lib = useSnapshot(voiceLibraryUi);
+    const vc = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
+    const selected = sameSlotPath(slot.path, vc.rvcSlotDir);
+    // The selected voice's reference is the live one (Rust saves it to its slot.json); the others' come from the listing.
+    const reference = (selected ? vc.referenceVoiceId : slot.reference_voice_id ?? "").trim();
+    const facts: string[] = [familyShortName(t, family)];
+    const sr = sampleRateLabel(slot.sample_rate);
+    if (sr) facts.push(sr);
+    if (slot.has_index) facts.push(t("voice_changer.voice_fact_index"));
+    return (
+        <span className="flex min-w-0 flex-wrap gap-1">
+            {facts.map((f, i) => (
+                <span key={i} className="badge badge-ghost badge-xs whitespace-nowrap">
+                    {f}
+                </span>
+            ))}
+            <FamilyBadges fam={{ experimental: slot.experimental === true || !!fam?.experimental, zero_shot: !!fam?.zero_shot, singing: !!fam?.singing }} />
+            {reference && fam?.zero_shot ? (
+                <span className="badge badge-ghost badge-xs max-w-full truncate whitespace-nowrap">
+                    {t("voice_changer.family_fact_reference", { name: referenceName(reference, lib.voices) })}
+                </span>
+            ) : null}
         </span>
     );
 };
@@ -112,6 +143,10 @@ const VoiceRow: FC<{
     const [mergeName, setMergeName] = useState("");
     const problem = slotProblem(slot, slotFormats);
     const partnerSlot = partners.find((p) => p.id === partner) ?? partners[0];
+    const caps = useVcCapabilities();
+    const ep = useSnapshot(vcApi.state).voiceChanger.rvcExecutionProvider;
+    const fam = voiceFamilyCapability(caps, slot);
+    const wrongEp = !problem && !!fam && !familyRunsOnEp(fam, ep);
 
     const fail = (e: unknown) => toast.error(importErrorText(t, e));
 
@@ -147,6 +182,7 @@ const VoiceRow: FC<{
                     </span>
                     <VoiceFacts slot={slot} />
                     {problem ? <VcNote tone="warn">{t("voice_changer.voice_problem", { problem })}</VcNote> : null}
+                    {wrongEp && fam ? <VcNote tone="warn">{t("voice_changer.family_row_runs_on", { eps: familyEpList(fam) })}</VcNote> : null}
                 </button>
                 {manage ? (
                     <Tooltip content={t("voice_changer.voice_actions")}>
@@ -340,8 +376,11 @@ function positionInside(el: HTMLElement | null, pos: { x: number; y: number }): 
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
 
-/** Drop `.pth` / `.zip` voices here, or pick them. */
-const ImportDropZone: FC = () => {
+/**
+ * Drop `.pth` / `.zip` voices here, or pick them. A dropped file that only one available family imports (not a
+ * `.pth` / `.zip`) goes to that family's "new voice" form (`onFamilyFile`).
+ */
+const ImportDropZone: FC<{ onFamilyFile: (family: VcFamilyId, path: string) => void }> = ({ onFamilyFile }) => {
     const { t } = useTranslation();
     const lib = window.ApiServer.voiceChanger.library;
     const zone = useRef<HTMLDivElement>(null);
@@ -350,12 +389,25 @@ const ImportDropZone: FC = () => {
     const importPaths = useCallback(
         (paths: readonly string[]) => {
             const plan = lib.importFiles(paths);
-            if (plan.ignored.length > 0) {
-                toast.warning(t("voice_changer.import_ignored", { files: plan.ignored.map((p) => p.split(/[\\/]/).pop()).join(", ") }));
+            const caps = window.ApiServer.voiceChanger.state.capabilities;
+            const familyFiles = plan.ignored.flatMap((p) => {
+                const family = familyForImportFile(p, caps);
+                return family ? [{ family, path: p }] : [];
+            });
+            const ignored = plan.ignored.filter((p) => !familyFiles.some((f) => f.path === p));
+            if (ignored.length > 0) {
+                toast.warning(t("voice_changer.import_ignored", { files: ignored.map((p) => p.split(/[\\/]/).pop()).join(", ") }));
             }
             if (plan.unpairedIndexes.length > 0) toast.info(t("voice_changer.import_index_unpaired"));
+            // One form at a time: the first family file opens it; more are named so the user can add them next.
+            if (familyFiles.length > 0) {
+                onFamilyFile(familyFiles[0].family, familyFiles[0].path);
+                if (familyFiles.length > 1) {
+                    toast.info(t("voice_changer.family_drop_more", { files: familyFiles.slice(1).map((f) => f.path.split(/[\\/]/).pop()).join(", ") }));
+                }
+            }
         },
-        [lib, t],
+        [lib, t, onFamilyFile],
     );
 
     useEffect(() => {
@@ -413,10 +465,17 @@ const ImportDropZone: FC = () => {
     );
 };
 
-const ImportJobRow: FC<{ job: VcImportJob; selectedDir: string }> = ({ job, selectedDir }) => {
+const ImportJobRow: FC<{ job: VcImportJob; selectedDir: string; onRetry: (request: VcFamilySlotRequest) => void }> = ({ job, selectedDir, onRetry }) => {
     const { t } = useTranslation();
     const vcApi = window.ApiServer.voiceChanger;
-    const title = job.kind === "default_voice" ? t("voice_changer.default_voice") : job.fileName;
+    const title =
+        job.kind === "default_voice"
+            ? t("voice_changer.default_voice")
+            : job.kind === "family" && job.family
+              ? job.fileName
+                  ? t("voice_changer.family_job_title", { family: familyShortName(t, job.family), name: job.fileName })
+                  : familyName(t, job.family)
+              : job.fileName;
     const finished = isFinished(job.stage);
     return (
         <li className="flex flex-col gap-1 rounded-lg border border-base-content/10 p-2 text-xs">
@@ -452,9 +511,11 @@ const ImportJobRow: FC<{ job: VcImportJob; selectedDir: string }> = ({ job, sele
             ) : job.stage === "done" && job.slot ? (
                 <>
                     <span className="text-success">
-                        {job.cached
-                            ? t("voice_changer.import_done_cached", { name: job.slot.name })
-                            : t("voice_changer.import_done", { name: job.slot.name })}
+                        {job.kind === "family"
+                            ? t("voice_changer.family_job_done", { name: job.slot.name })
+                            : job.cached
+                              ? t("voice_changer.import_done_cached", { name: job.slot.name })
+                              : t("voice_changer.import_done", { name: job.slot.name })}
                     </span>
                     {job.warnings.map((w) => (
                         <VcNote key={w} tone="warn">
@@ -468,7 +529,23 @@ const ImportJobRow: FC<{ job: VcImportJob; selectedDir: string }> = ({ job, sele
                     ) : null}
                 </>
             ) : (
-                <VcNote tone="error">{importErrorText(t, job.error ?? "")}</VcNote>
+                <>
+                    <VcNote tone="error">{importErrorText(t, job.error ?? "")}</VcNote>
+                    {/* The "new voice" form closed when the job was queued: reopen it with what was sent. */}
+                    {job.kind === "family" && job.request ? (
+                        <button
+                            type="button"
+                            className="btn btn-xs self-start"
+                            onClick={() => {
+                                const request = JSON.parse(JSON.stringify(job.request)) as VcFamilySlotRequest;
+                                vcApi.library.dismiss(job.key);
+                                onRetry(request);
+                            }}
+                        >
+                            {t("voice_changer.family_job_retry")}
+                        </button>
+                    ) : null}
+                </>
             )}
         </li>
     );
@@ -525,6 +602,13 @@ export const VoiceLibrary: FC = () => {
     const [custom, setCustom] = useState(false);
     const [modelsDir, setModelsDir] = useState("");
     const hotkeyIds = useHotkeyVoiceIds();
+    /** The "new voice" form: closed, or open (with the family and file to start with, or a failed request to retry). */
+    const [creator, setCreator] = useState<{ key: number; family?: VcFamilyId; source?: string; request?: VcFamilySlotRequest } | null>(null);
+    const openCreator = useCallback((family?: VcFamilyId, source?: string) => setCreator({ key: Date.now(), family, source }), []);
+    const retryFamilyVoice = useCallback((request: VcFamilySlotRequest) => setCreator({ key: Date.now(), family: request.family, request }), []);
+    const familiesAvailable = (caps.families ?? []).some((f) => f.available);
+    // Reference names of zero-shot voices come from the shared voice library.
+    useVoiceLibraryHost(!!lib.slots?.some((s) => !!s.family));
 
     useEffect(() => {
         if (!isTauri()) return;
@@ -591,11 +675,22 @@ export const VoiceLibrary: FC = () => {
                 </VcNote>
             ) : null}
             {lib.listError ? <VcNote tone="warn">{t("voice_changer.voices_list_failed", { message: lib.listError })}</VcNote> : null}
-            {canImport ? <ImportDropZone /> : null}
+            {canImport ? <ImportDropZone onFamilyFile={openCreator} /> : null}
+            {creator ? (
+                <FamilyCreator
+                    key={creator.key}
+                    initial={creator.family ? { family: creator.family, source: creator.source, request: creator.request ?? null } : null}
+                    onClose={() => setCreator(null)}
+                />
+            ) : lib.slotStore && familiesAvailable ? (
+                <button type="button" className="btn btn-sm gap-1 self-start" onClick={() => openCreator()}>
+                    <RiAddLine aria-hidden /> {t("voice_changer.family_new")}
+                </button>
+            ) : null}
             {lib.jobs.length > 0 ? (
                 <ul className="flex flex-col gap-1.5" aria-label={t("voice_changer.import_jobs")}>
                     {(lib.jobs as VcImportJob[]).map((j) => (
-                        <ImportJobRow key={j.key} job={j} selectedDir={slotDir} />
+                        <ImportJobRow key={j.key} job={j} selectedDir={slotDir} onRetry={retryFamilyVoice} />
                     ))}
                 </ul>
             ) : null}

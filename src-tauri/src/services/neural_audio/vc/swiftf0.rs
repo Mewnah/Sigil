@@ -203,6 +203,10 @@ impl SwiftF0PitchExtractor {
             ModelSource::File(std::path::Path::new(path)),
         )
         .map_err(|e| format!("Failed to load SwiftF0 ONNX {path}: {e}"))?;
+        // Another kind of graph set as the SwiftF0 model is named for what it is (P5-D, load only).
+        if let Some(why) = super::rvc::foreign_graph_problem(&session, std::path::Path::new(path), "a SwiftF0 pitch model", &[super::rvc::GraphKind::PitchModel]) {
+            return Err(format!("SwiftF0: {why}"));
+        }
         let io = SwiftIo::inspect(&session, path)?;
         let range = F0Range::Speech;
         let pin = ShapePin::for_ep(&outcome.active);

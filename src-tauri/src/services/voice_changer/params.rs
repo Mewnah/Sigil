@@ -516,6 +516,20 @@ pub(super) struct RvcParamsState {
     pub(super) hot_slots: u32,
     /// VRAM budget of the hot slots (MiB, 0 = automatic).
     pub(super) vram_budget_mb: u32,
+    // ---- P5 (P5-S0) ----
+    /// Voice-library id of the zero-shot reference (per voice, `slot.json`; part of the voice
+    /// selection: a change loads the voice with that reference in the background). `""` = none.
+    pub(super) reference_voice_id: String,
+}
+
+/// A `reference_voice_id` as stored: a valid voice-library id (trimmed), else `""`.
+pub(crate) fn normalize_reference_voice_id(s: &str) -> String {
+    let t = s.trim();
+    if crate::services::voice_library::valid_voice_id(t) {
+        t.to_string()
+    } else {
+        String::new()
+    }
 }
 
 impl Default for RvcParamsState {
@@ -545,6 +559,7 @@ impl Default for RvcParamsState {
             denoiser: DenoiserKind::default(),
             hot_slots: DEFAULT_HOT_SLOTS,
             vram_budget_mb: VRAM_BUDGET_MB_RANGE.0,
+            reference_voice_id: String::new(),
         }
     }
 }
@@ -580,6 +595,10 @@ impl RvcParamsState {
         }
         if let Some(v) = params.vram_budget_mb {
             self.vram_budget_mb = v.clamp(VRAM_BUDGET_MB_RANGE.0, VRAM_BUDGET_MB_RANGE.1);
+        }
+        // P5 (P5-S0)
+        if let Some(v) = params.reference_voice_id.as_deref() {
+            self.reference_voice_id = normalize_reference_voice_id(v);
         }
     }
 }
@@ -740,6 +759,12 @@ pub struct VoiceChangerParams {
     /// VRAM budget of the hot slots in MiB (0 = automatic).
     #[serde(default)]
     pub vram_budget_mb: Option<u32>,
+
+    // ---- P5 (params_contract.json `params_p5_new_fields`; absent / null on `set` keeps) ----
+    /// Voice-library id of the zero-shot reference voice (`""` = none). Per voice (`slot.json`);
+    /// switch: a change loads the voice with that reference in the background.
+    #[serde(default)]
+    pub reference_voice_id: Option<String>,
 }
 
 impl VoiceChangerParams {
@@ -791,6 +816,7 @@ impl VoiceChangerParams {
         self.denoiser = Some(rvc.denoiser.as_str().to_string());
         self.hot_slots = Some(rvc.hot_slots);
         self.vram_budget_mb = Some(rvc.vram_budget_mb);
+        self.reference_voice_id = Some(rvc.reference_voice_id.clone());
     }
 
     /// Clear every P3 field (as parsed from a sender that predates them).
@@ -811,6 +837,7 @@ impl VoiceChangerParams {
         self.denoiser = None;
         self.hot_slots = None;
         self.vram_budget_mb = None;
+        self.reference_voice_id = None;
     }
 }
 
@@ -881,6 +908,7 @@ impl Default for VoiceChangerParams {
             denoiser: None,
             hot_slots: None,
             vram_budget_mb: None,
+            reference_voice_id: None,
         };
         // Concrete P3 defaults, like the P0 options (a default `set` is a full `get`).
         p.set_p3_from(&rvc_defaults, &VoiceChangerHotParams::default());
