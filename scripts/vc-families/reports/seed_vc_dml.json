@@ -1,0 +1,1294 @@
+{
+  "family": "seed_vc",
+  "model": "seed-uvit-tat-xlsr-tiny",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.24.4",
+    "ep": "dml"
+  },
+  "threads": 2,
+  "variants": {
+    "fp32": {
+      "files": {
+        "xlsr": "xlsr.onnx",
+        "lr": "lr.onnx",
+        "dit": "dit.onnx",
+        "dit_step": "dit_step.onnx",
+        "dit_step1": "dit_step1.onnx",
+        "hift": "hift.onnx",
+        "hift_f0": "hift_f0.onnx",
+        "hift_nsf": "hift_nsf.onnx",
+        "campplus": "campplus.onnx",
+        "mel": "mel.onnx"
+      },
+      "parity": {
+        "xlsr_prompt": {
+          "snr_db": 110.11,
+          "max_abs": 1.32e-05,
+          "rel_l2": 3.12e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.1414,
+          "pass": true
+        },
+        "xlsr_window": {
+          "snr_db": 108.51,
+          "max_abs": 1.28e-05,
+          "rel_l2": 3.75e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.1394,
+          "pass": true
+        },
+        "campplus": {
+          "snr_db": 116.72,
+          "max_abs": 4.29e-06,
+          "rel_l2": 1.46e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.9637,
+          "pass": true
+        },
+        "mel": {
+          "snr_db": 136.67,
+          "max_abs": 1.57e-05,
+          "rel_l2": 1.47e-07,
+          "cosine": 1.0,
+          "ref_rms": 4.932,
+          "pass": true
+        },
+        "lr_prompt": {
+          "snr_db": 128.95,
+          "max_abs": 1.49e-07,
+          "rel_l2": 3.57e-07,
+          "cosine": 1.0,
+          "ref_rms": 0.03089,
+          "pass": true
+        },
+        "lr_tick": {
+          "snr_db": 127.5,
+          "max_abs": 1.19e-07,
+          "rel_l2": 4.22e-07,
+          "cosine": 1.0,
+          "ref_rms": 0.03397,
+          "pass": true
+        },
+        "dit_estimator": {
+          "snr_db": 125.56,
+          "max_abs": 1.95e-05,
+          "rel_l2": 5.27e-07,
+          "cosine": 1.0,
+          "ref_rms": 4.028,
+          "pass": true
+        },
+        "dit_step": {
+          "snr_db": 125.32,
+          "max_abs": 4.05e-06,
+          "rel_l2": 5.42e-07,
+          "cosine": 1.0,
+          "ref_rms": 0.4079,
+          "pass": true
+        },
+        "dit_step1": {
+          "snr_db": 136.79,
+          "max_abs": 6.26e-07,
+          "rel_l2": 1.45e-07,
+          "cosine": 1.0,
+          "ref_rms": 0.4079,
+          "pass": true
+        },
+        "hift": {
+          "snr_db": 80.84,
+          "max_abs": 0.000194,
+          "rel_l2": 9.08e-05,
+          "cosine": 0.999999996,
+          "ref_rms": 0.181,
+          "logmel": {
+            "snr_db": 109.93,
+            "max_abs": 0.000354,
+            "rel_l2": 3.19e-06,
+            "cosine": 1.0,
+            "ref_rms": 7.152
+          },
+          "pass": true
+        },
+        "hift_f0": {
+          "snr_db": 130.4,
+          "max_abs": 0.000107,
+          "rel_l2": 3.02e-07,
+          "cosine": 1.0,
+          "ref_rms": 105.0,
+          "pass": true
+        },
+        "hift_split": {
+          "snr_db": 80.84,
+          "max_abs": 0.000194,
+          "rel_l2": 9.08e-05,
+          "cosine": 0.999999996,
+          "ref_rms": 0.181,
+          "logmel": {
+            "snr_db": 109.93,
+            "max_abs": 0.000354,
+            "rel_l2": 3.19e-06,
+            "cosine": 1.0,
+            "ref_rms": 7.152
+          },
+          "pass": true
+        },
+        "hift_partial": {
+          "snr_db": 76.83,
+          "max_abs": 0.00022,
+          "rel_l2": 0.000144,
+          "cosine": 0.99999999,
+          "ref_rms": 0.2163,
+          "logmel": {
+            "snr_db": 102.03,
+            "max_abs": 0.000253,
+            "rel_l2": 7.91e-06,
+            "cosine": 1.0,
+            "ref_rms": 4.703
+          },
+          "pass": true
+        },
+        "chain_style": {
+          "snr_db": 116.72,
+          "max_abs": 4.29e-06,
+          "rel_l2": 1.46e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.9637,
+          "pass": true
+        },
+        "chain_prompt_cond": {
+          "snr_db": 117.54,
+          "max_abs": 2.68e-07,
+          "rel_l2": 1.33e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.03089,
+          "pass": true
+        },
+        "chain_tick_cond": {
+          "snr_db": 116.42,
+          "max_abs": 3.37e-07,
+          "rel_l2": 1.51e-06,
+          "cosine": 1.0,
+          "ref_rms": 0.03397,
+          "pass": true
+        },
+        "chain_tick_mel": {
+          "snr_db": 118.77,
+          "max_abs": 1.81e-05,
+          "rel_l2": 1.15e-06,
+          "cosine": 1.0,
+          "ref_rms": 5.05,
+          "pass": true
+        },
+        "chain_tick_audio": {
+          "snr_db": 68.47,
+          "max_abs": 0.000548,
+          "rel_l2": 0.000377,
+          "cosine": 0.999999929,
+          "ref_rms": 0.217,
+          "logmel": {
+            "snr_db": 89.93,
+            "max_abs": 0.00122,
+            "rel_l2": 3.19e-05,
+            "cosine": 0.999999999,
+            "ref_rms": 4.711
+          },
+          "pass": true
+        },
+        "chain_tick_audio_host_update": {
+          "snr_db": 68.47,
+          "max_abs": 0.000548,
+          "rel_l2": 0.000377,
+          "cosine": 0.999999929,
+          "ref_rms": 0.217,
+          "logmel": {
+            "snr_db": 89.93,
+            "max_abs": 0.00122,
+            "rel_l2": 3.19e-05,
+            "cosine": 0.999999999,
+            "ref_rms": 4.711
+          },
+          "pass": true
+        },
+        "chain_tick_audio_partial": {
+          "snr_db": 68.85,
+          "max_abs": 0.000526,
+          "rel_l2": 0.000361,
+          "cosine": 0.999999935,
+          "ref_rms": 0.217,
+          "logmel": {
+            "snr_db": 90.24,
+            "max_abs": 0.00124,
+            "rel_l2": 3.07e-05,
+            "cosine": 1.0,
+            "ref_rms": 4.711
+          },
+          "pass": true
+        },
+        "lean_chain_tick_mel": {
+          "snr_db": 131.45,
+          "max_abs": 9.54e-06,
+          "rel_l2": 2.68e-07,
+          "cosine": 1.0,
+          "ref_rms": 5.466,
+          "pass": true
+        },
+        "lean_chain_tick_audio": {
+          "snr_db": 99.18,
+          "max_abs": 4.12e-07,
+          "rel_l2": 1.1e-05,
+          "cosine": 1.0,
+          "ref_rms": 0.006138,
+          "logmel": {
+            "snr_db": 121.72,
+            "max_abs": 3.96e-05,
+            "rel_l2": 8.2e-07,
+            "cosine": 1.0,
+            "ref_rms": 9.092
+          },
+          "pass": true
+        },
+        "lean_chain_tick_audio_partial": {
+          "snr_db": 96.23,
+          "max_abs": 9.98e-07,
+          "rel_l2": 1.54e-05,
+          "cosine": 1.0,
+          "ref_rms": 0.006138,
+          "logmel": {
+            "snr_db": 115.23,
+            "max_abs": 0.000145,
+            "rel_l2": 1.73e-06,
+            "cosine": 1.0,
+            "ref_rms": 9.092
+          },
+          "pass": true
+        }
+      },
+      "parity_setup": {
+        "preset": {
+          "name": "upstream_readme",
+          "steps": 10,
+          "cfg_rate": 0.7,
+          "max_prompt": 3.0,
+          "block": 0.18,
+          "crossfade": 0.04,
+          "extra_ce": 2.5,
+          "extra_dit": 0.5,
+          "extra_right": 0.02,
+          "hift_margin": 12
+        },
+        "shapes": {
+          "window_units": 138,
+          "skip_head": 125,
+          "skip_tail": 1,
+          "return_length": 12,
+          "ce_frames": 100,
+          "n16": 44160,
+          "xlsr_frames": 137,
+          "lr_in": 37,
+          "n_mel": 65,
+          "prompt_frames": 258,
+          "L": 323,
+          "hift_samples": 16640,
+          "out_samples": 5292,
+          "out_start": 10907,
+          "dec_start": 30,
+          "dec_frames": 35,
+          "dec_samples": 8960
+        },
+        "source": "jfk.wav",
+        "reference": "ja-short.wav",
+        "window_start_s": 1.0,
+        "seed": 0,
+        "reference_impl": "upstream custom_infer, PyTorch fp32 CPU",
+        "graphs": {
+          "campplus": {
+            "file": "campplus.onnx",
+            "bytes": 28154325,
+            "sha256": "ae24d7ce883c1c79dcbf86a939786b46d773d53e48f8f563cb2c8f9b4da7060a"
+          },
+          "dit": {
+            "file": "dit.onnx",
+            "bytes": 77823332,
+            "sha256": "0238aaa437930c87551be9d103de2b6565bff79eaafbd188a3f37aca5d6d88f7"
+          },
+          "dit_step": {
+            "file": "dit_step.onnx",
+            "bytes": 77854555,
+            "sha256": "07df97f65c41980600d11de0363a10d79856b9bb76325cff87abf6571dc5fcb5"
+          },
+          "dit_step1": {
+            "file": "dit_step1.onnx",
+            "bytes": 77851587,
+            "sha256": "e2121c2fd4c8809a37e6a0d82a7ee7a9708e11125cfc4626ad5548283375dab9"
+          },
+          "hift": {
+            "file": "hift.onnx",
+            "bytes": 81944369,
+            "sha256": "f1c14e3a487ec56d4ea1c127b25d06cf172ef9d332a6e8d1cd86250f30b9ed11"
+          },
+          "hift_f0": {
+            "file": "hift_f0.onnx",
+            "bytes": 13090307,
+            "sha256": "d27188a89f20fd399a207ea8a232c48494f3b352c03c31e3e0e9cb010fa8d85f"
+          },
+          "hift_nsf": {
+            "file": "hift_nsf.onnx",
+            "bytes": 68854251,
+            "sha256": "681986131b4c8ab68015d196fde43d96d8c61a6ecfc6ef07ce232249095988e6"
+          },
+          "lr": {
+            "file": "lr.onnx",
+            "bytes": 9271813,
+            "sha256": "9050989cfee42cdbc3924d78715d3ee09708158df6d88f45e9e9e9602ad61616"
+          },
+          "mel": {
+            "file": "mel.onnx",
+            "bytes": 4370130,
+            "sha256": "e80a4b0554c2db77600ed0fcf3a4c586dcbe9ce8f667aceac1db175a04400e12"
+          },
+          "xlsr": {
+            "file": "xlsr.onnx",
+            "bytes": 657377439,
+            "sha256": "95017567fb13e6e34d51ee65c5ef7f9c396c129ecf4668c79b46641e0b448886"
+          }
+        }
+      },
+      "stream_join": {
+        "upstream": {
+          "mean_mel_overlap_snr_db": 13.93,
+          "mean_best_corr": 0.372,
+          "mean_corr_at_expected_offset": -0.071,
+          "mean_sola_range_best_corr": 0.227,
+          "joins": [
+            {
+              "best_corr": 0.245,
+              "best_offset": 128,
+              "sola_range_best_corr": 0.245,
+              "corr_at_expected_offset": 0.03,
+              "mel_overlap_snr_db": 12.71
+            },
+            {
+              "best_corr": 0.001,
+              "best_offset": -501,
+              "sola_range_best_corr": -0.013,
+              "corr_at_expected_offset": -0.202,
+              "mel_overlap_snr_db": 13.04
+            },
+            {
+              "best_corr": 0.421,
+              "best_offset": 6,
+              "sola_range_best_corr": 0.421,
+              "corr_at_expected_offset": -0.206,
+              "mel_overlap_snr_db": 17.14
+            },
+            {
+              "best_corr": 0.327,
+              "best_offset": 66,
+              "sola_range_best_corr": 0.327,
+              "corr_at_expected_offset": -0.261,
+              "mel_overlap_snr_db": 13.11
+            },
+            {
+              "best_corr": 0.29,
+              "best_offset": -87,
+              "sola_range_best_corr": 0.201,
+              "corr_at_expected_offset": -0.044,
+              "mel_overlap_snr_db": 14.55
+            },
+            {
+              "best_corr": 0.563,
+              "best_offset": -262,
+              "sola_range_best_corr": 0.226,
+              "corr_at_expected_offset": 0.283,
+              "mel_overlap_snr_db": 9.34
+            },
+            {
+              "best_corr": 0.603,
+              "best_offset": -512,
+              "sola_range_best_corr": 0.175,
+              "corr_at_expected_offset": 0.081,
+              "mel_overlap_snr_db": 19.04
+            },
+            {
+              "best_corr": 0.524,
+              "best_offset": 512,
+              "sola_range_best_corr": 0.237,
+              "corr_at_expected_offset": -0.245,
+              "mel_overlap_snr_db": 12.51
+            }
+          ]
+        },
+        "z_anchored": {
+          "mean_mel_overlap_snr_db": 16.584,
+          "mean_best_corr": 0.71,
+          "mean_corr_at_expected_offset": 0.566,
+          "mean_sola_range_best_corr": 0.423,
+          "joins": [
+            {
+              "best_corr": 0.562,
+              "best_offset": -128,
+              "sola_range_best_corr": 0.297,
+              "corr_at_expected_offset": 0.375,
+              "mel_overlap_snr_db": 14.66
+            },
+            {
+              "best_corr": 0.934,
+              "best_offset": -126,
+              "sola_range_best_corr": 0.221,
+              "corr_at_expected_offset": 0.918,
+              "mel_overlap_snr_db": 15.55
+            },
+            {
+              "best_corr": 0.42,
+              "best_offset": -238,
+              "sola_range_best_corr": 0.299,
+              "corr_at_expected_offset": -0.131,
+              "mel_overlap_snr_db": 20.13
+            },
+            {
+              "best_corr": 0.359,
+              "best_offset": -374,
+              "sola_range_best_corr": 0.328,
+              "corr_at_expected_offset": 0.01,
+              "mel_overlap_snr_db": 13.94
+            },
+            {
+              "best_corr": 0.718,
+              "best_offset": -126,
+              "sola_range_best_corr": 0.286,
+              "corr_at_expected_offset": 0.674,
+              "mel_overlap_snr_db": 19.2
+            },
+            {
+              "best_corr": 0.977,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.816,
+              "corr_at_expected_offset": 0.977,
+              "mel_overlap_snr_db": 19.17
+            },
+            {
+              "best_corr": 0.821,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.415,
+              "corr_at_expected_offset": 0.821,
+              "mel_overlap_snr_db": 20.09
+            },
+            {
+              "best_corr": 0.885,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.725,
+              "corr_at_expected_offset": 0.885,
+              "mel_overlap_snr_db": 9.93
+            }
+          ]
+        },
+        "z_and_phase": {
+          "mean_mel_overlap_snr_db": 16.584,
+          "mean_best_corr": 0.756,
+          "mean_corr_at_expected_offset": 0.64,
+          "mean_sola_range_best_corr": 0.434,
+          "joins": [
+            {
+              "best_corr": 0.58,
+              "best_offset": -128,
+              "sola_range_best_corr": 0.288,
+              "corr_at_expected_offset": 0.284,
+              "mel_overlap_snr_db": 14.66
+            },
+            {
+              "best_corr": 0.934,
+              "best_offset": -126,
+              "sola_range_best_corr": 0.219,
+              "corr_at_expected_offset": 0.918,
+              "mel_overlap_snr_db": 15.55
+            },
+            {
+              "best_corr": 0.537,
+              "best_offset": -132,
+              "sola_range_best_corr": 0.446,
+              "corr_at_expected_offset": 0.232,
+              "mel_overlap_snr_db": 20.13
+            },
+            {
+              "best_corr": 0.53,
+              "best_offset": -310,
+              "sola_range_best_corr": 0.307,
+              "corr_at_expected_offset": 0.255,
+              "mel_overlap_snr_db": 13.94
+            },
+            {
+              "best_corr": 0.784,
+              "best_offset": -126,
+              "sola_range_best_corr": 0.259,
+              "corr_at_expected_offset": 0.747,
+              "mel_overlap_snr_db": 19.2
+            },
+            {
+              "best_corr": 0.977,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.816,
+              "corr_at_expected_offset": 0.977,
+              "mel_overlap_snr_db": 19.17
+            },
+            {
+              "best_corr": 0.821,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.415,
+              "corr_at_expected_offset": 0.821,
+              "mel_overlap_snr_db": 20.09
+            },
+            {
+              "best_corr": 0.885,
+              "best_offset": -127,
+              "sola_range_best_corr": 0.725,
+              "corr_at_expected_offset": 0.885,
+              "mel_overlap_snr_db": 9.93
+            }
+          ]
+        },
+        "setup": {
+          "preset": "upstream_readme",
+          "joins": 8,
+          "window_start_s": 1.0,
+          "frames_per_block": 15.811,
+          "grid_frames_per_tick": 16,
+          "expected_offset": -127,
+          "anchor": {
+            "n_this": 3668,
+            "n_prev": 7764
+          },
+          "note": "upstream: fresh z / phases / sine noise per tick; z_anchored: z and sine noise on the content-time mel-frame grid; z_and_phase: plus the NSF phase anchored at the join. Offsets are samples at 22.05 kHz relative to upstream's join (SOLA searches 0..441)."
+        },
+        "graphs": {
+          "dit_step": {
+            "file": "dit_step.onnx",
+            "bytes": 77854555,
+            "sha256": "07df97f65c41980600d11de0363a10d79856b9bb76325cff87abf6571dc5fcb5"
+          },
+          "dit_step1": {
+            "file": "dit_step1.onnx",
+            "bytes": 77851587,
+            "sha256": "e2121c2fd4c8809a37e6a0d82a7ee7a9708e11125cfc4626ad5548283375dab9"
+          },
+          "hift_f0": {
+            "file": "hift_f0.onnx",
+            "bytes": 13090307,
+            "sha256": "d27188a89f20fd399a207ea8a232c48494f3b352c03c31e3e0e9cb010fa8d85f"
+          },
+          "hift_nsf": {
+            "file": "hift_nsf.onnx",
+            "bytes": 68854251,
+            "sha256": "681986131b4c8ab68015d196fde43d96d8c61a6ecfc6ef07ce232249095988e6"
+          },
+          "lr": {
+            "file": "lr.onnx",
+            "bytes": 9271813,
+            "sha256": "9050989cfee42cdbc3924d78715d3ee09708158df6d88f45e9e9e9602ad61616"
+          },
+          "xlsr": {
+            "file": "xlsr.onnx",
+            "bytes": 657377439,
+            "sha256": "95017567fb13e6e34d51ee65c5ef7f9c396c129ecf4668c79b46641e0b448886"
+          }
+        }
+      },
+      "campplus_front_end": {
+        "fbank_x32768_vs_upstream": {
+          "snr_db": 29.11,
+          "max_abs": 0.0816,
+          "rel_l2": 0.035,
+          "cosine": 0.999386463,
+          "ref_rms": 0.9637
+        },
+        "bench_campplus_asset_vs_upstream": {
+          "snr_db": 4.44,
+          "max_abs": 1.57,
+          "rel_l2": 0.6,
+          "cosine": 0.925140761,
+          "ref_rms": 0.9637
+        },
+        "graphs": {
+          "bench_campplus": {
+            "file": "model.onnx",
+            "bytes": 28281138,
+            "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"
+          },
+          "campplus": {
+            "file": "campplus.onnx",
+            "bytes": 28154325,
+            "sha256": "ae24d7ce883c1c79dcbf86a939786b46d773d53e48f8f563cb2c8f9b4da7060a"
+          }
+        }
+      },
+      "timing_conditions": {
+        "gpu_util_pct": 18,
+        "waited_s": 2.1,
+        "cpu_util_pct": 9.0,
+        "cpu_threads": 16
+      },
+      "cost": {
+        "upstream_readme": {
+          "xlsr": {
+            "host": {
+              "median_ms": 6.469,
+              "p90_ms": 7.149,
+              "min_ms": 5.602,
+              "runs": 30,
+              "block_medians_ms": [
+                10.803,
+                6.529,
+                6.469
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 9,
+              "waited_s": 2.1
+            }
+          },
+          "lr": {
+            "host": {
+              "median_ms": 0.903,
+              "p90_ms": 1.433,
+              "min_ms": 0.872,
+              "runs": 30,
+              "block_medians_ms": [
+                1.012,
+                0.93,
+                0.903
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 9,
+              "waited_s": 2.1
+            }
+          },
+          "dit_step": {
+            "host": {
+              "median_ms": 3.691,
+              "p90_ms": 4.198,
+              "min_ms": 2.657,
+              "runs": 30,
+              "block_medians_ms": [
+                4.19,
+                3.829,
+                3.691
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 33,
+              "waited_s": 1.1
+            }
+          },
+          "hift": {
+            "host": {
+              "median_ms": 9.37,
+              "p90_ms": 10.219,
+              "min_ms": 8.862,
+              "runs": 30,
+              "block_medians_ms": [
+                9.37,
+                9.485,
+                9.659
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "M": 65,
+                  "S": 16640
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(1) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 16,
+              "waited_s": 1.1
+            }
+          },
+          "hift_f0": {
+            "host": {
+              "median_ms": 0.231,
+              "p90_ms": 0.297,
+              "min_ms": 0.226,
+              "runs": 30,
+              "block_medians_ms": [
+                0.234,
+                0.231,
+                0.232
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 8,
+              "waited_s": 2.1
+            }
+          },
+          "hift_nsf": {
+            "host": {
+              "median_ms": 6.482,
+              "p90_ms": 7.197,
+              "min_ms": 5.884,
+              "runs": 30,
+              "block_medians_ms": [
+                10.447,
+                6.798,
+                6.482
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "W": 35,
+                  "S": 8960
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(2) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 14,
+              "waited_s": 1.1
+            }
+          },
+          "tick": {
+            "host": {
+              "tick_ms": 53.65,
+              "per_step_ms": 3.691,
+              "rtf": 0.298
+            }
+          },
+          "tick_partial": {
+            "host": {
+              "tick_ms": 50.99,
+              "per_step_ms": 3.691,
+              "rtf": 0.283
+            }
+          },
+          "block_ms": 180.0,
+          "preset": {
+            "name": "upstream_readme",
+            "steps": 10,
+            "cfg_rate": 0.7,
+            "max_prompt": 3.0,
+            "block": 0.18,
+            "crossfade": 0.04,
+            "extra_ce": 2.5,
+            "extra_dit": 0.5,
+            "extra_right": 0.02,
+            "hift_margin": 12
+          },
+          "shapes": {
+            "window_units": 138,
+            "skip_head": 125,
+            "skip_tail": 1,
+            "return_length": 12,
+            "ce_frames": 100,
+            "n16": 44160,
+            "xlsr_frames": 137,
+            "lr_in": 37,
+            "n_mel": 65,
+            "prompt_frames": 258,
+            "L": 323,
+            "hift_samples": 16640,
+            "out_samples": 5292,
+            "out_start": 10907,
+            "dec_start": 30,
+            "dec_frames": 35,
+            "dec_samples": 8960
+          }
+        },
+        "sigil_low": {
+          "xlsr": {
+            "host": {
+              "median_ms": 4.204,
+              "p90_ms": 4.837,
+              "min_ms": 3.629,
+              "runs": 30,
+              "block_medians_ms": [
+                4.41,
+                4.23,
+                4.204
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 10,
+              "waited_s": 1.1
+            }
+          },
+          "lr": {
+            "host": {
+              "median_ms": 0.788,
+              "p90_ms": 1.225,
+              "min_ms": 0.748,
+              "runs": 30,
+              "block_medians_ms": [
+                0.788,
+                0.852,
+                0.79
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 10,
+              "waited_s": 2.1
+            }
+          },
+          "dit_step": {
+            "host": {
+              "median_ms": 3.005,
+              "p90_ms": 3.732,
+              "min_ms": 2.439,
+              "runs": 30,
+              "block_medians_ms": [
+                8.182,
+                3.125,
+                3.005
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 16,
+              "waited_s": 1.1
+            }
+          },
+          "hift": {
+            "host": {
+              "median_ms": 7.048,
+              "p90_ms": 7.499,
+              "min_ms": 6.252,
+              "runs": 30,
+              "block_medians_ms": [
+                7.729,
+                7.048,
+                7.172
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "M": 41,
+                  "S": 10496
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(3) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 16,
+              "waited_s": 2.1
+            }
+          },
+          "hift_f0": {
+            "host": {
+              "median_ms": 0.299,
+              "p90_ms": 0.559,
+              "min_ms": 0.294,
+              "runs": 30,
+              "block_medians_ms": [
+                0.312,
+                0.303,
+                0.299
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 10,
+              "waited_s": 2.1
+            }
+          },
+          "hift_nsf": {
+            "host": {
+              "median_ms": 6.35,
+              "p90_ms": 6.724,
+              "min_ms": 5.78,
+              "runs": 30,
+              "block_medians_ms": [
+                6.945,
+                6.35,
+                6.463
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "W": 28,
+                  "S": 7168
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(4) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 20,
+              "waited_s": 1.1
+            }
+          },
+          "tick": {
+            "host": {
+              "tick_ms": 30.07,
+              "per_step_ms": 3.005,
+              "rtf": 0.301
+            }
+          },
+          "tick_partial": {
+            "host": {
+              "tick_ms": 29.67,
+              "per_step_ms": 3.005,
+              "rtf": 0.297
+            }
+          },
+          "block_ms": 100.0,
+          "preset": {
+            "name": "sigil_low",
+            "steps": 6,
+            "cfg_rate": 0.7,
+            "max_prompt": 3.0,
+            "block": 0.1,
+            "crossfade": 0.04,
+            "extra_ce": 1.0,
+            "extra_dit": 0.3,
+            "extra_right": 0.02,
+            "hift_margin": 12
+          },
+          "shapes": {
+            "window_units": 59,
+            "skip_head": 50,
+            "skip_tail": 1,
+            "return_length": 8,
+            "ce_frames": 35,
+            "n16": 18880,
+            "xlsr_frames": 58,
+            "lr_in": 23,
+            "n_mel": 41,
+            "prompt_frames": 258,
+            "L": 299,
+            "hift_samples": 10496,
+            "out_samples": 3528,
+            "out_start": 6527,
+            "dec_start": 13,
+            "dec_frames": 28,
+            "dec_samples": 7168
+          }
+        },
+        "sigil_lean": {
+          "xlsr": {
+            "host": {
+              "median_ms": 4.213,
+              "p90_ms": 4.84,
+              "min_ms": 3.633,
+              "runs": 30,
+              "block_medians_ms": [
+                4.399,
+                4.441,
+                4.213
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 9,
+              "waited_s": 1.1
+            }
+          },
+          "lr": {
+            "host": {
+              "median_ms": 0.788,
+              "p90_ms": 1.26,
+              "min_ms": 0.754,
+              "runs": 30,
+              "block_medians_ms": [
+                0.796,
+                0.915,
+                0.788
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 15,
+              "waited_s": 2.1
+            }
+          },
+          "dit_step1": {
+            "host": {
+              "median_ms": 1.927,
+              "p90_ms": 2.659,
+              "min_ms": 1.604,
+              "runs": 30,
+              "block_medians_ms": [
+                5.003,
+                2.086,
+                1.927
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 23,
+              "waited_s": 1.1
+            }
+          },
+          "hift": {
+            "host": {
+              "median_ms": 11.444,
+              "p90_ms": 12.024,
+              "min_ms": 10.818,
+              "runs": 30,
+              "block_medians_ms": [
+                11.782,
+                11.444,
+                11.513
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "M": 41,
+                  "S": 10496
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(5) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 14,
+              "waited_s": 1.1
+            }
+          },
+          "hift_f0": {
+            "host": {
+              "median_ms": 0.386,
+              "p90_ms": 0.73,
+              "min_ms": 0.373,
+              "runs": 30,
+              "block_medians_ms": [
+                0.386,
+                0.412,
+                0.389
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 16,
+              "waited_s": 2.1
+            }
+          },
+          "hift_nsf": {
+            "host": {
+              "median_ms": 10.84,
+              "p90_ms": 11.356,
+              "min_ms": 9.714,
+              "runs": 30,
+              "block_medians_ms": [
+                10.858,
+                10.84,
+                11.001
+              ]
+            },
+            "session": {
+              "dims_pinned": false,
+              "dims_refused": {
+                "dims": {
+                  "W": 28,
+                  "S": 7168
+                },
+                "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(6) tid(7124) 80070057 The parameter is incorrect."
+              }
+            },
+            "gpu_before": {
+              "gpu_util_pct": 21,
+              "waited_s": 1.1
+            }
+          },
+          "tick": {
+            "host": {
+              "tick_ms": 24.15,
+              "per_step_ms": 1.927,
+              "rtf": 0.242
+            }
+          },
+          "tick_partial": {
+            "host": {
+              "tick_ms": 23.94,
+              "per_step_ms": 1.927,
+              "rtf": 0.239
+            }
+          },
+          "block_ms": 100.0,
+          "preset": {
+            "name": "sigil_lean",
+            "steps": 4,
+            "cfg_rate": 0.0,
+            "max_prompt": 1.5,
+            "block": 0.1,
+            "crossfade": 0.04,
+            "extra_ce": 1.0,
+            "extra_dit": 0.3,
+            "extra_right": 0.02,
+            "hift_margin": 12
+          },
+          "shapes": {
+            "window_units": 59,
+            "skip_head": 50,
+            "skip_tail": 1,
+            "return_length": 8,
+            "ce_frames": 35,
+            "n16": 18880,
+            "xlsr_frames": 58,
+            "lr_in": 23,
+            "n_mel": 41,
+            "prompt_frames": 129,
+            "L": 170,
+            "hift_samples": 10496,
+            "out_samples": 3528,
+            "out_start": 6527,
+            "dec_start": 13,
+            "dec_frames": 28,
+            "dec_samples": 7168
+          }
+        },
+        "once_per_voice": {
+          "xlsr": {
+            "host": {
+              "median_ms": 9.644,
+              "p90_ms": 10.249,
+              "min_ms": 9.107,
+              "runs": 10,
+              "block_medians_ms": [
+                21.038,
+                10.054,
+                9.644
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 14,
+              "waited_s": 1.1
+            }
+          },
+          "campplus": {
+            "host": {
+              "median_ms": 4.742,
+              "p90_ms": 5.345,
+              "min_ms": 3.864,
+              "runs": 10,
+              "block_medians_ms": [
+                6.111,
+                6.48,
+                4.742
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 15,
+              "waited_s": 1.1
+            }
+          },
+          "mel": {
+            "host": {
+              "median_ms": 0.58,
+              "p90_ms": 0.748,
+              "min_ms": 0.56,
+              "runs": 10,
+              "block_medians_ms": [
+                0.58,
+                0.588,
+                0.59
+              ]
+            },
+            "session": {
+              "dims_pinned": true
+            },
+            "gpu_before": {
+              "gpu_util_pct": 18,
+              "waited_s": 2.1
+            }
+          }
+        },
+        "graphs": {
+          "campplus": {
+            "file": "campplus.onnx",
+            "bytes": 28154325,
+            "sha256": "ae24d7ce883c1c79dcbf86a939786b46d773d53e48f8f563cb2c8f9b4da7060a"
+          },
+          "dit": {
+            "file": "dit.onnx",
+            "bytes": 77823332,
+            "sha256": "0238aaa437930c87551be9d103de2b6565bff79eaafbd188a3f37aca5d6d88f7"
+          },
+          "dit_step": {
+            "file": "dit_step.onnx",
+            "bytes": 77854555,
+            "sha256": "07df97f65c41980600d11de0363a10d79856b9bb76325cff87abf6571dc5fcb5"
+          },
+          "dit_step1": {
+            "file": "dit_step1.onnx",
+            "bytes": 77851587,
+            "sha256": "e2121c2fd4c8809a37e6a0d82a7ee7a9708e11125cfc4626ad5548283375dab9"
+          },
+          "hift": {
+            "file": "hift.onnx",
+            "bytes": 81944369,
+            "sha256": "f1c14e3a487ec56d4ea1c127b25d06cf172ef9d332a6e8d1cd86250f30b9ed11"
+          },
+          "hift_f0": {
+            "file": "hift_f0.onnx",
+            "bytes": 13090307,
+            "sha256": "d27188a89f20fd399a207ea8a232c48494f3b352c03c31e3e0e9cb010fa8d85f"
+          },
+          "hift_nsf": {
+            "file": "hift_nsf.onnx",
+            "bytes": 68854251,
+            "sha256": "681986131b4c8ab68015d196fde43d96d8c61a6ecfc6ef07ce232249095988e6"
+          },
+          "lr": {
+            "file": "lr.onnx",
+            "bytes": 9271813,
+            "sha256": "9050989cfee42cdbc3924d78715d3ee09708158df6d88f45e9e9e9602ad61616"
+          },
+          "mel": {
+            "file": "mel.onnx",
+            "bytes": 4370130,
+            "sha256": "e80a4b0554c2db77600ed0fcf3a4c586dcbe9ce8f667aceac1db175a04400e12"
+          },
+          "xlsr": {
+            "file": "xlsr.onnx",
+            "bytes": 657377439,
+            "sha256": "95017567fb13e6e34d51ee65c5ef7f9c396c129ecf4668c79b46641e0b448886"
+          }
+        }
+      }
+    }
+  }
+}

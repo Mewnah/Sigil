@@ -86,6 +86,8 @@
     "dec_margin": 11,
     "dec_receptive_left_frames": 11,
     "dec_receptive_left_samples": 2860,
+    "dec_receptive_right_frames": 11,
+    "dec_receptive_right_samples": 2860,
     "noise_scale": 0.66666,
     "knn_k": 8,
     "knn_coarse_k": 64,
@@ -95,6 +97,30 @@
       "enc": "T = context frames (10 ms each)",
       "flowdec": "S = F * upp; A = (F - flow_margin - dec_margin) * upp",
       "knn": "T = 20 ms content frames; N >= min_index_rows"
+    },
+    "main_margin": 11,
+    "latent_offset": 0,
+    "excitation": {
+      "kind": "nsf-sine",
+      "harmonics": 1,
+      "f0_to_samples": "repeat",
+      "f0_lookahead_frames": 0,
+      "phase": {
+        "input": "phase0",
+        "shape": [
+          1,
+          1
+        ],
+        "carry": "phase0' = frac(phase0 + sum(wrap(upp * f0 / sr))) over the frames that slide out; wrap(x) = fmod(x + 0.5, 1) - 0.5"
+      },
+      "noise": {
+        "input": "src_noise",
+        "shape": [
+          1,
+          "S"
+        ],
+        "per": "sample"
+      }
     }
   },
   "weights": {
@@ -6113,6 +6139,67 @@
     "torch": "2.3.1",
     "onnx": "1.17.0",
     "opset": 17,
-    "rvc_commit": "81eed5e8f68b6bed1789f682fe78cdd324495afc"
+    "rvc_commit": "81eed5e8f68b6bed1789f682fe78cdd324495afc",
+    "flowdec_fp16": {
+      "fp32_flow": false,
+      "fp32_stages": [
+        0
+      ],
+      "fp32_ends": false
+    }
+  },
+  "parity_evidence": {
+    "weights": "real voice (MIT default voice)",
+    "cpu": "ONNX Runtime 1.19.2 CPU (parity_test.py)",
+    "gpu": "DirectML via onnxruntime-directml 1.19.2 (the least accurate GPU EP for fp16, ADR 0004); fp16 flowdec rows must stay under 0.8 x the gate",
+    "gate": {
+      "fp32": 0.0001,
+      "fp16": 0.005
+    },
+    "worst": {
+      "cpu": {
+        "flowdec_fp32": 9.998679161071777e-06,
+        "flowdec_fp16": 0.0004623131826519966,
+        "enc_fp32": 5.8710575103759766e-06,
+        "enc_fp16": 0.0020783990621566772
+      },
+      "gpu": {
+        "flowdec_fp32": 7.180869579315186e-05,
+        "flowdec_fp16": 0.0032139793038368225,
+        "enc_fp32": 3.039836883544922e-06,
+        "enc_fp16": 0.020966708660125732
+      }
+    },
+    "fp16_mixes_tried": [
+      {
+        "fp32_flow": false,
+        "fp32_stages": [
+          0
+        ],
+        "fp32_ends": false
+      }
+    ],
+    "right_edge": [
+      {
+        "window_end": 124,
+        "kind": "voiced",
+        "returned_frames": 48,
+        "tol": 0.0001,
+        "seam_frames": 13,
+        "saturated": false,
+        "last_frame_max_abs": 0.10765436664223671,
+        "last_frame_rel_rms": 0.8849076690487567
+      },
+      {
+        "window_end": 151,
+        "kind": "voicing offset",
+        "returned_frames": 48,
+        "tol": 0.0001,
+        "seam_frames": 12,
+        "saturated": false,
+        "last_frame_max_abs": 0.005148118361830711,
+        "last_frame_rel_rms": 0.9362457695483853
+      }
+    ]
   }
 }

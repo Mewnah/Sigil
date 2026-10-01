@@ -1,0 +1,33 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "Sigil Voice Engine on ${EP}: the voice in ${SLOT} (an imported template voice, e.g. the MIT default voice), ${PITCH} F0 (the plan's reference config: RMVPE), 40 ms engine blocks on the voice changer's default 512-frame device block, 64 ms extra context, the Low-latency preset with the benchmark-decided levers (LEVERS_JSON overrides them). Offline compute (T2 H2), a wall-clock paced run (T1 engine-added latency, T4 CPU), the H2 load simulator (70 % GPU duty) and the H1 simulation (GPU + CPU load, 3 s stall: T2 under load, T7), and fidelity against the offline ceiling (T5). Materialized by run-perf-gate.ps1 -Profile p3.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": 2 },
+    { "mode": "paced", "name": "paced", "seconds": 20, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h2-load70", "profile": "h2_load70", "seconds": 20, "warmup_s": 1 },
+    { "mode": "contention", "name": "h1-sim", "profile": "h1_vrchat_obs", "seconds": 30, "warmup_s": 1 },
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1,
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu" }
+    }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": true }
+}

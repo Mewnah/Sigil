@@ -147,44 +147,72 @@ const VOWELS: [[f64; 3]; 5] = [
 const FORMANT_BW: [f64; 3] = [90.0, 110.0, 170.0];
 const FORMANT_GAIN: [f64; 3] = [1.0, 0.6, 0.3];
 
+/// The random choices of a test voice (syllables, base pitch, modulation phases), drawn in a
+/// fixed order so the waveform and its F0 truth come from the same plan.
+struct VoicePlan {
+    /// `(start s, duration s, vowel index)`, with pauses between phrases.
+    syllables: Vec<(f64, f64, usize)>,
+    base_f0: f64,
+    p1: f64,
+    p2: f64,
+}
+
+impl VoicePlan {
+    fn new(total_s: f64, rng: &mut SplitMix64) -> VoicePlan {
+        let mut syllables: Vec<(f64, f64, usize)> = Vec::new();
+        let mut t = 0.15;
+        let mut phrase_left = rng.range(1.2, 2.4);
+        while t < total_s {
+            let dur = rng.range(0.16, 0.30);
+            syllables.push((t, dur, (rng.next_u64() % VOWELS.len() as u64) as usize));
+            t += dur + rng.range(0.01, 0.05);
+            phrase_left -= dur;
+            if phrase_left <= 0.0 {
+                t += rng.range(0.25, 0.5);
+                phrase_left = rng.range(1.2, 2.4);
+            }
+        }
+        let base_f0 = rng.range(105.0, 145.0);
+        let (p1, p2) = (rng.range(0.0, 6.0), rng.range(0.0, 6.0));
+        VoicePlan { syllables, base_f0, p1, p2 }
+    }
+
+    /// The glottal pitch at time `t` (Hz): gliding (0.21 / 0.63 Hz) with a 5.5 Hz vibrato.
+    fn f0(&self, t: f64) -> f64 {
+        (self.base_f0
+            * (1.0 + 0.28 * (2.0 * PI * 0.21 * t + self.p1).sin() + 0.12 * (2.0 * PI * 0.63 * t + self.p2).sin())
+            * (1.0 + 0.012 * (2.0 * PI * 5.5 * t).sin()))
+        .clamp(95.0, 230.0)
+    }
+
+    /// Position within the syllable sounding at `t` (0..1), if any.
+    fn local(&self, t: f64) -> Option<(usize, f64)> {
+        let i = self.syllables.partition_point(|s| s.0 + s.1 < t);
+        let &(start, dur, _) = self.syllables.get(i)?;
+        let local = (t - start) / dur;
+        (0.0..=1.0).contains(&local).then_some((i, local))
+    }
+}
+
 /// Speech-like test voice: a band-limited glottal source (harmonics up to 4 kHz, -6 dB/oct)
 /// on a gliding F0 (95-230 Hz, 5.5 Hz vibrato), shaped by formants that move from vowel to vowel
 /// per syllable (~4 syllables/s), syllable envelopes, short fricative noise bursts and pauses.
 /// Voiced most of the time, so every pitch extractor tracks it; not intelligible.
 fn voice(rate: u32, n: usize, rng: &mut SplitMix64) -> Vec<f32> {
     let sr = f64::from(rate);
-    // Syllable plan: (start s, duration s, vowel index), with pauses between phrases.
-    let total = n as f64 / sr;
-    let mut plan: Vec<(f64, f64, usize)> = Vec::new();
-    let mut t = 0.15;
-    let mut phrase_left = rng.range(1.2, 2.4);
-    while t < total {
-        let dur = rng.range(0.16, 0.30);
-        plan.push((t, dur, (rng.next_u64() % VOWELS.len() as u64) as usize));
-        t += dur + rng.range(0.01, 0.05);
-        phrase_left -= dur;
-        if phrase_left <= 0.0 {
-            t += rng.range(0.25, 0.5);
-            phrase_left = rng.range(1.2, 2.4);
-        }
-    }
-    let base_f0 = rng.range(105.0, 145.0);
-    let (p1, p2) = (rng.range(0.0, 6.0), rng.range(0.0, 6.0));
+    let plan = VoicePlan::new(n as f64 / sr, rng);
     let mut out = vec![0.0f32; n];
     let mut phase = 0.0f64;
     let mut syl = 0usize;
     let mut noise_lp = 0.0f64;
     for (i, o) in out.iter_mut().enumerate() {
         let t = i as f64 / sr;
-        while syl + 1 < plan.len() && plan[syl].0 + plan[syl].1 < t {
+        while syl + 1 < plan.syllables.len() && plan.syllables[syl].0 + plan.syllables[syl].1 < t {
             syl += 1;
         }
-        let f0 = (base_f0
-            * (1.0 + 0.28 * (2.0 * PI * 0.21 * t + p1).sin() + 0.12 * (2.0 * PI * 0.63 * t + p2).sin())
-            * (1.0 + 0.012 * (2.0 * PI * 5.5 * t).sin()))
-        .clamp(95.0, 230.0);
+        let f0 = plan.f0(t);
         phase = (phase + 2.0 * PI * f0 / sr) % (2.0 * PI * 1024.0);
-        let Some(&(start, dur, vowel)) = plan.get(syl) else {
+        let Some(&(start, dur, vowel)) = plan.syllables.get(syl) else {
             continue;
         };
         let local = (t - start) / dur;
@@ -192,7 +220,7 @@ fn voice(rate: u32, n: usize, rng: &mut SplitMix64) -> Vec<f32> {
             continue;
         }
         // Formants glide from the previous syllable's vowel over the first 30 %.
-        let prev = if syl > 0 { plan[syl - 1].2 } else { vowel };
+        let prev = if syl > 0 { plan.syllables[syl - 1].2 } else { vowel };
         let g = (local / 0.3).min(1.0);
         let formants: [f64; 3] = std::array::from_fn(|k| VOWELS[prev][k] + g * (VOWELS[vowel][k] - VOWELS[prev][k]));
         let env = (PI * local).sin().powf(0.6);
@@ -215,6 +243,32 @@ fn voice(rate: u32, n: usize, rng: &mut SplitMix64) -> Vec<f32> {
         *o = (env * s + fric) as f32;
     }
     out
+}
+
+/// Ground-truth F0 of `synth(SignalKind::Voice, _, seconds, _, seed)` per 10 ms frame (frame `j`
+/// at `j * 10 ms`, as the pitch extractors' grid): `Some(hz)` inside the voiced middle of a
+/// syllable (10-90 % of it, where its envelope is well above silence and no fricative masks it),
+/// `Some(0.0)` in pauses, `None` at syllable edges and fricatives (judged by neither side).
+pub fn voice_f0_truth(seconds: f64, seed: u64) -> Vec<Option<f32>> {
+    let mut rng = SplitMix64::new(seed);
+    let plan = VoicePlan::new(seconds, &mut rng);
+    let frames = (seconds * 100.0).floor() as usize;
+    (0..frames)
+        .map(|j| {
+            let t = j as f64 / 100.0;
+            match plan.local(t) {
+                None => {
+                    // A pause: unvoiced unless a syllable starts or ends within 20 ms.
+                    let near = plan.local(t - 0.02).is_some() || plan.local(t + 0.02).is_some();
+                    (!near).then_some(0.0)
+                }
+                Some((i, local)) => {
+                    let fricative = i % 3 == 0 && local < 0.25;
+                    (!fricative && (0.1..=0.9).contains(&local)).then(|| plan.f0(t) as f32)
+                }
+            }
+        })
+        .collect()
 }
 
 /// A train of Hann-windowed log chirps at given onsets. Evaluated analytically, so the same train
@@ -391,6 +445,31 @@ mod tests {
         let quiet = frames.iter().filter(|&&r| r < 1e-4).count();
         assert!(loud > frames.len() / 2, "{loud} of {}", frames.len());
         assert!(quiet > 5, "no pauses ({quiet})");
+    }
+
+    /// The truth follows the waveform: DIO on the synthetic voice agrees with it within a few
+    /// cents on the frames it marks voiced, and the plan (hence the waveform) is unchanged.
+    #[test]
+    fn voice_truth_matches_the_waveform() {
+        let truth = voice_f0_truth(6.0, 21);
+        assert_eq!(truth.len(), 600);
+        let voiced = truth.iter().filter(|t| matches!(t, Some(f) if *f > 0.0)).count();
+        let silent = truth.iter().filter(|t| matches!(t, Some(f) if *f == 0.0)).count();
+        assert!(voiced > 250 && silent > 20, "{voiced} voiced, {silent} silent");
+        let x = synth(SignalKind::Voice, 16_000, 6.0, 0.4, 21);
+        let mut dio = crate::services::neural_audio::vc::world::DioPitchExtractor::new();
+        let f0 = crate::services::neural_audio::vc::traits::PitchExtractor::f0(&mut dio, &x).unwrap();
+        let mut cents = Vec::new();
+        for (t, f) in truth.iter().zip(&f0) {
+            if let (Some(t), f) = (t, *f) {
+                if *t > 0.0 && f > 0.0 {
+                    cents.push((1200.0 * (f64::from(f) / f64::from(*t)).log2()).abs());
+                }
+            }
+        }
+        cents.sort_by(f64::total_cmp);
+        let median = cents[cents.len() / 2];
+        assert!(cents.len() > 200 && median < 20.0, "{} frames, median {median} cents", cents.len());
     }
 
     #[test]

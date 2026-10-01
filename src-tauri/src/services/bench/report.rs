@@ -4,8 +4,9 @@
 //! Every run reports a flat `metrics` map with stable names (the perf gate and thresholds read
 //! them) plus mode-specific `details`. Distribution metrics are `<prefix>_<suffix>` with the
 //! suffixes of [`SUMMARY_SUFFIXES`] (`block_ms_p95`, `latency_ms_p99`, ...). All times are in
-//! milliseconds, ratios in `0..1`; lower is better for every metric except `throughput_x`,
-//! `e2e_detected` and the load duties.
+//! milliseconds, ratios in `0..1`; lower is better for every metric except those of
+//! [`HIGHER_IS_BETTER`] (`throughput_x`, `e2e_detected`, the load duties, speaker similarity,
+//! DNSMOS and the compare margins).
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -18,8 +19,11 @@ use super::spec::{ClockKind, Limit, RunMode, RunSpec, Thresholds};
 /// Schema id of [`BenchReport`].
 pub const REPORT_SCHEMA: &str = "sigil-bench-report/1";
 
-/// Distribution prefixes of offline and paced runs.
-const BLOCK_PREFIXES: &[&str] = &["block_ms", "model_ms", "rtf"];
+/// Distribution prefixes of offline and paced runs. `block_ms`: every device block; `call_ms`: the
+/// device blocks that ran the model (a fixed-block engine converts once every few device blocks,
+/// so this is its per-block compute), and `rtf` / `over_budget_ratio` are judged on those;
+/// `model_ms`: per model call.
+const BLOCK_PREFIXES: &[&str] = &["block_ms", "call_ms", "model_ms", "rtf"];
 /// Scalars of offline and paced runs.
 const BLOCK_SCALARS: &[&str] = &[
     "blocks",
@@ -50,6 +54,111 @@ const PACED_SCALARS: &[&str] = &[
 ];
 const E2E_PREFIXES: &[&str] = &["e2e_ms"];
 const E2E_SCALARS: &[&str] = &["e2e_detected", "e2e_missed", "e2e_timebase_jitter_ms"];
+/// SVE per-component compute (`build: direct` template voices).
+const COMPONENT_PREFIXES: &[&str] = &["content_ms", "f0_ms", "enc_ms", "flowdec_ms"];
+/// Quality (fidelity against the offline ceiling; plan T5).
+pub const QUALITY_SCALARS: &[&str] = &[
+    "mcd_db",
+    "f0_rmse_cents",
+    "gross_pitch_error",
+    "vuv_error",
+    "speaker_cosine",
+    "speaker_cosine_reference",
+    "dnsmos_ovrl",
+    "dnsmos_sig",
+    "dnsmos_bak",
+    "ceiling_dnsmos_ovrl",
+    "dnsmos_ovrl_delta",
+    "cer",
+    "cer_ceiling",
+    "cer_input",
+    "cer_delta_pts",
+    "clicks",
+    "clicks_per_10min",
+    "artifact_events",
+    "seam_flux_ratio",
+    "ceiling_seam_flux_ratio",
+    "f0_frames",
+    "offset_ms",
+    "quality_seconds",
+    "ceiling_compute_ms",
+    "ceiling_rtf",
+];
+/// Compare (competitor head-to-head; plan T6).
+pub const COMPARE_SCALARS: &[&str] = &[
+    "sigil_dnsmos_ovrl",
+    "sigil_dnsmos_sig",
+    "sigil_dnsmos_bak",
+    "sigil_gross_pitch_error",
+    "sigil_f0_rmse_cents",
+    "sigil_vuv_error",
+    "sigil_speaker_cosine",
+    "sigil_latency_ms",
+    "sigil_artifact_events_per_min",
+    "best_competitor_dnsmos_ovrl",
+    "dnsmos_ovrl_margin",
+    "min_competitor_gross_pitch_error",
+    "gross_pitch_error_margin",
+    "best_competitor_latency_ms",
+    "latency_ratio",
+    "candidates",
+    "candidates_scored",
+];
+/// Autotune (the chosen configuration; plan "Autotuner").
+pub const AUTOTUNE_SCALARS: &[&str] = &[
+    "autotune_block_ms",
+    "autotune_extra_context_ms",
+    "autotune_rtf_p99",
+    "autotune_compute_ms_p95",
+    "autotune_latency_ms_p50",
+    "autotune_latency_ms_p99",
+    "autotune_fidelity",
+    "autotune_gpu",
+    "autotune_candidates",
+    "autotune_seconds",
+];
+/// Live record (the running voice changer's timeline; plan T1 / T2 / T7 H1 evidence).
+const LIVE_PREFIXES: &[&str] = &["latency_ms", "block_ms", "model_ms", "backlog_ms", "queued_out_ms"];
+pub const LIVE_SCALARS: &[&str] = &[
+    "ticks",
+    "live_seconds",
+    "underrun_ticks",
+    "budget_drop_ticks",
+    "gap_ticks",
+    "error_ticks",
+    "silent_ratio",
+    "governor_steps",
+    "governor_level_max",
+    "dropped_ms",
+    "backlog_max_ms",
+    "over_budget_ratio",
+    "cpu_cores",
+    "vram_mb_peak",
+    "timeline_dropped",
+    "underruns",
+];
+
+/// Metrics where a larger value is better (the perf gate and the scorecard invert them).
+pub const HIGHER_IS_BETTER: &[&str] = &[
+    "throughput_x",
+    "e2e_detected",
+    "gpu_load_duty",
+    "cpu_load_duty",
+    "speaker_cosine",
+    "speaker_cosine_reference",
+    "dnsmos_ovrl",
+    "dnsmos_sig",
+    "dnsmos_bak",
+    "ceiling_dnsmos_ovrl",
+    "sigil_dnsmos_ovrl",
+    "sigil_dnsmos_sig",
+    "sigil_dnsmos_bak",
+    "sigil_speaker_cosine",
+    "best_competitor_dnsmos_ovrl",
+    "dnsmos_ovrl_margin",
+    "gross_pitch_error_margin",
+    "autotune_fidelity",
+];
 
 fn prefixed(prefixes: &[&str], name: &str) -> bool {
     prefixes.iter().any(|p| {
@@ -61,29 +170,71 @@ fn prefixed(prefixes: &[&str], name: &str) -> bool {
 
 /// Whether runs of `mode` produce metric `name` (when measurable on the PC).
 pub fn known_metric(mode: RunMode, name: &str) -> bool {
+    let block = prefixed(BLOCK_PREFIXES, name) || prefixed(COMPONENT_PREFIXES, name) || BLOCK_SCALARS.contains(&name);
+    let paced = block || prefixed(PACED_PREFIXES, name) || PACED_SCALARS.contains(&name);
     match mode {
-        RunMode::Offline => prefixed(BLOCK_PREFIXES, name) || BLOCK_SCALARS.contains(&name) || OFFLINE_SCALARS.contains(&name),
-        RunMode::Paced => {
-            prefixed(BLOCK_PREFIXES, name)
-                || prefixed(PACED_PREFIXES, name)
-                || BLOCK_SCALARS.contains(&name)
-                || PACED_SCALARS.contains(&name)
-        }
+        RunMode::Offline => block || OFFLINE_SCALARS.contains(&name),
+        RunMode::Paced | RunMode::Contention => paced,
         RunMode::E2eLoopback => prefixed(E2E_PREFIXES, name) || E2E_SCALARS.contains(&name),
+        RunMode::Quality => block || QUALITY_SCALARS.contains(&name),
+        RunMode::Compare => COMPARE_SCALARS.contains(&name),
+        RunMode::Autotune => AUTOTUNE_SCALARS.contains(&name),
+        RunMode::LiveRecord => prefixed(LIVE_PREFIXES, name) || LIVE_SCALARS.contains(&name),
     }
 }
 
 /// Why `run`'s configuration never produces metric `name` although its mode can: the stall
-/// metrics need `stalls`, the load duties their load, and the CPU figures real compute on the
-/// clock (not `simulated`). `None` when the run produces it.
+/// metrics need `stalls`, the load duties their load, the CPU figures real compute on the clock
+/// (not `simulated`), CER an STT engine, the reference speaker cosine a reference clip, and the
+/// compare margins / latencies their inputs. `None` when the run produces it.
 pub fn unproduced_reason(run: &RunSpec, name: &str) -> Option<&'static str> {
-    let RunSpec::Paced(p) = run else { return None };
-    match name {
-        "stall_recovery_blocks" | "stall_latency_recovery_ms" if p.stalls.is_empty() => Some("the run has no stalls"),
-        "gpu_load_duty" if p.load.gpu.is_none() => Some("the run has no load.gpu"),
-        "cpu_load_duty" if p.load.cpu.is_none() => Some("the run has no load.cpu"),
-        "cpu_cores" | "worker_cpu_cores" if p.clock == ClockKind::Simulated => {
-            Some("the simulated clock charges no real compute, so the run reports no CPU figures")
+    if name.starts_with("content_ms") || name.starts_with("f0_ms") || name.starts_with("enc_ms") || name.starts_with("flowdec_ms") {
+        // Only a template voice built directly reports its components; the spec cannot tell.
+        return None;
+    }
+    let paced_reason = |stalls: bool, gpu: bool, cpu: bool, clock: ClockKind| -> Option<&'static str> {
+        match name {
+            "stall_recovery_blocks" | "stall_latency_recovery_ms" if !stalls => Some("the run has no stalls"),
+            "gpu_load_duty" if !gpu => Some("the run has no load.gpu"),
+            "cpu_load_duty" if !cpu => Some("the run has no load.cpu"),
+            "cpu_cores" | "worker_cpu_cores" if clock == ClockKind::Simulated => {
+                Some("the simulated clock charges no real compute, so the run reports no CPU figures")
+            }
+            _ => None,
+        }
+    };
+    match run {
+        RunSpec::Paced(p) => paced_reason(!p.stalls.is_empty(), p.load.gpu.is_some(), p.load.cpu.is_some(), p.clock),
+        RunSpec::Contention(c) => {
+            let (load, stalls) = super::contention::profile_parts(c);
+            paced_reason(!stalls.is_empty(), load.gpu.is_some(), load.cpu.is_some(), c.clock)
+        }
+        RunSpec::Quality(q) => match name {
+            "cer" | "cer_ceiling" | "cer_input" | "cer_delta_pts" if q.stt.is_none() => Some("the run has no stt"),
+            "speaker_cosine_reference" if q.scoring.speaker_reference.is_none() => Some("the run has no scoring.speaker_reference"),
+            "speaker_cosine" if q.scoring.speaker_model.trim().eq_ignore_ascii_case("off") => Some("scoring.speaker_model is off"),
+            "dnsmos_ovrl" | "dnsmos_sig" | "dnsmos_bak" | "ceiling_dnsmos_ovrl" | "dnsmos_ovrl_delta"
+                if q.scoring.dnsmos_model.trim().eq_ignore_ascii_case("off") =>
+            {
+                Some("scoring.dnsmos_model is off")
+            }
+            _ => None,
+        },
+        RunSpec::Compare(c) => {
+            let sigil_latency = c.sigil.include && (c.sigil.latency_ms.is_some() || !c.sigil.latency_from.trim().is_empty());
+            let competitor_latency = c.candidates.iter().any(|x| x.latency_ms.is_some());
+            match name {
+                n if n.starts_with("sigil_") && !c.sigil.include => Some("sigil.include is false"),
+                "sigil_latency_ms" if !sigil_latency => Some("the run has no sigil.latency_ms or sigil.latency_from"),
+                "sigil_speaker_cosine" if c.scoring.speaker_reference.is_none() => Some("the run has no scoring.speaker_reference"),
+                "best_competitor_dnsmos_ovrl" | "min_competitor_gross_pitch_error" if c.candidates.is_empty() => Some("the run has no candidates"),
+                "dnsmos_ovrl_margin" | "gross_pitch_error_margin" if c.candidates.is_empty() || !c.sigil.include => {
+                    Some("a margin needs sigil.include and candidates")
+                }
+                "best_competitor_latency_ms" if !competitor_latency => Some("no candidate has a latency_ms"),
+                "latency_ratio" if !(sigil_latency && competitor_latency) => Some("the ratio needs Sigil's and a candidate's latency"),
+                _ => None,
+            }
         }
         _ => None,
     }
@@ -108,6 +259,8 @@ pub struct TickRecord {
     pub compute_ms: f64,
     /// Model `convert` time within it.
     pub model_ms: f64,
+    /// Model `convert` calls within it (0 while a fixed-block engine accumulates its block).
+    pub calls: u32,
     pub stall_ms: f64,
     /// Capture waiting after this wake's budget enforcement (paced).
     pub waiting_ms: f64,
@@ -118,7 +271,7 @@ pub struct TickRecord {
     pub error: bool,
 }
 
-const TIMELINE_HEADER: &str = "tick,t_ms,age_ms,compute_ms,model_ms,stall_ms,waiting_ms,dropped_ms,queued_out_ms,error";
+const TIMELINE_HEADER: &str = "tick,t_ms,age_ms,compute_ms,model_ms,calls,stall_ms,waiting_ms,dropped_ms,queued_out_ms,error";
 
 /// Timeline as CSV.
 pub fn timeline_csv(ticks: &[TickRecord]) -> String {
@@ -128,12 +281,13 @@ pub fn timeline_csv(ticks: &[TickRecord]) -> String {
     for t in ticks {
         let _ = writeln!(
             s,
-            "{},{:.3},{:.3},{:.4},{:.4},{:.1},{:.3},{:.3},{:.3},{}",
+            "{},{:.3},{:.3},{:.4},{:.4},{},{:.1},{:.3},{:.3},{:.3},{}",
             t.tick,
             t.t_ms,
             t.age_ms,
             t.compute_ms,
             t.model_ms,
+            t.calls,
             t.stall_ms,
             t.waiting_ms,
             t.dropped_ms,
@@ -152,6 +306,9 @@ pub struct RunOutcome {
     pub timeline: Vec<TickRecord>,
     /// `(interleaved, rate, channels)`.
     pub audio: Option<(Vec<f32>, u32, usize)>,
+    /// More audio files: `(suffix, interleaved, rate, channels)`, written as
+    /// `<run>.<suffix>.wav` (a quality run's ceiling).
+    pub extra_audio: Vec<(String, Vec<f32>, u32, usize)>,
 }
 
 /// Status of one run.
@@ -194,6 +351,18 @@ pub struct RunReport {
     pub details: serde_json::Value,
     /// Extra files written for this run (relative to the report folder).
     pub files: Vec<String>,
+    /// Metrics of this run where a larger value is better (P3-F; the perf gate reads it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub higher_is_better: Vec<String>,
+}
+
+/// The metrics of `metrics` where a larger value is better (from [`HIGHER_IS_BETTER`]).
+pub fn higher_is_better_of(metrics: &Metrics) -> Vec<String> {
+    metrics
+        .keys()
+        .filter(|k| HIGHER_IS_BETTER.contains(&k.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// Where and on what the benchmark ran.
@@ -298,6 +467,53 @@ pub fn run_failures(run: &RunReport) -> Vec<String> {
 /// Headline metrics per mode, in display order.
 fn headline(mode: RunMode) -> &'static [(&'static str, &'static str)] {
     match mode {
+        RunMode::Quality => &[
+            ("speaker_cosine", "speaker cos"),
+            ("mcd_db", "MCD dB"),
+            ("f0_rmse_cents", "F0 RMSE c"),
+            ("gross_pitch_error", "GPE"),
+            ("vuv_error", "V/UV err"),
+            ("clicks", "clicks"),
+            ("dnsmos_ovrl", "DNSMOS"),
+            ("cer_delta_pts", "CER +pts"),
+            ("block_ms_p95", "block p95 ms"),
+        ],
+        RunMode::Compare => &[
+            ("sigil_dnsmos_ovrl", "Sigil DNSMOS"),
+            ("dnsmos_ovrl_margin", "DNSMOS margin"),
+            ("sigil_gross_pitch_error", "Sigil GPE"),
+            ("gross_pitch_error_margin", "GPE margin"),
+            ("latency_ratio", "latency ratio"),
+            ("candidates_scored", "candidates"),
+        ],
+        RunMode::Contention => &[
+            ("latency_ms_p50", "latency p50 ms"),
+            ("latency_ms_p99", "latency p99 ms"),
+            ("block_ms_p95", "block p95 ms"),
+            ("block_ms_p99", "block p99 ms"),
+            ("over_budget_ratio", "over budget"),
+            ("underruns", "underruns"),
+            ("stall_recovery_blocks", "stall recovery blocks"),
+            ("gpu_load_duty", "GPU load"),
+            ("cpu_cores", "CPU cores"),
+        ],
+        RunMode::Autotune => &[
+            ("autotune_block_ms", "block ms"),
+            ("autotune_rtf_p99", "RTF p99"),
+            ("autotune_latency_ms_p50", "latency p50 ms"),
+            ("autotune_fidelity", "fidelity"),
+            ("autotune_candidates", "candidates"),
+        ],
+        RunMode::LiveRecord => &[
+            ("latency_ms_p50", "latency p50 ms"),
+            ("latency_ms_p99", "latency p99 ms"),
+            ("block_ms_p95", "block p95 ms"),
+            ("block_ms_p99", "block p99 ms"),
+            ("underrun_ticks", "underrun ticks"),
+            ("dropped_ms", "dropped ms"),
+            ("cpu_cores", "CPU cores"),
+            ("ticks", "ticks"),
+        ],
         RunMode::Offline => &[
             ("block_ms_p50", "block p50 ms"),
             ("block_ms_p95", "block p95 ms"),
@@ -403,6 +619,11 @@ pub fn to_markdown(r: &BenchReport) -> String {
                 let _ = writeln!(s, "| {key} | {v} |");
             }
         }
+        for w in engine.get("warnings").and_then(|w| w.as_array()).into_iter().flatten() {
+            if let Some(w) = w.as_str().filter(|w| !w.is_empty()) {
+                let _ = writeln!(s, "| warning | {} |", w.replace('|', "/"));
+            }
+        }
     }
     let _ = writeln!(s, "\n## Runs\n");
     let _ = writeln!(s, "| Run | Mode | Status | Headline |\n|---|---|---|---|");
@@ -448,11 +669,89 @@ pub fn to_markdown(r: &BenchReport) -> String {
         for (k, v) in &run.metrics {
             let _ = writeln!(s, "| {k} | {} |", fmt_value(*v));
         }
+        if let Some(rows) = run.details.get("rows").and_then(|r| r.as_array()) {
+            compare_rows_markdown(&mut s, rows);
+        }
+        if let Some(cands) = run.details.get("candidates").and_then(|r| r.as_array()) {
+            autotune_markdown(&mut s, &run.details, cands);
+        }
+        if let Some(notes) = run.details.get("notes").and_then(|r| r.as_array()).filter(|n| !n.is_empty()) {
+            let _ = writeln!(s, "\nNotes:");
+            for n in notes.iter().filter_map(|n| n.as_str()) {
+                let _ = writeln!(s, "- {n}");
+            }
+        }
         if !run.files.is_empty() {
             let _ = writeln!(s, "\nFiles: {}", run.files.join(", "));
         }
     }
     s
+}
+
+fn cell(v: Option<&serde_json::Value>) -> String {
+    match v {
+        Some(serde_json::Value::Number(n)) => n.as_f64().map(fmt_value).unwrap_or_default(),
+        Some(serde_json::Value::String(t)) => t.clone(),
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        _ => "-".to_string(),
+    }
+}
+
+/// The per-candidate table of a compare run (`details.rows`).
+fn compare_rows_markdown(s: &mut String, rows: &[serde_json::Value]) {
+    let _ = writeln!(
+        s,
+        "\n| Candidate | DNSMOS OVRL | SIG | BAK | GPE | F0 RMSE c | V/UV err | Speaker cos | Latency ms | Artifact events / min | Offset ms |\n|---|---|---|---|---|---|---|---|---|---|---|"
+    );
+    for r in rows {
+        let q = r.get("quality");
+        let g = |k: &str| cell(q.and_then(|q| q.get(k)));
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            cell(r.get("name")),
+            g("dnsmos_ovrl"),
+            g("dnsmos_sig"),
+            g("dnsmos_bak"),
+            g("gross_pitch_error"),
+            g("f0_rmse_cents"),
+            g("vuv_error"),
+            g("speaker_cosine"),
+            cell(r.get("latency_ms")),
+            cell(r.get("artifact_events_per_min")),
+            g("offset_ms"),
+        );
+    }
+}
+
+/// The candidates an autotune run measured and the configuration it chose.
+fn autotune_markdown(s: &mut String, details: &serde_json::Value, cands: &[serde_json::Value]) {
+    if let Some(params) = details.get("result").and_then(|r| r.get("params")) {
+        let _ = writeln!(s, "\nChosen parameters: `{params}`");
+    }
+    let _ = writeln!(
+        s,
+        "\n| Stage | EP | F0 | Block ms | Context ms | Precision | Levers | RTF p99 | Compute p95 ms | Latency p50 ms | Fidelity | OK | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    );
+    for c in cands {
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            cell(c.get("stage")),
+            cell(c.get("ep")),
+            cell(c.get("pitch")),
+            cell(c.get("block_ms")),
+            cell(c.get("extra_context_ms")),
+            cell(c.get("precision")),
+            cell(c.get("levers")),
+            cell(c.get("rtf_p99")),
+            cell(c.get("compute_ms_p95")),
+            cell(c.get("latency_ms_p50")),
+            cell(c.get("fidelity")),
+            cell(c.get("ok")),
+            cell(c.get("note")),
+        );
+    }
 }
 
 /// Write `report.json` and `report.md` into `dir`; returns their paths.
@@ -580,6 +879,7 @@ mod tests {
             }],
             details: serde_json::json!({}),
             files: vec!["paced.timeline.csv".into()],
+            higher_is_better: Vec::new(),
         };
         let mut r = BenchReport {
             schema: REPORT_SCHEMA.into(),
@@ -602,7 +902,8 @@ mod tests {
                 gpus: vec![serde_json::json!({"name": "GPU0", "driver_version": "1.2", "dedicated_vram_mb": 8192})],
                 voice_changer_running: false,
             },
-            engine: Some(serde_json::json!({"description": "stub", "output_rate": 40000})),
+            engine: Some(serde_json::json!({"description": "stub", "output_rate": 40000,
+                                            "warnings": ["stream.block_frames = 1920 | not a device block"]})),
             runs: vec![run],
         };
         r.failures = r.runs.iter().flat_map(run_failures).collect();
@@ -622,6 +923,7 @@ mod tests {
             "| underruns | <= 0 | 2 | FAIL |",
             "| GPU | GPU0 (8192 MB, driver 1.2) |",
             "Files: paced.timeline.csv",
+            "| warning | stream.block_frames = 1920 / not a device block |",
         ] {
             assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
         }
@@ -660,7 +962,7 @@ mod tests {
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], TIMELINE_HEADER);
-        assert!(lines[1].starts_with("0,0.000,0.000,1.5000"));
+        assert!(lines[1].starts_with("0,0.000,0.000,1.5000,0.0000,0,"));
         assert!(lines[2].ends_with(",1"));
     }
 }

@@ -85,6 +85,11 @@ impl PitchInputs {
         })
     }
 
+    /// Name of the main (audio) input.
+    pub(super) fn main_name(&self) -> &str {
+        &self.main_name
+    }
+
     /// Declared shape of the main input (for error messages).
     pub(super) fn main_dims(&self) -> &[i64] {
         &self.main_dims
@@ -114,6 +119,86 @@ pub(super) fn waveform_shape(rank: usize, n: usize) -> Vec<usize> {
     } else {
         vec![1, n]
     }
+}
+
+/// DirectML compiles a session for the first input shape it runs; every other shape then runs about
+/// 20x slower on every call (measured on RMVPE: 4.5 ms at its first shape, 84-116 ms at the others;
+/// CUDA and the CPU are unaffected). Extractors on DirectML therefore run every call at the size of
+/// their first call (padding: RMVPE mel frames, CREPE windows, SwiftF0 front samples), which is the
+/// largest in the voice engine (the first F0-cache call is the whole window). P3-D.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ShapePin {
+    enabled: bool,
+    pinned: Option<usize>,
+    warned: bool,
+}
+
+impl ShapePin {
+    /// Pinning for a session running on `active_ep`.
+    pub(super) fn for_ep(active_ep: &str) -> ShapePin {
+        ShapePin {
+            enabled: active_ep == "dml",
+            pinned: None,
+            warned: false,
+        }
+    }
+
+    /// The size to run a call of size `n` at (`n` itself when not pinning, or when `n` exceeds the
+    /// pinned size: that call runs at its own, slower shape). The first call pins.
+    pub(super) fn size(&mut self, n: usize) -> usize {
+        self.size_aligned(n, 1)
+    }
+
+    /// [`size`](Self::size), pinning only when the padding `pinned - n` is a multiple of `align`.
+    pub(super) fn size_aligned(&mut self, n: usize, align: usize) -> usize {
+        if !self.enabled {
+            return n;
+        }
+        match self.pinned {
+            None => {
+                self.pinned = Some(n);
+                n
+            }
+            Some(p) if n <= p && (p - n).is_multiple_of(align.max(1)) => p,
+            Some(p) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::debug!(target: "sigil::vc", "pitch extractor on DirectML: a call of {n} does not fit its pinned shape {p}; it runs slower");
+                }
+                n
+            }
+        }
+    }
+}
+
+/// Pitch bins of the 20-cent salience grids of RMVPE and CREPE.
+pub(super) const SALIENCE_BINS: usize = 360;
+/// Cents of bin 0 (`cents = 20 * bin + 1997.3794084376191`, shared by RMVPE and CREPE).
+pub(super) const SALIENCE_CENTS_OFFSET: f32 = 1_997.379_4;
+
+/// RVC / CREPE `to_local_average_cents` for one salience row: the salience-weighted mean of
+/// `cents = 20 * bin + offset` over argmax ± 4 bins, as Hz (`10 * 2^(c / 1200)`), plus the peak
+/// salience. The Hz value is 0 when the window has no positive weight or the result is not
+/// finite (a NaN near the peak is unvoiced, never NaN F0).
+pub(super) fn local_average_f0(row: &[f32]) -> (f32, f32) {
+    let (center, peak) = row
+        .iter()
+        .copied()
+        .enumerate()
+        .fold((0usize, f32::NEG_INFINITY), |best, (i, v)| if v > best.1 { (i, v) } else { best });
+    let start = center.saturating_sub(4);
+    let end = (center + 5).min(row.len());
+    let mut weighted = 0.0f32;
+    let mut weight = 0.0f32;
+    for (bin, &s) in row.iter().enumerate().take(end).skip(start) {
+        weighted += s * (20.0 * bin as f32 + SALIENCE_CENTS_OFFSET);
+        weight += s;
+    }
+    if weight.is_nan() || weight <= 0.0 {
+        return (0.0, peak);
+    }
+    let hz = 10.0 * (weighted / weight / 1200.0).exp2();
+    (if hz.is_finite() { hz } else { 0.0 }, peak)
 }
 
 /// Flatten a direct F0 output (`[T]`, `[1, T]` or `[1, T, 1]`, Hz) into `T` values.

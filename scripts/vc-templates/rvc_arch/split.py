@@ -24,6 +24,14 @@ All three are mask-free (the real-time context is always full) and use only data
 so every length dimension stays dynamic in the ONNX graph; the engine pins them per preset with ONNX
 Runtime free-dimension overrides. The fp16 variants keep fp32 inputs and outputs and cast inside.
 
+The other vocoders' flowdecs (P3-A; layout version 2) keep that contract and differ only where their
+decoder does: ``SigilFlowDecNoF0`` (f0-less voices: no source inputs), ``SigilFlowDecMRF`` (Applio's
+MRF HiFi-GAN: 9 harmonics, ``src_noise`` [1, S, 9]) and ``SigilFlowDecRefineGAN`` (Applio's
+RefineGAN: linear f0 interpolation, AdaIN noise from a pool indexed per absolute frame, and its main
+path decoded over its own shorter margin). Both Applio vocoders take the frame-level phase of every
+window frame (``phase`` [1, F], ``FRAME_PHASE``) instead of ``phase0``, so no phase accumulates in fp32
+inside the graph.
+
 Nothing here changes RVC's arithmetic; ``parity_test.py`` checks every graph against the upstream
 ``infer`` path within tolerance.
 """
@@ -293,6 +301,313 @@ class SigilFlowDec(nn.Module):
         audio = _decoder(self.dec, z, har, gg, self.fp32_stages)  # [1, 1, (F - FLOW_MARGIN) * upp]
         audio = audio[:, 0, self.dec_margin * self.upp :]
         return audio.float()
+
+
+# ---------------------------------------------------------------------------------------------
+# flowdec for f0-less voices (RVC `Generator`, no NSF source)
+# ---------------------------------------------------------------------------------------------
+
+
+def _decoder_nof0(dec, z, g, fp32_stages=()):
+    """``models.Generator.forward`` (the f0-less HiFi-GAN of ``SynthesizerTrnMs*NSFsid_nono``)."""
+    dt = z.dtype
+    x = dec.conv_pre(z)
+    x = x + dec.cond(g)
+    nk = dec.num_kernels
+    for i in range(dec.num_upsamples):
+        sd = torch.float32 if i in fp32_stages else dt
+        x = F.leaky_relu(x, modules.LRELU_SLOPE).to(sd)
+        x = dec.ups[i](x)
+        xs = None
+        for j in range(nk):
+            r = dec.resblocks[i * nk + j](x)
+            xs = r if xs is None else xs + r
+        x = xs / nk
+    x = F.leaky_relu(x.to(dt))
+    x = dec.conv_post(x)
+    return torch.tanh(x)
+
+
+class SigilFlowDecNoF0(nn.Module):
+    """flow (reverse) + f0-less HiFi-GAN over one window of F frames:
+    m_p, logs_p, z_noise [1, C, F], g [1, G, 1] -> audio [1, (F - FLOW_MARGIN - dec_margin) * upp]."""
+
+    def __init__(self, flow, dec, upp, dec_margin, dtype=torch.float32, fp32_flow=False, fp32_stages=()):
+        super().__init__()
+        self.flow = flow
+        self.dec = dec
+        self.upp = int(upp)
+        self.dec_margin = int(dec_margin)
+        self.dtype = dtype
+        self.fp32_flow = fp32_flow
+        self.fp32_stages = tuple(fp32_stages)
+
+    def forward(self, m_p, logs_p, z_noise, g):
+        dt = self.dtype
+        z_p = m_p + torch.exp(logs_p) * z_noise  # fp32
+        fdt = torch.float32 if self.fp32_flow else dt
+        z = _flow_reverse(self.flow, z_p.to(fdt), g.to(fdt))
+        z = z[:, :, FLOW_MARGIN:].to(dt)
+        audio = _decoder_nof0(self.dec, z, g.to(dt), self.fp32_stages)
+        return audio[:, 0, self.dec_margin * self.upp :].float()
+
+
+# The frame-level NSF phase the Applio-vocoder templates take as ``phase`` [1, F]: for each window
+# frame j, frac(phase0 + sum over the frames before j of wrap(upp * f0 / sr)), wrap(x) =
+# fmod(x + 0.5, 1) - 0.5, i.e. the HiFi-GAN templates' ``phase0`` carried to every frame. The engine
+# computes it in float64 from its f0 history (parity_test.nsf_phase is the reference), so no fp32
+# phase accumulates inside the graphs (it drifts by ~1e-5 cycles over a few seconds, which a trained
+# RefineGAN amplifies to the size of the fp32 gate).
+FRAME_PHASE = "frac(phase0 + sum(wrap(upp * f0 / sr)) over the earlier frames), per window frame, computed in f64"
+
+
+# ---------------------------------------------------------------------------------------------
+# flowdec for Applio's MRF HiFi-GAN (9-harmonic NSF source)
+# ---------------------------------------------------------------------------------------------
+
+
+def excitation_harmonics(l_linear, sr, upp, f0, phase, src_noise, phase_ini):
+    """Applio's MRF source over a window, fp32: f0 [1, F] Hz (repeated per sample), phase [1, F]
+    (the fundamental's NSF phase in cycles at each window frame's first sample, see ``FRAME_PHASE``),
+    src_noise [1, F*upp, H] unit normals, phase_ini [H] cycles (constant) -> [1, 1, F*upp].
+
+    Applio accumulates ``(k * f0 / sr) % 1`` per sample for harmonic k and adds its initial phase at
+    the first sample, so harmonic k's phase at sample i of frame j is
+    ``phase_ini[k] + k * (phase[j] + (i + 1) * f0[j] / sr)`` (mod 1). Nothing accumulates across
+    frames inside the graph, so fp32 keeps its precision however long the window is.
+    """
+    h = phase_ini.shape[0]
+    f0 = f0.float().unsqueeze(-1)  # [1, F, 1]
+    ramp = torch.arange(1, upp + 1, dtype=torch.int64, device=f0.device)
+    phi = torch.fmod(phase.float().unsqueeze(-1) + f0 / sr * ramp, 1.0).reshape(1, -1, 1)  # [1, S, 1]
+    k = torch.arange(1, h + 1, dtype=torch.int64, device=f0.device).reshape(1, 1, -1)
+    ph = torch.fmod(phi * k + phase_ini.float().reshape(1, 1, -1), 1.0)  # [1, S, H]
+    sine = torch.sin(2 * np.pi * ph) * 0.1
+    uv = (f0 > 0).float().expand(-1, -1, upp).reshape(1, -1, 1)
+    noise_amp = uv * 0.003 + (1 - uv) * (0.1 / 3)
+    sine = sine * uv + noise_amp * src_noise.float()
+    har = torch.tanh(F.linear(sine, l_linear.weight.float(), l_linear.bias.float()))  # [1, S, 1]
+    return har.transpose(1, 2)
+
+
+def _decoder_mrf(dec, z, har, g, fp32_stages=()):
+    """``HiFiGANMRFGenerator.forward`` (Applio) with a precomputed fp32 source ``har``."""
+    from .vocoders import MRF_SLOPE, mrf_block
+
+    dt = z.dtype
+    source = {dt: har.to(dt), torch.float32: har}
+    x = dec.conv_pre(z)
+    x = x + dec.cond(g)
+    nk = dec.num_kernels
+    for i in range(len(dec.upsamples)):
+        sd = torch.float32 if i in fp32_stages else dt
+        x = F.leaky_relu(x, MRF_SLOPE).to(sd)
+        x = dec.upsamples[i](x)
+        x = x + dec.noise_convs[i](source[sd])
+        xs = None
+        for block in dec.mrfs[i]:
+            r = mrf_block(block, x)
+            xs = r if xs is None else xs + r
+        x = xs / nk
+    x = F.leaky_relu(x.to(dt))
+    return torch.tanh(dec.conv_post(x))
+
+
+class SigilFlowDecMRF(nn.Module):
+    """flow (reverse) + MRF HiFi-GAN over one window of F frames. Inputs as ``SigilFlowDec`` except
+    ``phase`` [1, F] (``FRAME_PHASE``, instead of ``phase0``) and ``src_noise`` [1, F*upp, H] (one unit
+    normal per sample and harmonic)."""
+
+    def __init__(self, flow, dec, dec_margin, phase_ini, dtype=torch.float32, fp32_flow=False, fp32_stages=()):
+        super().__init__()
+        self.flow = flow
+        self.dec = dec
+        self.sr = int(dec.sample_rate)
+        self.upp = int(dec.upp)
+        self.dec_margin = int(dec_margin)
+        self.register_buffer("phase_ini", torch.tensor(phase_ini, dtype=torch.float32), persistent=False)
+        self.dtype = dtype
+        self.fp32_flow = fp32_flow
+        self.fp32_stages = tuple(fp32_stages)
+
+    def forward(self, m_p, logs_p, z_noise, g, f0, phase, src_noise):
+        dt = self.dtype
+        z_p = m_p + torch.exp(logs_p) * z_noise
+        fdt = torch.float32 if self.fp32_flow else dt
+        z = _flow_reverse(self.flow, z_p.to(fdt), g.to(fdt))
+        z = z[:, :, FLOW_MARGIN:].to(dt)
+        har = excitation_harmonics(self.dec.m_source.l_linear, self.sr, self.upp, f0, phase, src_noise, self.phase_ini)
+        har = har[:, :, FLOW_MARGIN * self.upp :]
+        audio = _decoder_mrf(self.dec, z, har, g.to(dt), self.fp32_stages)
+        return audio[:, 0, self.dec_margin * self.upp :].float()
+
+
+# ---------------------------------------------------------------------------------------------
+# flowdec for Applio's RefineGAN
+# ---------------------------------------------------------------------------------------------
+
+
+def refinegan_excitation(merge_weight, sr, upp, f0, phase, src_noise, start):
+    """RefineGAN's source over window frames [start, F), fp32: -> [1, 1, (F - start) * upp].
+
+    Applio interpolates f0 linearly to the sample rate (half-pixel, edge-clamped) and accumulates
+    ``f0 / sr`` per sample. The window's frame ``start - 1`` is the interpolation's left context, so
+    every sample from frame ``start`` on equals the whole-utterance interpolation. Summing that
+    interpolation over whole frames telescopes: the phase before frame j's first sample is
+    ``phase[j] + upp / (8 sr) * (f0[j] - f0[j - 1])``, with ``phase`` the frame-level NSF phase every
+    template's engine carries (``FRAME_PHASE``). Nothing accumulates across frames inside the graph.
+    """
+    f0 = f0.float()
+    # The interpolation in closed form (no Resize op, whose coordinate arithmetic differs between
+    # execution providers): sample i of frame j sits at d_i = (i + 0.5) / upp - 0.5 frames from the
+    # frame centre, so f0(j, i) = f0[j] + min(d_i, 0) (f0[j] - f0[j-1]) + max(d_i, 0) (f0[j+1] - f0[j])
+    # (edge-clamped at the window end, like the whole-utterance interpolation at the utterance end),
+    # and the within-frame running sum of f0 has the same form with the running sums of d_i.
+    fd = f0[:, start:].unsqueeze(-1)  # [1, Fd, 1]
+    d_prev = fd - f0[:, start - 1 : -1].unsqueeze(-1)
+    d_next = torch.cat([f0[:, start + 1 :], f0[:, -1:]], dim=1).unsqueeze(-1) - fd
+    d = (np.arange(upp, dtype=np.float64) + 0.5) / upp - 0.5
+    neg, pos = np.minimum(d, 0.0), np.maximum(d, 0.0)
+    w_neg = torch.from_numpy(neg.astype(np.float32)).to(f0.device)
+    w_pos = torch.from_numpy(pos.astype(np.float32)).to(f0.device)
+    c_neg = torch.from_numpy(np.cumsum(neg).astype(np.float32)).to(f0.device)
+    c_pos = torch.from_numpy(np.cumsum(pos).astype(np.float32)).to(f0.device)
+    ramp = torch.arange(1, upp + 1, dtype=torch.int64, device=f0.device)
+    f0s = fd + d_prev * w_neg + d_next * w_pos  # [1, Fd, upp] Hz
+    inner = (fd * ramp + d_prev * c_neg + d_next * c_pos) / sr  # inclusive running phase in the frame (cycles)
+    q = phase.float()[:, start:].unsqueeze(-1) + (upp / (8.0 * sr)) * d_prev  # phase before each frame's first sample
+    ph = torch.fmod(q + inner, 1.0).reshape(1, -1, 1)  # [1, S, 1]
+    sine = torch.sin(2 * np.pi * ph) * 0.1
+    uv = (f0s > 0).float().reshape(1, -1, 1)
+    noise_amp = uv * 0.003 + (1 - uv) * (0.1 / 3)
+    sine = sine * uv + noise_amp * src_noise[:, start * upp :].float().reshape(1, -1, 1)
+    har = torch.tanh(F.linear(sine, merge_weight.float()))  # [1, S, 1]
+    return har.transpose(1, 2)
+
+
+def linear_upsample(x, rate):
+    """``F.interpolate(x, scale_factor=rate, mode="linear")`` (half-pixel, edge-clamped) for an
+    integer ``rate``, in closed form: output sample i of input sample j is
+    x[j] + min(d_i, 0) (x[j] - x[j-1]) + max(d_i, 0) (x[j+1] - x[j]), d_i = (i + 0.5) / rate - 0.5.
+    Exact and the same on every execution provider (ONNX Resize's coordinate arithmetic is not)."""
+    d = (np.arange(rate, dtype=np.float64) + 0.5) / rate - 0.5
+    w_neg = torch.from_numpy(np.minimum(d, 0.0).astype(np.float32)).to(x.device, x.dtype)
+    w_pos = torch.from_numpy(np.maximum(d, 0.0).astype(np.float32)).to(x.device, x.dtype)
+    prev = torch.cat([x[:, :, :1], x[:, :, :-1]], dim=2)
+    nxt = torch.cat([x[:, :, 1:], x[:, :, -1:]], dim=2)
+    xu = x.unsqueeze(-1)
+    y = xu + (xu - prev.unsqueeze(-1)) * w_neg + (nxt.unsqueeze(-1) - xu) * w_pos  # [1, C, T, rate]
+    return y.reshape(x.shape[0], x.shape[1], -1)
+
+
+class SigilFlowDecRefineGAN(nn.Module):
+    """flow (reverse) + RefineGAN over one window of F frames, with the main path decoded only where
+    the returned audio needs it.
+
+    Two windows that end at the same frame:
+
+    - the *source window* of ``F = FLOW_MARGIN + dec_margin + R`` frames: ``f0`` [1, F], ``phase``
+      [1, F] (``FRAME_PHASE``, instead of ``phase0``), ``src_noise`` [1, F * upp] and
+      ``noise_offsets`` [1, F] int64 (the AdaIN noise pool offset of each window frame, a pure
+      function of its absolute frame index chosen by the engine, each in [0, pool - per_frame]);
+    - the *latent window* of ``Fz = FLOW_MARGIN + main_margin + R = F - latent_offset`` frames
+      (``latent_offset = dec_margin - main_margin``): ``m_p``, ``logs_p``, ``z_noise`` [1, C, Fz].
+
+    The AdaIN noise pool is the ``adain_noise_pool`` initializer (external, ``noise.f32.bin``: ``pool``
+    iid N(0, 1) f32 values the engine generates once).
+
+    RefineGAN's source path (sine, pre_conv, then torchaudio's 64-zero-crossing sinc resampler down to
+    the frame rate) sees about 0.7 s of left context, while its main path (mel conv, linear upsampling,
+    parallel residual blocks) sees about 0.1 s. The source window covers ``dec_margin`` = the larger
+    of the two; the main path, and the flow and text encoder feeding it, only the latent window, so
+    the engine runs the content encoder over ``Fz`` frames (not ``F``: 40 instead of 117 at 32 kHz
+    with R = 4) and the decoder's main path costs about 5x less per tick than a full-window decode.
+    Of the source inputs, the graph reads ``f0`` from window frame ``FLOW_MARGIN - 1`` (the
+    interpolation's left context), ``phase`` and ``src_noise`` from frame ``FLOW_MARGIN`` and
+    ``noise_offsets`` from frame ``FLOW_MARGIN + latent_offset``; earlier values are ignored. A
+    mismatched pair of window lengths (``F - Fz != latent_offset``) fails in ONNX Runtime (the main
+    path's concat), never silently.
+    """
+
+    def __init__(
+        self, flow, dec, dec_margin, main_margin, pool_size, dtype=torch.float32, fp32_flow=False, fp32_stages=(), fp32_ends=False,
+    ):
+        super().__init__()
+        from .vocoders import adain_layers, sinc_resample_kernel
+
+        self.flow = flow
+        self.dec = dec
+        self.sr = int(dec.sample_rate)
+        self.upp = int(dec.upp)
+        self.dec_margin = int(dec_margin)
+        self.main_margin = int(main_margin)
+        assert self.main_margin <= self.dec_margin
+        # latent window = source window minus its first latent_offset frames (layout streaming.latent_offset)
+        self.latent_offset = self.dec_margin - self.main_margin
+        self.dtype = dtype
+        self.fp32_flow = fp32_flow
+        self.fp32_stages = tuple(fp32_stages)
+        # fp16 mix: the main path's ends (mel conv + speaker cond, and conv_post) in fp32
+        self.fp32_ends = bool(fp32_ends)
+        self.resample = []
+        for i, (old, new) in enumerate(dec.df0):
+            assert old % new == 0, "RefineGAN reductions are integer rates"
+            kernel, width = sinc_resample_kernel(old // new)
+            self.register_buffer(f"resample_kernel_{i}", kernel, persistent=False)
+            self.resample.append((width, old // new))
+        self.layers, self.per_frame = adain_layers(dec)
+        self.pool_size = int(pool_size)
+        assert self.per_frame <= self.pool_size
+        # Persistent, so the exporter writes it as the named initializer the exporter externalizes.
+        self.register_buffer("adain_noise_pool", torch.zeros(self.pool_size, dtype=torch.float32))
+
+    def forward(self, m_p, logs_p, z_noise, g, f0, phase, src_noise, noise_offsets):
+        from .vocoders import REFINEGAN_SLOPE, adain_noise_from_pool, sinc_resample
+
+        dt = self.dtype
+        dec = self.dec
+        o = self.latent_offset  # the latent window starts at source window frame o
+        # flow over the latent window (source frames [o, F)): the main region [FLOW_MARGIN + o, F) plus
+        # the flow's margin
+        z_p = m_p + torch.exp(logs_p) * z_noise
+        fdt = torch.float32 if self.fp32_flow else dt
+        z = _flow_reverse(self.flow, z_p.to(fdt), g.to(fdt))
+        z = z[:, :, FLOW_MARGIN:]  # [1, C, main_margin + R], in the flow's dtype (cast by the mel conv)
+
+        # source path over the whole decoder region [FLOW_MARGIN, F), fp32 (cheap next to the main path)
+        har = refinegan_excitation(dec.m_source.merge[0].weight, self.sr, self.upp, f0, phase, src_noise, FLOW_MARGIN)
+        x = F.conv1d(har, dec.pre_conv.weight.float(), dec.pre_conv.bias.float(), padding=3)
+        downs = []
+        for i, (block, (width, rate)) in enumerate(zip(dec.downsample_blocks, self.resample)):
+            x = F.leaky_relu(x, REFINEGAN_SLOPE)
+            downs.append(x)
+            x = sinc_resample(x, getattr(self, f"resample_kernel_{i}"), width, rate)
+            x = F.conv1d(x, block.weight.float(), block.bias.float(), padding=3)
+
+        # main path over the main region
+        edt = torch.float32 if self.fp32_ends else dt
+        m = dec.mel_conv(z.to(edt)) + dec.cond(g.to(edt))
+        x = torch.cat([m, x[:, :, o:].to(edt)], dim=1)
+        offsets = noise_offsets[0, FLOW_MARGIN + o :]
+        pool = self.adain_noise_pool
+        rates = dec.stage_rates()
+        bases = {(s, l): base for s, l, _c, _r, base in self.layers}
+        for i, (rate, res) in enumerate(zip(dec.upsample_rates, dec.upsample_conv_blocks)):
+            sd = torch.float32 if i in self.fp32_stages else dt
+            x = F.leaky_relu(x, REFINEGAN_SLOPE).to(sd)
+            x = linear_upsample(x, rate)
+            down = downs[len(downs) - 1 - i][:, :, o * rates[i] :]
+            x = torch.cat([x, down.to(sd)], dim=1)
+            x = self._parallel(res, x, lambda layer, y, i=i: adain_noise_from_pool(pool, offsets, bases[(i, layer)], y).to(y.dtype))
+        x = F.leaky_relu(x.to(edt), REFINEGAN_SLOPE)
+        x = torch.tanh(dec.conv_post(x))
+        return x[:, 0, self.main_margin * self.upp :].float()
+
+    @staticmethod
+    def _parallel(prb, x, noise):
+        from .vocoders import parallel_resblock
+
+        return parallel_resblock(prb, x, noise)
 
 
 # ---------------------------------------------------------------------------------------------

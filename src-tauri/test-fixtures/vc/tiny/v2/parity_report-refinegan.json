@@ -1,0 +1,269 @@
+{
+  "template": "v2-16k-f0-refinegan",
+  "weights": "",
+  "frames": 200,
+  "block_frames": 12,
+  "window_frames": 150,
+  "flow_margin": 24,
+  "dec_margin": 114,
+  "latent_offset": 86,
+  "rows": [
+    {
+      "check": "enc.m_p",
+      "variant": "fp32",
+      "max_abs": 1.7583370208740234e-06,
+      "rel_l2": 3.5349121590293525e-07,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "",
+      "peak": 1.6063432693481445
+    },
+    {
+      "check": "enc.logs_p",
+      "variant": "fp32",
+      "max_abs": 1.6689300537109375e-06,
+      "rel_l2": 3.037644838244215e-07,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "",
+      "peak": 1.8851466178894043
+    },
+    {
+      "check": "flowdec",
+      "variant": "fp32",
+      "max_abs": 3.6192784405586487e-07,
+      "rel_l2": 1.0029031746994178e-06,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "200 frames",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "chain",
+      "variant": "fp32",
+      "max_abs": 4.6251068211433655e-07,
+      "rel_l2": 1.0917789059515722e-06,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "partial",
+      "variant": "fp32",
+      "max_abs": 4.0120739529247995e-07,
+      "rel_l2": 8.266163891500573e-07,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "R=12 of F=150 frames, vs reference",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "partial",
+      "variant": "fp32",
+      "max_abs": 4.246830940246582e-07,
+      "rel_l2": 8.206191378938439e-07,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "vs this graph's full decode",
+      "peak": 0.40816497802734375
+    },
+    {
+      "check": "edge",
+      "variant": "fp32",
+      "max_abs": 0.259892457638252,
+      "rel_l2": 0.9278831526110775,
+      "tol": 0.0001,
+      "ok": false,
+      "gate": false,
+      "note": "window ends at frame 151 of 200 (voicing offset), no lookahead: seam 13 of 13 frames over tol",
+      "peak": 0.1445924341152144
+    },
+    {
+      "check": "fallback",
+      "variant": "fp32",
+      "max_abs": 0.0,
+      "rel_l2": 0.0,
+      "tol": 0.0,
+      "ok": true,
+      "gate": true,
+      "note": "graph + weights file on disk == in-memory",
+      "peak": 0.40816497802734375
+    },
+    {
+      "check": "enc.m_p",
+      "variant": "fp16",
+      "max_abs": 0.0014501512050628662,
+      "rel_l2": 0.0006013378075211312,
+      "tol": 0.008031716346740722,
+      "ok": true,
+      "gate": true,
+      "note": "",
+      "peak": 1.6063432693481445
+    },
+    {
+      "check": "enc.logs_p",
+      "variant": "fp16",
+      "max_abs": 0.0013041794300079346,
+      "rel_l2": 0.0005005917671052869,
+      "tol": 0.009425733089447021,
+      "ok": true,
+      "gate": true,
+      "note": "",
+      "peak": 1.8851466178894043
+    },
+    {
+      "check": "flowdec",
+      "variant": "fp16",
+      "max_abs": 0.00030060320666845664,
+      "rel_l2": 0.001049154115455529,
+      "tol": 0.005,
+      "ok": true,
+      "gate": true,
+      "note": "200 frames",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "chain",
+      "variant": "fp16",
+      "max_abs": 0.0003814244274109313,
+      "rel_l2": 0.0011626457191598757,
+      "tol": 0.005,
+      "ok": true,
+      "gate": false,
+      "note": "enc fp16 -> flowdec fp16 (decides enc fp16)",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "chain-mix",
+      "variant": "fp16",
+      "max_abs": 0.00030060320666845664,
+      "rel_l2": 0.001049154115455529,
+      "tol": 0.005,
+      "ok": true,
+      "gate": true,
+      "note": "enc fp32 -> flowdec fp16",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "partial",
+      "variant": "fp16",
+      "max_abs": 0.0002843235018628598,
+      "rel_l2": 0.0007120297353216358,
+      "tol": 0.005,
+      "ok": true,
+      "gate": true,
+      "note": "R=12 of F=150 frames, vs reference",
+      "peak": 0.40816486946437786
+    },
+    {
+      "check": "partial",
+      "variant": "fp16",
+      "max_abs": 6.103515625e-05,
+      "rel_l2": 7.744222948314235e-05,
+      "tol": 0.005,
+      "ok": true,
+      "gate": true,
+      "note": "vs this graph's full decode",
+      "peak": 0.408203125
+    },
+    {
+      "check": "edge",
+      "variant": "fp16",
+      "max_abs": 0.2599495886902692,
+      "rel_l2": 0.9276217341442095,
+      "tol": 0.005,
+      "ok": false,
+      "gate": false,
+      "note": "window ends at frame 151 of 200 (voicing offset), no lookahead: seam 7 of 13 frames over tol",
+      "peak": 0.1445924341152144
+    },
+    {
+      "check": "knn",
+      "variant": "fp32",
+      "max_abs": 3.601331144409414e-07,
+      "rel_l2": 6.324222874905899e-08,
+      "tol": 0.0001,
+      "ok": true,
+      "gate": true,
+      "note": "N=64, T=8",
+      "peak": 4.397273789403711
+    },
+    {
+      "check": "knn",
+      "variant": "fp16",
+      "max_abs": 4.238370268083713e-07,
+      "rel_l2": 6.199341456010304e-08,
+      "tol": 0.021987060857776068,
+      "ok": true,
+      "gate": true,
+      "note": "N=64, T=8",
+      "peak": 4.397412171555214
+    }
+  ],
+  "right_edge": {
+    "fp32": [
+      {
+        "window_end": 151,
+        "kind": "voicing offset",
+        "returned_frames": 13,
+        "tol": 0.0001,
+        "seam_frames": 13,
+        "saturated": true,
+        "max_abs": 0.259892457638252,
+        "last_frame_max_abs": 0.259892457638252,
+        "last_frame_rel_rms": 8.86729583669925,
+        "per_frame_max_abs": [
+          0.0001033783062781568,
+          0.00018478407822682813,
+          0.0001240135472375184,
+          0.0005291189106945496,
+          0.001892966847837546,
+          0.003705478929434185,
+          0.006410159230761978,
+          0.004632154081458256,
+          0.007278058664819176,
+          0.0268640978214645,
+          0.0696579771645782,
+          0.07555809381079416,
+          0.259892457638252
+        ]
+      }
+    ],
+    "fp16": [
+      {
+        "window_end": 151,
+        "kind": "voicing offset",
+        "returned_frames": 13,
+        "tol": 0.005,
+        "seam_frames": 7,
+        "saturated": false,
+        "max_abs": 0.2599495886902692,
+        "last_frame_max_abs": 0.2599495886902692,
+        "last_frame_rel_rms": 8.8660967088993,
+        "per_frame_max_abs": [
+          0.000264939746131454,
+          0.0002757950107671603,
+          0.00019333210911079424,
+          0.0007584850343708496,
+          0.0019923948459034946,
+          0.003622714620534544,
+          0.006202692226105186,
+          0.004762967264872277,
+          0.007348459200879509,
+          0.02678331722964879,
+          0.06968826749999499,
+          0.07546114871871214,
+          0.2599495886902692
+        ]
+      }
+    ]
+  },
+  "ok": true
+}

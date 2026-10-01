@@ -22,6 +22,76 @@ pub(crate) const OUT_RING_MAX_SAMPLES: usize = 262_144;
 /// audio so playback resumes without a click.
 const RECOVER_FRAMES: usize = 16;
 
+/// While starved, the held sample decays to silence over this many frames (a starve that lasts
+/// never parks the speaker on a DC offset, which would thump when playback resumes).
+const HOLD_DECAY_FRAMES: usize = 96;
+
+/// Crossfade of a latency trim splice (ms).
+pub(crate) const TRIM_FADE_MS: f64 = 5.0;
+/// Pushed audio over which the smallest queue level is tracked for drift trimming (ms).
+const DRIFT_WINDOW_MS: f64 = 1_000.0;
+/// Shortest settle window of a recovery (ms of pushed audio).
+const SETTLE_MIN_MS: f64 = 20.0;
+/// Output rate assumed until the caller says (only sizes the trim fade and the windows).
+const DEFAULT_RATE: u32 = 48_000;
+
+/// The shared `callback_len` word: the latest device callback's length (low 32 bits, interleaved
+/// samples) and, on 64-bit targets, the count of callbacks that ran (partly) dry after playback
+/// began (high 32 bits). [`RingPlayout`] writes it every callback; [`OutputPlayback`] reads both,
+/// so the queue learns about a starved device without any extra wiring.
+const LEN_BITS: u32 = 32;
+const LEN_MASK: usize = (1usize << (usize::BITS / 2)).wrapping_sub(1);
+
+#[inline]
+fn pack_callback(len: usize, starves: usize) -> usize {
+    if usize::BITS >= 64 {
+        ((starves & LEN_MASK) << (usize::BITS - LEN_BITS)) | (len & LEN_MASK)
+    } else {
+        len
+    }
+}
+
+#[inline]
+fn unpack_callback(word: usize) -> (usize, usize) {
+    if usize::BITS >= 64 {
+        (word & LEN_MASK, word >> (usize::BITS - LEN_BITS))
+    } else {
+        (word, 0)
+    }
+}
+
+/// Longest a recovery lasts (device time, ms): it normally ends within a few windows.
+const RECOVERY_MAX_MS: f64 = 3_000.0;
+/// Pushes remembered for a recovery's valley.
+const VALLEY_PUSHES: usize = 256;
+
+/// Worker-owned output queue in front of a device's lock-free ring.
+///
+/// Latency control (P3-E; the benchmark's post-stall finding: after a stall the queue refilled to
+/// `output_max_queue_ms` and stayed there, 74 -> 94 ms, for the rest of the session):
+/// - **Recovery** starts when the device starved while playing (a stall, a slow block; the playout
+///   counts dry callbacks into the shared `callback_len` word) or on
+///   [`OutputPlayback::note_discontinuity`] (the worker's latency budget dropped input, or the
+///   capture had a gap). Playback resumes at once (the catch-up itself refills the cushion). During
+///   a recovery every push trims the queue to the ring's top-up target (the most a steady queue
+///   holds right after a push), which bounds the catch-up burst; and once the device has consumed a
+///   settle window (two of the longest period: chunk, capture or device callback) the valley of the
+///   queue over the last such window of *device time* is trimmed back to the steady valley (the
+///   lowest queue level before a push that steady playback showed before, at least one device
+///   callback; the gate level, the prefill or one device callback, until one was measured). Pushes of an instant catch-up burst
+///   all happen at one device time, so they drop out of the window as soon as the device plays on:
+///   the valley is measured on steady playback. The recovery ends when a window's valley is already
+///   at the steady one. A stall therefore never leaves standing latency (the queue returns to its
+///   pre-stall level), and a short glitch costs nothing beyond itself.
+/// - **Drift:** otherwise, when the smallest queue level over a second of pushed audio stays above
+///   the gate level by more than one chunk / capture period / device callback (clock drift between
+///   capture and playback devices), the excess is trimmed.
+/// - Every trim (and the `max_queue` cap) is a splice, not a cut: [`TRIM_FADE_MS`] of the audio
+///   that continues what the device already has crossfades (equal power) into the first kept
+///   audio; when the kept audio has not been converted yet, the fade finishes on the next push.
+///
+/// A trim never goes below the level steady playback already reached (or the gate level), so it
+/// never causes an underrun by itself. Whole frames only; nothing here runs on the audio callback.
 pub(crate) struct OutputPlayback {
     deque: VecDeque<f32>,
     prefill_target: usize,
@@ -33,8 +103,8 @@ pub(crate) struct OutputPlayback {
     /// Interleaved channel count: trims and ring hand-off move whole frames only, so the
     /// device callback never sees a split frame (which would swap channels).
     ch: usize,
-    /// Samples requested by the device's latest output callback (written by [`RingPlayout`];
-    /// 0 before the first callback).
+    /// The device's latest callback length and dry-callback count (packed; written by
+    /// [`RingPlayout`], 0 before the first callback).
     callback_len: Arc<AtomicUsize>,
     /// Capture-side burst: interleaved samples of the latest input callback (0 before the first,
     /// or when not wired). The worker produces nothing between two capture callbacks, so the
@@ -45,6 +115,43 @@ pub(crate) struct OutputPlayback {
     in_burst_ch: usize,
     in_burst_r_in: u64,
     in_burst_r_out: u64,
+    // ---- latency control (P3-E) ----
+    rate: u32,
+    /// Frames of a trim crossfade at this output's rate.
+    fade_frames: usize,
+    /// Interleaved samples of pushed audio per drift window.
+    drift_window: usize,
+    recovering: bool,
+    /// Device consumption so far (interleaved samples; the ring level after each flush minus the
+    /// level at the next push), the clock of a recovery's windows.
+    consumed_total: u64,
+    ring_after_flush: usize,
+    /// Recovery: `(consumed_total, level before the push)` of the recent pushes, the device time
+    /// the current window and the recovery started.
+    valley: VecDeque<(u64, usize)>,
+    valley_since: u64,
+    recovery_since: u64,
+    /// The lowest queue level before a push that steady playback showed (the minimum over the
+    /// completed drift windows outside recoveries; reset by new limits).
+    steady_valley: Option<usize>,
+    /// Dry callbacks seen at the previous push.
+    starves_seen: usize,
+    /// Fade-out audio of a splice whose fade-in audio is not (all) queued yet (whole frames;
+    /// capacity reserved for one fade).
+    pending_out: Vec<f32>,
+    /// Frames of `pending_out` already blended into the queue.
+    pending_pos: usize,
+    /// Queue frame where the next frame of `pending_out` blends (frames before it are blended).
+    pending_at: usize,
+    /// Smallest queue level (before a push) over the current window, and the audio pushed in it
+    /// (interleaved samples).
+    window_min: usize,
+    window_pushed: usize,
+    trimmed_frames: u64,
+    recoveries: u64,
+    /// Frames trimmed by each rule (recovery, drift, cap), for tests.
+    #[cfg(test)]
+    trimmed_by: [u64; 3],
 }
 
 fn rms_interleaved(samples: &[f32]) -> f32 {
@@ -55,6 +162,14 @@ fn rms_interleaved(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
+/// Equal-power crossfade weights `(fade_in, fade_out)` at frame `i` of an `n`-frame fade.
+#[inline]
+fn xfade_weights(i: usize, n: usize) -> (f32, f32) {
+    let t = (i as f32 + 0.5) / n.max(1) as f32;
+    let a = t * std::f32::consts::FRAC_PI_2;
+    (a.sin(), a.cos())
+}
+
 impl OutputPlayback {
     pub(crate) fn new(
         prefill_target: usize,
@@ -62,24 +177,48 @@ impl OutputPlayback {
         ch_out: usize,
         callback_len: Arc<AtomicUsize>,
     ) -> Self {
-        Self {
+        let ch = ch_out.max(1);
+        let starves_seen = unpack_callback(callback_len.load(Ordering::Relaxed)).1;
+        let mut s = Self {
             deque: VecDeque::with_capacity(max_queue_samples.max(prefill_target) + 8192),
             prefill_target,
             max_queue_samples: max_queue_samples.max(prefill_target + 1),
             prefilled: false,
             truncate_silent_streak: 0,
             last_chunk_len: 0,
-            ch: ch_out.max(1),
+            ch,
             callback_len,
             in_burst_len: Arc::new(AtomicUsize::new(0)),
             in_burst_ch: 1,
             in_burst_r_in: 1,
             in_burst_r_out: 1,
-        }
+            rate: DEFAULT_RATE,
+            fade_frames: 1,
+            drift_window: 1,
+            recovering: false,
+            consumed_total: 0,
+            ring_after_flush: 0,
+            valley: VecDeque::with_capacity(VALLEY_PUSHES),
+            valley_since: 0,
+            recovery_since: 0,
+            steady_valley: None,
+            starves_seen,
+            pending_out: Vec::new(),
+            pending_pos: 0,
+            pending_at: 0,
+            window_min: usize::MAX,
+            window_pushed: 0,
+            trimmed_frames: 0,
+            recoveries: 0,
+            #[cfg(test)]
+            trimmed_by: [0; 3],
+        };
+        s.set_output_rate(DEFAULT_RATE);
+        s
     }
 
     /// Wire the capture callback length (`in_burst_len`, interleaved samples at `ch_in` / `r_in`)
-    /// into the ring target of this output (`r_out`).
+    /// into the ring target of this output (`r_out`, also this output's rate).
     pub(crate) fn with_capture_burst(
         mut self,
         in_burst_len: Arc<AtomicUsize>,
@@ -91,11 +230,117 @@ impl OutputPlayback {
         self.in_burst_ch = ch_in.max(1);
         self.in_burst_r_in = u64::from(r_in.max(1));
         self.in_burst_r_out = u64::from(r_out.max(1));
+        self.set_output_rate(r_out);
         self
+    }
+
+    /// This output's sample rate (sizes the trim crossfade and the windows).
+    #[allow(dead_code)] // `with_capture_burst` sets it for every caller today.
+    pub(crate) fn with_output_rate(mut self, rate: u32) -> Self {
+        self.set_output_rate(rate);
+        self
+    }
+
+    fn set_output_rate(&mut self, rate: u32) {
+        self.rate = rate.max(1);
+        let rate = f64::from(self.rate);
+        self.fade_frames = ((TRIM_FADE_MS * rate / 1000.0).round() as usize).max(1);
+        self.drift_window = ((DRIFT_WINDOW_MS * rate / 1000.0).round() as usize).max(1) * self.ch;
+        self.pending_out = Vec::with_capacity(self.fade_frames * self.ch);
     }
 
     pub(crate) fn queue_len(&self) -> usize {
         self.deque.len()
+    }
+
+    /// Frames removed by latency trims so far (recovery, drift and the queue cap).
+    pub(crate) fn trimmed_frames(&self) -> u64 {
+        self.trimmed_frames
+    }
+
+    /// Recoveries started by a starved device or a discontinuity.
+    pub(crate) fn recoveries(&self) -> u64 {
+        self.recoveries
+    }
+
+    /// Whether the queue is being trimmed back after an underrun or a discontinuity.
+    #[cfg(test)]
+    pub(crate) fn is_recovering(&self) -> bool {
+        self.recovering
+    }
+
+    /// The input side skipped audio (the latency budget dropped stale input, or the capture had a
+    /// gap): whatever the catch-up produces beyond the steady level is stale; trim it back.
+    pub(crate) fn note_discontinuity(&mut self) {
+        self.start_recovery();
+    }
+
+    fn start_recovery(&mut self) {
+        if !self.recovering {
+            self.recoveries += 1;
+            self.recovery_since = self.consumed_total;
+        }
+        self.recovering = true;
+        self.valley.clear();
+        self.valley_since = self.consumed_total;
+        self.reset_window();
+    }
+
+    /// One recovery step at a push (`level_before`: the queue before it). See the type docs.
+    fn recover(&mut self, level_before: usize, ring_used: usize) {
+        let target = self.ring_target();
+        let level = self.deque.len() + ring_used;
+        if level > target {
+            self.trim_counted(level - target, 0);
+        }
+        let now = self.consumed_total;
+        let window = self.settle_window() as u64;
+        if self.valley.len() == VALLEY_PUSHES {
+            self.valley.pop_front();
+        }
+        self.valley.push_back((now, level_before));
+        // Only pushes inside the last window of device time (the catch-up burst's all happened at
+        // the window's start and drop out here).
+        while self.valley.front().is_some_and(|&(t, _)| t + window <= now) {
+            self.valley.pop_front();
+        }
+        if now.saturating_sub(self.valley_since) < window {
+            return;
+        }
+        let valley = self.valley.iter().map(|&(_, l)| l).min().unwrap_or(0);
+        let peak = self.valley.iter().map(|&(_, l)| l).max().unwrap_or(0);
+        let floor = RING_TOPUP_MARGIN_FRAMES * self.ch;
+        // The steady valley, but never less than one device callback (a valley measured at push
+        // instants that happened to fall right after a callback can be lower than what keeps every
+        // callback fed), nor above the gate level.
+        let gate = self.gate_target();
+        let goal = self
+            .steady_valley
+            .map_or(gate, |v| v.max(gate.min(self.callback_samples())))
+            .max(floor);
+        let expired = now.saturating_sub(self.recovery_since) >= ((RECOVERY_MAX_MS * f64::from(self.rate) / 1000.0) as u64) * self.ch as u64;
+        if valley > goal + floor && !expired {
+            self.trim_counted(valley - goal, 0);
+            // The recorded levels predate the trim: measure a fresh window.
+            self.valley.clear();
+            self.valley_since = now;
+        } else if expired || peak <= valley + self.longest_period() + floor {
+            // Steady playback at (or below) the goal: recovered. A window whose levels still climb
+            // (a catch-up burst in progress) keeps sliding instead.
+            self.recovering = false;
+            self.valley.clear();
+            self.reset_window();
+        }
+    }
+
+    fn reset_window(&mut self) {
+        self.window_min = usize::MAX;
+        self.window_pushed = 0;
+    }
+
+    /// The latest device callback's length (interleaved samples).
+    fn callback_samples(&self) -> usize {
+        unpack_callback(self.callback_len.load(Ordering::Relaxed)).0
     }
 
     /// Latest capture callback converted to this output's interleaved samples (whole frames,
@@ -109,7 +354,7 @@ impl OutputPlayback {
     /// Level at which the prefill gate opens: the prefill, or one full device callback when that
     /// is longer (a gate below one callback would underrun the very first period).
     fn gate_target(&self) -> usize {
-        self.prefill_target.max(self.callback_len.load(Ordering::Relaxed))
+        self.prefill_target.max(self.callback_samples())
     }
 
     /// Samples the ring should hold after a top-up: one full device callback (which can be
@@ -132,13 +377,96 @@ impl OutputPlayback {
         self.max_queue_samples.max(self.ring_target())
     }
 
+    /// The longest of the periods that shape the queue: a chunk, a capture callback, a device
+    /// callback.
+    fn longest_period(&self) -> usize {
+        self.last_chunk_len.max(self.in_burst_samples()).max(self.callback_samples())
+    }
+
+    /// Queue level above the gate level that steady playback can legitimately hold at its lowest
+    /// point (the longest period plus the top-up margin).
+    fn drift_slack(&self) -> usize {
+        self.longest_period().saturating_add(RING_TOPUP_MARGIN_FRAMES * self.ch)
+    }
+
+    /// Pushed audio of a recovery's settle window: two of the longest periods, at least
+    /// [`SETTLE_MIN_MS`].
+    fn settle_window(&self) -> usize {
+        let min = ((SETTLE_MIN_MS * f64::from(self.rate) / 1000.0).round() as usize).max(1) * self.ch;
+        self.longest_period().saturating_mul(2).max(min)
+    }
+
     /// Drop at least `n` samples from the front of the deque, rounded up to whole frames and
-    /// capped at the deque length (the ring part cannot be trimmed from here).
+    /// capped at the deque length (the ring part cannot be trimmed from here). A plain cut: only
+    /// for silence (buffer truncation) and tests.
     fn drop_front(&mut self, n: usize) {
         let ch = self.ch;
         let n = (n.div_ceil(ch) * ch).min(self.deque.len());
         if n > 0 {
             self.deque.drain(0..n);
+            self.pending_at = self.pending_at.saturating_sub(n / ch);
+        }
+    }
+
+    /// Blend the unfinished splice fade into the queued frames that follow it.
+    fn blend_pending(&mut self) {
+        if self.pending_out.is_empty() {
+            return;
+        }
+        let ch = self.ch;
+        let total = self.pending_out.len() / ch;
+        let queued = self.deque.len() / ch;
+        while self.pending_pos < total && self.pending_at < queued {
+            let (w_in, w_out) = xfade_weights(self.pending_pos, total);
+            for c in 0..ch {
+                let old = self.pending_out[self.pending_pos * ch + c];
+                let s = &mut self.deque[self.pending_at * ch + c];
+                *s = *s * w_in + old * w_out;
+            }
+            self.pending_pos += 1;
+            self.pending_at += 1;
+        }
+        if self.pending_pos >= total {
+            self.pending_out.clear();
+            self.pending_pos = 0;
+            self.pending_at = 0;
+        }
+    }
+
+    /// Drop up to `frames` frames from the front of the deque as a crossfaded splice (the ring
+    /// part cannot be trimmed from here). Skipped while an earlier splice is still fading.
+    fn trim_frames(&mut self, frames: usize) {
+        let ch = self.ch;
+        let queued = self.deque.len() / ch;
+        let drop = frames.min(queued);
+        if drop == 0 || !self.pending_out.is_empty() {
+            return;
+        }
+        // The fade-out: the audio that continues what the device already has.
+        let fade = self.fade_frames.min(queued);
+        self.pending_out.clear();
+        self.pending_out.extend(self.deque.range(..fade * ch).copied());
+        self.pending_pos = 0;
+        self.pending_at = 0;
+        self.deque.drain(..drop * ch);
+        self.trimmed_frames += drop as u64;
+        // The fade-in: whatever audio follows the dropped part (the rest arrives with the next push).
+        self.blend_pending();
+    }
+
+    /// Trim `samples` (rounded up to whole frames) of queue level.
+    fn trim_samples(&mut self, samples: usize) {
+        self.trim_frames(samples.div_ceil(self.ch));
+    }
+
+    /// [`Self::trim_samples`], counted per rule in tests (0 recovery, 1 drift, 2 cap).
+    fn trim_counted(&mut self, samples: usize, _rule: usize) {
+        #[cfg(test)]
+        let before = self.trimmed_frames;
+        self.trim_samples(samples);
+        #[cfg(test)]
+        {
+            self.trimmed_by[_rule] += self.trimmed_frames - before;
         }
     }
 
@@ -151,10 +479,13 @@ impl OutputPlayback {
         }
         self.prefill_target = prefill_target;
         self.max_queue_samples = max_queue_samples;
-        self.drop_front((self.deque.len() + ring_used).saturating_sub(self.queue_cap()));
+        let over = (self.deque.len() + ring_used).saturating_sub(self.queue_cap());
+        self.trim_samples(over);
         if self.deque.len() + ring_used < self.prefill_target {
             self.prefilled = false;
         }
+        self.steady_valley = None;
+        self.reset_window();
     }
 
     pub(crate) fn push_interleaved(
@@ -165,10 +496,40 @@ impl OutputPlayback {
         truncate_chunks: u32,
         ring_used: usize,
     ) {
+        let level_before = self.deque.len() + ring_used;
+        // What the device played since the last flush (nothing else lowers the ring).
+        self.consumed_total += self.ring_after_flush.saturating_sub(ring_used) as u64;
+        self.ring_after_flush = ring_used;
+        let starves = unpack_callback(self.callback_len.load(Ordering::Relaxed)).1;
+        let starved = std::mem::replace(&mut self.starves_seen, starves) != starves;
+        if starved && self.prefilled && !samples.is_empty() {
+            // The device ran dry while playing: whatever catch-up follows is stale.
+            self.start_recovery();
+        }
         self.last_chunk_len = samples.len();
         self.deque.extend(samples.iter().copied());
+        self.blend_pending();
+
+        if !samples.is_empty() && self.prefilled {
+            if self.recovering {
+                self.recover(level_before, ring_used);
+            } else {
+                self.window_min = self.window_min.min(level_before);
+                self.window_pushed += samples.len();
+                if self.window_pushed >= self.drift_window {
+                    let gate = self.gate_target();
+                    if self.window_min != usize::MAX && self.window_min > gate + self.drift_slack() {
+                        self.trim_counted(self.window_min - gate, 1);
+                    } else if self.window_min != usize::MAX {
+                        self.steady_valley = Some(self.steady_valley.map_or(self.window_min, |v| v.min(self.window_min)));
+                    }
+                    self.reset_window();
+                }
+            }
+        }
         // The queue cap covers deque + ring; only the deque part can be trimmed here.
-        self.drop_front((self.deque.len() + ring_used).saturating_sub(self.queue_cap()));
+        let over = (self.deque.len() + ring_used).saturating_sub(self.queue_cap());
+        self.trim_counted(over, 2);
 
         if truncate_enabled && truncate_chunks > 0 && !samples.is_empty() {
             let rms = rms_interleaved(samples);
@@ -188,34 +549,41 @@ impl OutputPlayback {
 
     /// Hand whole frames to the lock-free output ring once the prefill gate opens. The ring is
     /// only topped up to [`Self::ring_target`], so any backlog stays in the deque where the
-    /// queue cap and silence truncation can still trim it.
+    /// queue cap and silence truncation can still trim it. Frames of an unfinished splice fade are
+    /// held back until the fade completes.
     pub(crate) fn flush_to_ring(&mut self, producer: &mut rtrb::Producer<f32>, ring_used: usize) {
         if !self.prefilled {
             if self.deque.len() + ring_used >= self.gate_target() {
                 self.prefilled = true;
+                // Dry callbacks while the gate was closed are not starvation.
+                self.starves_seen = unpack_callback(self.callback_len.load(Ordering::Relaxed)).1;
             } else {
                 return;
             }
         }
         let ch = self.ch;
         let budget = self.ring_target().saturating_sub(ring_used);
-        let n = (budget / ch)
-            .min(self.deque.len() / ch)
-            .min(producer.slots() / ch)
-            * ch;
+        let ready = if self.pending_out.is_empty() {
+            self.deque.len() / ch
+        } else {
+            self.pending_at
+        };
+        let n = (budget / ch).min(ready).min(producer.slots() / ch) * ch;
         if n == 0 {
             return;
         }
         // One commit for the whole run of frames: the consumer never observes a partial frame.
         if let Ok(chunk) = producer.write_chunk_uninit(n) {
             chunk.fill_from_iter(self.deque.drain(..n));
+            self.pending_at = self.pending_at.saturating_sub(n / ch);
+            self.ring_after_flush = ring_used + n;
         }
     }
 }
 
 /// Real-time side of an output device: pulls whole frames from the lock-free ring, holds the
-/// last frame on underrun and ramps back to live audio after a starve. All state is
-/// closure-local (no locks, no allocation per callback).
+/// last frame on underrun (decaying to silence) and ramps back to live audio after a starve. All
+/// state is closure-local (no locks, no allocation per callback).
 pub(crate) struct RingPlayout {
     consumer: rtrb::Consumer<f32>,
     /// Last emitted frame (one value per channel).
@@ -223,11 +591,17 @@ pub(crate) struct RingPlayout {
     starving: bool,
     /// Frames left in the post-underrun recovery ramp.
     recover_left: usize,
-    /// Length (samples) of the latest callback, read by the worker's ring top-up.
+    /// Frames of the hold decay still to go while starving.
+    decay_left: usize,
+    /// Latest callback length and dry-callback count, packed (read by [`OutputPlayback`]).
     callback_len: Arc<AtomicUsize>,
+    /// Callbacks that ran (partly) dry after playback began (packed into `callback_len`).
+    starves: usize,
     /// Callbacks that ran (partly) dry after playback first began (the prefill wait before the
     /// first audio is not an underrun).
     underruns: Option<Arc<AtomicU64>>,
+    /// Callbacks so far (the worker's output stall detector).
+    callbacks: Option<Arc<AtomicU64>>,
     played_any: bool,
 }
 
@@ -239,8 +613,11 @@ impl RingPlayout {
             // Start "starved" so the first audio after prefill fades in from silence.
             starving: true,
             recover_left: 0,
+            decay_left: 0,
             callback_len,
+            starves: 0,
             underruns: None,
+            callbacks: None,
             played_any: false,
         }
     }
@@ -251,8 +628,16 @@ impl RingPlayout {
         self
     }
 
+    /// Count callbacks into `counter` (a device that stops calling back is lost).
+    pub(crate) fn with_callback_counter(mut self, counter: Arc<AtomicU64>) -> Self {
+        self.callbacks = Some(counter);
+        self
+    }
+
     pub(crate) fn fill(&mut self, data: &mut [f32]) {
-        self.callback_len.store(data.len(), Ordering::Relaxed);
+        if let Some(c) = &self.callbacks {
+            c.fetch_add(1, Ordering::Relaxed);
+        }
         let ch = self.hold.len();
         let avail = (self.consumer.slots() / ch).min(data.len() / ch);
         let mut filled = 0usize;
@@ -290,15 +675,30 @@ impl RingPlayout {
         }
         if filled < data.len() {
             if self.played_any {
+                self.starves = self.starves.wrapping_add(1);
                 if let Some(c) = &self.underruns {
                     c.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            self.starving = true;
-            for (i, s) in data.iter_mut().enumerate().skip(filled) {
-                *s = self.hold[i % ch];
+            if !self.starving {
+                self.starving = true;
+                self.decay_left = HOLD_DECAY_FRAMES;
+            }
+            for frame in data[filled..].chunks_mut(ch) {
+                if self.decay_left > 0 {
+                    // Linear decay of the held frame to silence.
+                    let g = (self.decay_left - 1) as f32 / self.decay_left as f32;
+                    self.decay_left -= 1;
+                    for h in self.hold.iter_mut() {
+                        *h *= g;
+                    }
+                }
+                for (s, &h) in frame.iter_mut().zip(self.hold.iter()) {
+                    *s = h;
+                }
             }
         }
+        self.callback_len.store(pack_callback(data.len(), self.starves), Ordering::Relaxed);
     }
 }
 
@@ -334,7 +734,7 @@ pub(crate) fn adapt_channels_interleaved_into(data: &[f32], from_ch: usize, to_c
 
 #[cfg(test)]
 mod tests {
-    use super::{adapt_channels_interleaved_into, OutputPlayback, RingPlayout, RECOVER_FRAMES};
+    use super::{adapt_channels_interleaved_into, OutputPlayback, RingPlayout, HOLD_DECAY_FRAMES, RECOVER_FRAMES};
     use rtrb::RingBuffer;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -372,7 +772,7 @@ mod tests {
                 underrun_periods += 1;
             }
         }
-        assert_eq!(cb_len.load(Ordering::Relaxed), 480 * ch);
+        assert_eq!(super::unpack_callback(cb_len.load(Ordering::Relaxed)).0, 480 * ch);
         assert_eq!(underrun_periods, 0);
         // Nothing was dropped: produced - consumed stays bounded (= what is still queued).
         assert!(pb.queue_len() + ring_used(&prod) < 2 * 480 * ch);
@@ -537,5 +937,346 @@ mod tests {
         let mut o = Vec::new();
         adapt_channels_interleaved_into(&[0.2f32, 0.4f32], 2, 1, &mut o);
         assert!((o[0] - 0.3).abs() < 1e-6);
+    }
+
+    // ---- latency control (P3-E) ----
+
+    /// A simulated run on one 48 kHz clock: capture delivers `cap` mono frames per period, the
+    /// worker converts whole `chunk`-frame blocks the moment they are complete (a stall holds them
+    /// back; afterwards the latency budget keeps `budget_keep` frames and the worker catches up in a
+    /// burst), the device pulls `cb` stereo frames per callback, half a period out of phase. The
+    /// audio is a continuous 220 Hz sine on the input clock, so splices and drops are audible in the
+    /// played stream.
+    struct Sim {
+        pb: OutputPlayback,
+        prod: rtrb::Producer<f32>,
+        playout: RingPlayout,
+        underruns: Arc<std::sync::atomic::AtomicU64>,
+        burst: Arc<AtomicUsize>,
+        chunk: usize,
+        cap: usize,
+        /// Device frames between two device callbacks (== `cb` unless the clocks drift).
+        cb_period: usize,
+        input_waiting: usize,
+        input_pos: u64,
+        stalled: bool,
+        /// The worker tells the queue about budget drops (`note_discontinuity`).
+        notify_drops: bool,
+        /// Blocks the worker converts per wake (its compute speed; `usize::MAX` = instant).
+        blocks_per_wake: usize,
+        played: Vec<f32>,
+        /// (time in frames, queue level in frames) at every push, before the push.
+        push_levels: Vec<(u64, usize)>,
+        t: u64,
+        next_cap: u64,
+        next_cb: u64,
+        buf: Vec<f32>,
+    }
+
+    const SIM_RATE: u32 = 48_000;
+    const SIM_CH: usize = 2;
+    const SIM_RING: usize = 65_536;
+
+    impl Sim {
+        fn new(prefill_ms: f64, max_queue_ms: f64, chunk: usize, cap: usize, cb: usize) -> Sim {
+            let frames = |ms: f64| (f64::from(SIM_RATE) * ms / 1000.0).ceil() as usize;
+            let cb_len = Arc::new(AtomicUsize::new(0));
+            let burst = Arc::new(AtomicUsize::new(0));
+            let (prod, cons) = RingBuffer::<f32>::new(SIM_RING);
+            let underruns = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let pb = OutputPlayback::new(frames(prefill_ms) * SIM_CH, frames(max_queue_ms) * SIM_CH, SIM_CH, cb_len.clone())
+                .with_capture_burst(burst.clone(), 1, SIM_RATE, SIM_RATE);
+            let playout = RingPlayout::new(cons, SIM_CH, cb_len).with_underrun_counter(underruns.clone());
+            Sim {
+                pb,
+                prod,
+                playout,
+                underruns,
+                burst,
+                chunk,
+                cap,
+                cb_period: cb,
+                input_waiting: 0,
+                input_pos: 0,
+                stalled: false,
+                notify_drops: true,
+                blocks_per_wake: usize::MAX,
+                played: Vec::new(),
+                push_levels: Vec::new(),
+                t: 0,
+                next_cap: cap as u64,
+                next_cb: (cb / 2) as u64,
+                buf: vec![0.0; cb * SIM_CH],
+            }
+        }
+
+        fn ring_used(&self) -> usize {
+            SIM_RING - self.prod.slots()
+        }
+
+        fn level_frames(&self) -> usize {
+            (self.pb.queue_len() + self.ring_used()) / SIM_CH
+        }
+
+        /// Convert every whole block waiting.
+        fn convert_waiting(&mut self) {
+            let mut n = 0;
+            while self.input_waiting >= self.chunk && n < self.blocks_per_wake {
+                n += 1;
+                self.input_waiting -= self.chunk;
+                let first = self.input_pos;
+                self.input_pos += self.chunk as u64;
+                let block: Vec<f32> = (0..self.chunk as u64)
+                    .flat_map(|i| {
+                        let v = (2.0 * std::f64::consts::PI * 220.0 * (first + i) as f64 / f64::from(SIM_RATE)).sin() as f32 * 0.5;
+                        [v, v]
+                    })
+                    .collect();
+                self.push_levels.push((self.t, self.level_frames()));
+                let used = self.ring_used();
+                self.pb.push_interleaved(&block, false, 0.0, 0, used);
+                let used = self.ring_used();
+                self.pb.flush_to_ring(&mut self.prod, used);
+            }
+        }
+
+        /// The worker wakes after a stall: the latency budget keeps the newest `keep` frames.
+        fn end_stall(&mut self, keep: usize) {
+            self.stalled = false;
+            if self.input_waiting > keep {
+                let dropped = self.input_waiting - keep;
+                self.input_waiting = keep;
+                self.input_pos += dropped as u64;
+                if self.notify_drops {
+                    self.pb.note_discontinuity();
+                }
+            }
+            self.convert_waiting();
+        }
+
+        fn run_for(&mut self, frames: u64) {
+            let end = self.t + frames;
+            while self.t < end {
+                let next = self.next_cap.min(self.next_cb);
+                self.t = next;
+                if self.next_cap == next {
+                    self.next_cap += self.cap as u64;
+                    self.burst.store(self.cap, Ordering::Relaxed);
+                    self.input_waiting += self.cap;
+                    if !self.stalled {
+                        self.convert_waiting();
+                    }
+                }
+                if self.next_cb == next {
+                    self.next_cb += self.cb_period as u64;
+                    self.playout.fill(&mut self.buf);
+                    self.played.extend(self.buf.iter().step_by(SIM_CH));
+                }
+            }
+        }
+
+        fn levels_between(&self, from_s: f64, to_s: f64) -> Vec<usize> {
+            let (a, b) = ((from_s * f64::from(SIM_RATE)) as u64, (to_s * f64::from(SIM_RATE)) as u64);
+            self.push_levels.iter().filter(|(t, _)| *t >= a && *t < b).map(|x| x.1).collect()
+        }
+
+        fn underruns(&self) -> u64 {
+            self.underruns.load(Ordering::Relaxed)
+        }
+    }
+
+    fn median(mut v: Vec<usize>) -> usize {
+        v.sort_unstable();
+        v[v.len() / 2]
+    }
+
+    /// The largest sample-to-sample step of a mono stream.
+    fn max_step(s: &[f32]) -> f32 {
+        s.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
+    }
+
+    /// The benchmark's post-stall finding (74 -> 94 ms, persistent): after a 3 s stall the catch-up
+    /// burst refilled the queue to `max_queue` and it stayed there. Now the underrun re-gates, the
+    /// recovery trims the burst away, and the queue is back at its pre-stall level within a fraction
+    /// of a second, with no further underruns and no click.
+    #[test]
+    fn post_stall_catch_up_does_not_become_standing_latency() {
+        post_stall_recovers(Sim::new(35.0, 70.0, 512, 480, 480));
+        // Without the budget's notice (the benchmark's driver): the starved device alone.
+        let mut quiet = Sim::new(35.0, 70.0, 512, 480, 480);
+        quiet.notify_drops = false;
+        post_stall_recovers(quiet);
+        // A chunk longer than the prefill.
+        post_stall_recovers(Sim::new(35.0, 70.0, 2048, 480, 1024));
+        // A worker that catches up at about 3x real time (the burst takes a while).
+        let mut slow = Sim::new(35.0, 70.0, 512, 480, 480);
+        slow.blocks_per_wake = 3;
+        post_stall_recovers(slow);
+    }
+
+    fn post_stall_recovers(mut sim: Sim) {
+        let (chunk, cb) = (sim.chunk, sim.cb_period);
+        sim.run_for(3 * 48_000);
+        let before = median(sim.levels_between(1.0, 3.0));
+        sim.stalled = true;
+        sim.run_for(3 * 48_000);
+        // The budget (300 ms) keeps its low-water mark, 150 ms, then the worker catches up.
+        sim.end_stall(7_200);
+        let underruns_after_stall = sim.underruns();
+        sim.run_for(5 * 48_000);
+        assert_eq!(sim.pb.recoveries(), 1, "the starve started one recovery");
+        assert!(!sim.pb.is_recovering());
+        let after = sim.levels_between(7.0, 11.0);
+        let (m_after, worst) = (median(after.clone()), *after.iter().max().unwrap());
+        assert!(
+            m_after.abs_diff(before) <= chunk,
+            "queue level {m_after} frames after the stall vs {before} before (one chunk tolerance)"
+        );
+        assert!(worst <= before + chunk + cb, "chunk {chunk}: peak {worst} vs steady {before}");
+        // The recovery happens within half a second of the stall's end.
+        let settled: Vec<usize> = sim.levels_between(6.5, 7.0);
+        assert!(settled.iter().all(|&l| l <= before + chunk + cb), "{settled:?} vs {before}");
+        assert_eq!(sim.underruns(), underruns_after_stall, "no underrun after the recovery");
+        assert!(sim.pb.trimmed_frames() > 0);
+        // No click anywhere: splices and the starve edges are all smooth.
+        let slope = 2.0 * std::f32::consts::PI * 220.0 / SIM_RATE as f32 * 0.5;
+        let steps = max_step(&sim.played);
+        assert!(steps < 4.0 * slope, "largest step {steps} vs sine slope {slope}");
+    }
+
+    /// Steady playback, in every chunk / capture / callback relation the voice changer produces,
+    /// never trims and never re-gates: the latency control only acts on real excess.
+    #[test]
+    fn steady_playback_never_trims() {
+        for (chunk, cap, cb) in [(512, 480, 480), (160, 480, 480), (160, 960, 480), (1024, 480, 480), (240, 480, 441), (2048, 480, 1024)] {
+            let mut sim = Sim::new(35.0, 70.0, chunk, cap, cb);
+            sim.run_for(20 * 48_000);
+            assert_eq!(sim.pb.trimmed_frames(), 0, "chunk {chunk} cap {cap} cb {cb}: {:?}", sim.pb.trimmed_by);
+            assert_eq!(sim.pb.recoveries(), 0, "chunk {chunk} cap {cap} cb {cb}");
+            assert_eq!(sim.underruns(), 0, "chunk {chunk} cap {cap} cb {cb}");
+        }
+    }
+
+    /// Capture clock 0.2 % faster than the playback clock: the queue would creep up to the cap and
+    /// be cut there. The drift trimmer keeps it near the steady level with crossfaded splices.
+    #[test]
+    fn clock_drift_is_trimmed_long_before_the_cap() {
+        let mut sim = Sim::new(35.0, 150.0, 512, 480, 480);
+        sim.cb_period = 481; // the device consumes 480 frames per 481 frames of capture time
+        sim.run_for(60 * 48_000);
+        let steady = sim.levels_between(1.0, 3.0);
+        let (steady_min, steady_max) = (*steady.iter().min().unwrap(), *steady.iter().max().unwrap());
+        let late = sim.levels_between(30.0, 60.0);
+        let worst = *late.iter().max().unwrap();
+        // 0.2 % of 60 s is 120 ms (5760 frames) of excess without trimming. With it, the smallest
+        // level of a window is kept at most the drift slack (a chunk plus margin) above the gate
+        // level (1680 frames), plus one window's drift: the steady range shifted by that much.
+        let allowed = (1_680usize + 512 + 64).saturating_sub(steady_min) + 96 + 64;
+        assert!(worst <= steady_max + allowed, "{worst} frames vs steady {steady_min}..{steady_max} (+{allowed})");
+        assert!(worst < 7_200 / 2, "far below the 150 ms cap");
+        assert!(sim.pb.trimmed_by[1] > 4_000, "{:?}", sim.pb.trimmed_by);
+        assert_eq!(sim.pb.trimmed_by[2], 0, "never cut at the cap");
+        assert_eq!(sim.pb.recoveries(), 0);
+        let slope = 2.0 * std::f32::consts::PI * 220.0 / SIM_RATE as f32 * 0.5;
+        assert!(max_step(&sim.played[48_000..]) < 4.0 * slope);
+    }
+
+    /// A trim is a whole-frame splice: the audio continuing the device's crossfades into the kept
+    /// audio (equal power), channels never swap, and the dropped frames are counted.
+    #[test]
+    fn trims_are_crossfaded_whole_frame_splices() {
+        let cb = Arc::new(AtomicUsize::new(0));
+        // 1 kHz output: a 5 ms fade is 5 frames.
+        let mut pb = OutputPlayback::new(0, 10_000, 2, cb).with_output_rate(1_000);
+        let frames: Vec<f32> = (0..50).flat_map(|i| [i as f32, -(i as f32)]).collect();
+        pb.push_interleaved(&frames, false, 0.0, 0, 0);
+        pb.trim_frames(10);
+        assert_eq!(pb.trimmed_frames(), 10);
+        assert_eq!(pb.queue_len(), 40 * 2);
+        let q: Vec<f32> = pb.deque.iter().copied().collect();
+        for k in 0..5 {
+            let (w_in, w_out) = super::xfade_weights(k, 5);
+            let want = (10 + k) as f32 * w_in + k as f32 * w_out;
+            assert!((q[2 * k] - want).abs() < 1e-5, "frame {k}: {} vs {want}", q[2 * k]);
+            assert_eq!(q[2 * k + 1], -q[2 * k], "frame {k} keeps its channels");
+        }
+        assert_eq!(&q[10..], &frames[30..], "past the fade the kept audio is untouched");
+    }
+
+    /// A splice whose kept audio is not converted yet finishes its fade on the next push, and the
+    /// ring never receives a frame before its fade is complete.
+    #[test]
+    fn a_splice_finishes_on_the_next_push() {
+        let cb = Arc::new(AtomicUsize::new(0));
+        let mut pb = OutputPlayback::new(0, 10_000, 1, cb).with_output_rate(1_000);
+        let (mut prod, mut cons) = RingBuffer::<f32>::new(RING_CAP);
+        // Playing: 10 frames in the ring.
+        pb.push_interleaved(&[0.5; 10], false, 0.0, 0, 0);
+        pb.flush_to_ring(&mut prod, 0);
+        assert_eq!(ring_used(&prod), 10);
+        pb.push_interleaved(&[1.0, 1.0, 1.0], false, 0.0, 0, 10);
+        pb.trim_frames(3);
+        assert_eq!(pb.queue_len(), 0);
+        pb.flush_to_ring(&mut prod, 10);
+        assert_eq!(ring_used(&prod), 10, "nothing leaves before its fade is complete");
+        pb.push_interleaved(&[-1.0; 8], false, 0.0, 0, 10);
+        let used = ring_used(&prod);
+        pb.flush_to_ring(&mut prod, used);
+        let got: Vec<f32> = std::iter::from_fn(|| cons.pop().ok()).skip(10).collect();
+        assert_eq!(got.len(), 8);
+        for (k, g) in got.iter().take(3).enumerate() {
+            let (w_in, w_out) = super::xfade_weights(k, 3);
+            assert!((g - (-w_in + w_out)).abs() < 1e-6, "{k}: {g}");
+        }
+        assert!(got[3..].iter().all(|&v| v == -1.0));
+    }
+
+    /// A device that ran dry while playing starts a recovery through the shared callback word (no
+    /// extra wiring); dry callbacks during the start-up prefill wait do not.
+    #[test]
+    fn a_starved_device_starts_a_recovery() {
+        let cb = Arc::new(AtomicUsize::new(0));
+        let (mut prod, cons) = RingBuffer::<f32>::new(RING_CAP);
+        let mut pb = OutputPlayback::new(64, 1_000, 1, cb.clone());
+        let mut playout = RingPlayout::new(cons, 1, cb.clone());
+        let mut data = vec![0.0f32; 32];
+        playout.fill(&mut data); // before any audio: not starvation
+        pb.push_interleaved(&[0.1; 64], false, 0.0, 0, ring_used(&prod));
+        let used = ring_used(&prod);
+        pb.flush_to_ring(&mut prod, used);
+        assert!(!pb.is_recovering());
+        playout.fill(&mut data);
+        playout.fill(&mut data);
+        pb.push_interleaved(&[0.1; 16], false, 0.0, 0, ring_used(&prod));
+        assert!(!pb.is_recovering(), "exactly drained is not starved");
+        let used = ring_used(&prod);
+        pb.flush_to_ring(&mut prod, used);
+        playout.fill(&mut data); // 16 of 32: dry
+        pb.push_interleaved(&[0.1; 16], false, 0.0, 0, ring_used(&prod));
+        assert!(pb.is_recovering());
+        assert_eq!(pb.recoveries(), 1);
+        assert_eq!(super::unpack_callback(cb.load(Ordering::Relaxed)), (32, 1));
+    }
+
+    /// While starved the held frame decays to silence instead of parking the speaker on a DC
+    /// offset; playback then ramps back in from silence.
+    #[test]
+    fn the_hold_decays_to_silence_while_starved() {
+        let (mut prod, cons) = RingBuffer::<f32>::new(RING_CAP);
+        let mut playout = RingPlayout::new(cons, 1, Arc::new(AtomicUsize::new(0)));
+        for _ in 0..64 {
+            prod.push(0.5).unwrap();
+        }
+        let mut data = vec![0.0f32; 64];
+        playout.fill(&mut data);
+        assert_eq!(data[63], 0.5);
+        let mut starved = vec![1.0f32; 256];
+        playout.fill(&mut starved);
+        assert!(starved[0] < 0.5 && starved[0] > 0.49, "{}", starved[0]);
+        for w in starved.windows(2) {
+            assert!(w[1] <= w[0]);
+        }
+        assert!(starved[HOLD_DECAY_FRAMES - 1].abs() < 1e-6);
+        assert!(starved[HOLD_DECAY_FRAMES..].iter().all(|&v| v == 0.0));
     }
 }

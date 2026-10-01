@@ -1,0 +1,22 @@
+# Maintainer spike for the zero-shot and singing voice-changer families (P3-H, docs/adr/0006-vc-zero-shot-singing.md):
+# export.py / sampler.py / parity.py per family, common.py, test_families.py. Not needed to build or run Sigil.
+# Versions are the ones the reports under reports/ were produced with. Install one package at a time on slow networks.
+torch==2.3.1          # dev rig: the cu121 build (pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121)
+torchaudio==2.3.1     # Kaldi fbank, sinc resampling (upstream front ends)
+onnx==1.17.0
+onnxruntime==1.19.2   # CPU parity and CPU cost
+transformers==4.39.3  # XLS-R (Seed-VC) and ContentVec (DDSP-SVC reference units)
+einops==0.8.0         # MeanVC2 DiT
+safetensors           # MeanVC2 checkpoint
+librosa==0.10.2.post1 # mel filter banks, resampling for the checks
+soundfile
+pyyaml
+numpy>=1.24,<2
+scipy
+pytest                # test_families.py
+# x-transformers is NOT installed: meanvc/x_transformers_shim.py carries the two functions MeanVC2 imports (v2.2.11).
+# GPU parity and cost run in separate environments, since each replaces the onnxruntime module:
+#   python -m venv --system-site-packages %LOCALAPPDATA%/sigil-dev-cache/venv-ort128-cuda
+#   ...venv-ort128-cuda/Scripts/python -m pip install --no-deps onnxruntime-gpu==1.28.0      (CUDA 13 + cuDNN 9 on PATH, see common.CUDA_DLL_DIRS)
+#   python -m venv --system-site-packages %LOCALAPPDATA%/sigil-dev-cache/venv-ort128-dml
+#   ...venv-ort128-dml/Scripts/python -m pip install --no-deps onnxruntime-directml==1.24.4

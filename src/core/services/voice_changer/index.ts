@@ -11,6 +11,7 @@ import { toast } from "react-toastify";
 import type { RustEpOutcomeEntry } from "@/types";
 import { devLog } from "@/utils/devLog";
 
+import { VoiceBench } from "./bench";
 import { effectiveCrossfadeMs } from "./chunkFrames";
 import {
     type AuxMicGate,
@@ -21,10 +22,22 @@ import {
     OUTPUT_BUFFER_STABLE,
     type WorkerPriority,
 } from "./contract";
+import { isVcShortcut, normalizeHotkeyVoices, vcShortcutAction } from "./hotkeys";
+import { BASELINE_CAPABILITIES, normalizeCapabilities, VC_COMMANDS, VC_EVENTS, type VcCapabilities, type VcTrtProgress } from "./ipc";
+import { VoiceLibrary } from "./library";
 import { epDisplayName, isVoiceChangerEpComponent, normalizeMetrics, type VoiceChangerMetrics } from "./metrics";
-import { adoptAdjustedParams, applyRustParams, toRustParams, type VoiceChangerParamsRust } from "./params";
+import {
+    adoptAdjustedParams,
+    applyRustParams,
+    applyRustParamsPatch,
+    toRustParams,
+    type VoiceChangerParamsRust,
+} from "./params";
+import { rvcProfilePatch } from "./presets";
+import { changedParamKeys, restartNeeded } from "./restart";
 import { RvcProfile, VoiceChangerState, VoiceChangerStateSchema } from "./schema";
-import { normalizeSlots, type VoiceChangerModelSlot } from "./slots";
+import { adjacentSlot, normalizeSlots, slotProblem, type VoiceChangerModelSlot } from "./slots";
+import { AUTOTUNE_PARAM_KEYS } from "./tuning";
 
 export type { VoiceChangerMetrics } from "./metrics";
 export type { VoiceChangerModelSlot } from "./slots";
@@ -51,6 +64,8 @@ const PARAMS_EVENT = "voice_changer:params";
 export const LEGACY_CONSENT_STORAGE_KEY = "sigil.vc.consent";
 /** At most one "settings were not applied" toast per this interval. */
 const SYNC_FAILURE_TOAST_INTERVAL_MS = 10_000;
+/** A finished TensorRT engine build (or cache hit) stays visible this long. */
+const TRT_DONE_VISIBLE_MS = 6_000;
 
 interface VoiceChangerServiceState {
     voiceChanger: VoiceChangerState;
@@ -63,6 +78,11 @@ interface VoiceChangerServiceState {
      * notice; `acknowledgeRvcConsent` or `dismissRvcConsent` clears it.
      */
     rvcConsentPending: boolean;
+    /** What this build runs (`voice_changer_get_capabilities`; the baseline until the reply). */
+    capabilities: VcCapabilities;
+    capabilitiesLoaded: boolean;
+    /** TensorRT engine builds of the current start, one row per session component. */
+    trt: VcTrtProgress[];
 }
 
 /** Reply of one `set_voice_changer_params`: null when Rust refused the params. */
@@ -124,6 +144,24 @@ export class VoiceChangerService {
         isRunning: false,
         hydrated: false,
         rvcConsentPending: false,
+        capabilities: { ...BASELINE_CAPABILITIES },
+        capabilitiesLoaded: false,
+        trt: [],
+    });
+
+    /** The voice library: slots, imports, rename / duplicate / delete / merge. */
+    public readonly library = new VoiceLibrary({
+        selectedVoiceDir: () => this.state.voiceChanger.rvcSlotDir,
+        selectVoice: (v) => this.selectVoice(v),
+        clearVoice: () => this.update({ rvcSlotDir: "", slotId: "" }),
+        isRunning: () => this.state.isRunning,
+    });
+
+    /** Autotune, "Benchmark this PC" and live recording. */
+    public readonly bench = new VoiceBench({
+        settings: () => this.state.voiceChanger,
+        isRunning: () => this.state.isRunning,
+        applyTuning: (params) => this.applyTuning(params),
     });
 
     private unlisteners: UnlistenFn[] = [];
@@ -131,6 +169,14 @@ export class VoiceChangerService {
 
     /** Harness params the running engine was last started (or restarted) with; null when unknown. */
     private appliedHarness: HarnessParams | null = null;
+    /**
+     * The params the running engine was started with (after Rust's adjustments), to tell whether a
+     * later change needs a restart (`restart.ts`); null when stopped or unknown.
+     */
+    private startedParams: VoiceChangerParamsRust | null = null;
+    /** A restart started by `update` (restarts are serialized; resolves whether it worked, never rejects). */
+    private restartInflight: Promise<boolean> | null = null;
+    private trtTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     /**
      * Params sync is serialized: at most one `set` is in flight. A change made meanwhile only marks
@@ -149,6 +195,8 @@ export class VoiceChangerService {
      */
     private lastSent: VoiceChangerParamsRust | null = null;
     private lastSyncFailureToastAt = 0;
+    /** A `voice_changer:params` arrived while a `set` was in flight: re-read once the sync is done. */
+    private paramsEventPending = false;
 
     /** A `start()` call is between its params sync and Rust's reply. */
     private starting = false;
@@ -168,15 +216,22 @@ export class VoiceChangerService {
                 this.runId++;
                 this.state.isRunning = true;
                 this.state.voiceChanger.enabled = true;
+                this.bench.onEngineStarted();
             }),
             await listen("voice_changer:stopped", () => {
                 this.state.isRunning = false;
                 this.state.voiceChanger.enabled = false;
+                this.startedParams = null;
+                this.clearTrt();
+                this.bench.onEngineStopped();
             }),
             await listen<VoiceChangerConversionErrorPayload>("voice_changer:error", (ev) => this.onError(ev.payload)),
             await listen<unknown>(PARAMS_EVENT, (ev) => void this.onParamsEvent(ev.payload)),
             await listen<RustEpOutcomeEntry>(EP_OUTCOME_EVENT, (ev) => this.onEpOutcome(ev.payload)),
+            await listen<VcTrtProgress>(VC_EVENTS.trtProgress, (ev) => this.onTrtProgress(ev.payload)),
         );
+        await this.library.init();
+        await this.bench.init();
 
         try {
             this.state.isRunning = await invoke<boolean>("plugin:voice-changer|is_voice_changer_running");
@@ -186,6 +241,23 @@ export class VoiceChangerService {
 
         await this.hydrate();
         await this.migrateLegacyConsent();
+        await this.refreshCapabilities();
+    }
+
+    /**
+     * Re-read what this build runs. Some values depend on installed models (e.g. PESTO), so the
+     * inspector refreshes this when it opens and after model installs.
+     */
+    async refreshCapabilities(): Promise<VcCapabilities> {
+        try {
+            const caps = normalizeCapabilities(await invoke<unknown>(VC_COMMANDS.getCapabilities));
+            this.state.capabilities = caps;
+            this.state.capabilitiesLoaded = true;
+            return caps;
+        } catch (e) {
+            devLog("[VoiceChanger] Could not read the capabilities:", e);
+            return this.state.capabilities;
+        }
     }
 
     /** Replace the shown settings with Rust's (every field, including the input device). */
@@ -198,7 +270,10 @@ export class VoiceChangerService {
             this.lastSent = toRustParams(vc);
             this.state.hydrated = true;
             // Already running (e.g. webview reload): the live harness was built from these params.
-            if (this.state.isRunning) this.appliedHarness = harnessParamsOf(vc);
+            if (this.state.isRunning) {
+                this.appliedHarness = harnessParamsOf(vc);
+                this.startedParams = this.lastSent;
+            }
             return true;
         } catch (e) {
             devLog("[VoiceChanger] Could not read settings:", e);
@@ -259,6 +334,15 @@ export class VoiceChangerService {
             case "worker_error":
                 toast.error(i18n.t("voice_changer.toast_error_stopped", { message: msg }));
                 break;
+            case "device_lost":
+                toast.warning(i18n.t("voice_changer.toast_warning_device_lost", { message: msg }));
+                break;
+            case "device_restored":
+                toast.info(i18n.t("voice_changer.toast_info_device_restored", { message: msg }));
+                break;
+            case "denoiser_warning":
+                toast.warning(i18n.t("voice_changer.toast_warning_denoiser", { message: msg }));
+                break;
             default:
                 toast.warning(i18n.t("voice_changer.toast_error_generic", { message: msg || code }));
         }
@@ -272,7 +356,13 @@ export class VoiceChangerService {
      */
     private async onParamsEvent(payload: unknown) {
         if (!payload || typeof payload !== "object") return;
-        if (this.syncLoop || !this.lastSent) return;
+        if (!this.lastSent) return;
+        if (this.syncLoop) {
+            // The reply of that `set` is newer only when Rust handled it after this change (e.g. a
+            // failed voice switch going back to the voice that plays): read once more afterwards.
+            this.paramsEventPending = true;
+            return;
+        }
         const gen = this.sendGen;
         let current: unknown;
         try {
@@ -310,6 +400,46 @@ export class VoiceChangerService {
         );
     }
 
+    /** A TensorRT engine build of the starting engine (first start: up to a minute; later: the cache). */
+    private onTrtProgress(p: VcTrtProgress) {
+        if (!p || typeof p !== "object" || typeof p.component !== "string" || !p.component) return;
+        // The event is process-wide: the autotuner and "Benchmark this PC" (both only while the voice
+        // changer is stopped) build engines too, and a stopped engine's worker can still be building.
+        if (!this.starting && !this.state.isRunning) return;
+        if (this.bench.state.autotune.running || this.bench.state.benchmark.running) return;
+        const row: VcTrtProgress = {
+            component: p.component,
+            stage: p.stage,
+            fraction: typeof p.fraction === "number" && Number.isFinite(p.fraction) ? Math.min(1, Math.max(0, p.fraction)) : 0,
+            message: typeof p.message === "string" ? p.message : "",
+            elapsed_ms: typeof p.elapsed_ms === "number" && Number.isFinite(p.elapsed_ms) ? p.elapsed_ms : 0,
+        };
+        const list = this.state.trt;
+        const i = list.findIndex((r) => r.component === row.component);
+        if (i >= 0) list[i] = row;
+        else list.push(row);
+        const timer = this.trtTimers.get(row.component);
+        if (timer) clearTimeout(timer);
+        this.trtTimers.delete(row.component);
+        // A failure stays until the next start (it explains the EP fallback); the rest fade out.
+        if (row.stage === "done" || row.stage === "cache_hit") {
+            this.trtTimers.set(
+                row.component,
+                setTimeout(() => {
+                    this.trtTimers.delete(row.component);
+                    const j = this.state.trt.findIndex((r) => r.component === row.component && r.stage === row.stage);
+                    if (j >= 0) this.state.trt.splice(j, 1);
+                }, TRT_DONE_VISIBLE_MS),
+            );
+        }
+    }
+
+    private clearTrt() {
+        for (const t of this.trtTimers.values()) clearTimeout(t);
+        this.trtTimers.clear();
+        this.state.trt = [];
+    }
+
     async getMetrics(): Promise<VoiceChangerMetrics | null> {
         try {
             return normalizeMetrics(await invoke<unknown>("plugin:voice-changer|get_voice_changer_metrics"));
@@ -337,13 +467,17 @@ export class VoiceChangerService {
         // Snapshot taken together with the params sent below, so later edits compare against what the harness got.
         const harness = harnessParamsOf(vc);
         this.starting = true;
+        this.clearTrt();
         try {
             await this.syncParams();
+            // As Rust holds them after that sync (its adjustments adopted): what the engine starts with.
+            const started = toRustParams(vc);
 
             // The input device also travels in the params (and is persisted there); passing it here
             // keeps start independent of whether that sync reached Rust.
             await invoke("plugin:voice-changer|start_voice_changer", { inputDevice: vc.inputDevice });
             this.appliedHarness = harness;
+            this.startedParams = started;
             devLog("[VoiceChanger] Started");
             return true;
         } catch (error) {
@@ -364,6 +498,11 @@ export class VoiceChangerService {
             await invoke("plugin:voice-changer|stop_voice_changer");
             this.state.isRunning = false;
             this.state.voiceChanger.enabled = false;
+            this.startedParams = null;
+            // Rust counts the engine as stopped from now on; its `stopped` event can come much later
+            // (a worker still loading a model) or never (a restart supersedes that worker).
+            this.clearTrt();
+            this.bench.onEngineStopped();
             devLog("[VoiceChanger] Stopped");
         } catch (error) {
             console.error("[VoiceChanger] Failed to stop:", error);
@@ -389,32 +528,110 @@ export class VoiceChangerService {
     }
 
     /**
-     * Apply RVC Streamer / Low latency / Quality profile (RVC EP + F0 + index + extra context + VRAM).
-     * Extra context follows the plan's minimal / small / higher split (HuBERT re-encodes it every tick).
-     * Structural fields restart the engine when running.
+     * Apply an RVC preset (Streamer / Low latency / Quality / Studio-TRT: EP, F0, index, extra
+     * context, VRAM cap; `presets.ts`). A running RVC engine restarts when its shape changed.
      */
     async applyRvcProfile(profile: RvcProfile) {
+        await this.update(rvcProfilePatch(profile));
+    }
+
+    /**
+     * Change settings and sync them; a running engine restarts only when a changed param is read at
+     * start in the running mode (`restart.ts`): voice, F0 method and F0 range switch without a restart
+     * in RVC mode, the voice controls apply live. Resolves whether Rust accepted the params and a
+     * restart they needed worked; never rejects (a failure was already shown to the user).
+     */
+    async update(patch: Partial<VoiceChangerState>): Promise<boolean> {
         const vc = this.state.voiceChanger;
-        vc.rvcProfile = profile;
-        if (profile === "streamer") {
-            vc.rvcExecutionProvider = "cpu";
-            vc.pitchExtractor = "fcpe";
-            vc.indexRate = 0;
-            vc.extraContextMs = 64;
-        } else if (profile === "low_latency") {
-            vc.rvcExecutionProvider = "cuda";
-            vc.pitchExtractor = "rmvpe";
-            vc.indexRate = 0;
-            vc.extraContextMs = 96;
-            vc.vramCapMb = 768;
-        } else {
-            vc.rvcExecutionProvider = "cuda";
-            vc.pitchExtractor = "rmvpe";
-            vc.indexRate = 0.5;
-            vc.extraContextMs = 192;
-            vc.vramCapMb = 1536;
+        const before = toRustParams(vc);
+        Object.assign(vc, patch);
+        const ok = await this.syncParams();
+        const restarted = await this.restartForChanges(before);
+        return ok && restarted;
+    }
+
+    /**
+     * Restart a running engine when the settings differ from what it started with in a way it cannot
+     * apply live (edits made earlier without a restart count too). Restarts are serialized: a change
+     * that arrives while one is in flight is judged against the engine that restart starts. Resolves
+     * `false` only when a needed restart failed; never rejects.
+     */
+    private async restartForChanges(before: VoiceChangerParamsRust): Promise<boolean> {
+        // A failed restart belongs to the change that caused it, not to the ones waiting here.
+        while (this.restartInflight) await this.restartInflight.catch(() => false);
+        if (!this.state.isRunning) return true;
+        const vc = this.state.voiceChanger;
+        const changed = changedParamKeys(this.startedParams ?? before, toRustParams(vc));
+        if (!restartNeeded(changed, vc.mode)) return true;
+        const run = this.restartIfRunning().finally(() => {
+            if (this.restartInflight === run) this.restartInflight = null;
+        });
+        this.restartInflight = run;
+        return run;
+    }
+
+    /**
+     * Use a voice (a slot-store row, or any folder). While RVC runs this is a hot switch (the voice
+     * loads in the background and is crossfaded in). `ensureRvc` also switches the mode to RVC.
+     */
+    async selectVoice(voice: { id?: string; path: string }, opts: { ensureRvc?: boolean } = {}): Promise<boolean> {
+        const patch: Partial<VoiceChangerState> = { rvcSlotDir: voice.path, slotId: voice.id ?? "" };
+        if (opts.ensureRvc && this.state.voiceChanger.mode !== "rvc") patch.mode = "rvc";
+        return this.update(patch);
+    }
+
+    /**
+     * Apply the autotuner's params patch (engine-shape fields only, `tuning.ts` `AUTOTUNE_PARAM_KEYS`),
+     * restarting a running engine when its shape changed.
+     */
+    async applyTuning(params: Readonly<Record<string, unknown>>): Promise<boolean> {
+        const vc = this.state.voiceChanger;
+        const { next, applied } = applyRustParamsPatch(vc, params, AUTOTUNE_PARAM_KEYS);
+        if (applied.length === 0) return false;
+        const patch: Partial<VoiceChangerState> = {};
+        for (const [k, v] of Object.entries(next) as [keyof VoiceChangerState, unknown][]) {
+            if (!Object.is(v, vc[k])) (patch as Record<string, unknown>)[k] = v;
         }
-        await this.syncParamsAndRestartIfRunning();
+        return this.update(patch);
+    }
+
+    /**
+     * A voice-changer hotkey (`hotkeys.ts`; dispatched by the keyboard service): start / stop, the
+     * next / previous voice, or voice hotkey N. A voice hotkey also switches to RVC mode.
+     */
+    async runShortcut(key: string): Promise<void> {
+        if (!isVcShortcut(key)) return;
+        const action = vcShortcutAction(key);
+        if (action.kind === "toggle") {
+            await this.toggle().catch(() => {});
+            // The notice is shown in the voice-changer panel, which may not be open while a game has focus.
+            if (this.state.rvcConsentPending) toast.info(i18n.t("voice_changer.hotkey_consent_needed"));
+            return;
+        }
+        const slots = await this.library.refresh();
+        const formats = this.state.capabilities.slot_formats;
+        const assigned = action.kind === "voice" ? hotkeyVoices()[action.index] : "";
+        const target =
+            action.kind === "step"
+                ? adjacentSlot(slots, this.state.voiceChanger.rvcSlotDir, action.step, formats)
+                : assigned
+                  ? slots.find((s) => s.id === assigned)
+                  : undefined;
+        if (!target) {
+            toast.info(
+                i18n.t(action.kind === "step" ? "voice_changer.hotkey_no_voices" : "voice_changer.hotkey_no_voice_assigned"),
+            );
+            return;
+        }
+        const problem = slotProblem(target, formats);
+        if (problem) {
+            toast.warning(i18n.t("voice_changer.hotkey_voice_unusable", { name: target.name, problem }));
+            return;
+        }
+        // A refused sync or a failed restart was already shown to the user: no "selected" toast then.
+        const ok = await this.selectVoice(target, { ensureRvc: true });
+        if (this.state.rvcConsentPending) toast.info(i18n.t("voice_changer.hotkey_consent_needed"));
+        if (ok) toast.info(i18n.t("voice_changer.hotkey_voice_selected", { name: target.name }), { autoClose: 1500 });
     }
 
     /** Voice folders under `app_data/voice-changer/models/` (sorted by name; empty on error). */
@@ -429,11 +646,12 @@ export class VoiceChangerService {
 
     /**
      * Switch the RVC voice folder. Rust applies that voice's saved `slot.json` (pitch, index, protect,
-     * F0, …) and the reply brings those values into the UI; a running engine restarts with the voice.
+     * F0, …) and the reply brings those values into the UI; a running RVC engine switches to the voice
+     * without a restart.
      */
     async selectModelSlot(path: string) {
-        this.state.voiceChanger.rvcSlotDir = path;
-        await this.syncParamsAndRestartIfRunning();
+        const slot = this.library.slotFor(path);
+        await this.selectVoice({ id: slot?.id ?? "", path });
     }
 
     async captureDebug(): Promise<Record<string, unknown> | null> {
@@ -453,18 +671,29 @@ export class VoiceChangerService {
     /**
      * Restart if running so chunk size / buffer caps take effect. A restart into RVC without the
      * voice-permission acknowledgement leaves the engine stopped with `rvcConsentPending` set.
+     * Resolves `false` when the start failed (`start()` already told the user); never rejects, so
+     * fire-and-forget callers (inspector controls, hotkeys) leave no unhandled rejection.
      */
-    async restartIfRunning() {
-        if (!this.state.isRunning) return;
+    async restartIfRunning(): Promise<boolean> {
+        if (!this.state.isRunning) return true;
         await this.stop();
         await new Promise((r) => setTimeout(r, 80));
-        await this.start();
+        try {
+            await this.start();
+            return true;
+        } catch {
+            return false;
+        }
     }
 
-    /** Sync Rust params then restart the engine when running (devices, mode, chunk size, bridges). */
-    async syncParamsAndRestartIfRunning() {
-        await this.syncParams();
-        await this.restartIfRunning();
+    /**
+     * Sync Rust params then restart the engine when running (devices, mode, chunk size, bridges).
+     * Resolves whether both worked; never rejects.
+     */
+    async syncParamsAndRestartIfRunning(): Promise<boolean> {
+        const ok = await this.syncParams();
+        const restarted = await this.restartIfRunning();
+        return ok && restarted;
     }
 
     /**
@@ -489,6 +718,11 @@ export class VoiceChangerService {
                 effectiveCrossfadeMs(applied.crossfadeMs, cur.chunkFrames, chunkMs) ===
                 effectiveCrossfadeMs(cur.crossfadeMs, cur.chunkFrames, chunkMs)
             ) {
+                // The running engine is equivalent to the new value: later changes must not count it
+                // as a pending restart (`update`).
+                if (this.startedParams) {
+                    this.startedParams = { ...this.startedParams, crossfade_ms: toRustParams(this.state.voiceChanger).crossfade_ms };
+                }
                 return;
             }
         }
@@ -526,6 +760,10 @@ export class VoiceChangerService {
         } finally {
             // Same turn as the last `syncDirty` check: a later `sendParams` starts a new loop.
             this.syncLoop = null;
+            if (this.paramsEventPending) {
+                this.paramsEventPending = false;
+                void this.onParamsEvent({});
+            }
         }
     }
 
@@ -555,6 +793,7 @@ export class VoiceChangerService {
         const { patch, adjusted } = adoptAdjustedParams(vc, sent, effective);
         if (adjusted.length === 0) return;
         Object.assign(vc, patch);
+        if (adjusted.includes("rvc_slot_dir") && !adjusted.includes("slot_id")) void this.alignSlotId();
         if (this.lastSent === sent) {
             // As the state now sends them (e.g. an unset RVC EP shows as the profile default).
             const now = toRustParams(vc);
@@ -563,6 +802,19 @@ export class VoiceChangerService {
             this.lastSent = known;
         }
         devLog("[VoiceChanger] Rust adjusted:", adjusted.join(", "));
+    }
+
+    /**
+     * Rust moved the selection to another folder without naming its slot (a failed voice switch went
+     * back to the voice that plays): the slot id follows the folder, as `selectVoice` sets them.
+     */
+    private async alignSlotId() {
+        if (!this.library.state.slots) await this.library.refresh();
+        const vc = this.state.voiceChanger;
+        const id = this.library.slotFor(vc.rvcSlotDir)?.id ?? "";
+        if (id === vc.slotId) return;
+        vc.slotId = id;
+        await this.sendParams();
     }
 
     private reportSyncFailure(error: unknown) {
@@ -634,6 +886,18 @@ export class VoiceChangerService {
 
     dispose() {
         for (const u of this.unlisteners.splice(0)) u();
+        this.library.dispose();
+        this.bench.dispose();
+        this.clearTrt();
         this.initialized = false;
     }
+}
+
+/**
+ * Slot ids of voice hotkeys 1-4 (`BackendState.vcHotkeyVoices`, added by the P3 INTEGRATE step;
+ * empty until then).
+ */
+export function hotkeyVoices(): string[] {
+    const state = typeof window !== "undefined" ? (window.ApiServer?.state as unknown as Record<string, unknown> | undefined) : undefined;
+    return normalizeHotkeyVoices(state?.vcHotkeyVoices);
 }

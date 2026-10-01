@@ -6,12 +6,23 @@
 //! against the storage before any element is read. Legacy (pre-zip) pickles and TorchScript
 //! archives are refused with their own error codes.
 //!
-//! RVC inference checkpoints are a dict with `weight` (parameter name -> tensor, usually fp16) and
-//! metadata (`config`, `sr`, `f0`, `version`, `info`; Applio adds `embedder_model`, `vocoder`,
-//! `speakers_id`, ...). Keys written by `torch.nn.utils.parametrizations.weight_norm`
-//! (`X.parametrizations.weight.original0/1`) are normalised to RVC's `X.weight_g` / `X.weight_v`.
-//! Only the metadata entries the importer reads ([`meta::USED_KEYS`]) are converted, all under one
-//! byte-counting [`JsonBudget`]; other entries are skipped unread.
+//! Three shapes of checkpoint hold an RVC generator ([`TorchCheckpoint::kind`]):
+//! - `inference`: RVC / Applio / Mangio / w-okada exports, a dict with `weight` (parameter name ->
+//!   tensor, usually fp16) and metadata (`config`, `sr`, `f0`, `version`, `info`; Applio adds
+//!   `embedder_model`, `vocoder`, `speakers_id`, ...);
+//! - `training`: a training checkpoint (`G_*.pth`: `model`, `iteration`, `optimizer`,
+//!   `learning_rate`), whose `model` state dict is the generator (no config: the template is
+//!   matched by shapes);
+//! - `state_dict`: a bare dict of generator tensors.
+//!
+//! A state dict saved by `torch.save` carries its `_metadata` version table through a `BUILD`,
+//! which the [`pickle`] VM accepts in that shape only and discards.
+//!
+//! Keys written by `torch.nn.utils.parametrizations.weight_norm`
+//! (`X.parametrizations.weight.original0/1`) are normalised to RVC's `X.weight_g` / `X.weight_v`,
+//! and a `module.` prefix on every key (a DataParallel save) is dropped. Only the metadata entries
+//! the importer reads ([`meta::USED_KEYS`]) are converted, all under one byte-counting
+//! [`JsonBudget`]; other entries (an optimizer state, say) are never read.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek};
@@ -28,9 +39,12 @@ use super::{ErrorCode, ImportError};
 const MAX_TENSOR_ELEMENTS: u64 = 1 << 30;
 /// Largest `data.pkl` accepted.
 const MAX_PICKLE_BYTES: u64 = 64 << 20;
-/// Most weights accepted (RVC v2: 457) and top-level entries (RVC: ~10).
+/// Most weights accepted (RVC v2: 457; a training checkpoint's generator: ~560) and top-level
+/// entries (RVC: ~10; a bare state dict holds its weights at the top level).
 const MAX_WEIGHTS: usize = 16_384;
-const MAX_TOP_LEVEL: usize = 4096;
+const MAX_TOP_LEVEL: usize = MAX_WEIGHTS;
+/// The tensor that makes a dict an RVC generator (every version has it).
+const GENERATOR_KEY: &str = "enc_p.emb_phone.weight";
 /// Longest weight name accepted (RVC's are under 64 bytes).
 const MAX_WEIGHT_NAME: usize = 512;
 
@@ -43,7 +57,24 @@ pub struct TorchCheckpoint<R: Read + Seek> {
     /// The top-level entries the importer reads ([`meta::USED_KEYS`]), as JSON (non-plain values,
     /// and values over the metadata budget, are dropped; long strings are cut).
     pub meta: serde_json::Map<String, serde_json::Value>,
+    /// `inference`, `training` or `state_dict` (see the module docs).
+    pub kind: &'static str,
     storages: HashMap<String, Arc<Vec<u8>>>,
+}
+
+/// Whether every value of the dict `id` is a tensor and it holds an RVC generator's
+/// [`GENERATOR_KEY`] (possibly under a `module.` prefix).
+fn is_generator_dict(root: &Pickled, id: pickle::Id) -> bool {
+    let Some(items) = root.str_items(id) else {
+        return false;
+    };
+    let Value::Dict(all) = root.get(id) else {
+        return false;
+    };
+    items.len() == all.len()
+        && !items.is_empty()
+        && items.iter().all(|(_, v)| matches!(root.get(*v), Value::Tensor(_)))
+        && items.iter().any(|(k, _)| *k == GENERATOR_KEY || k.strip_prefix("module.") == Some(GENERATOR_KEY))
 }
 
 fn invalid(msg: impl Into<String>) -> ImportError {
@@ -128,16 +159,20 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
             .str_items(root.root)
             .ok_or_else(|| ImportError::new(ErrorCode::NotACheckpoint, "the checkpoint is not a dict"))?;
 
-        let weights_id = match items.iter().find(|(k, _)| *k == "weight") {
-            Some((_, id)) => *id,
-            None if items.iter().any(|(k, _)| *k == "model") => {
-                return Err(ImportError::new(
-                    ErrorCode::NotACheckpoint,
-                    "this is a training checkpoint (G_*.pth) without the model settings; use the small \
-                     inference model RVC / Applio exports to the weights folder",
-                ))
-            }
-            None => return Err(ImportError::new(ErrorCode::NotACheckpoint, "no 'weight' entry: not an RVC voice checkpoint")),
+        let (weights_id, kind) = match items.iter().find(|(k, _)| *k == "weight") {
+            Some((_, id)) => (*id, "inference"),
+            None => match items.iter().find(|(k, _)| *k == "model") {
+                Some((_, id)) if is_generator_dict(&root, *id) => (*id, "training"),
+                Some(_) => {
+                    return Err(ImportError::new(
+                        ErrorCode::NotACheckpoint,
+                        "a training checkpoint without an RVC generator (a discriminator D_*.pth?); import the voice's \
+                         G_*.pth or the small model RVC / Applio export to the weights folder",
+                    ))
+                }
+                None if is_generator_dict(&root, root.root) => (root.root, "state_dict"),
+                None => return Err(ImportError::new(ErrorCode::NotACheckpoint, "no 'weight' entry: not an RVC voice checkpoint")),
+            },
         };
         let weight_count = dict_len(&root, weights_id);
         if weight_count > MAX_WEIGHTS {
@@ -146,6 +181,8 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
         let weight_items = root
             .str_items(weights_id)
             .ok_or_else(|| ImportError::new(ErrorCode::NotACheckpoint, "'weight' is not a dict"))?;
+        // A DataParallel save prefixes every key with `module.`.
+        let strip_module = !weight_items.is_empty() && weight_items.iter().all(|(k, _)| k.starts_with("module."));
         let mut tensors = BTreeMap::new();
         for (key, id) in weight_items {
             if key.len() > MAX_WEIGHT_NAME {
@@ -154,6 +191,7 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
             let Value::Tensor(t) = root.get(id) else {
                 return Err(invalid(format!("weight {key} is not a tensor")));
             };
+            let key = if strip_module { &key["module.".len()..] } else { key };
             let k = normalize_key(key);
             if tensors.insert(k.clone(), TensorRef::clone(t)).is_some() {
                 return Err(invalid(format!("duplicate weight {k}")));
@@ -162,15 +200,17 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
         // Only what meta.rs reads, under one budget for the whole checkpoint.
         let mut budget = JsonBudget::METADATA;
         let mut meta = serde_json::Map::new();
-        for (key, id) in items {
-            if !meta::USED_KEYS.contains(&key) {
-                continue;
-            }
-            if let Some(v) = root.to_json(id, &mut budget) {
-                meta.insert(key.to_string(), v);
+        if kind != "state_dict" {
+            for (key, id) in items {
+                if !meta::USED_KEYS.contains(&key) {
+                    continue;
+                }
+                if let Some(v) = root.to_json(id, &mut budget) {
+                    meta.insert(key.to_string(), v);
+                }
             }
         }
-        Ok(Self { zip, prefix, tensors, meta, storages: HashMap::new() })
+        Ok(Self { zip, prefix, tensors, meta, kind, storages: HashMap::new() })
     }
 
     pub fn tensor_names(&self) -> impl Iterator<Item = &str> {
@@ -348,6 +388,7 @@ pub(crate) mod tests {
     use super::super::zipguard::tests::build_zip;
     use super::*;
     use std::io::Cursor;
+    use std::path::Path;
     use zip::CompressionMethod;
 
     /// A torch-format zip holding `pickle` and the given storages.
@@ -483,6 +524,89 @@ pub(crate) mod tests {
         }
         let err = open(torch_zip(&checkpoint(w).stop(), &[("0", vec![0u8; 4])])).err().unwrap();
         assert_eq!(err.code, ErrorCode::TensorInvalid, "{err}");
+    }
+
+    /// Two generator tensors (the second a parametrized weight_norm key), optionally prefixed.
+    fn generator_entries(prefix: &str) -> P {
+        P::new()
+            .str(&format!("{prefix}enc_p.emb_phone.weight"))
+            .tensor("FloatStorage", "0", 4, 0, &[2, 2], &[2, 1])
+            .str(&format!("{prefix}dec.ups.0.parametrizations.weight.original0"))
+            .tensor("FloatStorage", "1", 2, 0, &[2], &[1])
+    }
+
+    fn storages() -> Vec<(&'static str, Vec<u8>)> {
+        let f32s = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        vec![("0", f32s(&[1.0, 2.0, 3.0, 4.0])), ("1", f32s(&[5.0, 6.0]))]
+    }
+
+    #[test]
+    fn training_checkpoints_and_bare_state_dicts() {
+        // G_*.pth: {"model": {...}, "iteration": 5, "optimizer": {...}, "sr": "40k"}; the optimizer
+        // state (tensors of its own) is never read.
+        let pkl = P::new()
+            .op(b'}')
+            .op(b'(')
+            .str("model")
+            .op(b'}')
+            .op(b'(')
+            .concat(generator_entries(""))
+            .op(b'u')
+            .str("iteration")
+            .int(5)
+            .str("optimizer")
+            .op(b'}')
+            .str("exp_avg")
+            .tensor("FloatStorage", "9", 1, 0, &[1], &[1])
+            .op(b's')
+            .str("sr")
+            .str("40k")
+            .op(b'u')
+            .stop();
+        let mut ck = open(torch_zip(&pkl, &storages())).unwrap();
+        assert_eq!(ck.kind, "training");
+        assert_eq!(ck.len(), 2);
+        assert!(ck.has("dec.ups.0.weight_g"));
+        assert_eq!(ck.read_f32("enc_p.emb_phone.weight").unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(ck.meta.get("sr"), Some(&serde_json::json!("40k")));
+
+        // A bare state dict saved from DataParallel: the `module.` prefix is dropped.
+        let pkl = P::new().op(b'}').op(b'(').concat(generator_entries("module.")).op(b'u').stop();
+        let mut ck = open(torch_zip(&pkl, &storages())).unwrap();
+        assert_eq!(ck.kind, "state_dict");
+        assert!(ck.meta.is_empty());
+        assert_eq!(ck.read_f32("dec.ups.0.weight_g").unwrap(), vec![5.0, 6.0]);
+
+        // A discriminator checkpoint, and a dict of tensors that is not a generator.
+        let pkl = P::new().op(b'}').str("model").op(b'}').str("disc.w").tensor("FloatStorage", "0", 4, 0, &[4], &[1]).op(b's').op(b's').stop();
+        let err = open(torch_zip(&pkl, &storages())).err().unwrap();
+        assert_eq!(err.code, ErrorCode::NotACheckpoint);
+        assert!(err.message.contains("discriminator"), "{err}");
+        let pkl = P::new().op(b'}').str("other.weight").tensor("FloatStorage", "0", 4, 0, &[4], &[1]).op(b's').stop();
+        assert_eq!(open(torch_zip(&pkl, &storages())).err().unwrap().code, ErrorCode::NotACheckpoint);
+        // An inference export keeps working with a `weight` entry next to `model`-like keys.
+        let pkl = checkpoint(generator_entries("")).stop();
+        assert_eq!(open(torch_zip(&pkl, &storages())).unwrap().kind, "inference");
+    }
+
+    /// Real `torch.save` output (`test-fixtures/vc/fuzz/torch-made`, made with PyTorch 2.3.1): a
+    /// state dict pickles its `_metadata` table with `BUILD`, which every training checkpoint and
+    /// bare state dict carries; all three shapes are read, and every tensor matches PyTorch's.
+    #[test]
+    fn real_torch_saves_are_read() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures").join("vc").join("fuzz").join("torch-made");
+        let expected: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("expected.json")).unwrap()).unwrap();
+        for (file, kind, table) in [("state-dict.pth", "state_dict", "state_dict"), ("data-parallel.pth", "state_dict", "state_dict"), ("G_7.pth", "training", "G_7")] {
+            let mut ck = TorchCheckpoint::open(std::fs::File::open(dir.join(file)).unwrap()).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(ck.kind, kind, "{file}");
+            let want = expected[table].as_object().unwrap();
+            assert_eq!(ck.len(), want.len(), "{file}: {:?}", ck.tensor_names().collect::<Vec<_>>());
+            for (name, values) in want {
+                let values: Vec<f32> = values.as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect();
+                assert_eq!(ck.read_f32(name).unwrap_or_else(|e| panic!("{file} {name}: {e}")), values, "{file} {name}");
+            }
+            assert!(ck.has("dec.conv_post.weight_g") && ck.has("dec.ups.0.weight_v"), "{file}: weight_norm keys normalised");
+        }
     }
 
     #[test]

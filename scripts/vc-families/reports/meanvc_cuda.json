@@ -1,0 +1,415 @@
+{
+  "family": "meanvc",
+  "model": "MeanVC2 40ms_40ms (HF ASLP-lab/MeanVC2 @39cdd195)",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.28.0",
+    "ep": "cuda"
+  },
+  "threads": 2,
+  "files": {
+    "fbank": "fbank.onnx",
+    "asr": "asr.onnx",
+    "gtm": "gtm.onnx",
+    "dit": "dit.onnx",
+    "dit_step": "dit_step.onnx",
+    "vocos": "vocos.onnx"
+  },
+  "parity": {
+    "fbank_utterance": {
+      "snr_db": 109.44,
+      "max_abs": 0.00317,
+      "rel_l2": 3.37e-06,
+      "cosine": 1.0,
+      "ref_rms": 16.07,
+      "pass": true
+    },
+    "asr_12_calls": {
+      "snr_db": 119.25,
+      "max_abs": 1.24e-05,
+      "rel_l2": 1.09e-06,
+      "cosine": 1.0,
+      "ref_rms": 1.62,
+      "pass": true
+    },
+    "asr_att_cache_after": {
+      "snr_db": 118.04,
+      "max_abs": 1.19e-05,
+      "rel_l2": 1.25e-06,
+      "cosine": 1.0,
+      "ref_rms": 1.152,
+      "pass": true
+    },
+    "gtm": {
+      "snr_db": 138.52,
+      "max_abs": 4.77e-07,
+      "rel_l2": 1.19e-07,
+      "cosine": 1.0,
+      "ref_rms": 0.5724,
+      "pass": true
+    },
+    "dit_5_calls": {
+      "snr_db": 123.51,
+      "max_abs": 2.98e-06,
+      "rel_l2": 6.68e-07,
+      "cosine": 1.0,
+      "ref_rms": 1.129,
+      "pass": true
+    },
+    "chain_bn_up": {
+      "snr_db": 104.25,
+      "max_abs": 0.000134,
+      "rel_l2": 6.13e-06,
+      "cosine": 1.0,
+      "ref_rms": 1.703,
+      "pass": true
+    },
+    "chain_mel": {
+      "snr_db": 102.73,
+      "max_abs": 6.74e-05,
+      "rel_l2": 7.3e-06,
+      "cosine": 1.0,
+      "ref_rms": 0.4251,
+      "pass": true
+    },
+    "chain_audio": {
+      "snr_db": 54.64,
+      "max_abs": 0.00947,
+      "rel_l2": 0.00185,
+      "cosine": 0.999998282,
+      "ref_rms": 0.1071,
+      "logmel": {
+        "snr_db": 79.81,
+        "max_abs": 0.0794,
+        "rel_l2": 0.000102,
+        "cosine": 0.999999995,
+        "ref_rms": 7.959
+      },
+      "pass": true
+    },
+    "vocos_24_frames": {
+      "snr_db": 92.43,
+      "max_abs": 2e-07,
+      "rel_l2": 2.39e-05,
+      "cosine": 1.0,
+      "ref_rms": 0.0004784,
+      "logmel": {
+        "snr_db": 134.29,
+        "max_abs": 1.53e-05,
+        "rel_l2": 1.93e-07,
+        "cosine": 1.0,
+        "ref_rms": 11.05
+      },
+      "pass": true
+    },
+    "crossfade_linspace_bitexact": {
+      "equal": true,
+      "pass": true
+    }
+  },
+  "parity_setup": {
+    "source": "jfk.wav",
+    "seconds": 11.0,
+    "seed": 42,
+    "speaker": "seeded random unit vector (numpy default_rng(1234))",
+    "reference_impl": "upstream run_rt.VCRunner.process_file, PyTorch fp32 CPU (40ms model, 2 ODE steps)",
+    "chunks": 69,
+    "dit_calls": 552,
+    "output_samples": 176480,
+    "graphs": {
+      "asr": {
+        "file": "asr.onnx",
+        "bytes": 75781551,
+        "sha256": "f15e38fd3aee130d3eeab7a8eceb628bdef916cf813ddfbcfacc2fddb5fe50a4"
+      },
+      "dit": {
+        "file": "dit.onnx",
+        "bytes": 53539418,
+        "sha256": "07b2ca239a0bd1f7e99ee01e916fa1cfbc09739a2af10b1adbb612424be02911"
+      },
+      "dit_step": {
+        "file": "dit_step.onnx",
+        "bytes": 53539573,
+        "sha256": "623713a15c704d98385ebc192ade35c70377460c84ed09ce4b93d18efe04f036"
+      },
+      "fbank": {
+        "file": "fbank.onnx",
+        "bytes": 906697,
+        "sha256": "9d5ab6bb30f6e4a50a97fdfe2834d018584f5737c9b583718e453f3878dacc61"
+      },
+      "gtm": {
+        "file": "gtm.onnx",
+        "bytes": 17441981,
+        "sha256": "eb6b2974bf039cd416e5a07f25c6add819264eace2a82058c4564854c08bb565"
+      },
+      "vocos": {
+        "file": "vocos.onnx",
+        "bytes": 34849583,
+        "sha256": "7fcf85deeb5e56a973f596e82f5fa37d154ac030a1434f6c9b893fe6c871f21a"
+      }
+    }
+  },
+  "timing_conditions": {
+    "gpu_util_pct": 21,
+    "waited_s": 2.1,
+    "cpu_util_pct": 8.5,
+    "cpu_threads": 16
+  },
+  "cost": {
+    "threads2": {
+      "fbank": {
+        "host": {
+          "median_ms": 0.194,
+          "p90_ms": 0.236,
+          "min_ms": 0.188,
+          "runs": 100,
+          "block_medians_ms": [
+            0.262,
+            0.241,
+            0.194
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 22,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 0.167,
+          "p90_ms": 0.205,
+          "min_ms": 0.158,
+          "runs": 100,
+          "block_medians_ms": [
+            0.169,
+            0.169,
+            0.167
+          ]
+        },
+        "graph": {
+          "median_ms": 0.129,
+          "p90_ms": 0.13,
+          "min_ms": 0.128,
+          "runs": 100,
+          "block_medians_ms": [
+            0.13,
+            0.129,
+            0.129
+          ]
+        }
+      },
+      "asr": {
+        "host": {
+          "median_ms": 4.357,
+          "p90_ms": 4.809,
+          "min_ms": 3.881,
+          "runs": 100,
+          "block_medians_ms": [
+            4.364,
+            4.389,
+            4.357
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        },
+        "gpu_before": {
+          "gpu_util_pct": 10,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 4.237,
+          "p90_ms": 4.759,
+          "min_ms": 3.636,
+          "runs": 100,
+          "block_medians_ms": [
+            4.352,
+            4.283,
+            4.237
+          ]
+        },
+        "graph": {
+          "error": "[ONNXRuntimeError] : 1 : FAIL : This session cannot use the graph capture feature as requested by the user  as all compute graph nodes have not been partitioned to the CUDAExecutionProvider"
+        }
+      },
+      "dit_step": {
+        "host": {
+          "median_ms": 3.642,
+          "p90_ms": 4.1,
+          "min_ms": 3.203,
+          "runs": 100,
+          "block_medians_ms": [
+            3.662,
+            3.66,
+            3.642
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        },
+        "gpu_before": {
+          "gpu_util_pct": 9,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 3.468,
+          "p90_ms": 3.907,
+          "min_ms": 3.062,
+          "runs": 100,
+          "block_medians_ms": [
+            3.468,
+            3.501,
+            3.513
+          ]
+        },
+        "graph": {
+          "median_ms": 0.677,
+          "p90_ms": 1.033,
+          "min_ms": 0.655,
+          "runs": 100,
+          "block_medians_ms": [
+            0.68,
+            0.677,
+            0.682
+          ]
+        }
+      },
+      "vocos": {
+        "host": {
+          "median_ms": 1.04,
+          "p90_ms": 1.346,
+          "min_ms": 0.914,
+          "runs": 100,
+          "block_medians_ms": [
+            1.109,
+            1.072,
+            1.04
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 9,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 0.986,
+          "p90_ms": 1.393,
+          "min_ms": 0.896,
+          "runs": 100,
+          "block_medians_ms": [
+            1.111,
+            1.013,
+            0.986
+          ]
+        },
+        "graph": {
+          "median_ms": 0.252,
+          "p90_ms": 0.417,
+          "min_ms": 0.251,
+          "runs": 100,
+          "block_medians_ms": [
+            0.252,
+            0.252,
+            0.252
+          ]
+        }
+      },
+      "per_chunk": {
+        "host_steps1": {
+          "per_40ms_chunk_ms": 6.909,
+          "rtf": 0.173
+        },
+        "host_steps2": {
+          "per_40ms_chunk_ms": 10.551,
+          "rtf": 0.264
+        },
+        "bound_steps1": {
+          "per_40ms_chunk_ms": 6.614,
+          "rtf": 0.165
+        },
+        "bound_steps2": {
+          "per_40ms_chunk_ms": 10.082,
+          "rtf": 0.252
+        },
+        "graph_steps1": {
+          "per_40ms_chunk_ms": 3.08,
+          "rtf": 0.077
+        },
+        "graph_steps2": {
+          "per_40ms_chunk_ms": 3.757,
+          "rtf": 0.094
+        }
+      }
+    },
+    "once_per_voice": {
+      "gtm": {
+        "host": {
+          "median_ms": 0.162,
+          "p90_ms": 0.171,
+          "min_ms": 0.141,
+          "runs": 10,
+          "block_medians_ms": [
+            0.191,
+            0.162,
+            0.172
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        },
+        "gpu_before": {
+          "gpu_util_pct": 10,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 0.101,
+          "p90_ms": 0.122,
+          "min_ms": 0.094,
+          "runs": 10,
+          "block_medians_ms": [
+            0.101,
+            0.119,
+            0.101
+          ]
+        }
+      }
+    },
+    "note": "per 40 ms output chunk = fbank(2880 samples)/4 + asr/2 + steps x dit_step + vocos(6 frames); upstream processes 160 ms audio chunks (2 ASR calls, 4 DiT chunks). The speaker encoder (WavLM-Large + ECAPA) runs once per reference voice and is not included.",
+    "graphs": {
+      "asr": {
+        "file": "asr.onnx",
+        "bytes": 75781551,
+        "sha256": "f15e38fd3aee130d3eeab7a8eceb628bdef916cf813ddfbcfacc2fddb5fe50a4"
+      },
+      "dit": {
+        "file": "dit.onnx",
+        "bytes": 53539418,
+        "sha256": "07b2ca239a0bd1f7e99ee01e916fa1cfbc09739a2af10b1adbb612424be02911"
+      },
+      "dit_step": {
+        "file": "dit_step.onnx",
+        "bytes": 53539573,
+        "sha256": "623713a15c704d98385ebc192ade35c70377460c84ed09ce4b93d18efe04f036"
+      },
+      "fbank": {
+        "file": "fbank.onnx",
+        "bytes": 906697,
+        "sha256": "9d5ab6bb30f6e4a50a97fdfe2834d018584f5737c9b583718e453f3878dacc61"
+      },
+      "gtm": {
+        "file": "gtm.onnx",
+        "bytes": 17441981,
+        "sha256": "eb6b2974bf039cd416e5a07f25c6add819264eace2a82058c4564854c08bb565"
+      },
+      "vocos": {
+        "file": "vocos.onnx",
+        "bytes": 34849583,
+        "sha256": "7fcf85deeb5e56a973f596e82f5fa37d154ac030a1434f6c9b893fe6c871f21a"
+      }
+    }
+  }
+}

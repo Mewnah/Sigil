@@ -5,7 +5,8 @@ use std::sync::Arc;
 use realfft::num_complex::Complex;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
-use super::f0_post::smooth_f0;
+use super::engine::options::F0Range;
+use super::f0_post::{smooth_f0, F0Limits};
 use super::traits::PitchExtractor;
 
 const SR: u32 = 16_000;
@@ -48,6 +49,9 @@ fn pick_lag(corr: &[f32], min_lag: usize) -> Option<usize> {
 pub struct DioPitchExtractor {
     min_hz: f32,
     max_hz: f32,
+    /// Parabolic interpolation of the chosen lag (P3-D pitch bank; the legacy `new()` keeps
+    /// integer lags, so its output is unchanged).
+    refine: bool,
     fwd: Arc<dyn RealToComplex<f32>>,
     inv: Arc<dyn ComplexToReal<f32>>,
     time_buf: Vec<f32>,
@@ -78,6 +82,7 @@ impl DioPitchExtractor {
         Self {
             min_hz: 50.0,
             max_hz: 1100.0,
+            refine: false,
             fwd,
             inv,
             time_buf,
@@ -88,6 +93,18 @@ impl DioPitchExtractor {
             energy_prefix: Vec::with_capacity(FRAME + 1),
             corr: Vec::with_capacity(FRAME / 2),
         }
+    }
+
+    /// The pitch bank's Dio (P3-D): the voice's F0 range (singing reaches 2 kHz) and sub-sample lag
+    /// refinement (parabolic interpolation of the normalized autocorrelation peak; an integer lag
+    /// quantises a 400 Hz voice to 43-cent steps).
+    pub fn with_range(mut self, range: F0Range) -> Self {
+        let limits = F0Limits::for_range(range);
+        self.min_hz = limits.min_hz;
+        // The shortest lag (8 samples at 16 kHz) caps the range at 2 kHz.
+        self.max_hz = limits.max_hz.min(2_000.0);
+        self.refine = true;
+        self
     }
 
     /// Linear autocorrelation `acf[lag] = sum_{i < len-lag} x[i]·x[i+lag]` for `lag < len`.
@@ -142,7 +159,20 @@ impl DioPitchExtractor {
                 (f64::from(self.acf[lag]) / denom) as f32
             });
         }
-        Ok(pick_lag(&self.corr, min_lag).map_or(0.0, |lag| SR as f32 / lag as f32))
+        Ok(pick_lag(&self.corr, min_lag).map_or(0.0, |lag| {
+            if !self.refine {
+                return SR as f32 / lag as f32;
+            }
+            // Parabolic peak interpolation around the chosen lag.
+            let i = lag - min_lag;
+            if i == 0 || i + 1 >= self.corr.len() {
+                return SR as f32 / lag as f32;
+            }
+            let (a, b, c) = (self.corr[i - 1], self.corr[i], self.corr[i + 1]);
+            let den = a - 2.0 * b + c;
+            let delta = if den.abs() > 1e-9 { (0.5 * (a - c) / den).clamp(-0.5, 0.5) } else { 0.0 };
+            SR as f32 / (lag as f32 + delta)
+        }))
     }
 }
 
@@ -228,6 +258,29 @@ mod tests {
                 assert!((v - hz).abs() <= 0.03 * hz, "{hz} Hz frame {i}: {v}");
             }
         }
+    }
+
+    #[test]
+    fn refined_dio_is_finer_and_reaches_singing_range() {
+        let mut coarse = DioPitchExtractor::new();
+        let mut fine = DioPitchExtractor::new().with_range(F0Range::Singing);
+        for hz in [233.0f32, 410.0, 777.0] {
+            let sig = harmonic_tone(hz, 4, FRAME);
+            let c = coarse.frame_f0(&sig).unwrap();
+            let f = fine.frame_f0(&sig).unwrap();
+            let cents = |v: f32| (1200.0 * (v / hz).log2()).abs();
+            assert!(cents(f) <= cents(c) + 0.5, "{hz} Hz: refined {f} vs integer {c}");
+            assert!(cents(f) < 15.0, "{hz} Hz read as {f}");
+        }
+        // 1500 Hz is past the legacy 1100 Hz ceiling, inside the singing range.
+        let sig = harmonic_tone(1_500.0, 4, FRAME);
+        let f = fine.frame_f0(&sig).unwrap();
+        assert!((f - 1_500.0).abs() < 0.03 * 1_500.0, "{f}");
+        let f = DioPitchExtractor::new()
+            .with_range(F0Range::Speech)
+            .frame_f0(&sig)
+            .unwrap();
+        assert!(f == 0.0 || f < 1_101.0, "{f}");
     }
 
     #[test]

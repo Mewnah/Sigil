@@ -1,0 +1,79 @@
+{
+  "$comment": [
+    "Pinned upstream sources of sigil-bergamot.exe (P4-E, docs/adr/0008-bergamot.md). Mozilla maintains Bergamot in the inference/ folder of mozilla/translations (bergamot-translator plus Mozilla's marian fork, the engine Firefox Translations ships as WebAssembly); that commit matches the models in src-tauri/model-catalog/mt-bergamot.json.",
+    "GitHub source archives do not contain git submodules, so each submodule the native build needs is its own archive, pinned to the commit the parent tree records (read from the GitHub contents API on 2026-09-30).",
+    "sha256/size are null until a maintainer pins them: scripts/runtime-packs/bergamot/build.ps1 -FetchOnly -PinArchives downloads each archive once (sequentially, a few seconds apart), prints the digests and writes them here. After that every fetch is verified against them.",
+    "Not fetched: inference/3rd_party/emsdk (WebAssembly only), marian-fork fbgemm / nccl / simple-websocket-server (GPU and server code the library build does not use). ruy and simd_utils are the ARM paths; they are fetched because marian's CMake may reference them on every platform (their own nested submodules are not).",
+    "The license fields are informational; the pack ships each component's own license file (build.ps1 copies them from the fetched trees)."
+  ],
+  "name": "sigil-bergamot",
+  "upstream_version": "69455ac",
+  "shim_revision": 1,
+  "catalog_version": "69455ac-s1",
+  "protocol": 1,
+  "root": {
+    "repo": "mozilla/translations",
+    "commit": "69455acaecbe8650cdba988dbcf7c10ca20e7c48",
+    "subdir": "inference",
+    "license": "MPL-2.0",
+    "url": "https://codeload.github.com/mozilla/translations/tar.gz/69455acaecbe8650cdba988dbcf7c10ca20e7c48",
+    "sha256": null,
+    "size": null
+  },
+  "submodules": [
+    {
+      "path": "inference/3rd_party/ssplit-cpp",
+      "repo": "browsermt/ssplit-cpp",
+      "commit": "a311f9865ade34db1e8e080e6cc146f55dafb067",
+      "license": "Apache-2.0",
+      "url": "https://codeload.github.com/browsermt/ssplit-cpp/tar.gz/a311f9865ade34db1e8e080e6cc146f55dafb067",
+      "sha256": null,
+      "size": null
+    },
+    {
+      "path": "inference/marian-fork/src/3rd_party/intgemm",
+      "repo": "kpu/intgemm",
+      "commit": "f7401513da71758dacce52fed1c7855549abee59",
+      "license": "MIT",
+      "url": "https://codeload.github.com/kpu/intgemm/tar.gz/f7401513da71758dacce52fed1c7855549abee59",
+      "sha256": null,
+      "size": null
+    },
+    {
+      "path": "inference/marian-fork/src/3rd_party/sentencepiece",
+      "repo": "browsermt/sentencepiece",
+      "commit": "ae41b7740d7006596bb9257e83340b2620db9d00",
+      "license": "Apache-2.0",
+      "url": "https://codeload.github.com/browsermt/sentencepiece/tar.gz/ae41b7740d7006596bb9257e83340b2620db9d00",
+      "sha256": null,
+      "size": null
+    },
+    {
+      "path": "inference/marian-fork/src/3rd_party/onnxjs",
+      "repo": "browsermt/onnxjs",
+      "commit": "924924b08e9596b41aeebada4a172f026be95f5a",
+      "license": "MIT",
+      "url": "https://codeload.github.com/browsermt/onnxjs/tar.gz/924924b08e9596b41aeebada4a172f026be95f5a",
+      "sha256": null,
+      "size": null
+    },
+    {
+      "path": "inference/marian-fork/src/3rd_party/ruy",
+      "repo": "google/ruy",
+      "commit": "2d950b3bfa7ebfbe7a97ecb44b1cc4da5ac1d6f0",
+      "license": "Apache-2.0",
+      "url": "https://codeload.github.com/google/ruy/tar.gz/2d950b3bfa7ebfbe7a97ecb44b1cc4da5ac1d6f0",
+      "sha256": null,
+      "size": null
+    },
+    {
+      "path": "inference/marian-fork/src/3rd_party/simd_utils",
+      "repo": "browsermt/simd_utils",
+      "commit": "d0793d86aea9036a5bc77b9ca7791dff024168ca",
+      "license": "BSD-2-Clause",
+      "url": "https://codeload.github.com/browsermt/simd_utils/tar.gz/d0793d86aea9036a5bc77b9ca7791dff024168ca",
+      "sha256": null,
+      "size": null
+    }
+  ]
+}

@@ -1,11 +1,18 @@
-# Maintainer pipeline for Sigil's RVC templates (export_rvc.py, parity_test.py). Not needed to
-# build or run Sigil: the exported graph-only templates are checked in under
-# src-tauri/resources/vc-templates and src-tauri/test-fixtures/vc/tiny.
+# Maintainer pipeline for Sigil's RVC templates and voice-changer base assets (export_*.py,
+# parity_test.py). Not needed to build or run Sigil: the exported graph-only templates are checked in
+# under src-tauri/resources/vc-templates and src-tauri/test-fixtures/vc/tiny, and the base assets are
+# model-store entries.
 #
-# Versions are the ones the checked-in templates were exported and verified with (exports are
+# Versions are the ones the checked-in files were exported and verified with (exports are
 # deterministic for a given torch / onnx pair). Install one package at a time on slow networks.
 torch==2.3.1          # dev rig: the cu121 build (pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121)
-onnx==1.17.0          # graph post-processing (external initializers, metadata); keeps IR <= 10 for onnxruntime 1.19
-onnxruntime==1.19.2   # CPU parity (the Rust engine runs ONNX Runtime 1.28 through ort)
+torchaudio==2.3.1     # RefineGAN's sinc resampler kernel, Kaldi fbank for the CAM++ check
+onnx==1.17.0          # graph post-processing (external initializers, metadata, adapters); keeps IR <= 10 for onnxruntime 1.19
+onnxruntime==1.19.2   # CPU parity (the Rust engine runs ONNX Runtime 1.28 through ort); also int8 quantisation
+transformers==4.39.3  # HubertModel for the content encoders (checkpoints read with torch.load(weights_only=True))
 numpy>=1.24,<2
 scipy                 # imported by the vendored RVC modules.py
+soundfile             # speech samples for the checks
+# GPU parity (DirectML), in a separate environment, since it replaces the onnxruntime module:
+#   python -m venv --system-site-packages .venv-dml
+#   .venv-dml/Scripts/python -m pip install --no-deps onnxruntime-directml==1.19.2

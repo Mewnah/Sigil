@@ -1,0 +1,215 @@
+{
+  "format": "sigil-tensor-bundle",
+  "version": 1,
+  "meta": {
+    "template": "v2-16k-f0-refinegan",
+    "frames": 200,
+    "block_frames": 12,
+    "partial_start": 50,
+    "weights_id": "118aa71483e80746352c15300ab5e2700d433f29cdbc4e5f7b99e32241f98fb0",
+    "weights_f32_sha256": "8c543a79c1c99e6226dd5bc1038e7ace10dae0f1abb2b2c116aa1d45fa6527f2",
+    "speakers_f32_sha256": "5ba0d905a04cab7f5c4035ff33183e1e5b8d9ed5bd0cf6c87022bfcea9a0d5d7",
+    "speakers": 3,
+    "tolerance": {
+      "fp32": 0.0001,
+      "fp16": 0.005
+    },
+    "fp16_tolerance_scaled_by_peak": true,
+    "source": "RVC enc_p / flow + Sigil's port of Applio's generator (rvc_arch/vocoders.py), float64, fixed noise",
+    "layout_version": 2
+  },
+  "tensors": [
+    {
+      "name": "phone",
+      "dtype": "float32",
+      "shape": [
+        1,
+        200,
+        768
+      ],
+      "offset": 0,
+      "bytes": 614400
+    },
+    {
+      "name": "pitch",
+      "dtype": "int64",
+      "shape": [
+        1,
+        200
+      ],
+      "offset": 614400,
+      "bytes": 1600
+    },
+    {
+      "name": "f0",
+      "dtype": "float32",
+      "shape": [
+        1,
+        200
+      ],
+      "offset": 616000,
+      "bytes": 800
+    },
+    {
+      "name": "z_noise",
+      "dtype": "float32",
+      "shape": [
+        1,
+        8,
+        200
+      ],
+      "offset": 616832,
+      "bytes": 6400
+    },
+    {
+      "name": "src_noise",
+      "dtype": "float32",
+      "shape": [
+        1,
+        1600
+      ],
+      "offset": 623232,
+      "bytes": 6400
+    },
+    {
+      "name": "sid",
+      "dtype": "int64",
+      "shape": [
+        1
+      ],
+      "offset": 629632,
+      "bytes": 8
+    },
+    {
+      "name": "phase0_partial",
+      "dtype": "float32",
+      "shape": [
+        1,
+        1
+      ],
+      "offset": 629696,
+      "bytes": 4
+    },
+    {
+      "name": "ref_m_p",
+      "dtype": "float32",
+      "shape": [
+        1,
+        8,
+        200
+      ],
+      "offset": 629760,
+      "bytes": 6400
+    },
+    {
+      "name": "ref_logs_p",
+      "dtype": "float32",
+      "shape": [
+        1,
+        8,
+        200
+      ],
+      "offset": 636160,
+      "bytes": 6400
+    },
+    {
+      "name": "ref_audio",
+      "dtype": "float32",
+      "shape": [
+        1,
+        1600
+      ],
+      "offset": 642560,
+      "bytes": 6400
+    },
+    {
+      "name": "ref_g",
+      "dtype": "float32",
+      "shape": [
+        1,
+        256,
+        1
+      ],
+      "offset": 648960,
+      "bytes": 1024
+    },
+    {
+      "name": "knn_feats",
+      "dtype": "float32",
+      "shape": [
+        8,
+        768
+      ],
+      "offset": 649984,
+      "bytes": 24576
+    },
+    {
+      "name": "knn_index",
+      "dtype": "float32",
+      "shape": [
+        64,
+        768
+      ],
+      "offset": 674560,
+      "bytes": 196608
+    },
+    {
+      "name": "knn_rate",
+      "dtype": "float32",
+      "shape": [
+        1
+      ],
+      "offset": 871168,
+      "bytes": 4
+    },
+    {
+      "name": "knn_ref_fp32",
+      "dtype": "float32",
+      "shape": [
+        8,
+        768
+      ],
+      "offset": 871232,
+      "bytes": 24576
+    },
+    {
+      "name": "knn_ref_fp16",
+      "dtype": "float32",
+      "shape": [
+        8,
+        768
+      ],
+      "offset": 895808,
+      "bytes": 24576
+    },
+    {
+      "name": "phase_frames",
+      "dtype": "float32",
+      "shape": [
+        1,
+        200
+      ],
+      "offset": 920384,
+      "bytes": 800
+    },
+    {
+      "name": "noise_offsets",
+      "dtype": "int64",
+      "shape": [
+        1,
+        200
+      ],
+      "offset": 921216,
+      "bytes": 1600
+    },
+    {
+      "name": "adain_pool",
+      "dtype": "float32",
+      "shape": [
+        16384
+      ],
+      "offset": 922816,
+      "bytes": 65536
+    }
+  ]
+}

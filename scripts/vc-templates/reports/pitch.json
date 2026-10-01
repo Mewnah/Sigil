@@ -1,0 +1,284 @@
+{
+  "ep": "cpu",
+  "swiftf0": {
+    "rows": [
+      {
+        "tone_hz": 98.0,
+        "voiced_frames": 123,
+        "frames": 125,
+        "median_cents": 2.601351035337024,
+        "ok": true
+      },
+      {
+        "tone_hz": 220.0,
+        "voiced_frames": 123,
+        "frames": 125,
+        "median_cents": 1.630592104592829,
+        "ok": true
+      },
+      {
+        "tone_hz": 440.0,
+        "voiced_frames": 123,
+        "frames": 125,
+        "median_cents": 2.135276140126132,
+        "ok": true
+      },
+      {
+        "tone_hz": 880.0,
+        "voiced_frames": 123,
+        "frames": 125,
+        "median_cents": 2.786193082967264,
+        "ok": true
+      }
+    ],
+    "silence_unvoiced": true,
+    "frames_by_samples": {
+      "16000": 62,
+      "16777": 65,
+      "17850": 69,
+      "17920": 70,
+      "32000": 125
+    },
+    "hop": 256,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "audio",
+          "dtype": "float32",
+          "shape": [
+            1,
+            "samples"
+          ]
+        },
+        {
+          "name": "fmin",
+          "dtype": "float32",
+          "shape": []
+        },
+        {
+          "name": "fmax",
+          "dtype": "float32",
+          "shape": []
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pitch",
+          "dtype": "float64",
+          "shape": [
+            1,
+            "frames"
+          ]
+        },
+        {
+          "name": "confidence",
+          "dtype": "float32",
+          "shape": [
+            1,
+            "frames"
+          ]
+        }
+      ],
+      "opset": 18
+    },
+    "file": {
+      "path": "vc/pitch-swiftf0/model.onnx",
+      "bytes": 135090,
+      "sha256": "6385e8c2ebc3872e82c9ff5946228de44cd3be77a750ea53698b7dbfe94b0a22"
+    }
+  },
+  "crepe-tiny": {
+    "rows": [
+      {
+        "tone_hz": 98.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 2.074215906628806,
+        "ok": true
+      },
+      {
+        "tone_hz": 220.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 2.387895453487859,
+        "ok": true
+      },
+      {
+        "tone_hz": 440.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 2.320856891688864,
+        "ok": true
+      },
+      {
+        "tone_hz": 880.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 2.7423935167068767,
+        "ok": true
+      }
+    ],
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "frames",
+          "dtype": "float32",
+          "shape": [
+            "n_frames",
+            1024
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "probabilities",
+          "dtype": "float32",
+          "shape": [
+            "Sigmoidprobabilities_dim_0",
+            360
+          ]
+        }
+      ],
+      "opset": 10
+    },
+    "file": {
+      "path": "vc/pitch-crepe-tiny/model.onnx",
+      "bytes": 1955762,
+      "sha256": "91fc2a0fd10f965dbf7775995daf50e99273caedd7efd00001f23be649da1bc3"
+    }
+  },
+  "fcpe": {
+    "rows": [
+      {
+        "signal": "tone 98",
+        "frames": 201,
+        "voiced": 201,
+        "median_cents": 1.3348680513067044,
+        "ok": true
+      },
+      {
+        "signal": "tone 220",
+        "frames": 201,
+        "voiced": 201,
+        "median_cents": 0.0887378173248705,
+        "ok": true
+      },
+      {
+        "signal": "tone 440",
+        "frames": 201,
+        "voiced": 201,
+        "median_cents": 0.7948398425722109,
+        "ok": true
+      },
+      {
+        "signal": "tone 880",
+        "frames": 201,
+        "voiced": 201,
+        "median_cents": 4.187397917969823,
+        "ok": true
+      },
+      {
+        "signal": "jfk.wav[:4 s]",
+        "frames": 401,
+        "voiced": 322
+      },
+      {
+        "signal": "silence",
+        "frames": 101,
+        "voiced": 0,
+        "ok": true
+      }
+    ],
+    "adapter_vs_upstream_max_abs": 0.0,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "audio",
+          "dtype": "float32",
+          "shape": [
+            1,
+            "n_samples"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "f0",
+          "dtype": "float32",
+          "shape": [
+            1,
+            "n_frames"
+          ]
+        }
+      ],
+      "opset": 17
+    },
+    "file": {
+      "path": "vc/pitch-fcpe/model.onnx",
+      "bytes": 43612519,
+      "sha256": "5d336dab0d58c32ab273dcb45b7df85e6002edeb6db2d1632f663dcf271c717a"
+    }
+  },
+  "rmvpe": {
+    "rows": [
+      {
+        "tone_hz": 98.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 0.6659192844490339,
+        "ok": true
+      },
+      {
+        "tone_hz": 220.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 3.539318747238428,
+        "ok": true
+      },
+      {
+        "tone_hz": 440.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 1.608758141153734,
+        "ok": true
+      },
+      {
+        "tone_hz": 880.0,
+        "voiced_frames": 201,
+        "frames": 201,
+        "median_cents": 2.034699043704954,
+        "ok": true
+      }
+    ],
+    "silence_unvoiced": true,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "float32",
+          "shape": [
+            1,
+            128,
+            "time"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "float32",
+          "shape": [
+            "Sigmoidoutput_dim_0",
+            "Sigmoidoutput_dim_1",
+            "time"
+          ]
+        }
+      ],
+      "opset": 10
+    }
+  }
+}

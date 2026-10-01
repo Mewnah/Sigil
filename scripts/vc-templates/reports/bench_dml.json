@@ -1,0 +1,150 @@
+{
+  "ep": "dml",
+  "dnsmos": {
+    "clean": {
+      "sig": 3.402762771010127,
+      "bak": 3.03412893364204,
+      "ovr": 2.6855906788305672
+    },
+    "noisy_0db": {
+      "sig": 3.047385051837073,
+      "bak": 1.117756661841851,
+      "ovr": 1.4174280587884387
+    },
+    "ok": true,
+    "contract": {
+      "model.onnx": {
+        "inputs": [
+          {
+            "name": "input_1",
+            "dtype": "float32",
+            "shape": [
+              "N",
+              144160
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Identity:0",
+            "dtype": "float32",
+            "shape": [
+              "N",
+              3
+            ]
+          }
+        ],
+        "opset": 12
+      },
+      "p808.onnx": {
+        "inputs": [
+          {
+            "name": "input_1",
+            "dtype": "float32",
+            "shape": [
+              "N",
+              900,
+              120
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Identity:0",
+            "dtype": "float32",
+            "shape": [
+              "N",
+              1
+            ]
+          }
+        ],
+        "opset": 12
+      }
+    },
+    "files": {
+      "model.onnx": {
+        "path": "bench/dnsmos-p835/model.onnx",
+        "bytes": 1157965,
+        "sha256": "269fbebdb513aa23cddfbb593542ecc540284a91849ac50516870e1ac78f6edd"
+      },
+      "p808.onnx": {
+        "path": "bench/dnsmos-p835/p808.onnx",
+        "bytes": 224860,
+        "sha256": "9246480c58567bc6affd4200938e77eef49468c8bc7ed3776d109c07456f6e91"
+      }
+    }
+  },
+  "campplus": {
+    "same_speaker_cosine": 0.7814292311668396,
+    "different_speaker_cosine": [
+      0.12984062731266022,
+      0.07722704112529755
+    ],
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "float32",
+          "shape": [
+            "N",
+            "T",
+            80
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "embedding",
+          "dtype": "float32",
+          "shape": [
+            "BatchNormalizationembedding_dim_0",
+            192
+          ]
+        }
+      ],
+      "opset": 13
+    },
+    "file": {
+      "path": "bench/campplus/model.onnx",
+      "bytes": 28281138,
+      "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"
+    }
+  },
+  "gpu-load": {
+    "out_rms": 1.139844298362732,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "float32",
+          "shape": [
+            1,
+            32,
+            "H",
+            "W"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "dtype": "float32",
+          "shape": [
+            1,
+            32,
+            "H",
+            "W"
+          ]
+        }
+      ],
+      "opset": 17
+    },
+    "file": {
+      "path": "bench/gpu-load/model.onnx",
+      "bytes": 297186,
+      "sha256": "a5a974abbddcb77329fa7488bae6736bd773d83884f0280b7ab728786f566131"
+    }
+  }
+}

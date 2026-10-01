@@ -207,30 +207,66 @@ fastest competitor (≤ 0.7). The blind A/B test of T6 uses the same WAVs: `tool
 `AutotuneRequest` of `voice_changer_autotune`) and reports the chosen configuration
 (`autotune_*` metrics; `details` holds the result with every candidate measured). The search, per
 EP and then across EPs:
-1. EPs: those the request names, else every EP the build offers; an EP whose sessions fall back
-   is dropped with its reason.
-2. F0 method: every method the build runs on the rung, ranked by accuracy on the tuning clip
-   (gross pitch error + V/UV error against the synthetic voice's exact F0), then the most
-   accurate one that meets the RTF limit at the reference block (40 ms on a GPU, 80 ms on the
-   CPU).
+1. EPs: those the request names, else every EP the build offers. The voice's generator sessions
+   decide (`vc.enc` / `vc.flowdec` of template voices, `vc` of ONNX voices): one on another rung
+   drops the EP with its reason, and so does `tensorrt_rtx` when no generator session runs
+   TensorRT (the CUDA rung is tuned as `cuda`; classic TensorRT counts, with a note). A pitch model
+   that falls back drops only its F0 method; another component that falls back (e.g. the content
+   encoder) is measured as it runs, with a note.
+   On the CPU, the thread policy comes next: the reference configuration with one ONNX Runtime
+   thread (the Streamer preset), two (`worker_priority: protect_game`) and the default pool (one
+   per physical core, below-normal priority); the fewest threads that meet the limit win (least
+   load next to a game), else the fastest. An explicit priority is kept: `protect_game` never
+   gets the pool, `protect_voice` is never demoted to two threads. The result then carries
+   `rvc_preset` and `worker_priority`.
+2. F0 method: every method the build runs on the rung, ranked by accuracy (gross pitch error +
+   V/UV error against the synthetic voice's exact F0, measured as each method runs on the rung;
+   a user clip only times the engine), then the most accurate one that meets the RTF limit at
+   the reference block (40 ms on a GPU, 80 ms on the CPU). When none does, the most accurate one
+   within 20 % of the fastest one's RTF (the F0 methods cost about the same next to the voice, and
+   one measurement varies by about that much).
 3. Block, ascending (template voices: 20 / 40 / 60 / 80 / 100 ms engine blocks; ONNX voices: the
-   voice changer's chunk sizes from 20 to 100 ms): the first that meets the limit.
+   voice changer's chunk sizes from 20 to 100 ms): the first that meets the limit. On the CPU the
+   sweep continues to 120 / 160 / 200 ms (ONNX voices: chunk sizes up to 200 ms) when nothing
+   shorter meets it: a voice that keeps up at a higher latency beats one that cannot.
 4. Context: the largest extra context (64–512 ms) that still meets the limit.
 5. Precision (template voices on a GPU): fp32 when it is within 5 % of fp16.
-6. GPU levers (template voices on a GPU): IOBinding, CUDA graphs and the priority stream / queue,
-   each kept when it lowers the p99 RTF by 5 % or more.
+6. GPU levers (template voices on a GPU), measured under the H2 load (the conv hammer at 70 % on
+   the same GPU), where they matter: from every lever off, IOBinding with CUDA graphs (CUDA;
+   graphs need IOBinding), else IOBinding alone, then the priority stream / queue, each set kept
+   when it lowers the loaded p99 RTF by 5 % or more; the winner is then measured idle again. Only
+   the levers this stage measured go into `params`: stages 2–5 measure with the voice changer's
+   own lever settings, which a lever keeps when the stage does not run (out of time) or never
+   tried it.
 7. Fidelity: the winner is scored against its offline ceiling (T5: CAM++ ≥ 0.97 when installed,
    F0 RMSE ≤ 15 cents, V/UV ≤ 3 %, no seam clicks). A failing block steps up, twice at most; a
    larger block is kept only when it passes or cuts the T5 shortfall by a quarter (never when it
    misses the RTF limit the smaller one met).
 
 "Meets the limit" = p99 RTF ≤ `rtf_limit` (default 0.5: headroom for a game), at most 0.1 % of
-blocks over budget and no model errors, measured on the virtual clock (real compute, no sleeps).
+the model calls over budget and no model errors, measured on the virtual clock (real compute, no
+sleeps). A configuration that misses the limit while its median call meets it is measured once
+more and the better run counts: a PC busy for a few seconds must not decide the preset.
 Across EPs the lowest p50 latency wins. When nothing meets the limit, the fastest configuration is
-returned with a note, so the result is always a valid set of parameters. In the app, the
-`voice_changer_autotune` command fills the voice, models, device block and preset from the voice
-changer, refuses to run while the voice changer or a benchmark runs, stores the result per GPU and
-driver, and the UI applies its `params` with `set_voice_changer_params`.
+returned with a note, so the result is always a valid set of parameters.
+
+Every candidate runs with the voice changer's own settings besides the knobs the search sweeps:
+`request.conditions` (`TuneConditions`: device rates and block, preset, crossfade, output cushion
+and latency budget, worker priority, retrieval and the hot voice controls, F0 range, denoiser,
+lookahead, the lever settings, GPU index and VRAM cap; default: the voice changer's defaults, and
+in a spec, the spec's `stream` and `rvc` engine). A `gtcrn` denoiser runs inside the measured
+engine, as in the voice changer's RVC mode; `dfn3` / `dpdfnet` run on the capture copy, outside
+it, and the result says so. The result records the conditions.
+
+In the app, the `voice_changer_autotune` command fills the voice, models, device block, preset and
+conditions from the voice changer (the device rates from its saved devices' formats), refuses to
+start while the voice changer runs, claims the one measurement slot it shares with "Benchmark this
+PC" in one atomic step (a benchmark and a tune never run together), and fails without storing
+anything when the voice changer starts during the tune. It stores the result per GPU and driver,
+and the UI applies its `params` with `set_voice_changer_params`. `voice_changer_get_autotune`
+returns the stored result with `stale`: what changed since the tune (another voice, a different
+crossfade, cushion, budget, priority, preset, retrieval on / off, F0 range, denoiser, lookahead,
+lever, device rate or block), compared with the values the tune itself wrote.
 
 **live_record** (in-app only: `voice_changer_live_record_start { request: { max_seconds?, note? } }`
 and `voice_changer_live_record_stop`) records the running voice changer's per-tick timeline for up
@@ -311,8 +347,12 @@ disables a gate. Relative paths resolve against the spec file's folder (CLI) or 
 }
 ```
 
-- The `stream` defaults are the voice changer's defaults. `block_frames` must be one of its chunk
-  sizes: 160 … 48000. For example, 512 is 10.7 ms and 1536 is 32 ms at 48 kHz.
+- The `stream` defaults are the voice changer's defaults. `block_frames` is one of its chunk
+  sizes: 160 … 48000. For example, 512 is 10.7 ms and 1536 is 32 ms at 48 kHz. A whole number of
+  10 ms up to 200 ms also runs (e.g. 1920 = 40 ms at 48 kHz, where a template voice's device block
+  equals its engine block), but the voice changer itself runs only its chunk sizes (any other
+  setting becomes 512): such a run measures the engine's floor, and its report says so (an engine
+  warning in `report.json` / `report.md`).
 - `input.signal` is one of the following:
   - `voice`: speech-like, voiced, with pauses;
   - `tones`;
@@ -337,7 +377,11 @@ disables a gate. Relative paths resolve against the spec file's folder (CLI) or 
     is `auto`, `on` or `off`), `f0_range` (`speech`, `singing`), `lookahead_ms` (0–80, direct
     build), `noise_seed`;
   - `build`: `auto` (the engine factory; the direct builder when `lookahead_ms` is set),
-    `factory` or `direct`.
+    `factory` or `direct`;
+  - `denoiser`: `off` (default), `gtcrn`, `dfn3` or `dpdfnet`, resolved like the voice changer's
+    (a kind this build cannot run runs its stand-in, noted). `gtcrn` runs inside the engine on
+    factory builds, as in the voice changer's RVC mode, and its latency counts; the others run on
+    the voice changer's capture copy, outside the engine, so the run excludes them with a warning.
 - Paced `clock` is `wall` (default), `virtual` or `simulated` (see Modes). `warmup_s` (default
   0.5) excludes start-up priming from `latency_ms_*` and must be below `seconds`.
 - A stall must start at least 1 s after `warmup_s` and end at least 1 s before its run ends, so
@@ -367,7 +411,7 @@ DNSMOS, the compare margins and `autotune_fidelity`.
 
 | Mode | Distributions | Scalars |
 |---|---|---|
-| offline | `block_ms`, `model_ms`, `rtf` | `blocks`, `over_budget_ratio`, `model_errors`, `algorithmic_latency_ms`, `engine_load_ms`, `harness_init_ms`, `cpu_cores`, `worker_cpu_cores`, `vram_engine_mb`, `throughput_x` |
+| offline | `block_ms`, `call_ms`, `model_ms`, `rtf` | `blocks`, `over_budget_ratio`, `model_errors`, `algorithmic_latency_ms`, `engine_load_ms`, `harness_init_ms`, `cpu_cores`, `worker_cpu_cores`, `vram_engine_mb`, `throughput_x` |
 | paced | the offline ones, plus `latency_ms`, `block_age_ms` | the offline scalars except `throughput_x`, plus `underruns`, `underrun_ms`, `dropped_ms`, `drop_events`, `overflow_ms`, `backlog_max_ms`, `backlog_over_budget_ms`, `stall_recovery_blocks`, `stall_latency_recovery_ms`, `output_trimmed_ms`, `gpu_load_duty`, `cpu_load_duty` |
 | e2e_loopback | `e2e_ms` | `e2e_detected`, `e2e_missed`, `e2e_timebase_jitter_ms` |
 | quality | the offline ones | see **quality** above |
@@ -380,6 +424,13 @@ Template voices built directly (`build: direct`) add `content_ms_*`, `f0_ms_*`, 
 `flowdec_ms_*` to offline and paced runs.
 
 Notes on specific metrics:
+- `block_ms` covers every device block; `call_ms` only the device blocks that ran the model, and
+  `model_ms` is per model call. `rtf_*` (compute over the real-time budget: the longer of the
+  device block and the engine block) and `over_budget_ratio` are judged on the device blocks that
+  ran the model. All of these are the same for an engine that converts every device block. A
+  template voice converts one engine block (for example 40 ms) every few device blocks (10.7 ms),
+  so its per-block compute (T2) is `call_ms`: `block_ms_p95` would be about the 80th percentile of
+  the calls. The timeline CSV has a `calls` column.
 - `algorithmic_latency_ms` is the harness's own delay: block accumulation, the input resampler,
   the context ring, SOLA, the output resampler and the priming cushion. An identity model with the
   run's rates and context measures it by cross-correlation. Model-internal delay is not included.
@@ -401,7 +452,7 @@ Each report folder contains:
     the files written.
 - `report.md`: the same content, readable.
 - `<run>.timeline.csv`: one row per block, with columns `tick`, `t_ms`, `age_ms`, `compute_ms`,
-  `model_ms`, `stall_ms`, `waiting_ms`, `dropped_ms`, `queued_out_ms` and `error`.
+  `model_ms`, `calls`, `stall_ms`, `waiting_ms`, `dropped_ms`, `queued_out_ms` and `error`.
 - `<run>.output.wav` (with `output.write_audio`): the converted audio. For offline runs this is
   the harness output; for paced runs it is what the simulated device played, underrun holds
   included.
@@ -505,3 +556,9 @@ at 94.4 ms against 74.4 ms, and stays there. The catch-up blocks refill the outp
 rate, so the queue never drains back. With `output_max_queue_ms` = prefill + 5, latency recovers
 within a fraction of a second. `stall_latency_recovery_ms` reports this, and `latency_end_p50_ms` in
 the stall record shows where latency settled.
+
+**Fixed in P3 (P3-E):** the output queue now trims back toward the prefill with a crossfade after
+an underrun or a budget drop. The same stub-smoke stall run (debug build before, release after;
+the stall run is on the simulated clock, so the timeline is build-independent) now settles at
+67.0 ms (74.4 ms before the stall) and recovers in 95 ms; before the fix it stayed at 94.4 ms for
+the rest of the run (`stall_latency_recovery_ms` 2000 = never).

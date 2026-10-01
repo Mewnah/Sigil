@@ -102,6 +102,7 @@ pub fn convert_tone_on(ep: &str, tag: &str) -> Vec<f32> {
         index_rate: 0.0,
         protect: 0.33,
         speaker_id: 0,
+        stream_pos_16k: 0,
     };
     let out = model.convert(&ctx).expect("conversion");
     drop(model);

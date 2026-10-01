@@ -140,6 +140,7 @@ Sigil.exe --headless fetch <id>... [--mirror auto|huggingface|hf-mirror|modelsco
 Sigil.exe --headless fetch --list          # catalog, install states and sizes
 Sigil.exe --headless sysinfo [--out f]     # GPUs, drivers, VRAM budget, suggested model sizes (JSON)
 Sigil.exe --headless engine-probe <sherpa|transcribe|echo> [model] [wav]   # load a native runtime and run a smoke test
+Sigil.exe --headless mt-bench <spec.json> [--out <dir>]   # translation benchmark (chrF, latency) on a local corpus
 ```
 
 `SIGIL_APP_DATA_DIR=<folder>` points any of these at a scratch profile instead of `%APPDATA%\com.sigil.app`.
@@ -154,7 +155,14 @@ Sigil.exe --headless engine-probe <sherpa|transcribe|echo> [model] [wav]   # loa
 
 ### Local LLM runtime packs (llama-server)
 
-`runtime/llama-server-vulkan` (default GPU build), `runtime/llama-server-cuda13` and `runtime/llama-server-cpu` are the official llama.cpp server builds used by the upcoming local translation. Sigil runs them as helper processes that listen only on `127.0.0.1` with a random key and are killed together with Sigil, even when Sigil is ended in Task Manager.
+`runtime/llama-server-vulkan` (default GPU build), `runtime/llama-server-cuda13` and `runtime/llama-server-cpu` are the official llama.cpp server builds behind the translation **Local model server** (see [Translation backends](#translation-backends)). Sigil runs them as helper processes that listen only on `127.0.0.1` with a random key and are killed together with Sigil, even when Sigil is ended in Task Manager. The translation models (family **Translation models (AI)**, ids `mt/…`) are GGUF files pinned to their Hugging Face commits; Hy-MT2 1.8B Q4 (about 1.1 GB) is the default.
+
+### Offline translation models and packs
+
+- **NLLB-200** (`mt/nllb-200-distilled-600m-int8`, about 0.9 GB): runs on the processor inside Sigil. The 1.3B model is built locally (`scripts/mt-bench/export_nllb.py`) and imported.
+- **Firefox Translations (Bergamot)** (`mt-bergamot/<from>_<to>`, one small model per direction, about 17–60 MB each): needs the `runtime/bergamot` pack, which is built locally (`scripts/runtime-packs/bergamot/build.ps1`, [ADR 0008](adr/0008-bergamot.md)) and installed with **Import…**. Until it is imported, downloading a direction shows the "import first" message.
+
+`Sigil.exe --headless mt-bench <spec.json> [--out <dir>]` scores translation engines on a local corpus (chrF and latency; [`scripts/mt-bench/README.md`](../scripts/mt-bench/README.md)).
 
 ---
 
@@ -338,30 +346,116 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 
 ## Voice changer
 
-Sigil’s voice changer runs in the **`voice-changer`** Tauri plugin (`src-tauri/src/services/voice_changer/`): **cpal** capture (any device sample format) → latency budget → process (built-in phase vocoder, **ONNX** file, **RVC** BYO ONNX slot, or **WebSocket** sidecar) → optional post-DSP (formant tilt, phase vocoder refinement) → playback queue. It is **not** compatible with [w-okada/voice-changer](https://github.com/w-okada/voice-changer)’s Python **Socket.IO / REST** server as a drop-in; Sigil’s sidecar speaks **raw WebSocket binary PCM** as documented in [`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md).
+Sigil’s voice changer runs in the **`voice-changer`** Tauri plugin (`src-tauri/src/services/voice_changer/`): the microphone comes from Sigil's shared capture (speech-to-text keeps its own untouched copy of the same microphone, so the voice changer's gain and noise removal never reach STT) → optional **noise removal** → **latency budget** → process (**Built-in** phase vocoder, **ONNX** file, **RVC voices** on the Sigil Voice Engine, or **WebSocket** sidecar) → optional post-DSP → playback queue. It is **not** compatible with [w-okada/voice-changer](https://github.com/w-okada/voice-changer)’s Python **Socket.IO / REST** server as a drop-in; Sigil’s sidecar speaks **raw WebSocket binary PCM** as documented in [`scripts/neural-sidecar/README.md`](../scripts/neural-sidecar/README.md).
 
-### RVC (bring-your-own ONNX)
+### RVC voices (Sigil Voice Engine)
 
-**RVC** mode loads a user-exported slot (`gen.onnx` / `model.onnx`, optional `.index` such as `added_IVF256_Flat_nprobe_1.index`) plus shared HuBERT/FCPE/RMVPE ONNX — no bundled voice weights. Shared bases resolve from inspector paths or `%AppData%/com.sigil.app/voice-changer/base/` (`hubert_base.onnx` / `contentvec.onnx`, `fcpe.onnx`, `rmvpe.onnx`). While streaming, prefer Streamer or encode with **NVENC**.
+**RVC voices** mode runs RVC voices on Sigil's own real-time engine, the **Sigil Voice Engine**. You import a voice once (`.pth` or `.zip`); Sigil converts it for its engine and keeps it in its voice library. Voices you exported to ONNX yourself (bring-your-own ONNX) keep working in the same mode. The panel is laid out as **Voices**, **Preset**, **Voice settings**, **RVC tuning**, **Engine**, **Base model paths** and **Benchmark and tuning**. Measured performance and quality: [docs/benchmarks/VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md).
 
-- **Voice list:** the **Voice** picker lists the folders under `%AppData%/com.sigil.app/voice-changer/models/`, with **Rescan voices** and **Other folder…** for a folder anywhere else. Picking a voice applies its saved per-voice settings.
-- **Permission notice:** the first RVC start asks you to confirm you only use voices whose owners agreed. The acknowledgement is stored in the Rust settings (the old browser flag is migrated once).
-- **`manifest.json` is optional and never written.** (Sigil does write a small `slot.json` with your per-voice settings; see [Settings persistence](#settings-persistence).) An existing `manifest.json` in the slot always wins. Without one, Sigil infers the settings **in memory** from the generator ONNX: w-okada-style export metadata (sample rate, F0, embedding channels/layer, final projection, version), the graph inputs (`pitch` / `pitchf` ⇒ F0 model), and the `phone` input’s last dimension (embedding channels). The slot folder can therefore be read-only (only the per-voice `slot.json` is then not saved). If the sample rate still cannot be determined, Sigil assumes **40 kHz** and shows a warning toast asking you to add a `manifest.json`; other non-fatal load problems (for example an unreadable index) are reported the same way.
-- **FAISS index:** standard RVC `.index` files (FAISS `IndexIVFFlat`, plus flat L2/IP indexes) load, so **Index rate** takes effect. Retrieval follows RVC (8 nearest neighbours, inverse-squared-distance weights, blended by index rate). An index that exists but cannot be parsed is skipped with a warning.
-- **Profiles:**
+What the engine does that other real-time RVC clients do not (each part can be switched off under **Engine**, see [Levers](#engine-settings-and-levers)): it decodes only the audio it plays (so more context costs almost nothing), uses the same model noise and a continuous excitation for the same moment on every block (clean joins), tracks pitch only for new audio, keeps its work on the GPU between blocks (CUDA graphs on NVIDIA), drops stale audio instead of queueing it, and can step quality down under load instead of stuttering.
 
-  | Profile | RVC execution provider | F0 | Index rate | Extra context | VRAM cap |
-  |---------|------------------------|----|-----------|---------------|----------|
-  | **Streamer** (default) | CPU | FCPE | 0 | 64 ms | — |
-  | **Low latency** | CUDA | RMVPE | 0 | 96 ms | 768 MB |
-  | **Quality** | CUDA | RMVPE | 0.5 | 192 ms | 1536 MB |
+#### Voices
 
-  Extra context is re-encoded by HuBERT every tick, so keep it small on CPU. Use **dio** F0 if FCPE is missing. The profile only fills these fields; values you change afterwards (for example Index rate 0 under Quality) are used as set. **RMVPE is GPU-only:** on the CPU provider the inspector marks it "(GPU only)" and FCPE runs instead, with a note. The old **crepe** option always ran RMVPE; it is no longer offered and saved `crepe` settings load as `rmvpe`.
-- **RVC execution provider** (`rvc_execution_provider`: CPU / CUDA / DirectML) is separate from the ONNX-mode provider (`onnx_execution_provider`), so switching RVC to CUDA does not change the ONNX chunk mode and vice versa.
-- **GPU device index** selects the adapter for the RVC **CUDA** or **DirectML** provider (and the pitch extractor sessions). It has no effect on CPU.
-- **VRAM cap** applies to the **CUDA** provider only (ONNX Runtime CUDA memory limit); DirectML and CPU ignore it, and the inspector disables the field unless the RVC provider is CUDA. The limit is set **per ONNX session**: HuBERT, the generator and the pitch extractor (FCPE / RMVPE; dio has none) each get the full cap, so total VRAM can reach about three times the cap, plus CUDA’s own context.
-- **Pitch** is applied to the model’s F0 (no phase vocoder on RVC output). **Brightness (formant tilt)** is applied to the RVC output like in the other modes.
-- **Crossfade** and **extra context** are read when the conversion pipeline is built, so changing them restarts the engine while running. The crossfade never spans more than one processing chunk (the pipeline clamps it), so the inspector caps it at the chunk length (at 48 kHz, e.g. 10 ms for 512 samples); a stored longer value takes effect again with a larger chunk.
+- **Import:** drop `.pth` or `.zip` files on the import box, or use **Import…**. Accepted: exported voices from RVC WebUI, Applio, Mangio and w-okada merges (`.pth`), voice `.zip` archives, training checkpoints (`G_*.pth`) and bare state dicts. From an archive Sigil picks the exported voice: training by-products (`G_`/`D_`/`f0G40k` files) give way to it, else the latest `G_<step>` is used; system metadata files are ignored; an archive that holds only ONNX files is refused with a pointer to bring-your-own ONNX voices. Imports run one at a time with progress and **Cancel**. Each import runs in a separate helper process with a memory and time limit, so a broken or malicious file cannot harm Sigil (nothing inside it is executed). A 55 MB voice imports in about a second.
+- **Retrieval index:** an `added_*.index` next to the `.pth` or inside the zip is adopted automatically when there is only one candidate (a name match wins); dropping one `.index` together with one `.pth` pairs them. A `trained_*.index` is never used, and an index that cannot be read is only a warning.
+- **The same file again** returns the voice already imported; importing a voice again keeps its settings and its index.
+- **Library actions:** **Rename**, **Duplicate**, **Delete** (not the voice that is running) and **Merge** (a weighted blend of voices with the same model type and content encoder; the index is not carried over). Each voice row shows read-only facts: engine, RVC version, sample rate, pitch guidance, content encoder, vocoder, index, speakers, and any problem that stops it from running.
+- **Bring-your-own ONNX voices:** a folder with `gen.onnx` / `model.onnx` (optional `.index`) under `%AppData%/com.sigil.app/voice-changer/models/`, or anywhere with **Other folder…**. `manifest.json` is optional and never written: an existing one wins; without one, Sigil infers the settings in memory from the generator ONNX (w-okada export metadata, the `pitch` / `pitchf` inputs, the `phone` input's width), so the folder can be read-only. If the sample rate cannot be determined Sigil assumes 40 kHz and warns. Shared base models for these voices resolve from the **Base model paths** or `%AppData%/com.sigil.app/voice-changer/base/` (`hubert_base.onnx` / `contentvec.onnx`, `fcpe.onnx`, `rmvpe.onnx`), then from the model store. fp16 exports and exports with `skip_head` / `return_length` inputs run too (the latter decode only the returned audio).
+- **First run:** the **Get started** card installs the content encoder, the pitch model your settings use and the MIT default voice in one click, then imports and selects the voice. Models Sigil builds itself (the ContentVec content encoder and the FCPE pitch model) are not downloadable yet: the card shows **Import** for them (install them from a folder with Models & Runtimes → Import).
+- **Permission notice:** the first RVC start asks you to confirm you only use voices whose owners agreed. The acknowledgement is stored in the Rust settings.
+
+**Voice kinds:**
+
+| Voice | Imports and runs |
+|---|---|
+| RVC v2 at 24, 32, 40 or 48 kHz with pitch guidance, HiFi-GAN vocoder | Yes |
+| RVC v1 at 32, 40 or 48 kHz with pitch guidance | Yes |
+| Voices without pitch guidance (v1 or v2) | Not yet: refused as "not supported yet" (the templates ship; the engine support is a follow-up) |
+| Applio RefineGAN and MRF HiFi-GAN voices (v2, 24–48 kHz) | Not yet, as above |
+| RVC v1 at 24 kHz, and RefineGAN / MRF on v1 or without pitch | No trainer produces these |
+
+Content encoders: **ContentVec** (768 channels for v2, 256 for v1), **SPIN**, **SPIN v2**, and the **Japanese**, **Korean** and **Chinese HuBERT**; Sigil picks the one the voice was trained with (Applio's `embedder_model`). A voice trained with a custom encoder is refused, because it would play back as the wrong words.
+
+**Import errors** (the panel shows a translated message for each):
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `not_a_checkpoint` | Not an RVC voice checkpoint. | Import the voice's `.pth` (from the trainer's weights folder), not an optimizer or D file. |
+| `legacy_format` | An old-style (pre-zip) PyTorch file. | Save it again with a current RVC or Applio. |
+| `torchscript` | A TorchScript export. | Use the original `.pth`. |
+| `archive_rejected` | The zip is too large, has too many files or unsafe paths (or the import hit its memory limit). | Extract the voice's `.pth` and import that. |
+| `ambiguous_archive` | The zip holds more than one voice. | Import each `.pth` on its own. |
+| `pickle_rejected` | The file contains code, so it was refused. | Use a file from a trusted source; Sigil never runs code from voice files. |
+| `tensor_invalid`, `non_finite` | Damaged weights or invalid numbers. | Re-download or re-export the voice. |
+| `missing_tensor` | Weights are missing (often a training checkpoint). | Export the finished voice from your trainer. |
+| `shape_mismatch` | The weights match no known model type. | Check the voice was trained with RVC / Applio. |
+| `unsupported_model` | A kind of voice Sigil does not run yet (for example no pitch guidance, RefineGAN, MRF, a custom encoder). | Use a supported voice kind (table above). |
+| `no_template` | No engine template for this model type. | As above. |
+| `layout_invalid` | A template of this installation is damaged. | Reinstall Sigil. |
+| `session` | The converted voice failed its test run. | Report it with the voice's details. |
+| `time_limit` | The import took too long. | Try again with nothing heavy running. |
+| `precision_refused` | The voice does not convert accurately enough at this precision. | Set **Precision** to Auto or fp32. |
+| `io`, `job` | A file could not be read or written, or the request could not be done (unknown voice, cancelled, voice in use). | Check the file and folder. |
+
+#### Presets
+
+A preset fills the settings below; values you change afterwards are used as set. Every preset also selects the engine's benchmark-decided lever defaults (**Auto**).
+
+| Preset | Execution provider | F0 | Index rate | Extra context | Lookahead | VRAM cap |
+|---|---|---|---|---|---|---|
+| **Streamer** (default) | CPU | FCPE | 0 | 64 ms | off | — |
+| **Low latency** | CUDA | RMVPE | 0 | 96 ms | off | 768 MB |
+| **Quality** | CUDA | RMVPE | 0.5 | 192 ms | 20 ms (not on DirectML yet) | 1536 MB |
+| **Studio-TRT** | TensorRT-RTX (NVIDIA RTX) | RMVPE | 0.5 | 192 ms | 20 ms | 1536 MB |
+
+On imported voices, extra context is cheap (only new audio is analysed and only the played audio is decoded); bring-your-own ONNX voices re-encode all of it every block, so keep it small on the CPU. **Autotune** (below) picks the fastest safe settings for your PC and can replace the preset's.
+
+#### Voice settings
+
+- **Pitch** (±24 semitones) is applied to the model's F0. **F0 method:** **FCPE**, **RMVPE**, **DIO**, **SwiftF0** (fast, CPU), **CREPE tiny**, **PESTO** (import its model) and **Fusion** (voicing from SwiftF0, pitch from RMVPE on a GPU or FCPE on the CPU: the fewest octave errors). A method this build or provider cannot run shows "(not available)" with what runs instead (RMVPE runs as FCPE on the CPU provider). **Pitch range:** Speech (50–1100 Hz) or Singing (up to 2.5 kHz).
+- **Index rate**, **Protect** and the **Speaker** of multi-speaker voices work as in RVC.
+- **Volume envelope** (rms_mix): 1 keeps the model's own dynamics, lower values follow how loud you speak.
+- **Formant** (±12 semitones): a true formant shift on the RVC output (the pitch stays within 5 cents). While it is not 0, the older **Brightness** tilt does not apply to RVC voices, so the two never stack.
+- **Variation** (noise scale, imported voices only): lower is steadier and flatter.
+- Pitch, index rate, protect, F0 method, speaker, pitch range, volume envelope and formant are saved with the voice (`slot.json`) and applied when it is selected.
+
+#### Engine settings and levers
+
+- **Execution provider:** CPU, CUDA, DirectML, plus two accelerators: **TensorRT-RTX** (NVIDIA RTX, compute capability 8.6, 8.9 or 12.0+; needs the TensorRT-RTX runtime pack) and **DirectML high priority** (DirectML on a high-priority GPU queue; no admin rights). The first TensorRT-RTX start builds engines for the voice (up to about a minute, with progress per component); later starts load them from the cache (`%AppData%/com.sigil.app/voice-changer/trt-cache`, the 16 most recently used or 8 GB). If TensorRT-RTX cannot run, the voice runs on CUDA and the panel says why. The `runtime/tensorrt-rtx` pack is not downloadable yet: it is a local pack (a TensorRT-RTX plugin execution provider plus the runtime DLLs its imports name).
+- **Precision:** Auto (half precision on the GPU where Sigil's parity tests show it is accurate, full precision elsewhere), fp32 or fp16.
+- **Block size:** how much new audio is converted at a time (Auto = from the processing chunk). Imported voices round it up to 20 ms; smaller blocks lower the delay but cost more per second of audio.
+- **Lookahead** (imported voices): future audio decoded into every block before it is output. It gives cleaner joins and steadier pitch and voicing and adds exactly that much delay. On the default voice (CUDA), 20 ms raised the speaker similarity to the offline conversion from 0.940 to 0.975 and cut voicing errors from 7.4 % to 3.5 % (DNSMOS 3.12 → 3.29). It is not used yet while the content encoder runs on DirectML, where it would cost 35–49 ms per block instead of about 4 ms; the panel shows a note instead.
+- **Silence threshold** (−90 to −10 dBFS, default −42): below it the engine skips conversion (no GPU work while you are quiet), with a short hangover so word endings are kept.
+- **Voices kept loaded** (1–8) and **VRAM budget**: loaded voices switch instantly (hotkeys); the content encoder and pitch models are shared between them. 0 MB = automatic.
+- **Levers** (Auto / On / Off each; **Set all to Auto** resets them). Off always means the proven older path. The panel shows for each lever whether this build and provider can run it and, while running, whether it is in use (with the reason when not).
+
+  | Lever | What it does | Auto |
+  |---|---|---|
+  | Partial decode | Decodes only the audio that is played, not the whole context. | On |
+  | Anchored noise | The same model noise for the same moment on every block, so overlapping blocks match. | On |
+  | Continuous excitation | Keeps the voice's excitation phase continuous from block to block. | On |
+  | Pitch cache | Tracks pitch only for new audio and reuses the rest. | On |
+  | Device buffers (IOBinding) | Keeps inputs and outputs on the GPU between blocks, with no memory allocation per block. | On for CUDA and DirectML |
+  | CUDA graphs | Records each block's GPU work once and replays it (NVIDIA). | On for CUDA |
+  | GPU priority | A high-priority CUDA stream / DirectML queue. | Off (no measured gain yet) |
+  | GPU index search | Searches the voice's index exactly on the GPU. | Off |
+  | Quality governor | Under load, lowers quality step by step (index off, then lighter pitch tracking, then a lighter denoiser) instead of stuttering, and raises it again after about 5 s of calm. The panel shows the current quality level. | Off |
+
+  Only the governor and anchored noise apply to bring-your-own ONNX voices (partial decode too when the export supports it); anchored noise only when set to **On** (Auto keeps such a voice on its export's zero noise, which is what it was made with).
+- **Noise removal** (every mode): Off, **GTCRN** (lightest, about 16–32 ms added; inside the engine for RVC voices), **DPDFNet** (best, 48 kHz, about 50–60 ms added). A stored **DeepFilterNet3** runs DPDFNet (its published model cannot stream). The models install from Models & Runtimes (`vc/denoise-*`); speech-to-text never hears the denoised copy.
+
+#### Status, readouts and live changes
+
+- The status panel shows the provider actually in use (with the reason for any fallback), mic-to-speaker latency (estimated from the per-block timeline, including noise removal and lookahead), processing p50 / p95 / p99, skipped audio, playback gaps, VRAM, the quality level and the levers and precision in use. TensorRT-RTX build progress appears per component.
+- **Switching voices while running needs no restart:** a loaded voice switches within one block with a crossfade; another voice loads in the background while the current one keeps playing. The F0 method and pitch range also switch without a restart. Changes to the engine's shape (block size, lookahead, levers, precision, context, provider, noise removal, devices) restart the engine once.
+- **Voice hotkeys** (global, work while a game has focus): start / stop the voice changer, next / previous voice, and voice hotkeys 1–4 (each set to a voice in the panel; a voice hotkey also switches to RVC voices).
+- **Devices are followed:** a microphone the capture keeps reconnecting is reported after 1 s, and a USB microphone Windows renamed on another port is found again; outputs and the monitor retry every 250 ms and follow the system default when set to it. Messages: `device_lost`, `device_restored`, `denoiser_warning`; `rvc_load` while running means a voice switch failed and the current voice keeps playing.
+
+#### Benchmark and tuning
+
+- **Autotune** (Quick or Full): tries execution providers, block sizes, F0 methods, precision, context, the GPU levers (under a simulated game load) and, on the CPU, the number of threads, on a test clip; it picks the lowest-latency configuration that stays real time with headroom (p99 real-time factor ≤ 0.5) and full quality, and stores the result for this PC and driver. **Apply these settings** changes only the fields the tuner may set (it can also set the RVC preset and worker priority for the CPU thread policy).
+- **Benchmark this PC:** a paced run of the selected voice with your current settings on a simulated microphone and speaker (48 kHz), showing speed, steadiness, latency, CPU and VRAM.
+- **Live recording:** records how the running voice changer performs during a real session (up to 10 minutes; no audio, no file paths) into `app_data/bench/results/live-<time>/`, to share as evidence from other PCs.
 
 ### Feature parity (conceptual vs VCClient)
 
@@ -369,13 +463,13 @@ Sigil’s voice changer runs in the **`voice-changer`** Tauri plugin (`src-tauri
 |--------------------|--------------------|--------|
 | **Chunk / batch size** | Client `inputChunkNum` × fixed block size | **`chunk_frames`**: allowlisted sizes from **160** up to **48000** (~**1 s** at 48 kHz) frames per channel, with **coarser steps** above 4096 for very slow hosts (see `ALLOWED_CHUNK_FRAMES` / `VOICE_CHANGER_CHUNK_FRAMES`). Changing value **restarts** the engine. **WebSocket / ONNX** should match server/model shape when possible; Sigil adapts when it can. |
 | **Pitch** | Server + client | **±24** semitones. Phase vocoder on the mic in Built-in, or on converter/model **output** after WebSocket / ONNX returns audio (same post-DSP chain as brightness / vocoder refinement). In **RVC** mode the shift is applied to the model’s F0 instead. |
-| **Formant / brightness** | Model-dependent | **Formant tilt** [−1, 1] on processed audio in every mode, including the **RVC** output. |
+| **Formant / brightness** | Model-dependent | **Brightness** (formant tilt) [−1, 1] on processed audio in every mode; RVC voices also have a true **Formant** shift (±12 semitones, pitch kept), and while it is not 0 the tilt does not apply to them. |
 | **Input / output gain** | Client gain nodes | **`input_gain` / `output_gain`** (0–4) in Rust on the capture/playback path. |
 | **Output buffer** | Prefill + max queue (worklet) | **`output_prefill_ms`**, **`output_max_queue_ms`** (converted to samples using **output device rate**). Independent of chunk size: they only govern the **playback deque** after processing. **Prefill** = minimum queued audio before cpal starts pulling to speakers (reduces underruns). **Max queue** = cap on queued audio; excess drops oldest samples. The cap is raised automatically to at least the ring target (the larger of the prefill and one output device callback, plus one processed chunk, one capture callback and ~1.3 ms), since a smaller cap would drop audio on every tick. Presets **low_latency** / **stable** fill templates; **custom** when edited. |
 | **Silence truncation** | `volTrancate*` thresholds | Optional **RMS + consecutive silent chunks** trims playback deque toward safe minimum. |
-| **Metrics UI** | buf / res | IPC **`get_voice_changer_metrics`**: **buffer_ms** (output queue), **process_ms** (EMA) and **process_p99_ms** (p99 over the last 512 blocks), **chunk_ms** (block length), **backlog_ms** (captured audio waiting), **dropped_ms** (audio skipped by the latency budget), **underruns** (playback gaps after start) and **ep** (the execution provider actually in use). The status panel warns when processing is slower than real time, p99 spikes, the backlog nears the budget, or playback runs dry; while devices and the model load it shows “Starting…”. |
+| **Metrics UI** | buf / res | IPC **`get_voice_changer_metrics`**: **buffer_ms** (output queue), **process_ms** (EMA) and **process_p99_ms** (p99 over the last 512 blocks), **chunk_ms** (block length), **backlog_ms** (captured audio waiting), **dropped_ms** (audio skipped by the latency budget), **underruns** (playback gaps after start) and **ep** (the execution provider actually in use), plus **process_p50_ms** / **process_p95_ms**, **e2e_ms** (estimated mic-to-speaker latency), **vram_mb**, **governor_level** and **levers** (what the running engine uses). The status panel warns when processing is slower than real time, p99 spikes, the backlog nears the budget, or playback runs dry; while devices and the model load it shows “Starting…”. |
 | **Monitor output** | Separate monitor device + gain | **Yes** — second **cpal** stream: **`monitor_output_device`** (empty = off, or device name / `"default"`), **`monitor_gain`** (0–4) on **pre-main-gain** PCM; channel layout and sample rate are **adapted** (channel mix plus a stateful band-limited resampler, so there are no periodic clicks) when the monitor device differs from the main output. |
-| **Noise / AEC** | Browser constraints, VoiceFocus, etc. | **Not built in**; use **OBS / OS / mic vendor** filters or a virtual cable stack. RNNoise-class DSP remains a possible future plugin. |
+| **Noise / AEC** | Browser constraints, VoiceFocus, etc. | **Noise removal** built in (GTCRN or DPDFNet, on the voice changer's input only; speech-to-text keeps the raw microphone). No echo cancellation; use OBS / OS / mic vendor filters for that. |
 | **Wire protocol** | Socket.IO + REST | **WebSocket binary** sidecar only; see sidecar script for framing expectations. |
 
 ### Chunk size vs playback buffer (ms)
@@ -407,11 +501,11 @@ Text-to-speech reaches the voice changer through the TTS panel's **Play speech o
 
 ### Settings persistence
 
-Rust is authoritative. Every voice-changer setting, including the **input, output and monitor devices**, is saved to `%AppData%/com.sigil.app/voice-changer/settings.json` (atomic writes, a `.bak` of the last good file; a damaged file is kept as `.corrupt-<time>` and the backup is used). Each voice's **pitch, brightness, index rate, protect, F0 method and speaker id** are saved in `<voice folder>/slot.json` and applied when that voice is selected in RVC mode. The voice changer never starts by itself.
+Rust is authoritative. Every voice-changer setting, including the **input, output and monitor devices** and the engine settings (block size, lookahead, precision, levers, noise removal, voices kept loaded, VRAM budget), is saved to `%AppData%/com.sigil.app/voice-changer/settings.json` (atomic writes, a `.bak` of the last good file; a damaged file is kept as `.corrupt-<time>` and the backup is used). Each voice's **pitch, brightness, index rate, protect, F0 method, speaker id, pitch range, volume envelope and formant** are saved in `<voice folder>/slot.json` and applied when that voice is selected in RVC mode. Imported voices live in `%AppData%/com.sigil.app/voice-changer/models/<voice>/` (`manifest.json`, `weights.f32.bin`, `speakers.f32.bin`, `added.index`, `sigil-import.json`); voice hotkeys are app settings. The voice changer never starts by itself.
 
 ### ONNX execution provider (GPU acceleration)
 
-**ONNX** mode and **RVC** mode each have their own provider setting (`onnx_execution_provider` and `rvc_execution_provider`); for RVC, **GPU device index** picks the CUDA / DirectML adapter and **VRAM cap** limits CUDA memory only (per ONNX session: HuBERT, generator and pitch extractor each get the cap).
+**ONNX** mode and **RVC** mode each have their own provider setting (`onnx_execution_provider` and `rvc_execution_provider`); for RVC, **GPU device index** picks the CUDA / DirectML adapter and **VRAM cap** limits CUDA memory only (per ONNX session: the content encoder, generator and pitch extractor each get the cap, so total VRAM can reach several times the cap plus CUDA's own context). RVC also offers the **TensorRT-RTX** and **DirectML high priority** accelerators ([Engine settings](#engine-settings-and-levers)).
 
 | Provider | When to use | Requirements |
 |----------|-------------|--------------|
@@ -467,11 +561,38 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## Translation and AI transform
 
-- **Finals are always delivered, in order**; interims are live and latest-wins (at most one interim request in flight per sentence). Speech and typed text are sequenced separately. Each request has a deadline (15 s for interims, 30 s for finals); a fast, retryable failure of a final is retried once.
+- **Finals are always delivered, in order**; interims are live and latest-wins (at most one interim request in flight per sentence, and no closer together than **Minimum gap between partials**, 300 ms by default). Speech and typed text are sequenced separately. Each request has a deadline (15 s for interims, 30 s plus 10 ms per character for finals, longer for slow chains); a failed final is retried once, then reported. An untranslated line is never published as a translation (TTS and the chatbox would read it in the wrong language).
 - Failed lines show a throttled notice and are written to the **System log**. The `[...]` cut-off marker STT publishes on stop is never translated.
+- **Steady partial translations** (LocalAgreement, on by default): partial captions show only the words two partial translations in a row agree on, so they grow without flickering; **Also show the unconfirmed end** adds the newest words in the interim colour. The final translation of the whole sentence may still reword the line once.
+- **Wait until you finish speaking** (Smart Turn, on by default; needs Smart Turn in speech-to-text): a sentence Smart Turn marks as unfinished is joined with the next one and translated as one line, at most **Longest wait for the end of a turn** (2.5 s) after the last words, or 280 characters.
+- **Context:** the last 3 lines (**Earlier lines to send**, 0–10; only lines with the same target language, forgotten after 5 minutes) and a free-text **Background** go to AI models (and DeepL's context field) so names and style stay consistent.
+- **Glossary:** only the terms that occur in a line are sent (whole words in spaced scripts, anywhere in Chinese / Japanese, at most 24 per line), optionally limited to a source or target language and case-sensitive. **Paste a list** accepts one term per line: term and translation separated by a tab (as copied from a spreadsheet), `=`, `->` or a comma, with optional language columns and `#` comments. AI models use it; DeepL, Firefox Translations and NLLB ignore it. Glossary, context and partial-caption settings apply to the next line while translation runs; engine settings apply on the next start.
 - **Azure Translator:** the region field is optional (needed only for regional or multi-service resources); a blank source language auto-detects; the request timeout is 20 s. 401/403 are reported as key problems and not retried.
-- **LibreTranslate:** the endpoint and key are passed with every call (the key in the request body, never in a URL); translation requests time out after 20 s plus 10 ms per character (at most 60 s).
-- **AI transform:** **Max output tokens** (default 1024) and **Reasoning effort** (default "Model default", which sends nothing). Thinking models need a larger token limit; for Gemini 2.5 Flash through OpenRouter use reasoning **None**. Settings apply to the next sentence without a restart. Each sentence has a **15 s** deadline; on failure or timeout the original text is sent on with a notice, so captions and TTS keep flowing. **Stop with stream** works, and "Sync timing" captions follow STT when AI is off.
+- **LibreTranslate:** the endpoint and key are passed with every call (the key in the request body, never in a URL); translation requests time out after 20 s plus 10 ms per character (at most 60 s). The **LTEngine** server preset sets port 5050, no key and source **auto** (LTEngine detects the language itself; start it with `ltengine`, larger models with `-m gemma3-12b`). Language codes are mapped to the server's own list (for example `zt` for Traditional Chinese).
+
+### Translation backends
+
+The language pair of the new backends is the panel's **Source language** (automatic = the language speech-to-text reports, else a guess from the script) and **Target language**; Azure, LibreTranslate and On-device keep their own pairs. Each backend's panel shows what is missing (a key, a download) under **Start**.
+
+- **Automatic (best available)**: an ordered engine chain (default AI model → Firefox Translations → NLLB), with rules per language pair. Every engine gets **Time per engine** (6 s) before the next one is tried; an engine that keeps failing is skipped for 15 s, then up to 5 minutes; after a cloud engine fails, the offline engines are tried even when they are not in the chain (**Fall back to offline engines**). Partial captions use the cheapest ready offline engine (Firefox Translations first) unless you pick one. The status line names the engine that translated the last line and warns while a fallback is in use.
+- **AI model (LLM)**, **Model runs on**:
+  - **This PC (Sigil's model server)**: the **Local model server** block. **Model**: **Automatic (best for this PC)** (Hy-MT2 1.8B on most PCs, larger models when the graphics card has room), a catalog model (Hy-MT2 1.8B / 7B / 30B-A3B, MiLMMT-46 4B / 12B, TranslateGemma 4B / 12B, Seed-X 7B, LMT-60 4B), an opt-in specialist (CAT-Translate, Shisa, VNTL for ja → en, GalTransl for ja → zh, MADLAD-400, marked experimental), or **A GGUF file on this PC…**. **Runs on**: Automatic (CUDA 13 only when its pack is installed and the NVIDIA card and driver qualify, else Vulkan, else the processor), Vulkan, CUDA 13 or Processor; context size, layers on the graphics card and flash attention. The plan box says where the model will run and how much video memory it needs; a plan that does not fit (for example a 7B model on an 8 GB card while the voice changer runs on it) is refused with the reason, and **Start it anyway** overrides that for this session only. Missing files show a download card. **Test load**, **Stop server** and **Show server log** work while translation runs. The server stops 10 s after translation stops using it and is always ended with Sigil. The Hy-MT2 1.25-bit build is listed but needs a newer llama.cpp.
+  - **Google Gemini (free tier available)**: a free Google AI Studio key; the default model is `gemini-3.5-flash-lite` (new keys cannot use the 2.5 models). **OpenRouter**, **OpenAI**: their keys and model names.
+  - **Your own server (Ollama, LM Studio, …)**: presets for Ollama, LM Studio, llama.cpp and vLLM fill the URL; **Check connection** lists the server's models and picking one fills the name.
+  - **Prompt format**: automatic (from the catalog or the model name) or a family (Hy-MT2, TranslateGemma, MiLMMT, Seed-X, LMT, Sakura, VNTL, MADLAD, generic); **Custom** takes a template with `{source_lang}`, `{target_lang}`, `{text}`, `{context}`, `{glossary}` and `{background}` (typos are flagged, and a preview shows the prompt). The spoken text is always sent as quoted data, never as instructions.
+  - **Reasoning effort**: translation models (Hy-MT2, MiLMMT, TranslateGemma) do not reason, so keep **Model default**; for thinking models **None** or **Minimal** keeps captions fast. Also max output tokens, temperature, **Timeout per line**, **Stream the reply** (the first words appear while the model writes), partial captions and **Route** (see the AI transform below).
+- **DeepL**: paste the key (keys ending in `:fx` are API Free, 500,000 characters a month; **Plan** automatic / Free / Pro). The panel shows this month's usage, the code the target is sent as (for example `EN-US`), formality (DeepL's choice / more / less, sent so languages without formality still work) and the model type. The last 3 lines go along as context, which DeepL does not bill. Partials are off by default because each one uses quota. 403 means a wrong key or plan, 456 the monthly quota is used up; the status line warns at 90 %. The key is sent only in a request header.
+- **Firefox Translations (offline)** (Mozilla Bergamot): runs on the processor with no video memory and no internet; needs an AVX2 processor (an SSE2 build of the pack exists). Install the `runtime/bergamot` pack by **Import…**, then the direction models the panel lists (about 17–60 MB each). About 57 languages translate to and from English; other pairs go through English (two models). The spoken language must be known: set the source language or use a speech-to-text backend that reports it.
+- **NLLB-200 (offline, 200 languages)**: `mt/nllb-200-distilled-600m-int8` (about 0.9 GB, processor only). About 1 s per caption line with 2 threads (up to 4); **Beam width** 1–4 applies to finals (beam 4 is a little better and about twice as slow); partials are off by default. The source may stay automatic (guessed from the script). Best for languages no other offline engine covers; the 1.3B model is built locally and imported.
+- **Azure**, **LibreTranslate**, **On-device (WebView)**: as before (above).
+
+### AI transform
+
+- **Providers:** OpenAI, OpenRouter, **Google Gemini (free tier available)** (a free Google AI Studio key; Flash-Lite answers fastest and has the most generous free limits; default `gemini-3.5-flash-lite`) and a custom OpenAI-compatible server (Ollama, LM Studio, a llama.cpp server, vLLM). **Check connection** lists the server's models and says whether the configured model is among them.
+- **Max output tokens** (default 1024) and **Reasoning effort** (default "Model default", which sends nothing). Thinking models need a larger token limit; use reasoning **None** or **Minimal** to keep captions fast (Gemini 3 cannot turn thinking off, so None is sent as Minimal). Settings apply to the next sentence without a restart.
+- **Stream the reply** (on by default): captions bound to the synced AI source ("AI: Original Text (Synced)") fill in word by word as the reply arrives; TTS, the chatbox and the AI Transform source still get only the finished line, in sentence order.
+- **Timeout per line** (15 s, 3–120 s): on failure or timeout the original text is sent on with a notice, so captions and TTS keep flowing; stop and timeout cancel the request itself. **Stop with stream** works, and "Sync timing" captions follow STT when AI is off.
+- **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block the app window (Ollama and LM Studio by default); **Direct from the app window** or **Through Sigil** force one route (change it only if a server cannot be reached). Keys are sent only in request headers and are hidden in error messages.
 
 ---
 

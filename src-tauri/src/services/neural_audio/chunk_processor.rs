@@ -1,4 +1,9 @@
 //! Classic (DSP) voice chunk pipeline: phase vocoder pitch, device-rate resample, formant tilt.
+//!
+//! P3-D: on the RVC path the one-pole tilt gives way to the true cepstral formant shift of the
+//! post stage (`vc::engine::post`, driven by `VoiceControls::formant_semitones`);
+//! [`rvc_output_tilt`] says which tilt the worker still applies to converted RVC audio. The classic,
+//! ONNX and sidecar modes keep the tilt unchanged.
 
 use std::mem;
 
@@ -143,6 +148,20 @@ fn apply_phase_vocoder_channels(
             &planes_in[c][..frames],
             &mut planes_out[c][..frames],
         );
+    }
+}
+
+/// Shifts smaller than this (semitones) leave the true formant shift off.
+const FORMANT_SEMITONES_EPSILON: f32 = 0.01;
+
+/// The one-pole tilt the worker applies to converted RVC audio (P3-D): none while the true formant
+/// shift is on (`formant_semitones`, applied by the model's post stage), else the legacy
+/// `formant_shift` tilt, so a voice set up before P3 sounds exactly as it did.
+pub fn rvc_output_tilt(formant_shift: f32, formant_semitones: f32) -> f32 {
+    if formant_semitones.is_finite() && formant_semitones.abs() >= FORMANT_SEMITONES_EPSILON {
+        0.0
+    } else {
+        formant_shift
     }
 }
 
@@ -406,6 +425,22 @@ mod tests {
             let out = p.process(&chunk, 1.0f32, 0.0f32, 45, 8).unwrap();
             assert!(!out.is_empty());
         }
+    }
+
+    #[test]
+    fn rvc_tilt_gives_way_to_the_true_formant_shift() {
+        // Legacy voices keep their tilt ...
+        assert_eq!(rvc_output_tilt(0.4, 0.0), 0.4);
+        assert_eq!(rvc_output_tilt(-0.3, 0.005), -0.3);
+        assert_eq!(rvc_output_tilt(0.2, f32::NAN), 0.2);
+        // ... and the true shift replaces it (never both).
+        assert_eq!(rvc_output_tilt(0.4, 3.0), 0.0);
+        assert_eq!(rvc_output_tilt(0.4, -12.0), 0.0);
+        // A zero tilt is the bypass of apply_formant_interleaved.
+        let mut x = vec![0.1f32, -0.2, 0.3, -0.4];
+        let before = x.clone();
+        apply_formant_interleaved(&mut x, 1, rvc_output_tilt(0.5, 2.0), &mut [FormantLpState::default()], 48_000.0);
+        assert_eq!(x, before);
     }
 
     #[test]

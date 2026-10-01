@@ -1,11 +1,15 @@
 /**
  * Voice-changer run metrics (`get_voice_changer_metrics`) and the execution provider (EP) in use.
  *
- * The P0 fields (`process_p99_ms`, `backlog_ms`, `dropped_ms`, `underruns`, `ep`) are optional on
- * the wire (params_contract.json: an older backend omits them), so they normalize to `null`.
+ * The P0 fields (`process_p99_ms`, `backlog_ms`, `dropped_ms`, `underruns`, `ep`) and the P3 fields
+ * (`process_p50_ms`, `process_p95_ms`, `e2e_ms`, `vram_mb`, `governor_level`, `levers`) are optional
+ * on the wire (params_contract.json: an older backend omits them), so they normalize to `null`.
  * Pure module: no Tauri, DOM or `window`.
  */
 import type { RustEpOutcome } from "@/types";
+
+import { VC_LEVERS, type VcLever } from "./contract";
+import { normalizeEffectiveLevers, type VcEffectiveLevers } from "./ipc";
 
 /** Raw `get_voice_changer_metrics` reply. */
 export interface VoiceChangerMetricsRust {
@@ -17,6 +21,13 @@ export interface VoiceChangerMetricsRust {
     dropped_ms?: number | null;
     underruns?: number | null;
     ep?: RustEpOutcome | null;
+    // P3 (params_contract.json `metrics_p3_new_fields`)
+    process_p50_ms?: number | null;
+    process_p95_ms?: number | null;
+    e2e_ms?: number | null;
+    vram_mb?: number | null;
+    governor_level?: number | null;
+    levers?: unknown;
 }
 
 /** Normalized metrics: every number finite; P0 fields `null` when the backend does not report them. */
@@ -37,6 +48,17 @@ export interface VoiceChangerMetrics {
     underruns: number | null;
     /** EP of the running model; `null` for classic / WebSocket, while loading, or when stopped. */
     ep: RustEpOutcome | null;
+    /** P3: p50 / p95 of the per-block processing time. */
+    process_p50_ms: number | null;
+    process_p95_ms: number | null;
+    /** P3: estimated mic-to-speaker latency from the per-tick timeline. */
+    e2e_ms: number | null;
+    /** P3: process VRAM held by the voice engine (MiB). */
+    vram_mb: number | null;
+    /** P3: governor quality level (0 = full quality). */
+    governor_level: number | null;
+    /** P3: levers, accelerator and precision the running engine really uses. */
+    levers: VcEffectiveLevers | null;
 }
 
 function num(n: unknown): number {
@@ -70,6 +92,12 @@ export function normalizeMetrics(raw: unknown): VoiceChangerMetrics | null {
         dropped_ms: optNum(m.dropped_ms),
         underruns: optNum(m.underruns),
         ep: normalizeEp(m.ep),
+        process_p50_ms: optNum(m.process_p50_ms),
+        process_p95_ms: optNum(m.process_p95_ms),
+        e2e_ms: optNum(m.e2e_ms),
+        vram_mb: optNum(m.vram_mb),
+        governor_level: optNum(m.governor_level),
+        levers: normalizeEffectiveLevers(m.levers),
     };
 }
 
@@ -89,7 +117,10 @@ export function epDisplayName(ep: string | null | undefined): string {
         case "trt":
             return "TensorRT";
         case "nvrtx":
+        case "tensorrt_rtx":
             return "TensorRT-RTX";
+        case "dml_hp":
+            return "DirectML (high priority)";
         default:
             return (ep ?? "").trim();
     }
@@ -168,4 +199,18 @@ export function assessMetrics(
 export function formatMs(ms: number): string {
     if (!Number.isFinite(ms)) return "–";
     return ms >= 100 ? ms.toFixed(0) : ms.toFixed(1);
+}
+
+/** The governor's cheapest quality level (Rust `QualityLevel::LOWEST`). */
+export const GOVERNOR_LOWEST_LEVEL = 4;
+
+/** The levers the running engine uses, in contract order. */
+export function leversInUse(levers: VcEffectiveLevers | null): VcLever[] {
+    if (!levers) return [];
+    return VC_LEVERS.filter((l) => levers[l]);
+}
+
+/** Short name of an engine session component (`vc.enc` -> `enc`), for progress rows. */
+export function componentShortName(component: string): string {
+    return component.startsWith("vc.") ? component.slice(3) : component;
 }

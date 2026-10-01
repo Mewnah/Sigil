@@ -61,8 +61,26 @@
 //! with the voice-changer worker priority policy. Without them a session keeps ONNX Runtime's
 //! default pool.
 //!
+//! # GPU extras (P3-C2, voice-engine session plans)
+//! [`build_session_ext`] runs the same ladder with [`GpuExtras`], applied per rung and reported
+//! back ([`GpuApplied`]); the default extras are exactly the legacy configuration, so every other
+//! caller is unchanged:
+//! - CUDA rung: the session's compute stream (`user_compute_stream`, e.g. the highest-priority
+//!   stream; session plans also record their CUDA graphs on it, see `gpu::cuda_graph`), `use_tf32`,
+//!   `arena_extend_strategy = kSameAsRequested` without a cap, `cudnn_conv_use_max_workspace`, and
+//!   the shared environment arena (`session.use_env_allocators`, see `gpu::arena`); on both
+//!   provider sources (classic options, or `CUDAExecutionProvider.*` EP-device options).
+//! - DirectML rung: a Sigil-owned high-priority D3D12 queue (`gpu::dml_queue`, `DML1`); if it cannot
+//!   be created the default queue runs, with a note.
+//! - TensorRT-RTX (`gpu::trt`): an accelerator rung before CUDA (`tensorrt_rtx` → CUDA → DirectML →
+//!   CPU), attempted only after the CUDA rung's preflight and canary pass. Its outcome is
+//!   `requested: "tensorrt_rtx"`, so a TensorRT failure reads as a fallback to CUDA with its reason.
+//!
 //! # API
 //! - [`build_session`]: explicit component + model source → `(Session, EpOutcome)`.
+//! - [`build_session_with`]: the same ladder with a per-rung builder hook ([`SessionConfigure`]:
+//!   in-memory external initializers, dimension overrides; frozen by P3-S0 for template sessions).
+//! - [`build_session_ext`]: [`build_session_with`] plus [`GpuExtras`] (P3-C2).
 //! - [`session_builder_for_vc`] / [`session_builder_with_ep`]: the older call shape
 //!   (`session_builder_for_vc(ep, opts)?.commit_from_file(path)`), now returning a
 //!   [`VcSessionBuilder`] that runs the same ladder. Without [`VcSessionBuilder::component`] the
@@ -70,13 +88,14 @@
 //!   HuBERT/ContentVec, else `vc`); in-memory models without a component are not recorded.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Once, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, Once, OnceLock, PoisonError};
 use std::time::Instant;
 
 use ort::ep::{ArenaExtendStrategy, CPU, CUDA};
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use ort::session::Session;
 
+use super::gpu::{arena, dml_queue::DmlQueue, trt};
 use crate::services::diagnostics::{canary, gpu_mem, record_ep_outcome, truncate_chars, EpOutcome};
 use crate::services::native_runtime::nvidia::{self, Preload};
 use crate::services::rt_thread::{self, WorkerPriority};
@@ -84,6 +103,10 @@ use crate::services::rt_thread::{self, WorkerPriority};
 pub const EP_CPU: &str = "cpu";
 pub const EP_CUDA: &str = "cuda";
 pub const EP_DML: &str = "dml";
+/// The TensorRT-RTX accelerator rung (never a persisted EP value; `normalize_ep` maps it to CPU).
+pub const EP_TRT_RTX: &str = "tensorrt_rtx";
+/// Classic TensorRT, the accelerator rung's option when TensorRT-RTX cannot run (outcome id only).
+pub const EP_TRT_CLASSIC: &str = "tensorrt";
 
 /// File name of the CUDA provider library ONNX Runtime loads from `Sigil.exe`'s directory.
 pub const CUDA_PROVIDER_DLL: &str = "onnxruntime_providers_cuda.dll";
@@ -286,6 +309,12 @@ pub fn normalize_ep(hint: &str) -> &'static str {
 
 /// Human name of an EP id.
 pub fn ep_label(ep: &str) -> &'static str {
+    if ep.trim().eq_ignore_ascii_case(EP_TRT_RTX) {
+        return "TensorRT-RTX";
+    }
+    if ep.trim().eq_ignore_ascii_case(EP_TRT_CLASSIC) {
+        return "TensorRT";
+    }
     match normalize_ep(ep) {
         EP_CUDA => "CUDA",
         EP_DML => "DirectML",
@@ -507,21 +536,84 @@ fn cuda_provider(device_id: i32, opts: &VcSessionOptions) -> CUDA {
     }
 }
 
+/// [`cuda_provider`] with the CUDA [`GpuExtras`] applied (classic provider path).
+fn cuda_provider_ext(device_id: i32, opts: &VcSessionOptions, extras: &GpuExtras) -> CUDA {
+    let mut cuda = cuda_provider(device_id, opts);
+    if let Some(stream) = extras.cuda_stream {
+        // SAFETY: the caller (a session plan) owns the stream and destroys it only after the
+        // session (`GpuExtras::cuda_stream`).
+        cuda = unsafe { cuda.with_compute_stream(stream as *mut ()) };
+    }
+    if let Some(tf32) = extras.cuda_tf32 {
+        cuda = cuda.with_tf32(tf32);
+    }
+    if extras.cuda_same_as_requested && opts.vram_cap_mb.is_none_or(|mb| mb == 0) {
+        cuda = cuda.with_arena_extend_strategy(ArenaExtendStrategy::SameAsRequested);
+    }
+    if let Some(max_workspace) = extras.cuda_conv_max_workspace {
+        cuda = cuda.with_conv_max_workspace(max_workspace);
+    }
+    if let Some(nhwc) = extras.cuda_prefer_nhwc {
+        cuda = cuda.with_prefer_nhwc(nhwc);
+    }
+    if let Some(nc1d) = extras.cuda_conv1d_pad_to_nc1d {
+        cuda = cuda.with_conv1d_pad_to_nc1d(nc1d);
+    }
+    if let Some(search) = extras.cuda_conv_algo_search {
+        cuda = cuda.with_conv_algorithm_search(match search {
+            CudaConvSearch::Exhaustive => ort::ep::cuda::ConvAlgorithmSearch::Exhaustive,
+            CudaConvSearch::Heuristic => ort::ep::cuda::ConvAlgorithmSearch::Heuristic,
+            CudaConvSearch::Default => ort::ep::cuda::ConvAlgorithmSearch::Default,
+        });
+    }
+    cuda
+}
+
 /// Provider options of a CUDA EP device session: the CUDA device ordinal (the legacy
 /// [`CUDA::with_device_id`] meaning) and the VRAM cap exactly as [`cuda_provider`] sets them.
+#[cfg(test)]
 pub(crate) fn cuda_device_options(device_id: i32, opts: &VcSessionOptions) -> Vec<(String, String)> {
+    cuda_device_options_ext(device_id, opts, &GpuExtras::default())
+}
+
+/// [`cuda_device_options`] with the CUDA [`GpuExtras`], as the classic path sets them
+/// ([`cuda_provider_ext`]).
+pub(crate) fn cuda_device_options_ext(device_id: i32, opts: &VcSessionOptions, extras: &GpuExtras) -> Vec<(String, String)> {
     const P: &str = "CUDAExecutionProvider.";
     let mut options = vec![(format!("{P}device_id"), device_id.max(0).to_string())];
+    let capped = opts.vram_cap_mb.is_some_and(|mb| mb > 0);
     if let Some(mb) = opts.vram_cap_mb.filter(|&mb| mb > 0) {
         options.push((format!("{P}gpu_mem_limit"), (mb as usize).saturating_mul(1024 * 1024).to_string()));
         options.push((format!("{P}arena_extend_strategy"), "kSameAsRequested".to_string()));
+    }
+    if let Some(stream) = extras.cuda_stream {
+        options.push((format!("{P}has_user_compute_stream"), "1".to_string()));
+        options.push((format!("{P}user_compute_stream"), stream.to_string()));
+    }
+    if let Some(tf32) = extras.cuda_tf32 {
+        options.push((format!("{P}use_tf32"), if tf32 { "1" } else { "0" }.to_string()));
+    }
+    if extras.cuda_same_as_requested && !capped {
+        options.push((format!("{P}arena_extend_strategy"), "kSameAsRequested".to_string()));
+    }
+    if let Some(max_workspace) = extras.cuda_conv_max_workspace {
+        options.push((format!("{P}cudnn_conv_use_max_workspace"), if max_workspace { "1" } else { "0" }.to_string()));
+    }
+    if let Some(nhwc) = extras.cuda_prefer_nhwc {
+        options.push((format!("{P}prefer_nhwc"), if nhwc { "1" } else { "0" }.to_string()));
+    }
+    if let Some(nc1d) = extras.cuda_conv1d_pad_to_nc1d {
+        options.push((format!("{P}cudnn_conv1d_pad_to_nc1d"), if nc1d { "1" } else { "0" }.to_string()));
+    }
+    if let Some(search) = extras.cuda_conv_algo_search {
+        options.push((format!("{P}cudnn_conv_algo_search"), search.as_option().to_string()));
     }
     options
 }
 
 /// Append the registered CUDA provider's EP device for CUDA ordinal `device_id` (ORT plugin-EP
 /// path, ADR 0001 decision 5). One device per session: the CUDA EP drives exactly one GPU.
-fn with_cuda_ep_device(builder: SessionBuilder, device_id: i32, opts: &VcSessionOptions) -> Result<SessionBuilder, String> {
+fn with_cuda_ep_device(builder: SessionBuilder, device_id: i32, opts: &VcSessionOptions, extras: &GpuExtras) -> Result<SessionBuilder, String> {
     let env = ort::environment::Environment::current().map_err(|e| format!("ONNX Runtime environment: {e}"))?;
     let devices: Vec<_> = env
         .devices()
@@ -536,7 +628,7 @@ fn with_cuda_ep_device(builder: SessionBuilder, device_id: i32, opts: &VcSession
             format!("CUDA device {index} does not exist ({count} CUDA device(s) found)")
         });
     };
-    let options = cuda_device_options(device_id, opts);
+    let options = cuda_device_options_ext(device_id, opts, extras);
     builder
         .with_devices([device], Some(&options))
         .map_err(|e| explain_ep_error(EP_CUDA, &e.to_string()))
@@ -545,11 +637,30 @@ fn with_cuda_ep_device(builder: SessionBuilder, device_id: i32, opts: &VcSession
 /// A session builder with the common options and exactly one EP registered (`error_on_failure`
 /// for GPU EPs, so a registration failure is an `Err`, never a silent CPU session).
 pub(crate) fn builder_for_ep(ep: &str, device_id: i32, opts: &VcSessionOptions) -> Result<SessionBuilder, String> {
+    let mut applied = GpuApplied::default();
+    builder_for_rung(ep, device_id, opts, &GpuExtras::default(), &mut applied)
+}
+
+/// A builder with the common and thread options and no EP yet (the TensorRT-RTX rung appends its
+/// own EP device).
+pub(crate) fn base_builder(ep: &str, opts: &VcSessionOptions) -> Result<SessionBuilder, String> {
     ensure_ort_environment();
-    let ep = normalize_ep(ep);
     let builder = Session::builder().map_err(|e| format!("ONNX session builder: {}", e))?;
     let builder = apply_common_session_options(builder, ep)?;
-    let builder = apply_thread_options(builder, ep, opts)?;
+    apply_thread_options(builder, ep, opts)
+}
+
+/// [`builder_for_ep`] with the rung's [`GpuExtras`]; what was applied is written to `applied`
+/// (and a GPU extra that could not be applied adds a note there instead of failing the rung).
+fn builder_for_rung(
+    ep: &str,
+    device_id: i32,
+    opts: &VcSessionOptions,
+    extras: &GpuExtras,
+    applied: &mut GpuApplied,
+) -> Result<SessionBuilder, String> {
+    let ep = normalize_ep(ep);
+    let builder = base_builder(ep, opts)?;
     let registered = match ep {
         EP_CUDA => {
             // The provider's cuBLAS / cuDNN imports must resolve to the NVIDIA runtime pack (callers
@@ -557,21 +668,152 @@ pub(crate) fn builder_for_ep(ep: &str, device_id: i32, opts: &VcSessionOptions) 
             if let Preload::Removed(why) = nvidia::ensure_preloaded() {
                 return Err(why);
             }
-            match cuda_provider_source()? {
-                CudaProviderSource::Registered(_) => return with_cuda_ep_device(builder, device_id, opts),
+            let source = cuda_provider_source()?;
+            let builder = if extras.cuda_env_arena {
+                match &source {
+                    CudaProviderSource::ExeDir(_) => match arena::ensure_cuda_env_arena(device_id, opts.vram_cap_mb) {
+                        Ok(()) => {
+                            applied.env_arena = true;
+                            builder.with_env_allocators().map_err(|e| format!("ONNX env allocators: {e}"))?
+                        }
+                        Err(why) => {
+                            applied.notes.push(format!("shared arena: {why}; this session keeps its own arena"));
+                            builder
+                        }
+                    },
+                    CudaProviderSource::Registered(_) => {
+                        applied.notes.push(
+                            "shared arena: not available with the CUDA provider pack (registered EP); this session keeps its own arena"
+                                .to_string(),
+                        );
+                        builder
+                    }
+                }
+            } else {
+                builder
+            };
+            applied.cuda_stream = extras.cuda_stream.is_some();
+            match source {
+                CudaProviderSource::Registered(_) => return with_cuda_ep_device(builder, device_id, opts, extras),
                 CudaProviderSource::ExeDir(_) => {
-                    builder.with_execution_providers([cuda_provider(device_id, opts).build().error_on_failure()])
+                    builder.with_execution_providers([cuda_provider_ext(device_id, opts, extras).build().error_on_failure()])
                 }
             }
         }
         #[cfg(windows)]
-        EP_DML => builder.with_execution_providers([ort::ep::DirectML::default()
-            .with_device_id(device_id.max(0))
-            .build()
-            .error_on_failure()]),
+        EP_DML => {
+            let high_priority = if extras.dml_high_priority {
+                match DmlQueue::shared(device_id.max(0) as u32) {
+                    Ok(queue) => Some(queue),
+                    Err(why) => {
+                        applied.notes.push(format!("gpu_priority: the high-priority DirectML queue could not be created ({why}); running on the default queue"));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            match high_priority {
+                Some(queue) => {
+                    let mut builder = builder;
+                    match queue.append_to(&mut builder) {
+                        Ok(()) => {
+                            applied.dml_queue = Some(queue);
+                            return Ok(builder);
+                        }
+                        // A failed DML1 append leaves no EP registered: register the default one.
+                        Err(why) => {
+                            applied.notes.push(format!("gpu_priority: DirectML refused the high-priority queue ({why}); running on the default queue"));
+                            builder.with_execution_providers([ort::ep::DirectML::default()
+                                .with_device_id(device_id.max(0))
+                                .build()
+                                .error_on_failure()])
+                        }
+                    }
+                }
+                None => builder.with_execution_providers([ort::ep::DirectML::default()
+                    .with_device_id(device_id.max(0))
+                    .build()
+                    .error_on_failure()]),
+            }
+        }
         _ => builder.with_execution_providers([CPU::default().with_arena_allocator(opts.cpu_arena).build()]),
     };
     registered.map_err(|e| explain_ep_error(ep, &e.to_string()))
+}
+
+// ---------------------------------------------------------------------------------------------
+// GPU extras (P3-C2)
+// ---------------------------------------------------------------------------------------------
+
+/// Per-rung GPU options of one session build (see the module docs). `Default` is the legacy
+/// configuration.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GpuExtras {
+    /// CUDA rung: the session's compute stream (`CUstream` as an integer). The caller keeps the
+    /// stream alive until the session is dropped.
+    pub cuda_stream: Option<usize>,
+    /// CUDA rung: TF32 math (`use_tf32`); `None` keeps ONNX Runtime's default (on).
+    pub cuda_tf32: Option<bool>,
+    /// CUDA rung: grow the arena only by what is requested even without a VRAM cap.
+    pub cuda_same_as_requested: bool,
+    /// CUDA rung: `cudnn_conv_use_max_workspace`; `None` keeps ONNX Runtime's default (on).
+    pub cuda_conv_max_workspace: Option<bool>,
+    /// CUDA rung: `prefer_nhwc` (tensor-core friendly layout); `None` keeps ONNX Runtime's default
+    /// (off).
+    pub cuda_prefer_nhwc: Option<bool>,
+    /// CUDA rung: `cudnn_conv1d_pad_to_nc1d`; `None` keeps ONNX Runtime's default (off).
+    pub cuda_conv1d_pad_to_nc1d: Option<bool>,
+    /// CUDA rung: `cudnn_conv_algo_search`; `None` keeps ONNX Runtime's default (exhaustive).
+    pub cuda_conv_algo_search: Option<CudaConvSearch>,
+    /// CUDA rung: allocate from the shared environment arena of the device (`gpu::arena`).
+    pub cuda_env_arena: bool,
+    /// DirectML rung: run on the shared high-priority queue of the adapter.
+    pub dml_high_priority: bool,
+    /// Try TensorRT-RTX before CUDA (a CUDA request only).
+    pub tensorrt_rtx: Option<Arc<trt::TrtRequest>>,
+}
+
+/// cuDNN convolution algorithm search (`cudnn_conv_algo_search`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CudaConvSearch {
+    Exhaustive,
+    Heuristic,
+    Default,
+}
+
+impl CudaConvSearch {
+    pub fn as_option(self) -> &'static str {
+        match self {
+            CudaConvSearch::Exhaustive => "EXHAUSTIVE",
+            CudaConvSearch::Heuristic => "HEURISTIC",
+            CudaConvSearch::Default => "DEFAULT",
+        }
+    }
+}
+
+/// What [`build_session_ext`] applied on the rung that built the session.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GpuApplied {
+    /// The session runs on the caller's compute stream.
+    pub cuda_stream: bool,
+    /// The session allocates from the shared environment arena.
+    pub env_arena: bool,
+    /// The high-priority DirectML queue the session runs on.
+    pub dml_queue: Option<Arc<DmlQueue>>,
+    /// The session runs on TensorRT-RTX.
+    pub tensorrt_rtx: bool,
+    /// Why a requested extra is not in use.
+    pub notes: Vec<String>,
+}
+
+/// A session from [`build_session_ext`].
+pub(crate) struct BuiltSession {
+    pub session: Session,
+    pub outcome: EpOutcome,
+    pub applied: GpuApplied,
+    /// Device index of the rung that built it (CUDA ordinal, DXGI adapter index, 0 on the CPU).
+    pub device: i32,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -725,7 +967,7 @@ pub enum ModelSource<'a> {
 }
 
 impl ModelSource<'_> {
-    fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         match self {
             ModelSource::File(p) => p
                 .file_name()
@@ -736,7 +978,7 @@ impl ModelSource<'_> {
     }
 }
 
-fn commit(mut builder: SessionBuilder, source: ModelSource<'_>) -> Result<Session, String> {
+pub(crate) fn commit(mut builder: SessionBuilder, source: ModelSource<'_>) -> Result<Session, String> {
     match source {
         ModelSource::File(p) => builder.commit_from_file(p),
         ModelSource::Memory(b) => builder.commit_from_memory(b),
@@ -784,7 +1026,7 @@ fn gpu_preflight(ep: &str, device_id: i32) -> Result<(), String> {
 
 /// Device index for `ep` when `requested` was asked for with `opts.cuda_device_index`. Falling
 /// back from CUDA to DirectML targets the same NVIDIA card in DXGI order (DirectML's device id).
-fn device_for(ep: &str, requested: &str, opts: &VcSessionOptions) -> i32 {
+pub(crate) fn device_for(ep: &str, requested: &str, opts: &VcSessionOptions) -> i32 {
     let wanted = opts.cuda_device_index.max(0);
     if ep == EP_DML && requested == EP_CUDA {
         let nvidia = gpu_mem::nvidia_adapter_indices(&gpu_mem::adapters());
@@ -809,7 +1051,7 @@ pub(crate) fn outcome_for(requested: &str, active: &str, mut reasons: Vec<String
         // The first rung is always the requested EP, so nothing failed before it.
         return EpOutcome::granted(requested);
     }
-    if active == EP_DML && requested == EP_CUDA {
+    if active == EP_DML && (requested == EP_CUDA || requested == EP_TRT_RTX) {
         if let Some(mb) = opts.vram_cap_mb.filter(|&mb| mb > 0) {
             reasons.push(format!(
                 "{}: the {mb} MB VRAM cap only applies to CUDA and is not enforced on DirectML",
@@ -832,6 +1074,53 @@ pub fn build_session(
     opts: &VcSessionOptions,
     source: ModelSource<'_>,
 ) -> Result<(Session, EpOutcome), String> {
+    build_session_with(component, ep_hint, opts, source, &|builder, _ep| Ok(builder))
+}
+
+/// Per-rung builder hook of [`build_session_with`]: gets the builder with the common options and
+/// the rung's EP registered, plus the rung's EP id (`cuda` / `dml` / `cpu`), and returns it with
+/// the caller's additions (in-memory external initializers, dimension overrides, ...). Called once
+/// per rung tried, so it must be repeatable.
+pub type SessionConfigure<'a> = dyn Fn(SessionBuilder, &str) -> Result<SessionBuilder, String> + 'a;
+
+/// [`build_session`] with a builder hook applied on every rung of the ladder (P3-S0 contract for
+/// template sessions: P3-B's importer, P3-C1's engine and P3-C2's session plans). A hook error on a
+/// GPU rung is that rung's failure reason (the ladder moves on); on the CPU rung it is returned.
+pub fn build_session_with(
+    component: Option<&str>,
+    ep_hint: &str,
+    opts: &VcSessionOptions,
+    source: ModelSource<'_>,
+    configure: &SessionConfigure<'_>,
+) -> Result<(Session, EpOutcome), String> {
+    build_session_ext(component, ep_hint, opts, source, &GpuExtras::default(), configure).map(|b| (b.session, b.outcome))
+}
+
+/// One rung attempt: build, configure and commit on `ep` with `extras`.
+fn attempt_rung(
+    ep: &str,
+    device: i32,
+    opts: &VcSessionOptions,
+    source: ModelSource<'_>,
+    extras: &GpuExtras,
+    configure: &SessionConfigure<'_>,
+    applied: &mut GpuApplied,
+) -> Result<Session, String> {
+    builder_for_rung(ep, device, opts, extras, applied)
+        .and_then(|b| configure(b, ep))
+        .and_then(|b| commit(b, source).map_err(|e| if ep == EP_CPU { e } else { explain_ep_error(ep, &e) }))
+}
+
+/// [`build_session_with`] with [`GpuExtras`] applied per rung (P3-C2; see the module docs). Only a
+/// CUDA request tries TensorRT-RTX first.
+pub(crate) fn build_session_ext(
+    component: Option<&str>,
+    ep_hint: &str,
+    opts: &VcSessionOptions,
+    source: ModelSource<'_>,
+    extras: &GpuExtras,
+    configure: &SessionConfigure<'_>,
+) -> Result<BuiltSession, String> {
     ensure_ort_environment();
     if let ModelSource::File(p) = source {
         if !p.is_file() {
@@ -844,8 +1133,51 @@ pub fn build_session(
     });
     let component = component.as_deref();
     let requested = normalize_ep(ep_hint);
+    let trt_request = extras.tensorrt_rtx.as_ref().filter(|_| requested == EP_CUDA);
+    // What the outcome says was asked for: the accelerator when it is tried.
+    let requested_label = if trt_request.is_some() { EP_TRT_RTX } else { requested };
     let started = Instant::now();
     let mut reasons: Vec<String> = Vec::new();
+    let finish = |session: Session, ep: &'static str, device: i32, reasons: Vec<String>, applied: GpuApplied| {
+        let outcome = outcome_for(requested_label, ep, reasons, opts);
+        tracing::info!(
+            target: "sigil::ort",
+            "session [{}] {} on {}{} in {} ms",
+            component.unwrap_or("-"),
+            source.describe(),
+            ep_label(ep),
+            if ep == EP_CPU { String::new() } else { format!(" (device {device})") },
+            started.elapsed().as_millis()
+        );
+        if let Some(c) = component {
+            record_ep_outcome(c, outcome.clone());
+        }
+        BuiltSession { session, outcome, applied, device }
+    };
+    if let Some(request) = trt_request {
+        let device = opts.cuda_device_index.max(0);
+        // TensorRT brings the CUDA provider and the NVIDIA runtime into the process too: the CUDA
+        // rung's preflight (provider bridge version, runtime pack) and canary come first.
+        let attempt = gpu_preflight(EP_CUDA, device)
+            .and_then(|()| trt::build_session(component.unwrap_or("-"), device, opts, source, extras, request, configure));
+        match attempt {
+            Ok((session, active)) => {
+                let applied = GpuApplied {
+                    tensorrt_rtx: true,
+                    cuda_stream: extras.cuda_stream.is_some(),
+                    ..GpuApplied::default()
+                };
+                // Classic TensorRT reads as a fallback from TensorRT-RTX, with the reason.
+                let why = if active == EP_TRT_RTX {
+                    Vec::new()
+                } else {
+                    vec![format!("{}: not usable on this PC; classic TensorRT runs instead", ep_label(EP_TRT_RTX))]
+                };
+                return Ok(finish(session, active, device, why, applied));
+            }
+            Err(why) => reasons.push(format!("{}: {why}", ep_label(EP_TRT_RTX))),
+        }
+    }
     for &ep in ep_ladder(requested) {
         let device = device_for(ep, requested, opts);
         if ep != EP_CPU {
@@ -854,26 +1186,9 @@ pub fn build_session(
                 continue;
             }
         }
-        let attempt = builder_for_ep(ep, device, opts).and_then(|b| {
-            commit(b, source).map_err(|e| if ep == EP_CPU { e } else { explain_ep_error(ep, &e) })
-        });
-        match attempt {
-            Ok(session) => {
-                let outcome = outcome_for(requested, ep, std::mem::take(&mut reasons), opts);
-                tracing::info!(
-                    target: "sigil::ort",
-                    "session [{}] {} on {}{} in {} ms",
-                    component.unwrap_or("-"),
-                    source.describe(),
-                    ep_label(ep),
-                    if ep == EP_CPU { String::new() } else { format!(" (device {device})") },
-                    started.elapsed().as_millis()
-                );
-                if let Some(c) = component {
-                    record_ep_outcome(c, outcome.clone());
-                }
-                return Ok((session, outcome));
-            }
+        let mut applied = GpuApplied::default();
+        match attempt_rung(ep, device, opts, source, extras, configure, &mut applied) {
+            Ok(session) => return Ok(finish(session, ep, device, std::mem::take(&mut reasons), applied)),
             Err(e) if ep == EP_CPU => {
                 if !reasons.is_empty() {
                     tracing::warn!(
@@ -1000,6 +1315,18 @@ pub(crate) fn preload_test_cuda_runtime() -> bool {
         }
     }
     true
+}
+
+/// [`preload_test_cuda_runtime`] when `SIGIL_TEST_CUDA_BIN` is set, else nothing (the NVIDIA runtime
+/// pack of `SIGIL_APP_DATA_DIR` is then preloaded by the CUDA preflight).
+#[cfg(test)]
+pub(crate) fn preload_test_cuda_runtime_quiet() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if std::env::var_os("SIGIL_TEST_CUDA_BIN").is_some() {
+            preload_test_cuda_runtime();
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1129,6 +1456,64 @@ mod tests {
             },
         );
         assert_eq!(zero_cap.len(), 1, "a 0 MB cap means no cap");
+    }
+
+    /// P3-C2: the GPU extras reach the EP-device path with the classic option names, and a cap's
+    /// arena strategy is not repeated.
+    #[test]
+    fn gpu_extras_become_cuda_device_options() {
+        let extras = GpuExtras {
+            cuda_stream: Some(0x1234),
+            cuda_tf32: Some(false),
+            cuda_same_as_requested: true,
+            cuda_conv_max_workspace: Some(false),
+            cuda_prefer_nhwc: Some(true),
+            cuda_conv1d_pad_to_nc1d: Some(false),
+            cuda_conv_algo_search: Some(CudaConvSearch::Heuristic),
+            ..GpuExtras::default()
+        };
+        let o = cuda_device_options_ext(0, &VcSessionOptions::default(), &extras);
+        let get = |k: &str| o.iter().find(|(key, _)| key == &format!("CUDAExecutionProvider.{k}")).map(|(_, v)| v.as_str());
+        assert_eq!(get("has_user_compute_stream"), Some("1"));
+        assert_eq!(get("user_compute_stream"), Some(&*0x1234usize.to_string()));
+        assert_eq!(get("use_tf32"), Some("0"));
+        assert_eq!(get("arena_extend_strategy"), Some("kSameAsRequested"));
+        assert_eq!(get("cudnn_conv_use_max_workspace"), Some("0"));
+        assert_eq!(get("prefer_nhwc"), Some("1"));
+        assert_eq!(get("cudnn_conv1d_pad_to_nc1d"), Some("0"));
+        assert_eq!(get("cudnn_conv_algo_search"), Some("HEURISTIC"));
+        let capped = cuda_device_options_ext(0, &VcSessionOptions { vram_cap_mb: Some(256), ..VcSessionOptions::default() }, &extras);
+        assert_eq!(capped.iter().filter(|(k, _)| k.ends_with("arena_extend_strategy")).count(), 1);
+        assert_eq!(cuda_device_options_ext(2, &VcSessionOptions::default(), &GpuExtras::default()), cuda_device_options(2, &VcSessionOptions::default()));
+        assert_eq!(ep_label(EP_TRT_RTX), "TensorRT-RTX");
+        assert_eq!(ep_label(EP_TRT_CLASSIC), "TensorRT");
+        assert_eq!(normalize_ep(EP_TRT_RTX), EP_CPU, "never a ladder id");
+    }
+
+    /// P3-C2: a TensorRT request is attempted only after the CUDA rung's preflight and canary pass;
+    /// when they fail, the TensorRT reason is the preflight's (nothing TensorRT-related is loaded)
+    /// and the ladder goes on.
+    #[test]
+    fn tensorrt_waits_for_the_cuda_preflight() {
+        let Err(why) = check_gpu_ep(EP_CUDA, 0) else {
+            eprintln!("the CUDA preflight passes here; skipped");
+            return;
+        };
+        let mut g = crate::services::neural_audio::test_onnx::Graph::new();
+        g.input("x", crate::services::neural_audio::test_onnx::FLOAT, &[crate::services::neural_audio::test_onnx::Dim::Fixed(2)])
+            .node("Relu", &["x"], &["y"], &[])
+            .output("y", crate::services::neural_audio::test_onnx::FLOAT, &[crate::services::neural_audio::test_onnx::Dim::Fixed(2)]);
+        let bytes = g.model_bytes(17);
+        let extras = GpuExtras {
+            tensorrt_rtx: Some(Arc::new(trt::TrtRequest { model_key: "test".into(), fp16: false })),
+            ..GpuExtras::default()
+        };
+        let built = build_session_ext(None, EP_CUDA, &VcSessionOptions::default(), ModelSource::Memory(&bytes), &extras, &|b, _| Ok(b))
+            .expect("the ladder ends on a usable EP");
+        assert_eq!(built.outcome.requested, EP_TRT_RTX);
+        let reason = built.outcome.reason.clone().unwrap_or_default();
+        assert!(reason.contains(&format!("{}: {why}", ep_label(EP_TRT_RTX))), "{reason}");
+        assert!(!built.applied.tensorrt_rtx);
     }
 
     #[cfg(windows)]

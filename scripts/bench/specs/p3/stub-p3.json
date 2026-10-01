@@ -1,0 +1,36 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "stub-p3",
+  "description": "P3 plumbing without models or devices: a fixed-block stub (40 ms blocks, like the Sigil Voice Engine) through the harness; fidelity against its own offline ceiling (an identity model is at its ceiling: MCD, F0 and click gates must hold); the H1 contention profile on the simulated clock (3 s stall, recovery within two blocks, backlog within the budget). Thresholds only catch broken plumbing and scoring.",
+  "seed": 20260930,
+  "input": { "kind": "synthetic", "signal": "voice", "seconds": 6, "level_dbfs": -12 },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 1920 },
+  "engine": { "kind": "stub", "behavior": "passthrough", "output_rate": 40000, "compute_ms": 3.0, "compute": "sleep", "fixed_block_ms": 40 },
+  "runs": [
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1.0,
+      "scoring": { "f0_method": "dio", "speaker_model": "off", "dnsmos_model": "off" },
+      "thresholds": {
+        "mcd_db": { "max": 0.5 },
+        "f0_rmse_cents": { "max": 15 },
+        "vuv_error": { "max": 0.03 },
+        "clicks": { "max": 0 }
+      }
+    },
+    {
+      "mode": "contention",
+      "name": "h1-stall",
+      "profile": "stall",
+      "seconds": 10,
+      "clock": "simulated",
+      "thresholds": {
+        "stall_recovery_blocks": { "max": 2 },
+        "backlog_over_budget_ms": { "max": 0 }
+      }
+    }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

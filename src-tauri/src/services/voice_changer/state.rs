@@ -5,19 +5,24 @@ use super::aux_feed::AuxFeed;
 use super::params::{
     clamp_output_buffer_ms, latency_budget_or, normalize_execution_provider, normalize_latency_preset,
     normalize_pitch_extractor, normalize_rvc_preset, AuxMicGate, RvcParamsState, VoiceChangerHotParams,
-    VoiceChangerMode, VoiceChangerParams, DEFAULT_VOCODER_OVERSAMPLE, MAX_QUEUE_MS_STABLE, PREFILL_MS_STABLE,
+    VoiceChangerMode, VoiceChangerParams, DEFAULT_VOCODER_OVERSAMPLE, FORMANT_SEMITONES_RANGE, MAX_QUEUE_MS_STABLE,
+    PREFILL_MS_STABLE, RMS_MIX_RANGE,
 };
+use crate::services::neural_audio::vc::engine::options::F0Range;
 use super::persist::{
     load_json, parse_doc, settings_path, slot_settings_path, to_json_bytes, LoadSource, OutsideRvcVoice,
     SettingsFile, SettingsStore, SlotSettingsFile, SETTINGS_VERSION,
 };
+use super::metrics::METRIC_UNSET;
 use crate::services::diagnostics::EpOutcome;
+use crate::services::neural_audio::vc::engine::options::EffectiveLevers;
+use crate::services::neural_audio::vc::traits::VoiceControls;
 use crate::services::neural_audio::clamp_chunk_frames;
 use crate::services::rt_thread::WorkerPriority;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -137,8 +142,25 @@ pub struct VoiceChangerState {
     pub(super) metrics_dropped_frames: Arc<AtomicU64>,
     /// Output callbacks that ran dry since start.
     pub(super) metrics_underruns: Arc<AtomicU64>,
+    // ---- P3 metrics (P3-E; `metrics::METRIC_UNSET` / 0 = not measured) ----
+    /// p50 / p95 of the per-block processing time over the recent window (us).
+    pub(super) metrics_process_p50_us: Arc<AtomicU32>,
+    pub(super) metrics_process_p95_us: Arc<AtomicU32>,
+    /// Median estimated mic-to-speaker latency of the recent blocks (us; 0 = not measured).
+    pub(super) metrics_e2e_us: Arc<AtomicU32>,
+    /// Process VRAM held by the loaded voices (MiB).
+    pub(super) metrics_vram_mb: Arc<AtomicU32>,
+    /// Governor quality level (0 = full quality).
+    pub(super) metrics_governor_level: Arc<AtomicU32>,
+    /// Levers, accelerator and precision the running engine uses.
+    pub(super) run_levers: Arc<Mutex<Option<EffectiveLevers>>>,
     /// EP outcome of the running model (`None` for classic / sidecar or when stopped).
     pub(super) run_ep: Arc<Mutex<Option<EpOutcome>>>,
+    /// Slot folders the running worker holds loaded (`VoiceSet::slot_dirs`: the playing voice, a
+    /// voice ready to switch to or loading, the idle hot voices; empty for the non-RVC modes).
+    /// `None` while not running (or before the run's engine is loaded). The import commands refuse
+    /// to replace or delete these.
+    pub(super) held_slots: Arc<Mutex<Option<Vec<PathBuf>>>>,
     pub(super) mmcss: Arc<MmcssStatus>,
     pub(super) store: Arc<SettingsStore>,
     /// Pitch and formant of the non-RVC modes while RVC mode (whose voices bring their own) is
@@ -146,6 +168,74 @@ pub struct VoiceChangerState {
     pub(super) outside_rvc: Arc<Mutex<Option<OutsideRvcVoice>>>,
     /// The last replacement of per-voice values (see [`ReplacedVoice`]).
     pub(super) replaced: Arc<Mutex<Option<ReplacedVoice>>>,
+    /// Held while [`Self::update_params`] changes the params: entering a voice changes its folder and
+    /// its per-voice values (its `slot.json`) in several steps, and the worker must never act on
+    /// half of that (a new folder with the old F0 method starts a load it then abandons; the old
+    /// voice would play with the new one's pitch). The worker reads the selection only through
+    /// [`Self::try_voice_view`], which never waits for it.
+    pub(super) params_commit: Arc<Mutex<()>>,
+}
+
+/// What of the RVC params selects a voice: its folder, F0 method and F0 range (the worker compares
+/// it every tick without allocating; a change is a voice switch).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct VoiceSelection {
+    /// Trimmed slot folder.
+    pub(super) slot_dir: String,
+    pub(super) pitch_extractor: String,
+    pub(super) f0_range: F0Range,
+}
+
+impl VoiceSelection {
+    pub(super) fn of(s: &RvcParamsState) -> VoiceSelection {
+        VoiceSelection {
+            slot_dir: s.slot_dir.trim().to_string(),
+            pitch_extractor: s.pitch_extractor.clone(),
+            f0_range: s.f0_range,
+        }
+    }
+
+    pub(super) fn matches(&self, s: &RvcParamsState) -> bool {
+        self.slot_dir == s.slot_dir.trim() && self.pitch_extractor == s.pitch_extractor && self.f0_range == s.f0_range
+    }
+}
+
+/// The per-voice values a voice plays with (what its `slot.json` holds besides the F0 method and
+/// range, which select the voice). They belong to the selected slot: during a switch to another
+/// voice they are the incoming voice's, never the playing one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct VoiceTuning {
+    pub(super) pitch_semitones: f32,
+    pub(super) formant_shift: f32,
+    pub(super) index_rate: f32,
+    pub(super) protect: f32,
+    pub(super) speaker_id: i64,
+    pub(super) rms_mix: f32,
+    pub(super) formant_semitones: f32,
+}
+
+impl VoiceTuning {
+    pub(super) fn of(s: &RvcParamsState, h: &VoiceChangerHotParams) -> VoiceTuning {
+        VoiceTuning {
+            pitch_semitones: h.pitch_semitones,
+            formant_shift: h.formant_shift,
+            index_rate: s.index_rate,
+            protect: s.protect,
+            speaker_id: s.speaker_id,
+            rms_mix: h.rms_mix,
+            formant_semitones: h.formant_semitones,
+        }
+    }
+
+    /// The voice controls with these per-voice values (the others, `noise_scale` and `silence_db`,
+    /// are global: from `h`).
+    pub(super) fn controls(&self, h: &VoiceChangerHotParams) -> VoiceControls {
+        VoiceControls {
+            rms_mix: self.rms_mix,
+            formant_semitones: self.formant_semitones,
+            ..h.voice_controls()
+        }
+    }
 }
 
 impl VoiceChangerState {
@@ -179,11 +269,19 @@ impl VoiceChangerState {
             metrics_backlog_frames: Arc::new(AtomicU32::new(0)),
             metrics_dropped_frames: Arc::new(AtomicU64::new(0)),
             metrics_underruns: Arc::new(AtomicU64::new(0)),
+            metrics_process_p50_us: Arc::new(AtomicU32::new(0)),
+            metrics_process_p95_us: Arc::new(AtomicU32::new(0)),
+            metrics_e2e_us: Arc::new(AtomicU32::new(0)),
+            metrics_vram_mb: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_governor_level: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            run_levers: Arc::new(Mutex::new(None)),
             run_ep: Arc::new(Mutex::new(None)),
+            held_slots: Arc::new(Mutex::new(None)),
             mmcss: Arc::new(MmcssStatus::default()),
             store: Arc::new(SettingsStore::default()),
             outside_rvc: Arc::new(Mutex::new(None)),
             replaced: Arc::new(Mutex::new(None)),
+            params_commit: Arc::new(Mutex::new(())),
         }
     }
 
@@ -196,6 +294,12 @@ impl VoiceChangerState {
         self.metrics_backlog_frames.store(0, Ordering::Relaxed);
         self.metrics_dropped_frames.store(0, Ordering::Relaxed);
         self.metrics_underruns.store(0, Ordering::Relaxed);
+        self.metrics_process_p50_us.store(0, Ordering::Relaxed);
+        self.metrics_process_p95_us.store(0, Ordering::Relaxed);
+        self.metrics_e2e_us.store(0, Ordering::Relaxed);
+        self.metrics_vram_mb.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_governor_level.store(METRIC_UNSET, Ordering::Relaxed);
+        *lock(&self.run_levers) = None;
         self.mmcss.reset();
         *lock(&self.run_ep) = None;
     }
@@ -209,12 +313,16 @@ impl VoiceChangerState {
         self.output_channels.store(0, Ordering::Relaxed);
         self.reset_run_metrics();
         self.aux_feed.reset(0, 1);
+        // The run holds no voices any more.
+        *lock(&self.held_slots) = None;
     }
 
     /// The current params, as `get_voice_changer_params` returns them (every P0 field set).
     pub(super) fn snapshot_params(&self) -> VoiceChangerParams {
         let h = *lock(&self.hot_params);
         let rvc = lock(&self.rvc).clone();
+        let mut p3 = VoiceChangerParams::default();
+        p3.set_p3_from(&rvc, &h);
         VoiceChangerParams {
             enabled: *lock(&self.enabled),
             pitch_semitones: h.pitch_semitones,
@@ -257,6 +365,8 @@ impl VoiceChangerState {
             worker_priority: Some(h.worker_priority.as_str().to_string()),
             input_device: Some(lock(&self.input_device).clone()),
             rvc_consent_acknowledged: Some(self.rvc_consent_acknowledged.load(Ordering::Relaxed)),
+            // Every P3 field, concrete (`set_p3_from` above).
+            ..p3
         }
     }
 
@@ -294,7 +404,10 @@ impl VoiceChangerState {
             if let Some(w) = params.worker_priority.as_deref() {
                 h.worker_priority = WorkerPriority::from_str_lossy(w);
             }
+            h.apply_p3(&params);
         }
+        // P3 cold fields (absent ones keep the stored value), before `params` is taken apart.
+        lock(&self.rvc).apply_p3(&params);
         *lock(&self.enabled) = params.enabled;
         *lock(&self.output_device) = params.output_device;
         *lock(&self.mode) = params.mode;
@@ -344,6 +457,9 @@ impl VoiceChangerState {
             protect: Some(rvc.protect),
             pitch_extractor: Some(rvc.pitch_extractor.clone()),
             speaker_id: Some(rvc.speaker_id),
+            rms_mix: Some(h.rms_mix),
+            formant_semitones: Some(h.formant_semitones),
+            f0_range: Some(rvc.f0_range.as_str().to_string()),
         }
     }
 
@@ -356,6 +472,12 @@ impl VoiceChangerState {
             }
             if let Some(v) = s.formant_shift.filter(|v| v.is_finite()) {
                 h.formant_shift = v.clamp(-1.0, 1.0);
+            }
+            if let Some(v) = s.rms_mix.filter(|v| v.is_finite()) {
+                h.rms_mix = v.clamp(RMS_MIX_RANGE.0, RMS_MIX_RANGE.1);
+            }
+            if let Some(v) = s.formant_semitones.filter(|v| v.is_finite()) {
+                h.formant_semitones = v.clamp(FORMANT_SEMITONES_RANGE.0, FORMANT_SEMITONES_RANGE.1);
             }
         }
         let mut rvc = lock(&self.rvc);
@@ -370,6 +492,9 @@ impl VoiceChangerState {
         }
         if let Some(v) = s.speaker_id {
             rvc.speaker_id = v.max(0);
+        }
+        if let Some(v) = s.f0_range.as_deref() {
+            rvc.f0_range = F0Range::from_str_lossy(v);
         }
     }
 
@@ -387,6 +512,56 @@ impl VoiceChangerState {
     ///   the reply): that one keeps the replacement instead of overwriting the voice with the
     ///   previous voice's values.
     pub(super) fn update_params(&self, params: VoiceChangerParams) -> (VoiceChangerParams, bool) {
+        let _commit = lock(&self.params_commit);
+        self.update_params_locked(params)
+    }
+
+    /// The selected voice and its per-voice values as one consistent view (`f` runs under the
+    /// params locks), or `None` while [`Self::update_params`] is changing them (the worker keeps what
+    /// it had and looks again at its next block; it never waits).
+    pub(super) fn try_voice_view<T>(&self, f: impl FnOnce(&RvcParamsState, &VoiceChangerHotParams) -> T) -> Option<T> {
+        let _commit = match self.params_commit.try_lock() {
+            Ok(g) => g,
+            Err(TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        let rvc = lock(&self.rvc);
+        let h = lock(&self.hot_params);
+        Some(f(&rvc, &h))
+    }
+
+    /// A voice switch failed (the voice did not load): put the selection back on the voice that
+    /// plays (`playing`, with the per-voice values it plays with), unless the selection has moved on
+    /// from `failed` meanwhile. The voice is entered like any switch (its `slot.json` applies), so the
+    /// UI shows what is heard and selecting the failed voice again retries it. Returns the effective
+    /// params (for `voice_changer:params`), or `None` when nothing was reverted.
+    pub(super) fn revert_voice_selection(
+        &self,
+        failed: &VoiceSelection,
+        playing: &VoiceSelection,
+        tuning: &VoiceTuning,
+    ) -> Option<VoiceChangerParams> {
+        let _commit = lock(&self.params_commit);
+        let in_rvc = *lock(&self.mode) == VoiceChangerMode::Rvc;
+        let still_failed = failed.matches(&lock(&self.rvc));
+        if !in_rvc || !still_failed || failed == playing {
+            return None;
+        }
+        let mut p = self.snapshot_params();
+        p.rvc_slot_dir = playing.slot_dir.clone();
+        p.pitch_extractor = playing.pitch_extractor.clone();
+        p.f0_range = Some(playing.f0_range.as_str().to_string());
+        p.pitch_semitones = tuning.pitch_semitones;
+        p.formant_shift = tuning.formant_shift;
+        p.index_rate = tuning.index_rate;
+        p.protect = tuning.protect;
+        p.speaker_id = tuning.speaker_id;
+        p.rms_mix = Some(tuning.rms_mix);
+        p.formant_semitones = Some(tuning.formant_semitones);
+        Some(self.update_params_locked(p).0)
+    }
+
+    fn update_params_locked(&self, params: VoiceChangerParams) -> (VoiceChangerParams, bool) {
         let before_slot = self.current_slot_dir();
         let before_mode = lock(&self.mode).clone();
         let before_voice = self.slot_settings();
@@ -584,10 +759,10 @@ mod tests {
         p.rvc_consent_acknowledged = Some(true);
         st.apply_params(p.clone());
         let got = st.snapshot_params();
-        assert_eq!(got.pitch_extractor, "rmvpe", "the crepe alias is stored as rmvpe");
+        // Since P3 `crepe` is a value of its own (CREPE-tiny), no longer an alias of rmvpe.
+        assert_eq!(got.pitch_extractor, "crepe");
         assert_eq!(got.input_device.as_deref(), Some("USB Mic"));
         let mut expect = p.clone();
-        expect.pitch_extractor = "rmvpe".into();
         expect.input_device = Some("USB Mic".into());
         assert_eq!(got, expect);
 
@@ -831,6 +1006,55 @@ mod tests {
         st.update_params(rvc(4.0, -0.2));
         let (eff, adjusted) = st.update_params(classic(-5.0, 0.5));
         assert!(!adjusted && eff.pitch_semitones == -5.0);
+    }
+
+    /// P3 fields survive a restart, and the per-voice ones (rms_mix, formant_semitones, f0_range)
+    /// are saved to the voice's `slot.json` and applied when entering it again.
+    #[test]
+    fn p3_fields_persist_and_per_voice_ones_follow_the_slot() {
+        let dir = temp_dir("p3");
+        let (a, b) = (dir.0.join("voice-a"), dir.0.join("voice-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let app = dir.0.join("app");
+        let st = VoiceChangerState::new();
+        st.attach_persistence(&app);
+        let mut p = rvc_params(&a, 0.0, 0.33);
+        p.slot_id = Some("voice-a".into());
+        p.block_ms = Some(40.0);
+        p.precision = Some("fp16".into());
+        p.cuda_graphs = Some("on".into());
+        p.governor = Some("off".into());
+        p.denoiser = Some("gtcrn".into());
+        p.hot_slots = Some(3);
+        p.vram_budget_mb = Some(2048);
+        p.noise_scale = Some(0.5);
+        p.silence_db = Some(-50.0);
+        st.update_params(p.clone());
+        let mut tuned = p.clone();
+        tuned.rms_mix = Some(0.25);
+        tuned.formant_semitones = Some(3.0);
+        tuned.f0_range = Some("singing".into());
+        st.update_params(tuned.clone());
+        st.flush_settings();
+        let saved = saved_slot(&a);
+        assert_eq!((saved.rms_mix, saved.formant_semitones), (Some(0.25), Some(3.0)));
+        assert_eq!(saved.f0_range.as_deref(), Some("singing"));
+
+        let restarted = VoiceChangerState::new();
+        restarted.attach_persistence(&app);
+        assert_eq!(restarted.snapshot_params(), tuned, "every P3 field survives a restart");
+
+        // Voice B (no slot.json) keeps the UI's values; back to A applies A's own.
+        let mut to_b = tuned.clone();
+        to_b.rvc_slot_dir = b.to_string_lossy().into_owned();
+        to_b.rms_mix = Some(0.9);
+        restarted.update_params(to_b.clone());
+        let mut back = to_b.clone();
+        back.rvc_slot_dir = a.to_string_lossy().into_owned();
+        let (eff, adjusted) = restarted.update_params(back);
+        assert!(adjusted);
+        assert_eq!(eff.rms_mix, Some(0.25));
     }
 
     /// A main settings file that cannot be read is not overwritten by the (older) backup at

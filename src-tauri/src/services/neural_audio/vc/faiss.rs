@@ -120,13 +120,74 @@ impl FaissIndex {
         self.dim
     }
 
+    /// Rows in the index.
+    pub fn rows(&self) -> usize {
+        self.ntotal
+    }
+
+    /// Whether the index ranks by squared L2 distance (RVC's indexes; the GPU kNN graph is L2).
+    pub fn is_l2(&self) -> bool {
+        matches!(
+            &self.store,
+            Store::Flat { metric: Metric::L2, .. } | Store::IvfFlat { metric: Metric::L2, .. }
+        )
+    }
+
+    /// Every stored row, row-major (`rows() × dim()`; IVF lists in list order) into `out`.
+    pub fn copy_vectors(&self, out: &mut Vec<f32>) {
+        out.clear();
+        out.reserve(self.ntotal * self.dim);
+        match &self.store {
+            Store::Flat { vectors, .. } => out.extend_from_slice(&vectors.data),
+            Store::IvfFlat { lists, .. } => {
+                for list in lists {
+                    out.extend_from_slice(&list.data);
+                }
+            }
+        }
+    }
+
+    /// Multiply-adds of one query (centroid scan plus the probed lists, or the whole flat index):
+    /// what decides whether a parallel search pays for its synchronisation.
+    pub fn query_cost(&self) -> usize {
+        match &self.store {
+            Store::Flat { vectors, .. } => vectors.data.len(),
+            Store::IvfFlat {
+                nprobe, centroids, lists, ..
+            } => {
+                let avg = if lists.is_empty() { 0 } else { self.ntotal / lists.len() };
+                centroids.data.len() + nprobe * avg * self.dim
+            }
+        }
+    }
+
+    fn row(&self, list: usize, row: usize) -> &[f32] {
+        let d = self.dim;
+        match &self.store {
+            Store::Flat { vectors, .. } => &vectors.data[row * d..(row + 1) * d],
+            Store::IvfFlat { lists, .. } => &lists[list].data[row * d..(row + 1) * d],
+        }
+    }
+
     /// Up to `k` nearest stored rows for `query` (closest first).
+    #[cfg(test)]
     fn search<'a>(&'a self, query: &[f32], k: usize) -> Vec<&'a [f32]> {
-        let mut top = TopK::new(k);
+        let mut s = BlendScratch::new();
+        self.search_into(query, k, &mut s);
+        s.hits
+            .iter()
+            .map(|&(_, list, row)| self.row(list, row))
+            .collect()
+    }
+
+    /// The `k` nearest rows of `query` into `s.hits` as `(badness, list, row)`, closest first (ties
+    /// keep scan order).
+    fn search_into(&self, query: &[f32], k: usize, s: &mut BlendScratch) {
+        s.hits.clear();
         match &self.store {
             Store::Flat { metric, vectors } => {
-                for row in vectors.rows() {
-                    top.push(metric.badness(query, row), row);
+                for (r, row) in vectors.rows().enumerate() {
+                    top_insert(&mut s.hits, k, metric.badness(query, row), 0, r);
                 }
             }
             Store::IvfFlat {
@@ -136,119 +197,159 @@ impl FaissIndex {
                 centroids,
                 lists,
             } => {
-                let mut probe = TopK::new((*nprobe).max(1));
+                s.probe.clear();
                 for (list_no, centroid) in centroids.rows().enumerate() {
-                    probe.push_id(quantizer_metric.badness(query, centroid), list_no);
+                    top_insert(&mut s.probe, (*nprobe).max(1), quantizer_metric.badness(query, centroid), list_no, 0);
                 }
-                for list_no in probe.ids() {
+                for p in 0..s.probe.len() {
+                    let list_no = s.probe[p].1;
                     if let Some(list) = lists.get(list_no) {
-                        for row in list.rows() {
-                            top.push(metric.badness(query, row), row);
+                        for (r, row) in list.rows().enumerate() {
+                            top_insert(&mut s.hits, k, metric.badness(query, row), list_no, r);
                         }
                     }
                 }
             }
         }
-        top.into_rows()
     }
 
     /// RVC retrieval blend over `frames` rows of `features` (`frames × dim`, row-major).
     pub fn blend_inplace(&self, features: &mut [f32], frames: usize, index_rate: f32) {
+        let mut s = BlendScratch::new();
+        self.blend_with(features, frames, index_rate, &mut s);
+    }
+
+    /// [`blend_inplace`](Self::blend_inplace) with the caller's scratch: no allocation once the
+    /// scratch has grown to the index's `dim` and `k`. Bit-identical results.
+    pub fn blend_with(&self, features: &mut [f32], frames: usize, index_rate: f32, s: &mut BlendScratch) {
         let rate = index_rate.clamp(0.0, 1.0);
         if rate <= 0.0 || self.ntotal == 0 || self.dim == 0 || frames == 0 {
             return;
         }
         let dim = self.dim;
-        let mut blended = vec![0.0f32; dim];
-        let mut weights: Vec<f64> = Vec::with_capacity(K_NEIGHBORS);
         for t in 0..frames {
             let start = t * dim;
             if start + dim > features.len() {
                 break;
             }
-            let neighbours = self.search(&features[start..start + dim], K_NEIGHBORS);
-            if neighbours.is_empty() {
-                continue;
-            }
-            let query = &features[start..start + dim];
-            weights.clear();
-            let mut exact: Option<&[f32]> = None;
-            for row in &neighbours {
-                let score = f64::from(squared_l2(query, row));
-                if score <= 1e-12 {
-                    exact = Some(row);
-                    break;
-                }
-                weights.push(1.0 / (score * score));
-            }
-            blended.fill(0.0);
-            if let Some(row) = exact {
-                blended.copy_from_slice(row);
-            } else {
-                let sum: f64 = weights.iter().sum();
-                if !(sum.is_finite() && sum > 0.0) {
-                    continue;
-                }
-                for (row, w) in neighbours.iter().zip(weights.iter()) {
-                    let w = (w / sum) as f32;
-                    for (b, &v) in blended.iter_mut().zip(row.iter()) {
-                        *b += w * v;
-                    }
-                }
-            }
-            let out = &mut features[start..start + dim];
-            for (o, &b) in out.iter_mut().zip(blended.iter()) {
-                *o = b * rate + *o * (1.0 - rate);
-            }
-        }
-    }
-}
-
-/// Smallest-`badness` selection for small `k` (sorted insertion).
-struct TopK<'a> {
-    k: usize,
-    items: Vec<(f32, &'a [f32], usize)>,
-}
-
-impl<'a> TopK<'a> {
-    fn new(k: usize) -> Self {
-        Self {
-            k: k.max(1),
-            items: Vec::with_capacity(k.max(1) + 1),
+            self.blend_frame(&mut features[start..start + dim], rate, s);
         }
     }
 
-    fn insert(&mut self, badness: f32, row: &'a [f32], id: usize) {
-        if badness.is_nan() {
+    /// One frame of the blend (`rate` already clamped and positive).
+    fn blend_frame(&self, frame: &mut [f32], rate: f32, s: &mut BlendScratch) {
+        self.search_into(frame, K_NEIGHBORS, s);
+        if s.hits.is_empty() {
             return;
         }
-        if self.items.len() == self.k {
-            match self.items.last() {
-                Some(last) if badness < last.0 => {
-                    self.items.pop();
+        s.weights.clear();
+        let mut exact: Option<(usize, usize)> = None;
+        for &(_, list, r) in &s.hits {
+            let score = f64::from(squared_l2(frame, self.row(list, r)));
+            if score <= 1e-12 {
+                exact = Some((list, r));
+                break;
+            }
+            s.weights.push(1.0 / (score * score));
+        }
+        s.blended.clear();
+        s.blended.resize(self.dim, 0.0);
+        if let Some((list, r)) = exact {
+            s.blended.copy_from_slice(self.row(list, r));
+        } else {
+            let sum: f64 = s.weights.iter().sum();
+            if !(sum.is_finite() && sum > 0.0) {
+                return;
+            }
+            for (&(_, list, r), w) in s.hits.iter().zip(s.weights.iter()) {
+                let w = (w / sum) as f32;
+                for (b, &v) in s.blended.iter_mut().zip(self.row(list, r).iter()) {
+                    *b += w * v;
                 }
-                _ => return,
             }
         }
-        let pos = self.items.partition_point(|it| it.0 <= badness);
-        self.items.insert(pos, (badness, row, id));
+        for (o, &b) in frame.iter_mut().zip(s.blended.iter()) {
+            *o = b * rate + *o * (1.0 - rate);
+        }
     }
 
-    fn push(&mut self, badness: f32, row: &'a [f32]) {
-        self.insert(badness, row, 0);
+    /// Frames `[from, to)` of `features` (`dim` values each) blended with `s`: one worker's share of
+    /// a parallel blend (`rate` already clamped and positive).
+    pub(crate) fn blend_range(&self, features: &mut [f32], rate: f32, s: &mut BlendScratch) {
+        let dim = self.dim;
+        if dim == 0 || self.ntotal == 0 {
+            return;
+        }
+        for frame in features.chunks_exact_mut(dim) {
+            self.blend_frame(frame, rate, s);
+        }
     }
 
-    fn push_id(&mut self, badness: f32, id: usize) {
-        self.insert(badness, &[], id);
+    /// [`blend_with`](Self::blend_with) over `threads` scoped threads, each taking a contiguous run
+    /// of frames with its own scratch. Frames are independent, so the result is bit-identical to
+    /// the serial blend. (The voice engine uses the persistent pool of `engine::retrieval` instead;
+    /// this form serves one-off callers and the equivalence tests.)
+    #[allow(dead_code)] // One-off callers and tests; the engine uses its persistent pool.
+    pub fn blend_parallel(&self, features: &mut [f32], frames: usize, index_rate: f32, threads: usize) {
+        let rate = index_rate.clamp(0.0, 1.0);
+        let dim = self.dim;
+        let frames = frames.min(if dim == 0 { 0 } else { features.len() / dim });
+        let threads = threads.clamp(1, frames.max(1));
+        if threads == 1 || rate <= 0.0 || self.ntotal == 0 || dim == 0 {
+            self.blend_inplace(features, frames, index_rate);
+            return;
+        }
+        let per = frames.div_ceil(threads);
+        std::thread::scope(|scope| {
+            for chunk in features[..frames * dim].chunks_mut(per * dim) {
+                scope.spawn(move || {
+                    let mut s = BlendScratch::new();
+                    self.blend_range(chunk, rate, &mut s);
+                });
+            }
+        });
     }
+}
 
-    fn ids(&self) -> Vec<usize> {
-        self.items.iter().map(|it| it.2).collect()
-    }
+/// Reusable buffers of one searching thread.
+#[derive(Default)]
+pub struct BlendScratch {
+    /// `(badness, list, row)` of the current neighbours, closest first.
+    hits: Vec<(f32, usize, usize)>,
+    /// `(badness, list, 0)` of the probed IVF lists.
+    probe: Vec<(f32, usize, usize)>,
+    weights: Vec<f64>,
+    blended: Vec<f32>,
+}
 
-    fn into_rows(self) -> Vec<&'a [f32]> {
-        self.items.into_iter().map(|it| it.1).collect()
+impl BlendScratch {
+    pub fn new() -> BlendScratch {
+        BlendScratch {
+            hits: Vec::with_capacity(K_NEIGHBORS + 1),
+            probe: Vec::with_capacity(8),
+            weights: Vec::with_capacity(K_NEIGHBORS),
+            blended: Vec::new(),
+        }
     }
+}
+
+/// Keep the `k` smallest-`badness` items of `items` (sorted, ties after existing equals); NaN is
+/// never inserted.
+fn top_insert(items: &mut Vec<(f32, usize, usize)>, k: usize, badness: f32, list: usize, row: usize) {
+    let k = k.max(1);
+    if badness.is_nan() {
+        return;
+    }
+    if items.len() == k {
+        match items.last() {
+            Some(last) if badness < last.0 => {
+                items.pop();
+            }
+            _ => return,
+        }
+    }
+    let pos = items.partition_point(|it| it.0 <= badness);
+    items.insert(pos, (badness, list, row));
 }
 
 fn squared_l2(a: &[f32], b: &[f32]) -> f32 {
@@ -613,7 +714,7 @@ fn read_array_inverted_lists(r: &mut Reader<'_>, nlist: usize, dim: usize) -> Re
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // Writers mirroring faiss/impl/index_write.cpp.
@@ -834,5 +935,140 @@ mod tests {
         let mut feats = vec![0.3f32, 0.7];
         index.blend_inplace(&mut feats, 1, 0.0);
         assert_eq!(feats, vec![0.3, 0.7]);
+    }
+
+    /// Deterministic pseudo-random rows around a few cluster centres (an RVC-like index).
+    pub(crate) fn clustered(dim: usize, rows: usize, clusters: usize, seed: u64) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+        let mut state = seed | 1;
+        let mut rnd = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 40) as f32 / (1u64 << 24) as f32) - 0.5
+        };
+        let centres: Vec<Vec<f32>> = (0..clusters)
+            .map(|_| (0..dim).map(|_| 4.0 * rnd()).collect())
+            .collect();
+        let data: Vec<Vec<f32>> = (0..rows)
+            .map(|i| centres[i % clusters].iter().map(|c| c + rnd()).collect())
+            .collect();
+        (centres, data)
+    }
+
+    /// An IVFFlat index over `data` with each row in the list of its nearest centre.
+    pub(crate) fn ivf_of(dim: usize, centres: &[Vec<f32>], data: &[Vec<f32>], nprobe: u64) -> Vec<u8> {
+        let mut lists: Vec<(Vec<i64>, Vec<Vec<f32>>)> = vec![(Vec::new(), Vec::new()); centres.len()];
+        for (i, row) in data.iter().enumerate() {
+            let best = (0..centres.len())
+                .min_by(|&a, &b| squared_l2(row, &centres[a]).total_cmp(&squared_l2(row, &centres[b])))
+                .unwrap();
+            lists[best].0.push(i as i64);
+            lists[best].1.push(row.clone());
+        }
+        ivf_flat(dim, centres, &lists, nprobe, false, false)
+    }
+
+    /// Independent reference of RVC's blend (`pipeline.py`) in f64: probe the `nprobe` nearest
+    /// centroids, brute-force their lists, `(1 / score)^2` weights. The check `faiss.rs` is held to
+    /// (research §4.3#9 names pthrs; this is the same algorithm written separately, in f64).
+    fn reference_blend(centres: &[Vec<f32>], data: &[Vec<f32>], nprobe: usize, query: &[f32], rate: f32) -> Vec<f64> {
+        let d2 = |a: &[f32], b: &[f32]| {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2))
+                .sum::<f64>()
+        };
+        let mut order: Vec<usize> = (0..centres.len()).collect();
+        order.sort_by(|&a, &b| d2(query, &centres[a]).total_cmp(&d2(query, &centres[b])));
+        let probed: Vec<usize> = order[..nprobe].to_vec();
+        let mut cand: Vec<(f64, usize)> = data
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                let best = (0..centres.len())
+                    .min_by(|&a, &b| squared_l2(row, &centres[a]).total_cmp(&squared_l2(row, &centres[b])))
+                    .unwrap();
+                probed.contains(&best)
+            })
+            .map(|(i, row)| (d2(query, row), i))
+            .collect();
+        cand.sort_by(|a, b| a.0.total_cmp(&b.0));
+        cand.truncate(8);
+        let w: Vec<f64> = cand.iter().map(|(s, _)| 1.0 / (s * s)).collect();
+        let sum: f64 = w.iter().sum();
+        (0..query.len())
+            .map(|c| {
+                let nn: f64 = cand
+                    .iter()
+                    .zip(&w)
+                    .map(|((_, i), w)| w / sum * f64::from(data[*i][c]))
+                    .sum();
+                nn * f64::from(rate) + f64::from(query[c]) * (1.0 - f64::from(rate))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn blend_matches_an_independent_f64_reference() {
+        let dim = 32;
+        let (centres, data) = clustered(dim, 600, 12, 7);
+        for nprobe in [1u64, 3] {
+            let index = FaissIndex::from_bytes(&ivf_of(dim, &centres, &data, nprobe)).unwrap();
+            assert!(index.is_l2());
+            assert_eq!(index.rows(), 600);
+            let (_, queries) = clustered(dim, 40, 12, 99);
+            for q in &queries {
+                let mut got = q.clone();
+                index.blend_inplace(&mut got, 1, 0.75);
+                let want = reference_blend(&centres, &data, nprobe as usize, q, 0.75);
+                for (g, w) in got.iter().zip(&want) {
+                    assert!((f64::from(*g) - w).abs() < 1e-4, "nprobe {nprobe}: {g} vs {w}");
+                }
+            }
+        }
+    }
+
+    /// Parallel search is the serial search, bit for bit, at every thread count; the scratch form
+    /// equals the legacy call.
+    #[test]
+    fn parallel_and_scratch_blends_equal_the_serial_blend() {
+        let dim = 768;
+        let (centres, data) = clustered(dim, 3_000, 40, 3);
+        let index = FaissIndex::from_bytes(&ivf_of(dim, &centres, &data, 1)).unwrap();
+        let (_, q) = clustered(dim, 23, 40, 11);
+        let feats: Vec<f32> = q.concat();
+        let mut serial = feats.clone();
+        index.blend_inplace(&mut serial, 23, 0.6);
+        let mut scratch = BlendScratch::new();
+        let mut with = feats.clone();
+        index.blend_with(&mut with, 23, 0.6, &mut scratch);
+        assert_eq!(with, serial);
+        for threads in [1usize, 2, 3, 4, 8, 64] {
+            let mut par = feats.clone();
+            index.blend_parallel(&mut par, 23, 0.6, threads);
+            assert_eq!(par, serial, "{threads} threads");
+        }
+        // Rate 0 and zero frames stay untouched.
+        let mut same = feats.clone();
+        index.blend_parallel(&mut same, 23, 0.0, 4);
+        assert_eq!(same, feats);
+        index.blend_parallel(&mut same, 0, 0.5, 4);
+        assert_eq!(same, feats);
+        // The flattened rows hold every vector once.
+        let mut rows = Vec::new();
+        index.copy_vectors(&mut rows);
+        assert_eq!(rows.len(), 3_000 * dim);
+        let mut sums: Vec<f64> = rows
+            .chunks_exact(dim)
+            .map(|r| r.iter().map(|&v| f64::from(v)).sum())
+            .collect();
+        let mut want: Vec<f64> = data
+            .iter()
+            .map(|r| r.iter().map(|&v| f64::from(v)).sum())
+            .collect();
+        sums.sort_by(f64::total_cmp);
+        want.sort_by(f64::total_cmp);
+        assert_eq!(sums, want);
+        assert!(index.query_cost() >= 40 * dim);
     }
 }

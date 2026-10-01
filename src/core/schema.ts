@@ -102,7 +102,17 @@ export const BackendSchema = z.object({
     start: zSafe(z.string(), ""),
     muteMic: zSafe(z.string(), ""),
     muteSound: zSafe(z.string(), ""),
+    // Voice-changer hotkeys (P3-G; keys = `VC_SHORTCUT_KEYS` in services/voice_changer/hotkeys.ts).
+    vcToggle: zSafe(z.string(), ""),
+    vcNextVoice: zSafe(z.string(), ""),
+    vcPrevVoice: zSafe(z.string(), ""),
+    vcVoice1: zSafe(z.string(), ""),
+    vcVoice2: zSafe(z.string(), ""),
+    vcVoice3: zSafe(z.string(), ""),
+    vcVoice4: zSafe(z.string(), ""),
   }).default({}),
+  /** Slot ids of voice hotkeys 1-4 (`vcVoice1`..`vcVoice4`; "" = none). The voice library is Rust's. */
+  vcHotkeyVoices: zSafe(z.array(z.string()).max(4), []),
   services: z.object({
     vrc: zodServiceSchemaFactory(Service_VRC_Schema).default({}),
     stt: zodServiceSchemaFactory(Service_STT_Schema).default({}),

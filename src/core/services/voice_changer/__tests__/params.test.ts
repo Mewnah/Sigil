@@ -9,22 +9,41 @@ import contract from "../../../../../src-tauri/src/services/voice_changer/params
 import { normalizeChunkFramesValue, VOICE_CHANGER_CHUNK_FRAMES } from "../chunkFrames";
 import {
     AUX_MIC_GATES,
+    BASELINE_DENOISERS,
+    BASELINE_PITCH_EXTRACTORS,
+    BASELINE_PRECISIONS,
+    BASELINE_RVC_PROFILES,
     clampLatencyBudgetMs,
     clampOutputBufferMs,
+    DENOISERS,
     effectivePitchExtractor,
     effectiveRvcEp,
     EXECUTION_PROVIDER_ALIASES,
+    EXECUTION_PROVIDER_BASE,
     EXECUTION_PROVIDERS,
+    F0_RANGES,
     GPU_ONLY_PITCH_EXTRACTORS,
     LATENCY_PRESETS,
+    LEVER_MODES,
     normalizeAuxMicGate,
+    normalizeDenoiser,
     normalizeExecutionProvider,
+    normalizeF0Range,
     normalizeLatencyPreset,
+    normalizeLeverMode,
     normalizeMode,
+    normalizeOnnxExecutionProvider,
     normalizePitchExtractor,
+    normalizePrecision,
     normalizeRvcProfile,
     normalizeVocoderOversample,
     normalizeWorkerPriority,
+    PITCH_EXTRACTOR_STAND_IN,
+    PRECISIONS,
+    profileDefaultEp,
+    RVC_EXECUTION_PROVIDERS,
+    rvcBaseEp,
+    VC_LEVERS,
     OUTPUT_BUFFER_LOW_LATENCY,
     OUTPUT_BUFFER_STABLE,
     OUTPUT_MAX_QUEUE_MS,
@@ -42,6 +61,7 @@ import { normalizeMetrics } from "../metrics";
 import {
     adoptAdjustedParams,
     applyRustParams,
+    LEVER_STATE_KEYS,
     RUST_PARAM_KEYS,
     sameParamValue,
     toRustParams,
@@ -49,9 +69,14 @@ import {
 } from "../params";
 import {
     AuxMicGateSchema,
+    DenoiserSchema,
     ExecutionProviderSchema,
+    F0RangeSchema,
     LatencyPresetSchema,
+    LeverModeSchema,
     PitchExtractorSchema,
+    PrecisionSchema,
+    RvcExecutionProviderSchema,
     RvcProfileSchema,
     VoiceChangerModeSchema,
     VoiceChangerState,
@@ -67,6 +92,10 @@ type EnumSpec = {
     legacy_aliases?: Record<string, string>;
     gpu_only?: string[];
     cpu_fallback?: string;
+    baseline?: string[];
+    stand_in?: Record<string, string>;
+    base?: Record<string, string>;
+    default_ep?: Record<string, string>;
 };
 
 const enums = contract.enums as unknown as Record<string, EnumSpec>;
@@ -104,11 +133,36 @@ describe("contract parity with Rust (params_contract.json)", () => {
         checkStringEnum("aux_mic_gate", AUX_MIC_GATES, normalizeAuxMicGate, AuxMicGateSchema.options);
         checkStringEnum(
             "rvc_execution_provider",
-            EXECUTION_PROVIDERS,
+            RVC_EXECUTION_PROVIDERS,
             (s) => normalizeExecutionProvider(s) || "cpu",
-            ExecutionProviderSchema.options,
+            RvcExecutionProviderSchema.options,
         );
         expect(enums.onnx_execution_provider.values).toEqual([...EXECUTION_PROVIDERS]);
+        expect(ExecutionProviderSchema.options).toEqual([...EXECUTION_PROVIDERS]);
+        checkStringEnum("precision", PRECISIONS, normalizePrecision, PrecisionSchema.options);
+        checkStringEnum("lever_mode", LEVER_MODES, normalizeLeverMode, LeverModeSchema.options);
+        checkStringEnum("denoiser", DENOISERS, normalizeDenoiser, DenoiserSchema.options);
+        checkStringEnum("f0_range", F0_RANGES, normalizeF0Range, F0RangeSchema.options);
+    });
+
+    it("P3: levers, baselines, stand-ins, base rungs and preset EPs are the contract's", () => {
+        expect([...VC_LEVERS]).toEqual(contract.levers);
+        expect(Object.keys(LEVER_STATE_KEYS)).toEqual(contract.levers);
+        expect([...BASELINE_PITCH_EXTRACTORS]).toEqual(enums.pitch_extractor.baseline);
+        expect([...BASELINE_RVC_PROFILES]).toEqual(enums.rvc_preset.baseline);
+        expect([...BASELINE_PRECISIONS]).toEqual(enums.precision.baseline);
+        expect([...BASELINE_DENOISERS]).toEqual(enums.denoiser.baseline);
+        expect([...EXECUTION_PROVIDERS]).toEqual(enums.rvc_execution_provider.baseline);
+        expect(PITCH_EXTRACTOR_STAND_IN).toEqual(enums.pitch_extractor.stand_in);
+        expect(EXECUTION_PROVIDER_BASE).toEqual(enums.rvc_execution_provider.base);
+        for (const [ep, base] of Object.entries(enums.rvc_execution_provider.base ?? {})) {
+            expect(rvcBaseEp(ep), ep).toBe(base);
+            expect(normalizeOnnxExecutionProvider(ep), ep).toBe(base);
+        }
+        for (const [profile, ep] of Object.entries(enums.rvc_preset.default_ep ?? {})) {
+            expect(profileDefaultEp(normalizeRvcProfile(profile)), profile).toBe(ep);
+        }
+        expect(normalizeOnnxExecutionProvider("")).toBe("cpu");
     });
 
     it("legacy and alias maps are the contract's, and the UI never offers an alias", () => {
@@ -134,6 +188,10 @@ describe("contract parity with Rust (params_contract.json)", () => {
         expect(VC_ENUM_DEFAULTS.vocoderOversample).toBe(enums.vocoder_oversample.default);
         expect(VC_ENUM_DEFAULTS.workerPriority).toBe(enums.worker_priority.default);
         expect(VC_ENUM_DEFAULTS.auxMicGate).toBe(enums.aux_mic_gate.default);
+        expect(VC_ENUM_DEFAULTS.precision).toBe(enums.precision.default);
+        expect(VC_ENUM_DEFAULTS.leverMode).toBe(enums.lever_mode.default);
+        expect(VC_ENUM_DEFAULTS.denoiser).toBe(enums.denoiser.default);
+        expect(VC_ENUM_DEFAULTS.f0Range).toBe(enums.f0_range.default);
     });
 
     it("vocoder oversample list and fallback match", () => {
@@ -207,6 +265,19 @@ describe("contract parity with Rust (params_contract.json)", () => {
         expect(sent.chunk_frames).toBe(contract.chunk_frames.default);
         expect(sent.input_device).toBe("");
         expect(sent.rvc_consent_acknowledged).toBe(false);
+        expect(sent.slot_id).toBe("");
+        expect(sent.precision).toBe(enums.precision.default);
+        expect(sent.f0_range).toBe(enums.f0_range.default);
+        expect(sent.denoiser).toBe(enums.denoiser.default);
+        for (const lever of VC_LEVERS) expect(sent[lever], lever).toBe(enums.lever_mode.default);
+    });
+
+    it("every P3 params field is sent and hydrated under its contract name", () => {
+        const sent = toRustParams(defaults());
+        for (const key of Object.keys(contract.params_p3_new_fields)) {
+            expect(RUST_PARAM_KEYS, `key list has ${key}`).toContain(key);
+            expect(sent[key as keyof VoiceChangerParamsRust], `sent ${key}`).not.toBeUndefined();
+        }
     });
 
     it("every P0 params field is sent and hydrated under its contract name", () => {
@@ -222,7 +293,11 @@ describe("contract parity with Rust (params_contract.json)", () => {
     it("every metrics field of the contract is read", () => {
         const raw: Record<string, unknown> = { buffer_ms: 1, process_ms: 2, chunk_ms: 10 };
         const m = normalizeMetrics(raw) as unknown as Record<string, unknown>;
-        for (const key of [...Object.keys(contract.metrics_existing_fields), ...Object.keys(contract.metrics_p0_new_fields)]) {
+        for (const key of [
+            ...Object.keys(contract.metrics_existing_fields),
+            ...Object.keys(contract.metrics_p0_new_fields),
+            ...Object.keys(contract.metrics_p3_new_fields),
+        ]) {
             expect(key in m, `metrics field ${key}`).toBe(true);
         }
     });
@@ -235,15 +310,29 @@ describe("RVC effective EP and F0 (mirror of Rust effective_rvc_ep / effective_p
         expect(effectiveRvcEp("", "streamer")).toBe("cpu");
         expect(effectiveRvcEp("cpu", "quality")).toBe("cpu");
         expect(effectiveRvcEp("dml", "streamer")).toBe("dml");
+        // P3: Studio-TRT asks for TensorRT-RTX, which builds on the CUDA rung.
+        expect(effectiveRvcEp("", "studio_trt")).toBe("tensorrt_rtx");
+        expect(rvcBaseEp(effectiveRvcEp("", "studio_trt"))).toBe("cuda");
+        expect(rvcBaseEp("dml_hp")).toBe("dml");
     });
 
     it("a GPU-only F0 runs as fcpe on the CPU only, and says so", () => {
         expect(effectivePitchExtractor("rmvpe", "cpu")).toEqual({ extractor: "fcpe", fellBack: true });
-        expect(effectivePitchExtractor("crepe", "cpu")).toEqual({ extractor: "fcpe", fellBack: true });
-        expect(effectivePitchExtractor("crepe", "cuda")).toEqual({ extractor: "rmvpe", fellBack: false });
         expect(effectivePitchExtractor("RMVPE", "dml")).toEqual({ extractor: "rmvpe", fellBack: false });
         expect(effectivePitchExtractor("dio", "cpu")).toEqual({ extractor: "dio", fellBack: false });
         expect(effectivePitchExtractor("fcpe", "cuda")).toEqual({ extractor: "fcpe", fellBack: false });
+        expect(effectivePitchExtractor("rmvpe", "tensorrt_rtx")).toEqual({ extractor: "rmvpe", fellBack: false });
+    });
+
+    it("P3: a method this build cannot run runs its stand-in (then the GPU-only rule), as in Rust", () => {
+        // Not in the baseline (default `available`): the stand-in runs.
+        expect(effectivePitchExtractor("crepe", "cuda")).toEqual({ extractor: "rmvpe", fellBack: true });
+        expect(effectivePitchExtractor("crepe", "cpu")).toEqual({ extractor: "fcpe", fellBack: true });
+        expect(effectivePitchExtractor("swiftf0", "cpu")).toEqual({ extractor: "fcpe", fellBack: true });
+        expect(effectivePitchExtractor("fusion", "dml_hp")).toEqual({ extractor: "rmvpe", fellBack: true });
+        // Once the capabilities list it, it runs itself.
+        const withSwift = [...BASELINE_PITCH_EXTRACTORS, "swiftf0"];
+        expect(effectivePitchExtractor("swiftf0", "cpu", withSwift)).toEqual({ extractor: "swiftf0", fellBack: false });
     });
 });
 
@@ -292,6 +381,26 @@ function customState(): VoiceChangerState {
         auxMicGate: "duck",
         workerPriority: "protect_voice",
         rvcConsentAcknowledged: true,
+        slotId: "alto",
+        blockMs: 40,
+        precision: "fp16",
+        f0Range: "singing",
+        rmsMix: 0.25,
+        formantSemitones: -3,
+        noiseScale: 0.5,
+        silenceDb: -50,
+        partialDecode: "on",
+        anchoredNoise: "off",
+        nsfPhase0: "on",
+        f0Cache: "off",
+        gpuKnn: "on",
+        ioBinding: "on",
+        cudaGraphs: "off",
+        gpuPriority: "on",
+        governor: "off",
+        denoiser: "gtcrn",
+        hotSlots: 3,
+        vramBudgetMb: 2048,
     };
 }
 
@@ -311,9 +420,18 @@ describe("params mapping", () => {
         expect(got.rvcConsentAcknowledged).toBe(true);
     });
 
-    it("normalizes like Rust on hydration: crepe is rmvpe, an unset RVC EP is the profile default", () => {
+    it("normalizes like Rust on hydration: crepe is its own value, an unset RVC EP is the profile default", () => {
         const base = toRustParams(defaults());
-        expect(applyRustParams(defaults(), { ...base, pitch_extractor: "crepe" }).pitchExtractor).toBe("rmvpe");
+        expect(applyRustParams(defaults(), { ...base, pitch_extractor: "crepe" }).pitchExtractor).toBe("crepe");
+        expect(applyRustParams(defaults(), { ...base, pitch_extractor: "harvest" }).pitchExtractor).toBe("fcpe");
+        expect(applyRustParams(defaults(), { ...base, rvc_execution_provider: "TensorRT_RTX" }).rvcExecutionProvider).toBe(
+            "tensorrt_rtx",
+        );
+        expect(applyRustParams(defaults(), { ...base, onnx_execution_provider: "dml_hp" }).onnxExecutionProvider).toBe("dml");
+        expect(applyRustParams(defaults(), { ...base, cuda_graphs: "ON", denoiser: "rnnoise" })).toMatchObject({
+            cudaGraphs: "on",
+            denoiser: "off",
+        });
         expect(
             applyRustParams(defaults(), { ...base, rvc_execution_provider: "", rvc_preset: "low_latency" }).rvcExecutionProvider,
         ).toBe("cuda");
@@ -331,8 +449,13 @@ describe("params mapping", () => {
         delete old.worker_priority;
         delete old.input_device;
         delete old.rvc_consent_acknowledged;
-        const got = applyRustParams(prev, { ...old, worker_priority: null });
+        for (const key of Object.keys(contract.params_p3_new_fields)) delete old[key as keyof VoiceChangerParamsRust];
+        const got = applyRustParams(prev, { ...old, worker_priority: null, governor: null });
         expect(got.latencyBudgetMs).toBe(prev.latencyBudgetMs);
+        expect(got.governor).toBe(prev.governor);
+        expect(got.rmsMix).toBe(prev.rmsMix);
+        expect(got.slotId).toBe(prev.slotId);
+        expect(got.hotSlots).toBe(prev.hotSlots);
         expect(got.auxMicGate).toBe(prev.auxMicGate);
         expect(got.workerPriority).toBe(prev.workerPriority);
         expect(got.inputDevice).toBe(prev.inputDevice);

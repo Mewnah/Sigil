@@ -122,6 +122,11 @@ pub fn template_session(
     Ok(session)
 }
 
+/// Input names a session declares.
+fn declared_inputs(session: &Session) -> Vec<String> {
+    session.inputs().iter().map(|i| i.name().to_string()).collect()
+}
+
 /// Result of [`smoke_inference`].
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SmokeReport {
@@ -171,8 +176,9 @@ pub fn smoke_inference(voice: &super::ImportedVoice, precision: Precision) -> Re
         .collect();
     let pitch = vec![60i64; frames];
     let mut enc = template_session(&voice.template, "enc", precision, Some(&images), target, &[("T", frames as i64)])?;
+    let enc_inputs = declared_inputs(&enc);
     let mut feed = vec![tensor("phone", vec![1, frames, emb], &phone)?];
-    if arch.f0 {
+    if arch.f0 && enc_inputs.iter().any(|n| n == "pitch") {
         feed.push(tensor("pitch", vec![1, frames], &pitch)?);
     }
     let (m_p, logs_p) = {
@@ -190,7 +196,10 @@ pub fn smoke_inference(voice: &super::ImportedVoice, precision: Precision) -> Re
     let src_noise = vec![0.0f32; frames * upp];
     let dims = [("F", frames as i64), ("S", (frames * upp) as i64)];
     let mut fd = template_session(&voice.template, "flowdec", precision, Some(&images), target, &dims)?;
-    let feed = vec![
+    // Only the inputs the graph declares: a template without pitch guidance (nof0) or with
+    // another vocoder may take no f0 / phase0 / src_noise.
+    let fd_inputs = declared_inputs(&fd);
+    let feed: Vec<(String, SessionInputValue<'_>)> = vec![
         tensor("m_p", vec![1, c, frames], &m_p)?,
         tensor("logs_p", vec![1, c, frames], &logs_p)?,
         tensor("z_noise", vec![1, c, frames], &z_noise)?,
@@ -198,7 +207,10 @@ pub fn smoke_inference(voice: &super::ImportedVoice, precision: Precision) -> Re
         tensor("f0", vec![1, frames], &f0)?,
         tensor("phase0", vec![1, 1], &phase0)?,
         tensor("src_noise", vec![1, frames * upp], &src_noise)?,
-    ];
+    ]
+    .into_iter()
+    .filter(|(name, _)| fd_inputs.iter().any(|n| n == name))
+    .collect();
     let out = fd.run(feed).map_err(|e| fail("flowdec", e.to_string()))?;
     let audio = out[0].try_extract_tensor::<f32>().map_err(|e| fail("flowdec", e.to_string()))?.1;
     let expect = (frames - margin) * upp;

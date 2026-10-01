@@ -20,6 +20,12 @@ const sample = (over: Partial<VoiceChangerMetrics> = {}): VoiceChangerMetrics =>
     dropped_ms: 0,
     underruns: 0,
     ep: { requested: "cuda", active: "cuda", reason: null },
+    process_p50_ms: null,
+    process_p95_ms: null,
+    e2e_ms: null,
+    vram_mb: null,
+    governor_level: null,
+    levers: null,
     ...over,
 });
 
@@ -34,7 +40,30 @@ describe("metrics normalization", () => {
             dropped_ms: null,
             underruns: null,
             ep: null,
+            process_p50_ms: null,
+            process_p95_ms: null,
+            e2e_ms: null,
+            vram_mb: null,
+            governor_level: null,
+            levers: null,
         });
+    });
+
+    it("reads the P3 fields and normalizes the levers in use", () => {
+        const m = normalizeMetrics({
+            buffer_ms: 1,
+            process_ms: 2,
+            chunk_ms: 10,
+            process_p50_ms: 3.5,
+            process_p95_ms: 5,
+            e2e_ms: 61,
+            vram_mb: 540,
+            governor_level: 1,
+            levers: { cuda_graphs: true, partial_decode: "yes", accelerator: "tensorrt_rtx", precision: "FP16", notes: ["x", 3] },
+        })!;
+        expect([m.process_p50_ms, m.process_p95_ms, m.e2e_ms, m.vram_mb, m.governor_level]).toEqual([3.5, 5, 61, 540, 1]);
+        expect(m.levers).toMatchObject({ cuda_graphs: true, partial_decode: false, governor: false, accelerator: "tensorrt_rtx", precision: "fp16", notes: ["x"] });
+        expect(normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 3, levers: "bogus" })!.levers).toBeNull();
     });
 
     it("keeps the P0 fields and normalizes the EP", () => {

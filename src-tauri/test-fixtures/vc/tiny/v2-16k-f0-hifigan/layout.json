@@ -76,6 +76,8 @@
     "dec_margin": 13,
     "dec_receptive_left_frames": 13,
     "dec_receptive_left_samples": 77,
+    "dec_receptive_right_frames": 13,
+    "dec_receptive_right_samples": 77,
     "noise_scale": 0.66666,
     "knn_k": 8,
     "knn_coarse_k": 64,
@@ -85,6 +87,30 @@
       "enc": "T = context frames (10 ms each)",
       "flowdec": "S = F * upp; A = (F - flow_margin - dec_margin) * upp",
       "knn": "T = 20 ms content frames; N >= min_index_rows"
+    },
+    "main_margin": 13,
+    "latent_offset": 0,
+    "excitation": {
+      "kind": "nsf-sine",
+      "harmonics": 1,
+      "f0_to_samples": "repeat",
+      "f0_lookahead_frames": 0,
+      "phase": {
+        "input": "phase0",
+        "shape": [
+          1,
+          1
+        ],
+        "carry": "phase0' = frac(phase0 + sum(wrap(upp * f0 / sr))) over the frames that slide out; wrap(x) = fmod(x + 0.5, 1) - 0.5"
+      },
+      "noise": {
+        "input": "src_noise",
+        "shape": [
+          1,
+          "S"
+        ],
+        "per": "sample"
+      }
     }
   },
   "weights": {

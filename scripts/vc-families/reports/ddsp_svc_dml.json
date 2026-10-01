@@ -1,0 +1,1321 @@
+{
+  "family": "ddsp_svc",
+  "model": "DDSP-SVC 6.3 architecture (reflow.yaml) + openvpi PC-NSF-HiFiGAN 44.1k",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.24.4",
+    "ep": "dml"
+  },
+  "threads": 2,
+  "files": {
+    "ddsp": "ddsp.onnx",
+    "reflow_step": "reflow_step.onnx",
+    "velocity_f": "velocity_f.onnx",
+    "vocoder": "vocoder.onnx",
+    "encoder": "encoder.onnx",
+    "velocity": "velocity.onnx"
+  },
+  "upstream_exporter": {
+    "encoder_cond_tail_vs_upstream": {
+      "snr_db": 21.16,
+      "max_abs": 2.52,
+      "rel_l2": 0.0875,
+      "cosine": 0.996178163,
+      "ref_rms": 3.181
+    },
+    "velocity_int64_t_int_round_chain_audio": {
+      "snr_db": 75.29,
+      "max_abs": 0.00058,
+      "rel_l2": 0.000172,
+      "cosine": 0.999999985,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 83.78,
+        "max_abs": 0.00642,
+        "rel_l2": 6.47e-05,
+        "cosine": 0.999999998,
+        "ref_rms": 5.216
+      }
+    },
+    "velocity_int64_t_int_trunc_chain_audio": {
+      "snr_db": 49.12,
+      "max_abs": 0.00442,
+      "rel_l2": 0.0035,
+      "cosine": 0.999994905,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 57.95,
+        "max_abs": 0.0658,
+        "rel_l2": 0.00127,
+        "cosine": 0.999999214,
+        "ref_rms": 5.216
+      }
+    },
+    "encoder_nan_at_f0_0": false
+  },
+  "parity": {
+    "units_tta2x_shared_embedder": {
+      "snr_db": 111.36,
+      "max_abs": 2.74e-05,
+      "rel_l2": 2.7e-06,
+      "cosine": 1.0,
+      "ref_rms": 0.3291,
+      "pass": true
+    },
+    "ddsp_cond": {
+      "snr_db": 83.06,
+      "max_abs": 0.00343,
+      "rel_l2": 7.03e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 3.181,
+      "pass": true
+    },
+    "ddsp_x": {
+      "snr_db": 80.5,
+      "max_abs": 0.00049,
+      "rel_l2": 9.44e-05,
+      "cosine": 0.999999996,
+      "ref_rms": 0.3385,
+      "pass": true
+    },
+    "chain_mel": {
+      "snr_db": 88.05,
+      "max_abs": 0.00283,
+      "rel_l2": 3.96e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 4.445,
+      "pass": true
+    },
+    "chain_audio": {
+      "snr_db": 75.29,
+      "max_abs": 0.000581,
+      "rel_l2": 0.000172,
+      "cosine": 0.999999985,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 83.78,
+        "max_abs": 0.00641,
+        "rel_l2": 6.47e-05,
+        "cosine": 0.999999998,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_host_update": {
+      "snr_db": 75.29,
+      "max_abs": 0.000581,
+      "rel_l2": 0.000172,
+      "cosine": 0.999999985,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 83.78,
+        "max_abs": 0.00641,
+        "rel_l2": 6.47e-05,
+        "cosine": 0.999999998,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_formant0": {
+      "snr_db": 77.46,
+      "max_abs": 0.000233,
+      "rel_l2": 0.000134,
+      "cosine": 0.999999991,
+      "ref_rms": 0.1906,
+      "logmel": {
+        "snr_db": 88.17,
+        "max_abs": 0.0028,
+        "rel_l2": 3.9e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.312
+      },
+      "pass": true
+    },
+    "chain_audio_volume_gate": {
+      "snr_db": 75.89,
+      "max_abs": 0.000211,
+      "rel_l2": 0.000161,
+      "cosine": 0.999999987,
+      "ref_rms": 0.1249,
+      "logmel": {
+        "snr_db": 88.15,
+        "max_abs": 0.00706,
+        "rel_l2": 3.91e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 6.956
+      },
+      "pass": true,
+      "threshold_db": -41.0,
+      "muted_fraction": 0.443
+    },
+    "vocoder_sweep_E2_Ds7_4s": {
+      "snr_db": 81.39,
+      "max_abs": 8.71e-05,
+      "rel_l2": 8.52e-05,
+      "cosine": 0.999999996,
+      "ref_rms": 0.1276,
+      "logmel": {
+        "snr_db": 99.29,
+        "max_abs": 0.00221,
+        "rel_l2": 1.08e-05,
+        "cosine": 1.0,
+        "ref_rms": 8.923
+      },
+      "pass": true
+    }
+  },
+  "parity_setup": {
+    "preset": {
+      "name": "upstream_gui",
+      "block": 0.5,
+      "crossfade": 0.04,
+      "extra": 2.0,
+      "steps": 20,
+      "t_start": 0.7
+    },
+    "shapes": {
+      "n44": 110250,
+      "frames": 216,
+      "start_frame": 163,
+      "reflow_frames": 53,
+      "n16": 40000,
+      "units_tta2x": 248,
+      "audio_out": 27136
+    },
+    "source": "jfk.wav",
+    "window_start_s": 0.5,
+    "seed": 0,
+    "formant_shift": 2.0,
+    "f0": "log sweep E2 (82.4 Hz) -> D#7 (2489 Hz) over the decoded frames, +-25 cents vibrato at 5.5 Hz",
+    "weights": "DDSP + LYNXNet2: seeded random (1234); vocoder: openvpi pc_nsf_hifigan_44.1k_hop512_128bin_2025.02",
+    "reference_impl": "upstream Unit2Wav.forward (6.3), PyTorch fp32 CPU; SvcDDSP.infer's volume gate in chain_audio_volume_gate",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  },
+  "timing_conditions": {
+    "gpu_util_pct": 17,
+    "waited_s": 2.1,
+    "cpu_util_pct": 9.7,
+    "cpu_threads": 16
+  },
+  "cost": {
+    "upstream_gui": {
+      "contentvec": {
+        "host": {
+          "median_ms": 5.645,
+          "p90_ms": 5.899,
+          "min_ms": 4.916,
+          "runs": 30,
+          "block_medians_ms": [
+            10.663,
+            5.84,
+            5.645
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 15,
+          "waited_s": 1.1
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 4568.816,
+          "p90_ms": 4743.41,
+          "min_ms": 4533.03,
+          "runs": 30,
+          "block_medians_ms": [
+            4611.917,
+            4568.816,
+            4576.696
+          ]
+        },
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 248,
+              "T": 216,
+              "S": 110592,
+              "R": 53
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(1) tid(46f0) 80070057 The parameter is incorrect."
+          }
+        },
+        "gpu_before": {
+          "gpu_util_pct": 24,
+          "waited_s": 2.1
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 1.56,
+          "p90_ms": 2.821,
+          "min_ms": 0.899,
+          "runs": 30,
+          "block_medians_ms": [
+            1.646,
+            1.97,
+            1.56
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 14,
+          "waited_s": 2.1
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 5.669,
+          "p90_ms": 6.599,
+          "min_ms": 4.923,
+          "runs": 30,
+          "block_medians_ms": [
+            6.565,
+            5.669,
+            5.722
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 11,
+          "waited_s": 1.1
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 4616.97,
+          "per_step_ms": 1.56,
+          "rtf": 9.234
+        }
+      },
+      "block_ms": 500.0,
+      "preset": {
+        "name": "upstream_gui",
+        "block": 0.5,
+        "crossfade": 0.04,
+        "extra": 2.0,
+        "steps": 20,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 110250,
+        "frames": 216,
+        "start_frame": 163,
+        "reflow_frames": 53,
+        "n16": 40000,
+        "units_tta2x": 248,
+        "audio_out": 27136
+      }
+    },
+    "sigil_singing": {
+      "contentvec": {
+        "host": {
+          "median_ms": 3.402,
+          "p90_ms": 3.888,
+          "min_ms": 2.885,
+          "runs": 30,
+          "block_medians_ms": [
+            3.446,
+            3.522,
+            3.402
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 11,
+          "waited_s": 1.1
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 2065.362,
+          "p90_ms": 2078.377,
+          "min_ms": 2054.927,
+          "runs": 30,
+          "block_medians_ms": [
+            2073.368,
+            2069.008,
+            2065.362
+          ]
+        },
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 108,
+              "T": 95,
+              "S": 48640,
+              "R": 18
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(2) tid(46f0) 80070057 The parameter is incorrect."
+          }
+        },
+        "gpu_before": {
+          "gpu_util_pct": 12,
+          "waited_s": 2.1
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 1.16,
+          "p90_ms": 1.658,
+          "min_ms": 0.978,
+          "runs": 30,
+          "block_medians_ms": [
+            1.232,
+            1.565,
+            1.16
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 13,
+          "waited_s": 2.1
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 2.428,
+          "p90_ms": 2.941,
+          "min_ms": 2.104,
+          "runs": 30,
+          "block_medians_ms": [
+            5.061,
+            2.672,
+            2.428
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 21,
+          "waited_s": 2.1
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 2086.19,
+          "per_step_ms": 1.16,
+          "rtf": 20.862
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 10,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "sigil_singing_fast": {
+      "contentvec": {
+        "host": {
+          "median_ms": 3.415,
+          "p90_ms": 4.036,
+          "min_ms": 2.894,
+          "runs": 30,
+          "block_medians_ms": [
+            3.657,
+            3.415,
+            3.525
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 10,
+          "waited_s": 1.1
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 2052.286,
+          "p90_ms": 2148.484,
+          "min_ms": 2035.357,
+          "runs": 30,
+          "block_medians_ms": [
+            2056.548,
+            2057.956,
+            2052.286
+          ]
+        },
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 108,
+              "T": 95,
+              "S": 48640,
+              "R": 18
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(3) tid(46f0) 80070057 The parameter is incorrect."
+          }
+        },
+        "gpu_before": {
+          "gpu_util_pct": 16,
+          "waited_s": 2.1
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 0.67,
+          "p90_ms": 1.33,
+          "min_ms": 0.631,
+          "runs": 30,
+          "block_medians_ms": [
+            0.698,
+            0.67,
+            0.679
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 8,
+          "waited_s": 1.1
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 2.87,
+          "p90_ms": 3.708,
+          "min_ms": 1.967,
+          "runs": 30,
+          "block_medians_ms": [
+            4.145,
+            4.422,
+            2.87
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 12,
+          "waited_s": 1.1
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 2065.34,
+          "per_step_ms": 0.67,
+          "rtf": 20.653
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing_fast",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 5,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "note": "tick = 2 x contentvec (tta2x) + ddsp + steps x reflow_step + vocoder; F0 (RMVPE/FCPE) and resampling not included",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  },
+  "profile": {
+    "upstream_gui": {
+      "contentvec": {
+        "runs": 5,
+        "wall_ms_per_run": 4.183,
+        "model_run_ms_per_run": 4.167,
+        "kernel_ms_per_run": 0.104,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.104
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_0",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.104
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "model.fp32": {
+            "file": "model.fp32.onnx",
+            "bytes": 377722808,
+            "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+          }
+        },
+        "overhead_ms_per_run": 4.079,
+        "process_cpu_ms_per_run": 3.125,
+        "gpu_util_pct_during": {
+          "median": 24,
+          "max": 24,
+          "samples": 1
+        }
+      },
+      "ddsp": {
+        "runs": 5,
+        "wall_ms_per_run": 4489.066,
+        "model_run_ms_per_run": 4489.001,
+        "kernel_ms_per_run": 5.076,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 4.99,
+          "CPUExecutionProvider": 0.087
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 271,
+          "CPUExecutionProvider": 10
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "Add",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.653
+          },
+          {
+            "op": "Mul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.546
+          },
+          {
+            "op": "MemcpyToHost",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.32
+          },
+          {
+            "op": "Conv",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.319
+          },
+          {
+            "op": "MatMul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.311
+          },
+          {
+            "op": "Slice",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.289
+          },
+          {
+            "op": "Split",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.252
+          },
+          {
+            "op": "Unsqueeze",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.221
+          },
+          {
+            "op": "QuickGelu",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.176
+          },
+          {
+            "op": "Concat",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.175
+          },
+          {
+            "op": "LayerNormalization",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.169
+          },
+          {
+            "op": "Gather",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.164
+          }
+        ],
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 248,
+              "T": 216,
+              "S": 110592,
+              "R": 53
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(1) tid(5198) 80070057 The parameter is incorrect."
+          }
+        },
+        "graphs": {
+          "ddsp": {
+            "file": "ddsp.onnx",
+            "bytes": 108627252,
+            "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+          }
+        },
+        "cpu_placed_ops": {
+          "Unsqueeze": 3,
+          "Concat": 3,
+          "Gather": 2,
+          "Slice": 1,
+          "Squeeze": 1
+        },
+        "overhead_ms_per_run": 4483.99,
+        "process_cpu_ms_per_run": 4621.875,
+        "gpu_util_pct_during": {
+          "median": 100.0,
+          "max": 100,
+          "samples": 78
+        }
+      },
+      "reflow_step": {
+        "runs": 5,
+        "wall_ms_per_run": 1.048,
+        "model_run_ms_per_run": 1.024,
+        "kernel_ms_per_run": 0.094,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.094
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.094
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "reflow_step": {
+            "file": "reflow_step.onnx",
+            "bytes": 161938190,
+            "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+          }
+        },
+        "overhead_ms_per_run": 0.954,
+        "process_cpu_ms_per_run": 0.0,
+        "gpu_util_pct_during": {
+          "median": 100,
+          "max": 100,
+          "samples": 1
+        }
+      },
+      "vocoder": {
+        "runs": 5,
+        "wall_ms_per_run": 5.686,
+        "model_run_ms_per_run": 5.662,
+        "kernel_ms_per_run": 0.103,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.103
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.103
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "vocoder": {
+            "file": "vocoder.onnx",
+            "bytes": 56590562,
+            "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+          }
+        },
+        "overhead_ms_per_run": 5.583,
+        "process_cpu_ms_per_run": 6.25,
+        "gpu_util_pct_during": {
+          "median": 9,
+          "max": 9,
+          "samples": 1
+        }
+      }
+    },
+    "sigil_singing": {
+      "contentvec": {
+        "runs": 5,
+        "wall_ms_per_run": 3.255,
+        "model_run_ms_per_run": 3.232,
+        "kernel_ms_per_run": 0.123,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.123
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_0",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.123
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "model.fp32": {
+            "file": "model.fp32.onnx",
+            "bytes": 377722808,
+            "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+          }
+        },
+        "overhead_ms_per_run": 3.132,
+        "process_cpu_ms_per_run": 3.125,
+        "gpu_util_pct_during": {
+          "median": 8,
+          "max": 8,
+          "samples": 1
+        }
+      },
+      "ddsp": {
+        "runs": 5,
+        "wall_ms_per_run": 2015.997,
+        "model_run_ms_per_run": 2015.925,
+        "kernel_ms_per_run": 6.02,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 5.906,
+          "CPUExecutionProvider": 0.114
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 271,
+          "CPUExecutionProvider": 10
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "Add",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.787
+          },
+          {
+            "op": "Mul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.672
+          },
+          {
+            "op": "Conv",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.367
+          },
+          {
+            "op": "Slice",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.367
+          },
+          {
+            "op": "MatMul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.352
+          },
+          {
+            "op": "Split",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.309
+          },
+          {
+            "op": "Unsqueeze",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.28
+          },
+          {
+            "op": "MemcpyToHost",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.227
+          },
+          {
+            "op": "Concat",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.215
+          },
+          {
+            "op": "QuickGelu",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.214
+          },
+          {
+            "op": "Gather",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.208
+          },
+          {
+            "op": "Transpose",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.2
+          }
+        ],
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 108,
+              "T": 95,
+              "S": 48640,
+              "R": 18
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(2) tid(5198) 80070057 The parameter is incorrect."
+          }
+        },
+        "graphs": {
+          "ddsp": {
+            "file": "ddsp.onnx",
+            "bytes": 108627252,
+            "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+          }
+        },
+        "cpu_placed_ops": {
+          "Unsqueeze": 3,
+          "Concat": 3,
+          "Gather": 2,
+          "Slice": 1,
+          "Squeeze": 1
+        },
+        "overhead_ms_per_run": 2009.977,
+        "process_cpu_ms_per_run": 2046.875,
+        "gpu_util_pct_during": {
+          "median": 100,
+          "max": 100,
+          "samples": 35
+        }
+      },
+      "reflow_step": {
+        "runs": 5,
+        "wall_ms_per_run": 0.696,
+        "model_run_ms_per_run": 0.665,
+        "kernel_ms_per_run": 0.098,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.098
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.098
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "reflow_step": {
+            "file": "reflow_step.onnx",
+            "bytes": 161938190,
+            "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+          }
+        },
+        "overhead_ms_per_run": 0.598,
+        "process_cpu_ms_per_run": 0.0,
+        "gpu_util_pct_during": {
+          "median": 10,
+          "max": 10,
+          "samples": 1
+        }
+      },
+      "vocoder": {
+        "runs": 5,
+        "wall_ms_per_run": 1.98,
+        "model_run_ms_per_run": 1.958,
+        "kernel_ms_per_run": 0.103,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.103
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.103
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "vocoder": {
+            "file": "vocoder.onnx",
+            "bytes": 56590562,
+            "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+          }
+        },
+        "overhead_ms_per_run": 1.877,
+        "process_cpu_ms_per_run": 0.0,
+        "gpu_util_pct_during": {
+          "median": 10,
+          "max": 10,
+          "samples": 1
+        }
+      }
+    },
+    "sigil_singing_fast": {
+      "contentvec": {
+        "runs": 5,
+        "wall_ms_per_run": 3.744,
+        "model_run_ms_per_run": 3.724,
+        "kernel_ms_per_run": 0.103,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.103
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_0",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.103
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "model.fp32": {
+            "file": "model.fp32.onnx",
+            "bytes": 377722808,
+            "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+          }
+        },
+        "overhead_ms_per_run": 3.641,
+        "process_cpu_ms_per_run": 3.125,
+        "gpu_util_pct_during": {
+          "median": 27,
+          "max": 27,
+          "samples": 1
+        }
+      },
+      "ddsp": {
+        "runs": 5,
+        "wall_ms_per_run": 2022.69,
+        "model_run_ms_per_run": 2022.609,
+        "kernel_ms_per_run": 7.484,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 7.118,
+          "CPUExecutionProvider": 0.366
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 271,
+          "CPUExecutionProvider": 10
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "Add",
+            "provider": "DmlExecutionProvider",
+            "ms": 1.54
+          },
+          {
+            "op": "Mul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.961
+          },
+          {
+            "op": "Gather",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.515
+          },
+          {
+            "op": "Conv",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.449
+          },
+          {
+            "op": "MatMul",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.368
+          },
+          {
+            "op": "Slice",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.356
+          },
+          {
+            "op": "Split",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.309
+          },
+          {
+            "op": "Unsqueeze",
+            "provider": "CPUExecutionProvider",
+            "ms": 0.294
+          },
+          {
+            "op": "MemcpyToHost",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.24
+          },
+          {
+            "op": "Unsqueeze",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.24
+          },
+          {
+            "op": "QuickGelu",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.208
+          },
+          {
+            "op": "Concat",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.188
+          }
+        ],
+        "session": {
+          "dims_pinned": false,
+          "dims_refused": {
+            "dims": {
+              "U": 108,
+              "T": 95,
+              "S": 48640,
+              "R": 18
+            },
+            "error": "aphFusionHelper.cpp(588)\\onnxruntime_pybind11_state.pyd!00007FF84B0C07CF: (caller: 00007FF84B091217) Exception(3) tid(5198) 80070057 The parameter is incorrect."
+          }
+        },
+        "graphs": {
+          "ddsp": {
+            "file": "ddsp.onnx",
+            "bytes": 108627252,
+            "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+          }
+        },
+        "cpu_placed_ops": {
+          "Unsqueeze": 3,
+          "Concat": 3,
+          "Gather": 2,
+          "Slice": 1,
+          "Squeeze": 1
+        },
+        "overhead_ms_per_run": 2015.206,
+        "process_cpu_ms_per_run": 1650.0,
+        "gpu_util_pct_during": {
+          "median": 100.0,
+          "max": 100,
+          "samples": 26
+        }
+      },
+      "reflow_step": {
+        "runs": 5,
+        "wall_ms_per_run": 0.682,
+        "model_run_ms_per_run": 0.658,
+        "kernel_ms_per_run": 0.111,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.111
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.111
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "reflow_step": {
+            "file": "reflow_step.onnx",
+            "bytes": 161938190,
+            "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+          }
+        },
+        "overhead_ms_per_run": 0.571,
+        "process_cpu_ms_per_run": 3.125,
+        "gpu_util_pct_during": {
+          "median": 100,
+          "max": 100,
+          "samples": 1
+        }
+      },
+      "vocoder": {
+        "runs": 5,
+        "wall_ms_per_run": 2.272,
+        "model_run_ms_per_run": 2.243,
+        "kernel_ms_per_run": 0.118,
+        "kernel_ms_per_run_by_provider": {
+          "DmlExecutionProvider": 0.118
+        },
+        "nodes_by_provider": {
+          "DmlExecutionProvider": 1
+        },
+        "top_ops_ms_per_run": [
+          {
+            "op": "DmlFusedNode_0_1",
+            "provider": "DmlExecutionProvider",
+            "ms": 0.118
+          }
+        ],
+        "session": {
+          "dims_pinned": true
+        },
+        "graphs": {
+          "vocoder": {
+            "file": "vocoder.onnx",
+            "bytes": 56590562,
+            "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+          }
+        },
+        "overhead_ms_per_run": 2.154,
+        "process_cpu_ms_per_run": 3.125,
+        "gpu_util_pct_during": {
+          "median": 9,
+          "max": 9,
+          "samples": 1
+        }
+      }
+    },
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  }
+}

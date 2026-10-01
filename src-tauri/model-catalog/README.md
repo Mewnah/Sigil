@@ -46,15 +46,29 @@ P2 fragments:
 - `stt-whisper.json` (P2-A): empty; the `whisper/*` and `vosk/*` entries stay in `stt-legacy.json`
   (ids are forever, so they do not move).
 
-P3 fragments (created empty by P3-S0; ids and the in-entry file layout, `model.onnx` or
-`model.<fp32|fp16|int8>.onnx`, are frozen in `src/services/neural_audio/vc/assets.rs`):
+P3 fragments (ids and the in-entry file layout, `model.onnx` or `model.<fp32|fp16|int8>.onnx`, are
+frozen in `src/services/neural_audio/vc/assets.rs`; the four P3-A fragments are written by
+`scripts/assets/vc_catalog.py`, whose `--check` verifies them):
 
-- `vc-bases.json` (P3-A): pitch models `vc/pitch-{rmvpe,fcpe,swiftf0,crepe-tiny,pesto}` and the MIT
-  default voice `vc/voice-default` (`default.pth`).
-- `vc-embedders.json` (P3-A): content encoders `vc/embedder-{contentvec,contentvec-256,spin-v2,hubert-ja,hubert-ko,hubert-zh}`.
-- `vc-denoise.json` (P3-A): `vc/denoise-{gtcrn,dfn3,dpdfnet}`.
-- `bench-models.json` (P3-A): benchmark-only `bench/campplus`, `bench/dnsmos-p835` (kind `bench`).
-- `runtime-trt-rtx.json` (P3-C2): `runtime/tensorrt-rtx`.
+- `vc-bases.json` (P3-A): pitch models `vc/pitch-rmvpe`, `vc/pitch-swiftf0`, `vc/pitch-crepe-tiny`
+  (published, hash-pinned), `vc/pitch-fcpe` (Sigil's adapter around a community export,
+  `unpublished`) and `vc/pitch-pesto` (import only, unpinned: its ONNX comes from PESTO's own export
+  script), and the MIT default voice `vc/voice-default` (`default.pth` plus its
+  `added_IVF511_Flat_nprobe_1_default_v2.index`, adopted by the importer as the sibling index).
+- `vc-embedders.json` (P3-A): content encoders
+  `vc/embedder-{contentvec,contentvec-256,spin-v2,spin,hubert-ja,hubert-ko,hubert-zh}` (Sigil
+  exports, `unpublished`), each holding `model.fp32.onnx`, `model.fp16.onnx` (ContentVec also
+  `model.int8.onnx`) and `embedder.json` (the export contract, parity per variant and EP class, the
+  recommended variant). Installed together an entry is 575–867 MB; split the precision variants into
+  separate entries before publishing.
+- `vc-denoise.json` (P3-A): `vc/denoise-gtcrn`, `vc/denoise-dfn3` (the upstream tar.gz, 2 leading
+  folders stripped: `enc.onnx`, `erb_dec.onnx`, `df_dec.onnx`, `config.ini`) and `vc/denoise-dpdfnet`.
+- `bench-models.json` (P3-A): benchmark-only (kind `bench`) `bench/dnsmos-p835` (`model.onnx` plus
+  `p808.onnx`), `bench/campplus` and `bench/gpu-load` (Sigil-built, `unpublished`).
+- `runtime-trt-rtx.json` (P3-C2): `runtime/tensorrt-rtx` (a local pack: a TensorRT-RTX plugin
+  execution provider plus the runtime DLLs its imports name; `unpublished`, unpinned).
+
+`scripts/assets/check-local-assets.mjs` verifies a `SIGIL_LOCAL_ASSETS` folder against these entries.
 
 Sigil-exported files stay `unpublished` (asset hosting is local only: local import or
 `SIGIL_LOCAL_ASSETS`).

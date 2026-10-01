@@ -17,14 +17,21 @@ import {
     clampLatencyBudgetMs,
     effectiveRvcEp,
     normalizeAuxMicGate,
+    normalizeDenoiser,
     normalizeExecutionProvider,
+    normalizeF0Range,
     normalizeLatencyPreset,
+    normalizeLeverMode,
     normalizeMode,
+    normalizeOnnxExecutionProvider,
     normalizePitchExtractor,
+    normalizePrecision,
     normalizeRvcProfile,
     normalizeVocoderOversample,
     normalizeWorkerPriority,
+    VC_LEVERS,
     VC_NUMBER_RANGES as R,
+    type VcLever,
     type VcMode,
 } from "./contract";
 import type { VoiceChangerState } from "./schema";
@@ -79,7 +86,42 @@ export interface VoiceChangerParamsRust {
     input_device?: string | null;
     /** P0: the RVC voice-permission notice was acknowledged. */
     rvc_consent_acknowledged?: boolean | null;
+    // ---- P3 (params_contract.json `params_p3_new_fields`; optional on `set`, absent = keep) ----
+    slot_id?: string | null;
+    block_ms?: number | null;
+    lookahead_ms?: number | null;
+    precision?: string | null;
+    f0_range?: string | null;
+    rms_mix?: number | null;
+    formant_semitones?: number | null;
+    noise_scale?: number | null;
+    silence_db?: number | null;
+    partial_decode?: string | null;
+    anchored_noise?: string | null;
+    nsf_phase0?: string | null;
+    f0_cache?: string | null;
+    gpu_knn?: string | null;
+    io_binding?: string | null;
+    cuda_graphs?: string | null;
+    gpu_priority?: string | null;
+    governor?: string | null;
+    denoiser?: string | null;
+    hot_slots?: number | null;
+    vram_budget_mb?: number | null;
 }
+
+/** State key of every engine lever (Rust snake_case param -> TS camelCase field). */
+export const LEVER_STATE_KEYS = {
+    partial_decode: "partialDecode",
+    anchored_noise: "anchoredNoise",
+    nsf_phase0: "nsfPhase0",
+    f0_cache: "f0Cache",
+    gpu_knn: "gpuKnn",
+    io_binding: "ioBinding",
+    cuda_graphs: "cudaGraphs",
+    gpu_priority: "gpuPriority",
+    governor: "governor",
+} as const satisfies Record<VcLever, keyof VoiceChangerState>;
 
 export type RustParamKey = keyof VoiceChangerParamsRust;
 
@@ -126,6 +168,19 @@ export const RUST_PARAM_KEYS: readonly RustParamKey[] = [
     "worker_priority",
     "input_device",
     "rvc_consent_acknowledged",
+    "slot_id",
+    "block_ms",
+    "lookahead_ms",
+    "precision",
+    "f0_range",
+    "rms_mix",
+    "formant_semitones",
+    "noise_scale",
+    "silence_db",
+    ...VC_LEVERS,
+    "denoiser",
+    "hot_slots",
+    "vram_budget_mb",
 ];
 
 /** A finite number, else `fallback` (JSON has no NaN/Infinity: they would fail Rust's deserialize). */
@@ -186,6 +241,27 @@ export function toRustParams(vc: VoiceChangerState): VoiceChangerParamsRust {
         worker_priority: str(vc.workerPriority),
         input_device: str(vc.inputDevice),
         rvc_consent_acknowledged: !!vc.rvcConsentAcknowledged,
+        slot_id: str(vc.slotId),
+        block_ms: finite(vc.blockMs, R.block_ms.default),
+        lookahead_ms: finite(vc.lookaheadMs, R.lookahead_ms.default),
+        precision: str(vc.precision),
+        f0_range: str(vc.f0Range),
+        rms_mix: finite(vc.rmsMix, R.rms_mix.default),
+        formant_semitones: finite(vc.formantSemitones, R.formant_semitones.default),
+        noise_scale: finite(vc.noiseScale, R.noise_scale.default),
+        silence_db: finite(vc.silenceDb, R.silence_db.default),
+        partial_decode: str(vc.partialDecode),
+        anchored_noise: str(vc.anchoredNoise),
+        nsf_phase0: str(vc.nsfPhase0),
+        f0_cache: str(vc.f0Cache),
+        gpu_knn: str(vc.gpuKnn),
+        io_binding: str(vc.ioBinding),
+        cuda_graphs: str(vc.cudaGraphs),
+        gpu_priority: str(vc.gpuPriority),
+        governor: str(vc.governor),
+        denoiser: str(vc.denoiser),
+        hot_slots: uint(vc.hotSlots, R.hot_slots.default),
+        vram_budget_mb: uint(vc.vramBudgetMb, R.vram_budget_mb.default),
     };
 }
 
@@ -237,8 +313,8 @@ const FROM_RUST: { [K in RustParamKey]: (p: Partial<VoiceChangerParamsRust>, pre
     onnx_model_path: (p, prev) => ({
         onnxModelPath: typeof p.onnx_model_path === "string" ? p.onnx_model_path : prev.onnxModelPath,
     }),
-    // ONNX chunk mode has no profile: an unset EP runs on the CPU.
-    onnx_execution_provider: (p) => ({ onnxExecutionProvider: normalizeExecutionProvider(p.onnx_execution_provider) || "cpu" }),
+    // ONNX chunk mode has no profile: an unset EP runs on the CPU (and it has no accelerators).
+    onnx_execution_provider: (p) => ({ onnxExecutionProvider: normalizeOnnxExecutionProvider(p.onnx_execution_provider) }),
     // Unset (`""`) runs the profile default; show that instead of pretending it is the CPU.
     rvc_execution_provider: (p) => ({
         rvcExecutionProvider: effectiveRvcEp(
@@ -290,13 +366,76 @@ const FROM_RUST: { [K in RustParamKey]: (p: Partial<VoiceChangerParamsRust>, pre
         rvcConsentAcknowledged:
             typeof p.rvc_consent_acknowledged === "boolean" ? p.rvc_consent_acknowledged : prev.rvcConsentAcknowledged,
     }),
+    // P3 fields: absent (older backend) keeps the current value, like the P0 ones.
+    slot_id: (p, prev) => ({ slotId: typeof p.slot_id === "string" ? p.slot_id : prev.slotId }),
+    block_ms: (p, prev) => ({ blockMs: clampFinite(p.block_ms, R.block_ms.min, R.block_ms.max, prev.blockMs) }),
+    lookahead_ms: (p, prev) => ({
+        lookaheadMs: clampFinite(p.lookahead_ms, R.lookahead_ms.min, R.lookahead_ms.max, prev.lookaheadMs),
+    }),
+    precision: (p, prev) => ({ precision: p.precision == null ? prev.precision : normalizePrecision(p.precision) }),
+    f0_range: (p, prev) => ({ f0Range: p.f0_range == null ? prev.f0Range : normalizeF0Range(p.f0_range) }),
+    rms_mix: (p, prev) => ({ rmsMix: clampFinite(p.rms_mix, R.rms_mix.min, R.rms_mix.max, prev.rmsMix) }),
+    formant_semitones: (p, prev) => ({
+        formantSemitones: clampFinite(
+            p.formant_semitones,
+            R.formant_semitones.min,
+            R.formant_semitones.max,
+            prev.formantSemitones,
+        ),
+    }),
+    noise_scale: (p, prev) => ({
+        noiseScale: clampFinite(p.noise_scale, R.noise_scale.min, R.noise_scale.max, prev.noiseScale),
+    }),
+    silence_db: (p, prev) => ({ silenceDb: clampFinite(p.silence_db, R.silence_db.min, R.silence_db.max, prev.silenceDb) }),
+    partial_decode: (p, prev) => leverFromRust("partial_decode", p, prev),
+    anchored_noise: (p, prev) => leverFromRust("anchored_noise", p, prev),
+    nsf_phase0: (p, prev) => leverFromRust("nsf_phase0", p, prev),
+    f0_cache: (p, prev) => leverFromRust("f0_cache", p, prev),
+    gpu_knn: (p, prev) => leverFromRust("gpu_knn", p, prev),
+    io_binding: (p, prev) => leverFromRust("io_binding", p, prev),
+    cuda_graphs: (p, prev) => leverFromRust("cuda_graphs", p, prev),
+    gpu_priority: (p, prev) => leverFromRust("gpu_priority", p, prev),
+    governor: (p, prev) => leverFromRust("governor", p, prev),
+    denoiser: (p, prev) => ({ denoiser: p.denoiser == null ? prev.denoiser : normalizeDenoiser(p.denoiser) }),
+    hot_slots: (p, prev) => ({
+        hotSlots: Math.round(clampFinite(p.hot_slots, R.hot_slots.min, R.hot_slots.max, prev.hotSlots)),
+    }),
+    vram_budget_mb: (p, prev) => ({
+        vramBudgetMb: Math.round(clampFinite(p.vram_budget_mb, R.vram_budget_mb.min, R.vram_budget_mb.max, prev.vramBudgetMb)),
+    }),
 };
+
+/** One lever's state patch from Rust (absent keeps the current mode). */
+function leverFromRust(lever: VcLever, p: Partial<VoiceChangerParamsRust>, prev: VoiceChangerState): Patch {
+    const key = LEVER_STATE_KEYS[lever];
+    const raw = p[lever];
+    return { [key]: raw == null ? prev[key] : normalizeLeverMode(raw) };
+}
 
 /** The state after hydrating every field of `p` (as `get_voice_changer_params` returns it) onto `prev`. */
 export function applyRustParams(prev: VoiceChangerState, p: Partial<VoiceChangerParamsRust>): VoiceChangerState {
     let next: VoiceChangerState = { ...prev };
     for (const key of RUST_PARAM_KEYS) next = { ...next, ...FROM_RUST[key](p, next) };
     return next;
+}
+
+/**
+ * Apply a partial snake_case params object (e.g. the autotuner's `params`) onto `prev`: only the
+ * listed `keys` that the patch names change, each normalized like a hydration; a field a key's
+ * rule reads besides its own (the RVC EP reads the preset) comes from the patch, else from `prev`.
+ * Unknown keys are ignored. Returns the new state and the keys it applied.
+ */
+export function applyRustParamsPatch(
+    prev: VoiceChangerState,
+    patch: Readonly<Record<string, unknown>>,
+    keys: readonly RustParamKey[] = RUST_PARAM_KEYS,
+): { next: VoiceChangerState; applied: RustParamKey[] } {
+    const applied = keys.filter((k) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] != null);
+    const merged = { ...toRustParams(prev) } as Record<string, unknown>;
+    for (const k of applied) merged[k] = patch[k];
+    let next: VoiceChangerState = { ...prev };
+    for (const k of applied) next = { ...next, ...FROM_RUST[k](merged as Partial<VoiceChangerParamsRust>, next) };
+    return { next, applied };
 }
 
 /** Relative tolerance for numbers: Rust stores several params as `f32`, so e.g. 1/3 comes back as 0.33333334. */

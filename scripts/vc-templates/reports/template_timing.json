@@ -1,0 +1,119 @@
+{
+  "dml": {
+    "v2-40k-f0-hifigan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp16",
+      "enc_ms_T100": 4.54,
+      "flowdec_frames": 39,
+      "latent_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 6.85
+    },
+    "v2-48k-f0-hifigan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 4.5,
+      "flowdec_frames": 38,
+      "return_frames": 4,
+      "flowdec_ms": 8.92
+    },
+    "v2-40k-nof0-hifigan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp16",
+      "enc_ms_T100": 3.96,
+      "flowdec_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 5.7
+    },
+    "v2-40k-f0-mrf-hifigan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp16",
+      "enc_ms_T100": 4.26,
+      "flowdec_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 6.88
+    },
+    "v2-32k-f0-refinegan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 4.7,
+      "flowdec_frames": 117,
+      "latent_frames": 40,
+      "return_frames": 4,
+      "flowdec_ms": 14.65
+    },
+    "v2-48k-f0-refinegan": {
+      "ep": "dml",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 4.17,
+      "flowdec_frames": 113,
+      "latent_frames": 38,
+      "return_frames": 4,
+      "flowdec_ms": 14.54
+    }
+  },
+  "cpu": {
+    "v2-40k-f0-hifigan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 6.41,
+      "flowdec_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 45.9
+    },
+    "v2-48k-f0-hifigan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 6.42,
+      "flowdec_frames": 38,
+      "return_frames": 4,
+      "flowdec_ms": 50.22
+    },
+    "v2-40k-nof0-hifigan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 6.53,
+      "flowdec_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 42.21
+    },
+    "v2-40k-f0-mrf-hifigan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 6.66,
+      "flowdec_frames": 39,
+      "return_frames": 4,
+      "flowdec_ms": 45.52
+    },
+    "v2-32k-f0-refinegan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 6.92,
+      "flowdec_frames": 117,
+      "latent_frames": 40,
+      "return_frames": 4,
+      "flowdec_ms": 83.37
+    },
+    "v2-48k-f0-refinegan": {
+      "ep": "cpu",
+      "enc_variant": "fp32",
+      "flowdec_variant": "fp32",
+      "enc_ms_T100": 7.43,
+      "flowdec_frames": 113,
+      "latent_frames": 38,
+      "return_frames": 4,
+      "flowdec_ms": 105.0
+    }
+  }
+}

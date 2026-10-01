@@ -231,6 +231,19 @@ Working research doc, not synced to `public/docs/`. It compares Sigil's speech-t
 - **DeepL API Free.** It must be called from Rust because of CORS, and must use the `DeepL-Auth-Key` header.
 - **Gemini 3.5 Live Translate** (preview): speech in, translated captions and voice out.
 
+### 3.4 Facts found while implementing P4 (2026-09-30)
+
+Recorded by the P4 integrator from the workstream reports; the rest of this section is the original September research.
+
+- **MiLMMT-46-12B v1.0 now has a community GGUF** (mradermacher, 2026-08), so no self-made GGUF is needed; `scripts/models/make-gguf.md` stays for other models.
+- **Hy-MT2 30B-A3B has an official GGUF** (`tencent/Hy-MT2-30B-A3B-GGUF`).
+- **The Hy-MT2 1.8B 1.25-bit GGUF needs llama.cpp's STQ1_0 kernel** (PR #22836, open and ARM NEON only as of 2026-09-29), so the pinned b11146 cannot load it. It is catalogued as `needs_runtime_update`, and low-memory CPU PCs get Hy-MT2 1.8B Q4 instead.
+- **NiuTrans LMT-60-4B GGUF** (mradermacher) was updated on 2026-06-02, after the GRPO weights.
+- **Gemini:** Google now limits the 2.5 models to projects that already used them, so new free keys need a 3.x model; Sigil defaults to `gemini-3.5-flash-lite` for transform and translation.
+- **LTEngine** serves the LibreTranslate API on port 5050 with Gemma 3 4B by default and detects the source language itself (usable through the LibreTranslate backend's preset).
+- **Bergamot:** Mozilla's Remote Settings registry lists 106 release directions for Windows (5 more are nightly-only), and its CDN serves the files unchanged, matching the registry's sha256.
+- **NLLB-200:** the tokenizer's Santali token is `sat_Beng` (the FLORES-200 dataset writes `sat_Olck`). NLLB-600M int8 measured chrF 58.6 greedy / 59.6 beam 4 on the P4 smoke corpus at about 1 s per line on 2 threads ([SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md#machine-translation)).
+
 ---
 
 ## 4. Real-time voice changer

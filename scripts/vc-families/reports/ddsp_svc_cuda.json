@@ -1,0 +1,868 @@
+{
+  "family": "ddsp_svc",
+  "model": "DDSP-SVC 6.3 architecture (reflow.yaml) + openvpi PC-NSF-HiFiGAN 44.1k",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.28.0",
+    "ep": "cuda"
+  },
+  "threads": 2,
+  "files": {
+    "ddsp": "ddsp.onnx",
+    "reflow_step": "reflow_step.onnx",
+    "velocity_f": "velocity_f.onnx",
+    "vocoder": "vocoder.onnx",
+    "encoder": "encoder.onnx",
+    "velocity": "velocity.onnx"
+  },
+  "upstream_exporter": {
+    "encoder_cond_tail_vs_upstream": {
+      "snr_db": 21.16,
+      "max_abs": 2.52,
+      "rel_l2": 0.0875,
+      "cosine": 0.996178181,
+      "ref_rms": 3.181
+    },
+    "velocity_int64_t_int_round_chain_audio": {
+      "snr_db": 80.18,
+      "max_abs": 0.000402,
+      "rel_l2": 9.8e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.44,
+        "max_abs": 0.00581,
+        "rel_l2": 4.77e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      }
+    },
+    "velocity_int64_t_int_trunc_chain_audio": {
+      "snr_db": 49.09,
+      "max_abs": 0.00441,
+      "rel_l2": 0.00351,
+      "cosine": 0.999994877,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 57.97,
+        "max_abs": 0.066,
+        "rel_l2": 0.00126,
+        "cosine": 0.999999218,
+        "ref_rms": 5.216
+      }
+    },
+    "encoder_nan_at_f0_0": true
+  },
+  "parity": {
+    "units_tta2x_shared_embedder": {
+      "snr_db": 113.34,
+      "max_abs": 2.86e-05,
+      "rel_l2": 2.15e-06,
+      "cosine": 1.0,
+      "ref_rms": 0.3291,
+      "pass": true
+    },
+    "ddsp_cond": {
+      "snr_db": 85.89,
+      "max_abs": 0.00223,
+      "rel_l2": 5.08e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 3.181,
+      "pass": true
+    },
+    "ddsp_x": {
+      "snr_db": 83.33,
+      "max_abs": 0.000318,
+      "rel_l2": 6.82e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.3385,
+      "pass": true
+    },
+    "chain_mel": {
+      "snr_db": 90.73,
+      "max_abs": 0.00169,
+      "rel_l2": 2.91e-05,
+      "cosine": 1.0,
+      "ref_rms": 4.445,
+      "pass": true
+    },
+    "chain_audio": {
+      "snr_db": 80.2,
+      "max_abs": 0.000401,
+      "rel_l2": 9.77e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.44,
+        "max_abs": 0.0058,
+        "rel_l2": 4.76e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_host_update": {
+      "snr_db": 80.2,
+      "max_abs": 0.000401,
+      "rel_l2": 9.78e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.46,
+        "max_abs": 0.00578,
+        "rel_l2": 4.75e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_formant0": {
+      "snr_db": 84.56,
+      "max_abs": 9.92e-05,
+      "rel_l2": 5.91e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.1906,
+      "logmel": {
+        "snr_db": 92.17,
+        "max_abs": 0.00144,
+        "rel_l2": 2.46e-05,
+        "cosine": 1.0,
+        "ref_rms": 5.312
+      },
+      "pass": true
+    },
+    "chain_audio_volume_gate": {
+      "snr_db": 83.32,
+      "max_abs": 0.000181,
+      "rel_l2": 6.82e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.1249,
+      "logmel": {
+        "snr_db": 90.84,
+        "max_abs": 0.00661,
+        "rel_l2": 2.87e-05,
+        "cosine": 1.0,
+        "ref_rms": 6.956
+      },
+      "pass": true,
+      "threshold_db": -41.0,
+      "muted_fraction": 0.443
+    },
+    "vocoder_sweep_E2_Ds7_4s": {
+      "snr_db": 88.48,
+      "max_abs": 6.42e-05,
+      "rel_l2": 3.77e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 0.1276,
+      "logmel": {
+        "snr_db": 111.28,
+        "max_abs": 0.000725,
+        "rel_l2": 2.73e-06,
+        "cosine": 1.0,
+        "ref_rms": 8.923
+      },
+      "pass": true
+    }
+  },
+  "parity_setup": {
+    "preset": {
+      "name": "upstream_gui",
+      "block": 0.5,
+      "crossfade": 0.04,
+      "extra": 2.0,
+      "steps": 20,
+      "t_start": 0.7
+    },
+    "shapes": {
+      "n44": 110250,
+      "frames": 216,
+      "start_frame": 163,
+      "reflow_frames": 53,
+      "n16": 40000,
+      "units_tta2x": 248,
+      "audio_out": 27136
+    },
+    "source": "jfk.wav",
+    "window_start_s": 0.5,
+    "seed": 0,
+    "formant_shift": 2.0,
+    "f0": "log sweep E2 (82.4 Hz) -> D#7 (2489 Hz) over the decoded frames, +-25 cents vibrato at 5.5 Hz",
+    "weights": "DDSP + LYNXNet2: seeded random (1234); vocoder: openvpi pc_nsf_hifigan_44.1k_hop512_128bin_2025.02",
+    "reference_impl": "upstream Unit2Wav.forward (6.3), PyTorch fp32 CPU; SvcDDSP.infer's volume gate in chain_audio_volume_gate",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  },
+  "timing_conditions": {
+    "gpu_util_pct": 19,
+    "waited_s": 2.1,
+    "cpu_util_pct": 5.2,
+    "cpu_threads": 16
+  },
+  "cost": {
+    "upstream_gui": {
+      "contentvec": {
+        "host": {
+          "median_ms": 5.304,
+          "p90_ms": 5.756,
+          "min_ms": 4.623,
+          "runs": 30,
+          "block_medians_ms": [
+            5.4,
+            5.304,
+            5.329
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 20,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 5.215,
+          "p90_ms": 5.486,
+          "min_ms": 4.621,
+          "runs": 30,
+          "block_medians_ms": [
+            5.215,
+            5.285,
+            5.326
+          ]
+        },
+        "graph": {
+          "median_ms": 4.073,
+          "p90_ms": 4.597,
+          "min_ms": 3.552,
+          "runs": 30,
+          "block_medians_ms": [
+            4.089,
+            4.093,
+            4.073
+          ]
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 3.221,
+          "p90_ms": 3.707,
+          "min_ms": 2.673,
+          "runs": 30,
+          "block_medians_ms": [
+            5.176,
+            4.642,
+            3.221
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 11,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 2.7,
+          "p90_ms": 3.2,
+          "min_ms": 2.414,
+          "runs": 30,
+          "block_medians_ms": [
+            2.909,
+            2.7,
+            2.822
+          ]
+        },
+        "graph": {
+          "error": "[ONNXRuntimeError] : 1 : FAIL : This session cannot use the graph capture feature as requested by the user  as all compute graph nodes have not been partitioned to the CUDAExecutionProvider"
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 1.438,
+          "p90_ms": 2.46,
+          "min_ms": 1.301,
+          "runs": 30,
+          "block_medians_ms": [
+            1.438,
+            1.446,
+            1.473
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 13,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 1.203,
+          "p90_ms": 1.581,
+          "min_ms": 1.074,
+          "runs": 30,
+          "block_medians_ms": [
+            1.419,
+            1.372,
+            1.203
+          ]
+        },
+        "graph": {
+          "median_ms": 0.488,
+          "p90_ms": 0.697,
+          "min_ms": 0.459,
+          "runs": 30,
+          "block_medians_ms": [
+            0.49,
+            0.491,
+            0.488
+          ]
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 8.258,
+          "p90_ms": 9.183,
+          "min_ms": 7.294,
+          "runs": 30,
+          "block_medians_ms": [
+            12.422,
+            8.258,
+            8.462
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 8,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 8.25,
+          "p90_ms": 9.278,
+          "min_ms": 7.162,
+          "runs": 30,
+          "block_medians_ms": [
+            8.274,
+            8.25,
+            8.307
+          ]
+        },
+        "graph": {
+          "median_ms": 6.558,
+          "p90_ms": 7.465,
+          "min_ms": 5.936,
+          "runs": 30,
+          "block_medians_ms": [
+            6.787,
+            6.936,
+            6.558
+          ]
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 50.85,
+          "per_step_ms": 1.438,
+          "rtf": 0.102
+        },
+        "bound": {
+          "tick_ms": 45.44,
+          "per_step_ms": 1.203,
+          "rtf": 0.091
+        },
+        "graph": {
+          "tick_ms": 27.16,
+          "per_step_ms": 0.488,
+          "rtf": 0.054
+        }
+      },
+      "block_ms": 500.0,
+      "preset": {
+        "name": "upstream_gui",
+        "block": 0.5,
+        "crossfade": 0.04,
+        "extra": 2.0,
+        "steps": 20,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 110250,
+        "frames": 216,
+        "start_frame": 163,
+        "reflow_frames": 53,
+        "n16": 40000,
+        "units_tta2x": 248,
+        "audio_out": 27136
+      }
+    },
+    "sigil_singing": {
+      "contentvec": {
+        "host": {
+          "median_ms": 4.264,
+          "p90_ms": 4.687,
+          "min_ms": 3.659,
+          "runs": 30,
+          "block_medians_ms": [
+            6.352,
+            5.175,
+            4.264
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 10,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 4.179,
+          "p90_ms": 4.664,
+          "min_ms": 3.637,
+          "runs": 30,
+          "block_medians_ms": [
+            4.226,
+            4.179,
+            4.202
+          ]
+        },
+        "graph": {
+          "median_ms": 2.587,
+          "p90_ms": 3.177,
+          "min_ms": 2.307,
+          "runs": 30,
+          "block_medians_ms": [
+            2.664,
+            2.594,
+            2.587
+          ]
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 3.074,
+          "p90_ms": 3.417,
+          "min_ms": 2.538,
+          "runs": 30,
+          "block_medians_ms": [
+            4.723,
+            3.479,
+            3.074
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 13,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 2.608,
+          "p90_ms": 3.162,
+          "min_ms": 2.313,
+          "runs": 30,
+          "block_medians_ms": [
+            2.725,
+            2.63,
+            2.608
+          ]
+        },
+        "graph": {
+          "error": "[ONNXRuntimeError] : 1 : FAIL : This session cannot use the graph capture feature as requested by the user  as all compute graph nodes have not been partitioned to the CUDAExecutionProvider"
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 1.326,
+          "p90_ms": 1.735,
+          "min_ms": 1.156,
+          "runs": 30,
+          "block_medians_ms": [
+            1.327,
+            1.326,
+            1.358
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 9,
+          "waited_s": 1.1
+        },
+        "bound": {
+          "median_ms": 1.213,
+          "p90_ms": 1.63,
+          "min_ms": 1.083,
+          "runs": 30,
+          "block_medians_ms": [
+            1.213,
+            1.221,
+            1.238
+          ]
+        },
+        "graph": {
+          "median_ms": 0.448,
+          "p90_ms": 0.66,
+          "min_ms": 0.444,
+          "runs": 30,
+          "block_medians_ms": [
+            0.45,
+            0.448,
+            0.449
+          ]
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 5.828,
+          "p90_ms": 6.348,
+          "min_ms": 4.346,
+          "runs": 30,
+          "block_medians_ms": [
+            6.491,
+            5.909,
+            5.828
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 13,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 5.777,
+          "p90_ms": 6.693,
+          "min_ms": 4.62,
+          "runs": 30,
+          "block_medians_ms": [
+            5.823,
+            5.777,
+            5.859
+          ]
+        },
+        "graph": {
+          "median_ms": 4.589,
+          "p90_ms": 5.193,
+          "min_ms": 3.524,
+          "runs": 30,
+          "block_medians_ms": [
+            4.693,
+            4.589,
+            4.596
+          ]
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 30.69,
+          "per_step_ms": 1.326,
+          "rtf": 0.307
+        },
+        "bound": {
+          "tick_ms": 28.87,
+          "per_step_ms": 1.213,
+          "rtf": 0.289
+        },
+        "graph": {
+          "tick_ms": 16.85,
+          "per_step_ms": 0.448,
+          "rtf": 0.169
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 10,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "sigil_singing_fast": {
+      "contentvec": {
+        "host": {
+          "median_ms": 4.188,
+          "p90_ms": 4.756,
+          "min_ms": 3.503,
+          "runs": 30,
+          "block_medians_ms": [
+            6.132,
+            5.042,
+            4.188
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 12,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 4.124,
+          "p90_ms": 4.63,
+          "min_ms": 3.406,
+          "runs": 30,
+          "block_medians_ms": [
+            4.124,
+            4.331,
+            4.304
+          ]
+        },
+        "graph": {
+          "median_ms": 2.34,
+          "p90_ms": 3.215,
+          "min_ms": 2.316,
+          "runs": 30,
+          "block_medians_ms": [
+            2.34,
+            2.582,
+            2.619
+          ]
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 2.995,
+          "p90_ms": 3.47,
+          "min_ms": 2.515,
+          "runs": 30,
+          "block_medians_ms": [
+            4.837,
+            3.171,
+            2.995
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 8,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 2.69,
+          "p90_ms": 3.398,
+          "min_ms": 2.384,
+          "runs": 30,
+          "block_medians_ms": [
+            3.023,
+            2.737,
+            2.69
+          ]
+        },
+        "graph": {
+          "error": "[ONNXRuntimeError] : 1 : FAIL : This session cannot use the graph capture feature as requested by the user  as all compute graph nodes have not been partitioned to the CUDAExecutionProvider"
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 1.371,
+          "p90_ms": 2.201,
+          "min_ms": 1.287,
+          "runs": 30,
+          "block_medians_ms": [
+            1.414,
+            1.431,
+            1.371
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 12,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 1.188,
+          "p90_ms": 1.621,
+          "min_ms": 1.072,
+          "runs": 30,
+          "block_medians_ms": [
+            1.333,
+            1.298,
+            1.188
+          ]
+        },
+        "graph": {
+          "median_ms": 0.448,
+          "p90_ms": 0.681,
+          "min_ms": 0.442,
+          "runs": 30,
+          "block_medians_ms": [
+            0.473,
+            0.474,
+            0.448
+          ]
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 5.757,
+          "p90_ms": 6.545,
+          "min_ms": 4.186,
+          "runs": 30,
+          "block_medians_ms": [
+            9.156,
+            5.757,
+            5.781
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        },
+        "gpu_before": {
+          "gpu_util_pct": 8,
+          "waited_s": 2.1
+        },
+        "bound": {
+          "median_ms": 5.759,
+          "p90_ms": 6.497,
+          "min_ms": 4.103,
+          "runs": 30,
+          "block_medians_ms": [
+            5.759,
+            5.835,
+            5.95
+          ]
+        },
+        "graph": {
+          "median_ms": 4.534,
+          "p90_ms": 5.302,
+          "min_ms": 3.27,
+          "runs": 30,
+          "block_medians_ms": [
+            4.611,
+            4.664,
+            4.534
+          ]
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 23.98,
+          "per_step_ms": 1.371,
+          "rtf": 0.24
+        },
+        "bound": {
+          "tick_ms": 22.64,
+          "per_step_ms": 1.188,
+          "rtf": 0.226
+        },
+        "graph": {
+          "tick_ms": 14.14,
+          "per_step_ms": 0.448,
+          "rtf": 0.141
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing_fast",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 5,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "note": "tick = 2 x contentvec (tta2x) + ddsp + steps x reflow_step + vocoder; F0 (RMVPE/FCPE) and resampling not included",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  }
+}

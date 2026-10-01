@@ -12,8 +12,9 @@ use std::time::Instant;
 use crate::services::neural_audio::VcStreamHarness;
 use crate::services::rt_thread::{self, WorkerPriority};
 
+use super::ceiling::StreamRecorder;
 use super::engine::{AlgorithmicLatency, Engine, ModelTimes};
-use super::metrics::{cores, insert_summary, process_cpu_time, thread_cpu_time, Metrics};
+use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, thread_cpu_time, Metrics};
 use super::report::{RunOutcome, TickRecord};
 use super::spec::{OfflineRun, StreamSpec};
 use super::vc_rt::VcTick;
@@ -28,6 +29,8 @@ pub(super) struct OfflineInput<'a> {
     pub record_audio: bool,
     pub cancel: &'a AtomicBool,
     pub progress: &'a (dyn Fn(f64, &str) + Sync),
+    /// Record the model's 16 kHz input stream (the quality run's ceiling converts it).
+    pub recorder: Option<Arc<Mutex<StreamRecorder>>>,
 }
 
 /// Run on a dedicated thread (the worker priority policy applies to it alone).
@@ -35,6 +38,7 @@ pub(super) fn run_offline(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("sigil-bench-offline".into())
+            .stack_size(super::BENCH_STACK_BYTES)
             .spawn_scoped(scope, || offline_worker(p))
             .map_err(|e| format!("cannot start the benchmark thread: {e}"))?
             .join()
@@ -55,7 +59,7 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
     let times = Arc::new(Mutex::new(ModelTimes::default()));
     let init0 = Instant::now();
     let harness = VcStreamHarness::new(
-        p.engine.handle(times.clone()),
+        p.engine.handle_recording(times.clone(), p.recorder.clone()),
         s.input_rate,
         s.output_rate,
         ch_in,
@@ -97,10 +101,13 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
             let out = tick.process(&mut work);
             let compute_ms = c0.elapsed().as_secs_f64() * 1000.0;
             compute_total += compute_ms;
-            let model_ms = times
+            let (model_ms, calls) = times
                 .lock()
-                .map(|t| t.convert_ms[model_before.min(t.convert_ms.len())..].iter().sum())
-                .unwrap_or(0.0);
+                .map(|t| {
+                    let new = &t.convert_ms[model_before.min(t.convert_ms.len())..];
+                    (new.iter().sum(), new.len() as u32)
+                })
+                .unwrap_or((0.0, 0));
             debug_assert_eq!(out.audio.len(), out.owed_frames * ch_out);
             let failed = out.error.is_some();
             if let Some(e) = out.error {
@@ -112,6 +119,7 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
                 t_ms: c0.duration_since(wall0).as_secs_f64() * 1000.0,
                 compute_ms,
                 model_ms,
+                calls,
                 error: failed,
                 ..TickRecord::default()
             });
@@ -131,18 +139,27 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
 
     let mut m = Metrics::new();
     let compute: Vec<f64> = timeline.iter().map(|t| t.compute_ms).collect();
-    let rtf: Vec<f64> = compute.iter().map(|c| c / block_ms).collect();
+    // A fixed-block model converts one model block every few device blocks: its real-time budget
+    // is the longer of the two (the harness holds output back to cover the bursts).
+    let budget_ms = p
+        .engine
+        .fixed_block()
+        .map_or(block_ms, |b| block_ms.max(b as f64 / 16.0));
+    let basis = super::metrics::budget_basis(&timeline);
+    let rtf: Vec<f64> = basis.iter().map(|c| c / budget_ms).collect();
     insert_summary(&mut m, "block_ms", &compute);
     insert_summary(&mut m, "rtf", &rtf);
-    let (model_ms, warmup_ms, model_errors) = {
+    insert_summary(&mut m, "call_ms", &super::metrics::call_compute(&timeline));
+    let (model_ms, warmup_ms, model_errors, skipped) = {
         let t = times.lock().map_err(|_| "model timings poisoned")?;
-        (t.convert_ms.clone(), t.warmup_ms, t.errors)
+        insert_components(&mut m, &t.components);
+        (t.convert_ms.clone(), t.warmup_ms, t.errors, t.skipped)
     };
     insert_summary(&mut m, "model_ms", &model_ms);
     m.insert("blocks".into(), timeline.len() as f64);
     m.insert(
         "over_budget_ratio".into(),
-        compute.iter().filter(|&&c| c > block_ms).count() as f64 / compute.len().max(1) as f64,
+        basis.iter().filter(|&&c| c > budget_ms).count() as f64 / basis.len().max(1) as f64,
     );
     m.insert("model_errors".into(), model_errors as f64);
     m.insert("algorithmic_latency_ms".into(), p.probe.ms);
@@ -162,6 +179,7 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
         "blocks_per_pass": blocks_per_pass,
         "passes": p.run.repeat,
         "block_ms": block_ms,
+        "budget_ms": budget_ms,
         "audio_seconds": audio_s,
         "wall_ms": wall.as_secs_f64() * 1000.0,
         "warmup_ms": warmup_ms,
@@ -169,11 +187,13 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
         "first_error": first_error,
         "algorithmic_latency": p.probe,
         "worker_priority": priority.as_str(),
+        "silent_ticks": skipped,
     });
     Ok(RunOutcome {
         metrics: m,
         details,
         timeline,
         audio: audio.map(|a| (a, s.output_rate, ch_out)),
+        extra_audio: Vec::new(),
     })
 }

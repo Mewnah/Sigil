@@ -10,6 +10,7 @@ import { devLog } from "@/utils/devLog";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { i18nReady } from "@/core/services/stt/statusMessages";
 import { acceleratorKey, isValidAccelerator, recordKeyDown, ShortcutPressGate } from "./accelerator";
+import { isVcShortcut } from "@/core/services/voice_changer/hotkeys";
 
 type ShortcutKeys = keyof BackendState["shortcuts"];
 type InputCommands = "submit" | "delete" | "cancel";
@@ -118,6 +119,11 @@ class Service_Keyboard implements IServiceInterface {
         pushSystemLog("Sound effects", muted ? "Muted (shortcut)" : "Unmuted (shortcut)", "info");
         break;
       }
+      default:
+        // Voice-changer hotkeys (start / stop, next / previous voice, voices 1-4).
+        if (isVcShortcut(shortcut))
+          void window.ApiServer.voiceChanger.runShortcut(shortcut);
+        break;
     }
   }
 

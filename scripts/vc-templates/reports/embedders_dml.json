@@ -1,0 +1,740 @@
+{
+  "gates": {
+    "fp32": {
+      "rel_l2": 0.0001
+    },
+    "fp16": {
+      "rel_l2": 0.01,
+      "cosine": 0.9995
+    },
+    "int8": {
+      "rel_l2": 0.07,
+      "cosine": 0.997
+    }
+  },
+  "source_revision": "70ed563897504c756ec94067c12c902c4fd42025",
+  "embedders": {
+    "contentvec": {
+      "id": "vc/embedder-contentvec",
+      "ep": "dml",
+      "ok": false,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "fail",
+        "int8": "cpu only"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.1304506054925295e-05,
+          "max_abs": 0.0002658367156982422,
+          "cosine": 1.0,
+          "peak": 3.9597549438476562,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.4858164939384706e-06,
+          "max_abs": 1.0639429092407227e-05,
+          "cosine": 1.0,
+          "peak": 3.1957039833068848,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 3.1824947429592904e-06,
+          "max_abs": 3.319978713989258e-05,
+          "cosine": 1.0,
+          "peak": 3.865199327468872,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.0989359823622168e-05,
+          "max_abs": 2.09808349609375e-05,
+          "cosine": 1.0,
+          "peak": 2.512151002883911,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.02492732420614815,
+          "max_abs": 0.9128828048706055,
+          "cosine": 0.9996678829193115,
+          "peak": 3.9597549438476562,
+          "ok": false
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.004649290199688785,
+          "max_abs": 0.024940013885498047,
+          "cosine": 0.9999893307685852,
+          "peak": 3.1957039833068848,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0034179966919953113,
+          "max_abs": 0.02987915277481079,
+          "cosine": 0.9999942779541016,
+          "peak": 3.865199327468872,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.005927737751298754,
+          "max_abs": 0.01271146535873413,
+          "cosine": 0.9999826550483704,
+          "peak": 2.512151002883911,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "243eef5ee2eb0419a38b622195ac274435ce5bd240493a4784785da3badcaf77"
+        },
+        "int8": {
+          "bytes": 291946517,
+          "sha256": "cf8250cbb4f7b425b8ca971cd290e83fa12eeb8f16689cf3652be3427b282a65"
+        }
+      }
+    },
+    "contentvec-256": {
+      "id": "vc/embedder-contentvec-256",
+      "ep": "dml",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "cpu only"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 3.5535081795162844e-06,
+          "max_abs": 7.617473602294922e-05,
+          "cosine": 1.0,
+          "peak": 3.872406244277954,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.7378943408027783e-06,
+          "max_abs": 1.652538776397705e-05,
+          "cosine": 1.0,
+          "peak": 3.1166434288024902,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 3.3154855524618845e-06,
+          "max_abs": 2.968311309814453e-05,
+          "cosine": 1.0,
+          "peak": 3.625443696975708,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 5.444972917293382e-06,
+          "max_abs": 1.905113458633423e-05,
+          "cosine": 1.0,
+          "peak": 2.570340871810913,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.003688921622449264,
+          "max_abs": 0.03920698165893555,
+          "cosine": 0.9999934434890747,
+          "peak": 3.872406244277954,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.004524502098875439,
+          "max_abs": 0.03574991226196289,
+          "cosine": 0.9999886155128479,
+          "peak": 3.1166434288024902,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0037360304064669135,
+          "max_abs": 0.03523850440979004,
+          "cosine": 0.999993085861206,
+          "peak": 3.625443696975708,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.004979602051548765,
+          "max_abs": 0.01590871810913086,
+          "cosine": 0.9999881982803345,
+          "peak": 2.570340871810913,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 293401793,
+          "sha256": "14c857ed89814d899e767f33b5d392396d07b6d58fa0370255cd0595a09b5a57"
+        },
+        "fp16": {
+          "bytes": 155194474,
+          "sha256": "9f15609e5bb092cd8deb6ba4a341dbc052b90da5f0c947d745b998097f39a9a0"
+        },
+        "int8": {
+          "bytes": 228190338,
+          "sha256": "b0a118dffbad6d2ef177a6abbd2957ef1c588960ee69facca6dce2df2a22442f"
+        }
+      }
+    },
+    "spin-v2": {
+      "id": "vc/embedder-spin-v2",
+      "ep": "dml",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.3253490339101546e-06,
+          "max_abs": 1.049041748046875e-05,
+          "cosine": 1.0,
+          "peak": 4.3047027587890625,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 3.030330939123132e-06,
+          "max_abs": 1.1324882507324219e-05,
+          "cosine": 1.0,
+          "peak": 4.207859039306641,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 3.260625511165619e-06,
+          "max_abs": 1.8715858459472656e-05,
+          "cosine": 1.0,
+          "peak": 5.09734582901001,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 9.144318210231002e-06,
+          "max_abs": 2.6501715183258057e-05,
+          "cosine": 1.0,
+          "peak": 2.5049819946289062,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.003644606334729415,
+          "max_abs": 0.011838063597679138,
+          "cosine": 0.9999933838844299,
+          "peak": 4.3047027587890625,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.004073260046894585,
+          "max_abs": 0.012419462203979492,
+          "cosine": 0.9999915361404419,
+          "peak": 4.207859039306641,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.004202613932873596,
+          "max_abs": 0.029698103666305542,
+          "cosine": 0.999991238117218,
+          "peak": 5.09734582901001,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.006014867357168633,
+          "max_abs": 0.012725353240966797,
+          "cosine": 0.9999818205833435,
+          "peak": 2.5049819946289062,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "556ae152e4eca645610d8c3f5c527a45ff3c37745e569402131ca8d27091f9bb"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "994af6d7d39c4ab3f8c605dc36ddd6d683c33968e28c0224c7921e690104350d"
+        }
+      }
+    },
+    "spin": {
+      "id": "vc/embedder-spin",
+      "ep": "dml",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.2830567826727406e-06,
+          "max_abs": 1.633167266845703e-05,
+          "cosine": 1.0,
+          "peak": 5.982247829437256,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 3.7538334763305223e-06,
+          "max_abs": 1.2636184692382812e-05,
+          "cosine": 1.0,
+          "peak": 5.224237442016602,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.699295419806896e-06,
+          "max_abs": 2.5272369384765625e-05,
+          "cosine": 1.0,
+          "peak": 5.574812412261963,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.0368441280407609e-05,
+          "max_abs": 2.849102020263672e-05,
+          "cosine": 1.0,
+          "peak": 4.619003772735596,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.003452136674553244,
+          "max_abs": 0.02582073211669922,
+          "cosine": 0.9999940991401672,
+          "peak": 5.982247829437256,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0039944881183322884,
+          "max_abs": 0.012714862823486328,
+          "cosine": 0.9999918937683105,
+          "peak": 5.224237442016602,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0035552703470295636,
+          "max_abs": 0.016632080078125,
+          "cosine": 0.9999936819076538,
+          "peak": 5.574812412261963,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0053439410705354,
+          "max_abs": 0.016882434487342834,
+          "cosine": 0.9999856352806091,
+          "peak": 4.619003772735596,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "11c07b99f34fb88e28939ddb7d8405ba6567f4d9e5e1ddd70c734864523dad65"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "0211e7cfab2e6fef28ec412e34715456003575ba874b66e04813fcd9a62b425c"
+        }
+      }
+    },
+    "hubert-ja": {
+      "id": "vc/embedder-hubert-ja",
+      "ep": "dml",
+      "ok": false,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "fail",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 7.3515354970823165e-06,
+          "max_abs": 2.9206275939941406e-05,
+          "cosine": 1.0,
+          "peak": 4.85485315322876,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.0370995632214053e-05,
+          "max_abs": 5.507469177246094e-05,
+          "cosine": 1.0,
+          "peak": 3.7561490535736084,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 8.019016993922283e-06,
+          "max_abs": 0.0001150667667388916,
+          "cosine": 1.0,
+          "peak": 4.199446678161621,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 9.4266101138206e-06,
+          "max_abs": 4.498229827731848e-05,
+          "cosine": 1.0,
+          "peak": 3.054561138153076,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.014788196995915432,
+          "max_abs": 0.09144902229309082,
+          "cosine": 0.9998859763145447,
+          "peak": 4.85485315322876,
+          "ok": false
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.016524646671863638,
+          "max_abs": 0.07192730903625488,
+          "cosine": 0.9998597502708435,
+          "peak": 3.7561490535736084,
+          "ok": false
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.013644210815722065,
+          "max_abs": 0.09073901176452637,
+          "cosine": 0.9999055862426758,
+          "peak": 4.199446678161621,
+          "ok": false
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.010849467971069638,
+          "max_abs": 0.03571605682373047,
+          "cosine": 0.9999326467514038,
+          "peak": 3.054561138153076,
+          "ok": false
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "58d73b54efaa70fff7a617644cdb923e1029160a0c8b220aee5d08df7e86393e"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "a9d8f560c69cfd65c2855ca0264c70b4dacac73f6f182cb72ad2abf23acc211c"
+        }
+      }
+    },
+    "hubert-ko": {
+      "id": "vc/embedder-hubert-ko",
+      "ep": "dml",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 8.086592952170412e-06,
+          "max_abs": 0.00010538101196289062,
+          "cosine": 1.0,
+          "peak": 4.9800190925598145,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 7.326653615378792e-06,
+          "max_abs": 4.7206878662109375e-05,
+          "cosine": 1.0,
+          "peak": 4.123410701751709,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 5.152239547423233e-06,
+          "max_abs": 4.774332046508789e-05,
+          "cosine": 1.0,
+          "peak": 5.3352885246276855,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 7.765680390262834e-06,
+          "max_abs": 2.9742717742919922e-05,
+          "cosine": 1.0,
+          "peak": 3.598499059677124,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0033090802437790202,
+          "max_abs": 0.029680609703063965,
+          "cosine": 0.9999945163726807,
+          "peak": 4.9800190925598145,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0046222705340434,
+          "max_abs": 0.029914021492004395,
+          "cosine": 0.9999893307685852,
+          "peak": 4.123410701751709,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0036708931183846924,
+          "max_abs": 0.03860318660736084,
+          "cosine": 0.9999932646751404,
+          "peak": 5.3352885246276855,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0021235339671195654,
+          "max_abs": 0.01324474811553955,
+          "cosine": 0.9999977350234985,
+          "peak": 3.598499059677124,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "f19064f4479c9a2ab2ba1a3603f19515b2519c47695f60f57a841a66c7c47b45"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "5424552a33c8b20e8d74f21ff4f6307e76eaa37a369f6a0b8e19719000bbf3d7"
+        }
+      }
+    },
+    "hubert-zh": {
+      "id": "vc/embedder-hubert-zh",
+      "ep": "dml",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.152372318013727e-06,
+          "max_abs": 1.52587890625e-05,
+          "cosine": 1.0,
+          "peak": 4.422278881072998,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.1910597807617446e-06,
+          "max_abs": 1.1563301086425781e-05,
+          "cosine": 1.0,
+          "peak": 4.56979513168335,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 6.638045151020196e-06,
+          "max_abs": 0.00024950504302978516,
+          "cosine": 1.0,
+          "peak": 4.580565452575684,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.2307102189448565e-06,
+          "max_abs": 8.702278137207031e-06,
+          "cosine": 1.0,
+          "peak": 4.173198699951172,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.002347735779285085,
+          "max_abs": 0.013508796691894531,
+          "cosine": 0.9999973177909851,
+          "peak": 4.422278881072998,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.002402643223868466,
+          "max_abs": 0.0077588558197021484,
+          "cosine": 0.999997079372406,
+          "peak": 4.56979513168335,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.003044625265587348,
+          "max_abs": 0.07546603679656982,
+          "cosine": 0.9999958276748657,
+          "peak": 4.580565452575684,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0022829943098190814,
+          "max_abs": 0.007125139236450195,
+          "cosine": 0.9999973773956299,
+          "peak": 4.173198699951172,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "dd324de8a06cc338d7f59d57687aadd692be267286a49e2abb238df628a86679"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "5e4d3319aaac8e340554671a63aa5ea0d0940eca13a43d76602c8f120ee90a45"
+        }
+      }
+    }
+  }
+}

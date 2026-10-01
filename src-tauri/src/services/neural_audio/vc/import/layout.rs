@@ -25,6 +25,8 @@ pub const LAYOUT_VERSION: u32 = 1;
 pub const LAYOUT_FILE: &str = "layout.json";
 const MAX_LAYOUT_BYTES: u64 = 16 << 20;
 const MAX_WEIGHTS_BYTES: u64 = 4 << 30;
+/// Most template folders [`Template::scan`] reads (the P3 matrix has about 36).
+pub const MAX_TEMPLATE_FOLDERS: usize = 256;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Layout {
@@ -208,6 +210,31 @@ impl Layout {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Layout, ImportError> {
+        // A newer layout (P3-A's version 2: f0-less, MRF and RefineGAN templates) is a voice kind
+        // this build cannot run yet, not a damaged install: say so before the strict parse.
+        #[derive(Deserialize)]
+        struct Header {
+            #[serde(default)]
+            format: String,
+            #[serde(default)]
+            format_version: u32,
+            #[serde(default)]
+            template: String,
+            #[serde(default)]
+            features: Vec<String>,
+        }
+        if let Ok(h) = serde_json::from_slice::<Header>(bytes) {
+            if h.format == LAYOUT_FORMAT && h.format_version > LAYOUT_VERSION {
+                let what = if h.features.is_empty() { String::new() } else { format!(" ({})", h.features.join(", ")) };
+                return Err(ImportError::new(
+                    ErrorCode::UnsupportedModel,
+                    format!(
+                        "template {}: this voice needs engine features this build does not run yet{what}; voices without pitch guidance, RefineGAN and MRF HiFi-GAN voices are not supported yet",
+                        h.template
+                    ),
+                ));
+            }
+        }
         let layout: Layout = serde_json::from_slice(bytes)
             .map_err(|e| ImportError::new(ErrorCode::LayoutInvalid, format!("layout.json: {e}")))?;
         layout.validate()?;
@@ -344,6 +371,33 @@ impl Layout {
             .ok_or_else(|| invalid(&self.template, format!("no {graph}.{variant} graph")))
     }
 
+    /// Whether a checkpoint with these tensors fits the layout by shapes alone: every template
+    /// weight has its source with the layout's shape (a weight_norm pair, or its folded key), the
+    /// speaker table has the template's width, and every checkpoint tensor is used or ignored.
+    /// Chooses the template of a checkpoint without RVC's config; `Err` names the first misfit.
+    pub fn fit<'a>(&self, names: impl Iterator<Item = &'a str>, shape: impl Fn(&str) -> Option<Vec<usize>>) -> Result<(), String> {
+        for name in names {
+            if !self.uses_key(name) {
+                return Err(format!("{name} is not part of the {} architecture", self.template));
+            }
+        }
+        let is = |key: &str, want: &[usize]| shape(key).is_some_and(|got| got == want);
+        for e in &self.weights.tensors {
+            let ok = match (&e.source.key, &e.source.weight_norm) {
+                (Some(k), _) => is(k, &e.shape),
+                (_, Some(wn)) => (is(&wn.v, &e.shape) && is(&wn.g, &wn.g_shape)) || is(&wn.folded, &e.shape),
+                (None, None) => false,
+            };
+            if !ok {
+                return Err(format!("{} does not have the shape {:?} the {} template needs", e.name, e.shape, self.template));
+            }
+        }
+        match shape(&self.speakers.key).as_deref() {
+            Some([n, d]) if *n > 0 && *d == self.speakers.dim => Ok(()),
+            _ => Err(format!("the speaker table is not [speakers, {}]", self.speakers.dim)),
+        }
+    }
+
     /// Whether a checkpoint tensor is consumed by this layout (weights or speaker table) or ignored.
     pub fn uses_key(&self, key: &str) -> bool {
         key == self.speakers.key
@@ -380,6 +434,37 @@ impl Template {
             return Err(invalid(id, format!("folder holds template {}", layout.template)));
         }
         Ok(Template { dir, layout })
+    }
+
+    /// Every template folder under `templates_dir` (at most [`MAX_TEMPLATE_FOLDERS`], sorted by id)
+    /// whose `layout.json` loads and validates, plus the load errors of the others (a hand-edited
+    /// or half-updated folder must not hide the valid ones).
+    pub fn scan(templates_dir: &Path) -> (Vec<Template>, Vec<ImportError>) {
+        let mut ids: Vec<String> = match std::fs::read_dir(templates_dir) {
+            Ok(rd) => rd
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                .filter(|id| !id.starts_with('.') && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
+                .collect(),
+            Err(e) => {
+                return (Vec::new(), vec![ImportError::new(ErrorCode::NoTemplate, format!("{}: {e}", templates_dir.display()))]);
+            }
+        };
+        ids.sort();
+        ids.truncate(MAX_TEMPLATE_FOLDERS);
+        let mut found = Vec::new();
+        let mut errors = Vec::new();
+        for id in ids {
+            if !templates_dir.join(&id).join(LAYOUT_FILE).is_file() {
+                continue;
+            }
+            match Template::load(templates_dir, &id) {
+                Ok(t) => found.push(t),
+                Err(e) => errors.push(e),
+            }
+        }
+        (found, errors)
     }
 
     /// A graph file's bytes, checked against the layout's sha256.

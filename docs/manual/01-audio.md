@@ -253,28 +253,31 @@ Sidebar → **Voice Changer**.
 2. **Start** processing when you are ready; **Stop** when finished.  
 3. If options are missing, confirm you are on a **desktop host** build (not the `/client` page).
 
-### RVC mode
+### RVC voices
 
-**RVC (BYO ONNX)** runs a voice model you export yourself.
+**RVC voices (Sigil Voice Engine)** runs your RVC voices on Sigil's own real-time engine.
 
-- **Voice:** pick a voice from the list (folders under `%AppData%/com.sigil.app/voice-changer/models/`), **Rescan voices** after adding one, or choose **Other folder…**. A voice folder holds the generator (`gen.onnx` or `model.onnx`) and, optionally, the model’s `.index` file. A `manifest.json` is optional: Sigil reads the settings from the model. Sigil saves your per-voice settings (pitch, brightness, index rate, protect, F0 method, speaker) in a small `slot.json` in that folder and restores them when you pick the voice again. If Sigil cannot tell the model’s sample rate, it assumes 40 kHz and shows a warning suggesting you add a `manifest.json`.
+- **Get started:** on first use, **Add the default voice** installs a ready-to-use voice and the models the voice changer needs, then selects it.
+- **Import a voice:** drop a `.pth` or `.zip` voice (RVC WebUI, Applio, Mangio, w-okada) on the import box, or use **Import…**. Sigil converts it once for its engine, usually in a second or two, and picks up the voice's `.index` file when it sits next to the `.pth` or inside the zip. Voices without pitch guidance and Applio RefineGAN / MRF voices are not supported yet; the import says so.
+- **Your voices:** pick a voice from the list; **Rename**, **Duplicate**, **Delete** and **Merge** (blend two similar voices) are in each voice's menu. Voices you exported to ONNX yourself still work: put the folder under `%AppData%/com.sigil.app/voice-changer/models/` or choose **Other folder…**.
 - **Permission:** the first time you start RVC, Sigil asks you to confirm you only use voices whose owners agreed.
-- **Quality profile:** **Streamer** (default, CPU, 64 ms extra context), **Low latency** (GPU, 96 ms), or **Quality** (GPU, 192 ms, index rate 0.5). A profile sets the RVC execution provider, pitch extractor, index rate, and extra context together; **Low latency** and **Quality** also set the VRAM cap (768 MB / 1536 MB), while **Streamer** runs on the CPU and leaves it unchanged.
-- **Index rate** blends in the model’s FAISS `.index`; raise it above 0 when the slot has an index.
-- **RVC execution provider** is separate from the ONNX mode’s provider. **GPU device index** picks which GPU CUDA or DirectML uses; **VRAM cap** only applies to CUDA, and it applies to each ONNX session (HuBERT, generator, pitch extractor) separately, so total VRAM use can reach about three times the cap.
-- **Pitch** shifts the model’s F0; **Brightness** tilts the converted output.
-- **F0 method:** RMVPE needs a GPU provider; on the CPU, FCPE is used instead and the inspector says so.
-- Changing **extra context** or **crossfade** restarts the engine if it is running. **Crossfade** cannot be longer than one processing chunk, so its maximum follows the chunk size (about 10 ms at 512 samples).
+- **Preset:** **Streamer** (CPU), **Low latency** (GPU), **Quality** (GPU, retrieval index, 20 ms lookahead for cleaner, steadier output on NVIDIA GPUs) or **Studio-TRT** (Quality on NVIDIA TensorRT-RTX). A preset fills the settings below; you can change any of them afterwards.
+- **Voice settings:** **Pitch**, **F0 method** (FCPE, RMVPE, DIO, SwiftF0, CREPE tiny, PESTO, Fusion), **Pitch range** (Speech or Singing), **Index rate**, **Protect**, **Speaker**, **Volume envelope** and **Formant** (moves the voice's resonances without changing its pitch) are saved with each voice; **Variation** applies to every imported voice.
+- **Engine** (expert): execution provider, precision, block size, lookahead, noise removal, silence threshold, voices kept loaded, and the engine's levers (**Auto** uses the settings Sigil's benchmarks chose for your GPU).
+- **Switching voices while it runs** has no gap: the new voice fades in within one block. Voice hotkeys (the **Hotkeys** section under Voices) switch voices or start and stop the voice changer while a game has focus.
+- **Benchmark and tuning:** **Autotune** finds the fastest settings that stay smooth on your PC; **Benchmark this PC** shows how fast and steady your current settings are; **Live recording** measures a real session (no audio is recorded).
 
-Field-by-field reference: [RVC (bring-your-own ONNX)](../OPERATOR_REFERENCE.md#rvc-bring-your-own-onnx).
+Field-by-field reference: [RVC voices (Sigil Voice Engine)](../OPERATOR_REFERENCE.md#rvc-voices-sigil-voice-engine).
 
 ### Status, latency and priority
 
 - The status area shows the device the model **actually** runs on (**CUDA**, **DirectML** or **CPU**). If a GPU could not be used, a warning box explains why (for example the NVIDIA GPU runtime is not installed; install it under **Models & Runtimes** or **Settings → GPU & diagnostics**).
-- Live numbers show processing time (average and p99) against the block length, the audio waiting against the latency budget, the output buffer, skipped audio and playback gaps, each with a warning when it matters.
+- Live numbers show the estimated mic-to-speaker latency, processing time (p50, p95, p99) against the block length, the audio waiting against the latency budget, the output buffer, skipped audio, playback gaps, VRAM and the quality level, each with a warning when it matters.
 - **Latency budget** (default 300 ms): when the voice changer falls behind, audio older than this is skipped instead of piling up, so your voice never drifts further behind. Applies right away.
 - **Voice changer priority:** **Automatic**, **Protect game FPS** or **Protect voice**. Applies right away; Sigil never asks for administrator rights.
 - **Microphone while TTS plays:** mix, lower (about −12 dB) or mute your microphone while text-to-speech is sent through the voice changer. TTS clips of any length play intact.
+- **Noise removal** (every mode) cleans the voice changer's microphone copy only; speech-to-text still hears the raw microphone.
+- If a microphone or speaker is unplugged, Sigil reports it and picks it up again when it returns (also a USB microphone moved to another port).
 - All settings, including the input, output and monitor devices, are remembered across restarts. The voice changer never starts by itself.
 
 ### Tips

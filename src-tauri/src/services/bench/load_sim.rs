@@ -1,10 +1,13 @@
 //! Contention for paced runs: a GPU load generator and CPU burner threads, each at a duty cycle.
 //!
-//! - GPU: a chain of `depth` square MatMuls (`size` x `size`, fp32) built in memory and run through
+//! - GPU: a chain of `depth` square MatMuls (`size` x `size`, fp32), or (`kind: conv`, P3-F) of
+//!   `depth` 3x3 convolutions (32 -> 32 channels + ReLU) over a `size` x `size` image, the same graph
+//!   as the store's `bench/gpu-load` hammer. Built in memory and run through
 //!   `ort_session::build_session` (the one session factory: EP ladder, `error_on_failure`,
-//!   spinning off) on a normal-priority thread, like a game's compute on the same GPU. When no GPU
-//!   EP loads, the ladder's CPU fallback is reported (never hidden) and the graph shrinks to at most
-//!   256 x 256 so it stays a load rather than a multi-second stall.
+//!   spinning off) on a normal-priority thread and the EP's default stream / queue, like a game's
+//!   compute on the same GPU. When no GPU EP loads, the ladder's CPU fallback is reported (never
+//!   hidden) and the graph shrinks (MatMul 256 x 256, conv 64 x 64) so it stays a load rather than
+//!   a multi-second stall.
 //! - CPU: `threads` busy threads, each spinning `duty` of every `period_ms`.
 //!
 //! Duty is controlled on accumulated busy time (sleep until `busy / duty` has elapsed), so it is
@@ -28,10 +31,14 @@ use crate::services::neural_audio::ort_session::{build_session, normalize_ep, Mo
 use super::engine::spin_for;
 use super::metrics::{thread_cpu_time, Summary};
 use super::signals::SplitMix64;
-use super::spec::{CpuLoadSpec, GpuLoadSpec, LoadSpec};
+use super::spec::{CpuLoadSpec, GpuLoadKind, GpuLoadSpec, LoadSpec};
 
 /// Largest matrix used when the GPU load fell back to the CPU.
 const CPU_FALLBACK_MAX_SIZE: usize = 256;
+/// Largest conv image used when the GPU load fell back to the CPU.
+const CPU_FALLBACK_MAX_CONV: usize = 64;
+/// Channels of the conv hammer (`bench/gpu-load`: 32 -> 32).
+pub const CONV_CHANNELS: usize = 32;
 
 // ---- minimal ONNX protobuf writer (field numbers from onnx.proto) ----------------------------
 
@@ -52,6 +59,78 @@ fn field_bytes(out: &mut Vec<u8>, field: u32, bytes: &[u8]) {
     varint(out, (u64::from(field) << 3) | 2);
     varint(out, bytes.len() as u64);
     out.extend_from_slice(bytes);
+}
+
+fn attr_ints(name: &str, values: &[i64]) -> Vec<u8> {
+    let mut a = Vec::new();
+    field_bytes(&mut a, 1, name.as_bytes()); // AttributeProto.name
+    for &v in values {
+        field_varint(&mut a, 8, v as u64); // ints (unpacked)
+    }
+    field_varint(&mut a, 20, 7); // type = INTS
+    a
+}
+
+fn tensor_f32(name: &str, dims: &[u64], values: impl Iterator<Item = f32>) -> Vec<u8> {
+    let mut t = Vec::new();
+    let mut d = Vec::new();
+    for &x in dims {
+        varint(&mut d, x);
+    }
+    field_bytes(&mut t, 1, &d); // dims (packed)
+    field_varint(&mut t, 2, 1); // data_type = FLOAT
+    field_bytes(&mut t, 8, name.as_bytes());
+    let raw: Vec<u8> = values.flat_map(f32::to_le_bytes).collect();
+    field_bytes(&mut t, 9, &raw); // raw_data
+    t
+}
+
+/// `depth` x (Conv 3x3, 32 -> 32 channels, pad 1 + ReLU) over `x` `[1, 32, size, size]` -> `y`:
+/// the `bench/gpu-load` hammer (He-initialised, so activations keep their magnitude).
+pub fn conv_chain_model(size: usize, depth: usize, seed: u64) -> Vec<u8> {
+    let c = CONV_CHANNELS as u64;
+    let n = size as u64;
+    let depth = depth.max(1);
+    let mut rng = SplitMix64::new(seed);
+    let a = (3.0 * 2.0 / (CONV_CHANNELS as f64 * 9.0)).sqrt();
+    let mut graph = Vec::new();
+    for i in 0..depth {
+        let input = if i == 0 { "x".to_string() } else { format!("h{}", i - 1) };
+        let output = if i + 1 == depth { "y".to_string() } else { format!("h{i}") };
+        let conv_out = format!("c{i}");
+        let mut conv = Vec::new();
+        field_bytes(&mut conv, 1, input.as_bytes());
+        field_bytes(&mut conv, 1, format!("w{i}").as_bytes());
+        field_bytes(&mut conv, 1, format!("b{i}").as_bytes());
+        field_bytes(&mut conv, 2, conv_out.as_bytes());
+        field_bytes(&mut conv, 3, format!("conv{i}").as_bytes());
+        field_bytes(&mut conv, 4, b"Conv");
+        field_bytes(&mut conv, 5, &attr_ints("kernel_shape", &[3, 3]));
+        field_bytes(&mut conv, 5, &attr_ints("pads", &[1, 1, 1, 1]));
+        field_bytes(&mut graph, 1, &conv);
+        let mut relu = Vec::new();
+        field_bytes(&mut relu, 1, conv_out.as_bytes());
+        field_bytes(&mut relu, 2, output.as_bytes());
+        field_bytes(&mut relu, 3, format!("relu{i}").as_bytes());
+        field_bytes(&mut relu, 4, b"Relu");
+        field_bytes(&mut graph, 1, &relu);
+    }
+    field_bytes(&mut graph, 2, b"sigil_bench_gpu_load_conv");
+    for i in 0..depth {
+        let w: Vec<f32> = (0..CONV_CHANNELS * CONV_CHANNELS * 9).map(|_| rng.range(-a, a) as f32).collect();
+        field_bytes(&mut graph, 5, &tensor_f32(&format!("w{i}"), &[c, c, 3, 3], w.into_iter()));
+        field_bytes(&mut graph, 5, &tensor_f32(&format!("b{i}"), &[c], std::iter::repeat_n(0.0, CONV_CHANNELS)));
+    }
+    field_bytes(&mut graph, 11, &value_info("x", &[1, c, n, n]));
+    field_bytes(&mut graph, 12, &value_info("y", &[1, c, n, n]));
+    let mut opset = Vec::new();
+    field_varint(&mut opset, 2, 13);
+    let mut model = Vec::new();
+    field_varint(&mut model, 1, 7); // ir_version
+    field_bytes(&mut model, 2, b"sigil-bench");
+    field_bytes(&mut model, 7, &graph);
+    field_bytes(&mut model, 8, &opset);
+    model
 }
 
 fn value_info(name: &str, dims: &[u64]) -> Vec<u8> {
@@ -162,6 +241,7 @@ impl CpuFeed {
 /// What the GPU load generator did.
 #[derive(Debug, Clone, Serialize)]
 pub struct GpuLoadReport {
+    pub kind: GpuLoadKind,
     pub execution_provider: String,
     pub execution_provider_active: String,
     pub reason: Option<String>,
@@ -185,7 +265,14 @@ struct GpuSession {
     size: usize,
 }
 
-fn open_gpu_session(spec: &GpuLoadSpec) -> Result<GpuSession, String> {
+fn load_model(kind: GpuLoadKind, size: usize, depth: usize) -> Vec<u8> {
+    match kind {
+        GpuLoadKind::Matmul => matmul_chain_model(size, depth, 0x10ad),
+        GpuLoadKind::Conv => conv_chain_model(size, depth, 0x10ad),
+    }
+}
+
+fn open_gpu_session(spec: &GpuLoadSpec, kind: GpuLoadKind) -> Result<GpuSession, String> {
     let requested = normalize_ep(&spec.execution_provider);
     let opts = VcSessionOptions {
         cuda_device_index: spec.device_index,
@@ -193,21 +280,24 @@ fn open_gpu_session(spec: &GpuLoadSpec) -> Result<GpuSession, String> {
         intra_threads: Some(1),
         ..VcSessionOptions::default()
     };
-    let bytes = matmul_chain_model(spec.size, spec.depth, 0x10ad);
+    let bytes = load_model(kind, spec.size, spec.depth);
     let (session, outcome) = build_session(Some("bench.load"), requested, &opts, ModelSource::Memory(&bytes))?;
-    if outcome.active == "cpu" && requested != "cpu" && spec.size > CPU_FALLBACK_MAX_SIZE {
-        let small = CPU_FALLBACK_MAX_SIZE;
-        let bytes = matmul_chain_model(small, spec.depth, 0x10ad);
+    let cpu_max = match kind {
+        GpuLoadKind::Matmul => CPU_FALLBACK_MAX_SIZE,
+        GpuLoadKind::Conv => CPU_FALLBACK_MAX_CONV,
+    };
+    if outcome.active == "cpu" && requested != "cpu" && spec.size > cpu_max {
+        let bytes = load_model(kind, cpu_max, spec.depth);
         let (session, _) = build_session(None, "cpu", &opts, ModelSource::Memory(&bytes))?;
         let reason = format!(
-            "{}; on the CPU the matrices shrink to {small} x {small}",
+            "{}; on the CPU the load shrinks to {cpu_max} x {cpu_max}",
             outcome.reason.unwrap_or_else(|| "no GPU execution provider".into())
         );
         return Ok(GpuSession {
             session,
             active: "cpu".into(),
             reason: Some(reason),
-            size: small,
+            size: cpu_max,
         });
     }
     Ok(GpuSession {
@@ -220,11 +310,13 @@ fn open_gpu_session(spec: &GpuLoadSpec) -> Result<GpuSession, String> {
 
 fn gpu_thread(
     spec: GpuLoadSpec,
+    kind: GpuLoadKind,
     stop: Arc<AtomicBool>,
     ready: mpsc::Sender<Result<String, String>>,
     tally: LoadCpu,
 ) -> GpuLoadReport {
     let mut report = GpuLoadReport {
+        kind,
         execution_provider: normalize_ep(&spec.execution_provider).to_string(),
         execution_provider_active: String::new(),
         reason: None,
@@ -238,7 +330,7 @@ fn gpu_thread(
         cpu_ms: 0.0,
         error: None,
     };
-    let mut gs = match open_gpu_session(&spec) {
+    let mut gs = match open_gpu_session(&spec, kind) {
         Ok(s) => s,
         Err(e) => {
             let _ = ready.send(Err(format!("GPU load: {e}")));
@@ -251,8 +343,12 @@ fn gpu_thread(
     report.size = gs.size;
     let n = gs.size;
     let mut rng = SplitMix64::new(0x10ad_0001);
-    let data: Vec<f32> = (0..n * n).map(|_| rng.range(-1.0, 1.0) as f32).collect();
-    let x = match Tensor::from_array(([n, n], data)) {
+    let (input_name, shape): (&str, Vec<usize>) = match kind {
+        GpuLoadKind::Matmul => ("X", vec![n, n]),
+        GpuLoadKind::Conv => ("x", vec![1, CONV_CHANNELS, n, n]),
+    };
+    let data: Vec<f32> = (0..shape.iter().product::<usize>()).map(|_| rng.range(-1.0, 1.0) as f32).collect();
+    let x = match Tensor::from_array((shape, data)) {
         Ok(x) => x,
         Err(e) => {
             let _ = ready.send(Err(format!("GPU load input: {e}")));
@@ -261,7 +357,7 @@ fn gpu_thread(
         }
     };
     // One run before "ready" so kernel selection / allocation is not part of the measured load.
-    if let Err(e) = gs.session.run(ort::inputs!["X" => &x]) {
+    if let Err(e) = gs.session.run(ort::inputs![input_name => &x]) {
         let msg = format!("GPU load run on {}: {e}", gs.active);
         let _ = ready.send(Err(msg.clone()));
         report.error = Some(msg);
@@ -276,7 +372,7 @@ fn gpu_thread(
     let mut run_ms = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let r0 = Instant::now();
-        if let Err(e) = gs.session.run(ort::inputs!["X" => &x]) {
+        if let Err(e) = gs.session.run(ort::inputs![input_name => &x]) {
             report.error = Some(format!("GPU load run: {e}"));
             break;
         }
@@ -297,7 +393,11 @@ fn gpu_thread(
     report.runs = run_ms.len() as u64;
     report.run_ms = Summary::of(&run_ms);
     report.duty = if wall.is_zero() { 0.0 } else { busy.as_secs_f64() / wall.as_secs_f64() };
-    let flops = 2.0 * (n as f64).powi(3) * spec.depth as f64 * run_ms.len() as f64;
+    let per_run = match kind {
+        GpuLoadKind::Matmul => 2.0 * (n as f64).powi(3),
+        GpuLoadKind::Conv => 2.0 * (CONV_CHANNELS * CONV_CHANNELS * 9) as f64 * (n * n) as f64,
+    };
+    let flops = per_run * spec.depth as f64 * run_ms.len() as f64;
     report.gflops = if busy.is_zero() { 0.0 } else { flops / busy.as_secs_f64() / 1e9 };
     feed.update();
     report.cpu_ms = feed.total.as_secs_f64() * 1000.0;
@@ -377,9 +477,15 @@ pub struct LoadHandle {
 }
 
 impl LoadHandle {
-    /// Start the generators of `load`; returns once the GPU load has its session and first run
-    /// done (or failed: then nothing keeps running and the error is returned).
+    /// Start the generators of `load` (a MatMul GPU load); returns once the GPU load has its
+    /// session and first run done (or failed: then nothing keeps running and the error is
+    /// returned).
     pub fn start(load: &LoadSpec) -> Result<LoadHandle, String> {
+        Self::start_kind(load, GpuLoadKind::Matmul)
+    }
+
+    /// [`start`](Self::start) with the GPU load graph `kind` (P3-F: the conv hammer).
+    pub fn start_kind(load: &LoadSpec, kind: GpuLoadKind) -> Result<LoadHandle, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let tally = LoadCpu::default();
         let gpu = match &load.gpu {
@@ -389,7 +495,7 @@ impl LoadHandle {
                 let (spec, stop2, tally2) = (spec.clone(), stop.clone(), tally.clone());
                 let handle = std::thread::Builder::new()
                     .name("sigil-bench-gpu-load".into())
-                    .spawn(move || gpu_thread(spec, stop2, tx, tally2))
+                    .spawn(move || gpu_thread(spec, kind, stop2, tx, tally2))
                     .map_err(|e| format!("cannot start the GPU load thread: {e}"))?;
                 match rx.recv() {
                     Ok(Ok(_active)) => Some(handle),
@@ -479,6 +585,20 @@ mod tests {
         assert!(y.iter().all(|v| v.is_finite()));
         let rms = (y.iter().map(|v| v * v).sum::<f32>() / y.len() as f32).sqrt();
         assert!(rms > 1e-3 && rms < 10.0, "activations stay in range: {rms}");
+    }
+
+    #[test]
+    fn conv_chain_runs_on_the_cpu_and_keeps_shape() {
+        let bytes = conv_chain_model(16, 3, 1);
+        let (mut session, outcome) = build_session(None, "cpu", &VcSessionOptions::default(), ModelSource::Memory(&bytes))
+            .expect("the conv load graph builds on the CPU EP");
+        assert_eq!(outcome.active, "cpu");
+        let x = Tensor::from_array(([1usize, CONV_CHANNELS, 16, 16], vec![0.5f32; CONV_CHANNELS * 256])).unwrap();
+        let out = session.run(ort::inputs!["x" => &x]).unwrap();
+        let (shape, y) = out["y"].try_extract_tensor::<f32>().unwrap();
+        assert_eq!(shape.iter().copied().collect::<Vec<i64>>(), vec![1, 32, 16, 16]);
+        assert!(y.iter().all(|v| v.is_finite() && *v >= 0.0), "ReLU output");
+        assert!(y.iter().any(|v| *v > 0.0));
     }
 
     #[test]

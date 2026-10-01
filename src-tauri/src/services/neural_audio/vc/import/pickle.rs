@@ -14,8 +14,13 @@
 //! | `torch.{Float,Half,BFloat16,Long,Int}Storage` | storage dtype inside a persistent id |
 //! | `_codecs.encode` | `(str, "latin1")` → bytes (protocol 2's encoding of `bytes`) |
 //!
-//! Anything else (`os.system`, `builtins.eval`, `NEWOBJ`, `BUILD`, `INST`, text-protocol opcodes,
-//! extension registry, out-of-band buffers) is rejected with [`PickleError`].
+//! `BUILD` runs in exactly one shape, the one `torch.save(module.state_dict())` writes: an
+//! `OrderedDict` made by the allow-listed `REDUCE` gets the state `{"_metadata": {prefix: {key:
+//! scalar}}}` (PyTorch's per-module version table) once. The state is checked and discarded;
+//! nothing is set or called (`Vm::build`).
+//!
+//! Anything else (`os.system`, `builtins.eval`, `NEWOBJ`, any other `BUILD`, `INST`, text-protocol
+//! opcodes, extension registry, out-of-band buffers) is rejected with [`PickleError`].
 //!
 //! Memory: values live in an arena and containers refer to arena ids, so a memo reference is an id
 //! (no clone of the referenced value) and mutation through the memo keeps pickle's object
@@ -23,11 +28,21 @@
 //! of many dicts, or anywhere else, never copies it. Everything the VM materialises (arena values,
 //! payloads, container slots, dict indexes, memo entries) is charged against
 //! [`PickleLimits::max_memory`], and every other size is bounded too ([`PickleLimits`]);
-//! malformed input returns an error, never panics. [`Pickled::to_json`] is bounded separately by a
-//! byte-counting [`JsonBudget`] that a caller shares across every value it converts.
+//! malformed input returns an error, never panics.
+//!
+//! CPU: no work is repeated per reference either. A string used as a dict key is hashed and
+//! interned once per allocation (per-run random hash keys, so collisions cannot be planned): equal
+//! keys from separate allocations map to one canonical allocation, so key comparison is a pointer
+//! comparison and one long key costs its length once per allocation (bounded by the pickle's
+//! size), however many dicts use it. `_codecs.encode` of ASCII text is a plain copy, and its output
+//! is charged before it is built. The `BUILD` state check is charged against a node budget.
+//! [`Pickled::to_json`] is bounded separately by a byte-counting [`JsonBudget`] that a caller
+//! shares across every value it converts.
 
-use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 /// Arena index of a value.
@@ -390,6 +405,11 @@ pub fn unpickle(data: &[u8], limits: &PickleLimits) -> Result<Pickled, PickleErr
         marks: Vec::new(),
         memo: HashMap::new(),
         dict_index: HashMap::new(),
+        keys: HashMap::new(),
+        canonical: HashMap::new(),
+        hasher: RandomState::new(),
+        ordered_dicts: HashSet::new(),
+        build_nodes: limits.max_container,
         memory: 0,
     }
     .run()
@@ -405,6 +425,17 @@ struct Vm<'a> {
     memo: HashMap<u32, Id>,
     /// Key -> entry position of every dict built so far (O(1) SETITEM on large dicts).
     dict_index: HashMap<Id, HashMap<DictKey, usize>>,
+    /// Every string allocation used as a dict key, by address: its hash and the canonical
+    /// allocation of its content (every string lives in the arena until the run ends, so addresses
+    /// are never reused).
+    keys: HashMap<usize, (u64, Arc<str>)>,
+    /// Canonical allocation of every key content seen, by hash (a vector only on a collision).
+    canonical: HashMap<u64, Vec<Arc<str>>>,
+    hasher: RandomState,
+    /// Dicts made by `REDUCE(collections.OrderedDict, ())` that have not been `BUILD` yet.
+    ordered_dicts: HashSet<Id>,
+    /// Nodes the `BUILD` state checks may still visit (all of them together).
+    build_nodes: usize,
     /// Bytes charged so far (see [`PickleLimits::max_memory`]).
     memory: usize,
 }
@@ -596,9 +627,15 @@ impl<'a> Vm<'a> {
                 b'R' => {
                     let args = self.pop()?;
                     let func = self.pop()?;
+                    let ordered = matches!(self.value(func), Value::Global(Global::OrderedDict));
                     let v = self.reduce(func, args)?;
-                    self.push(v)?;
+                    let id = self.push(v)?;
+                    if ordered {
+                        self.charge(MEMO_ENTRY_COST)?;
+                        self.ordered_dicts.insert(id);
+                    }
                 }
+                b'b' => self.build(at)?,
                 b'Q' => {
                     // BINPERSID
                     let pid = self.pop()?;
@@ -811,7 +848,7 @@ impl<'a> Vm<'a> {
         for kv in items.chunks(2) {
             // Keys compare by value for str / int (enough for checkpoint dicts); others append.
             // A str key shares the string's allocation, so it costs a pointer, not a copy.
-            let key = self.dict_key(kv[0]);
+            let key = self.dict_key(kv[0])?;
             let slot = key
                 .as_ref()
                 .and_then(|k| self.dict_index.get(&dict).and_then(|m| m.get(k)).copied());
@@ -846,12 +883,100 @@ impl<'a> Vm<'a> {
         Ok(())
     }
 
-    fn dict_key(&self, id: Id) -> Option<DictKey> {
-        match self.value(id) {
-            Value::Str(s) => Some(DictKey::Str(Arc::clone(s))),
-            Value::Int(i) => Some(DictKey::Int(*i)),
-            _ => None,
+    /// The dict key of the value `id`: an int, or a string interned by content (see the module
+    /// docs), so equal keys share one allocation and compare by pointer.
+    fn dict_key(&mut self, id: Id) -> Result<Option<DictKey>, PickleError> {
+        let s = match self.value(id) {
+            Value::Str(s) => Arc::clone(s),
+            Value::Int(i) => return Ok(Some(DictKey::Int(*i))),
+            _ => return Ok(None),
+        };
+        let addr = Arc::as_ptr(&s) as *const u8 as usize;
+        if let Some((hash, canon)) = self.keys.get(&addr) {
+            return Ok(Some(DictKey::Str(*hash, Arc::clone(canon))));
         }
+        // First use of this allocation: hash it and find (or become) the canonical allocation of
+        // its content. O(len) once per allocation; the pickle's size bounds the total.
+        self.charge(2 * MEMO_ENTRY_COST)?;
+        let hash = self.hasher.hash_one(s.as_ref());
+        let same = self.canonical.entry(hash).or_default();
+        let canon = match same.iter().find(|c| c.as_ref() == s.as_ref()) {
+            Some(c) => Arc::clone(c),
+            None => {
+                same.push(Arc::clone(&s));
+                s
+            }
+        };
+        self.keys.insert(addr, (hash, Arc::clone(&canon)));
+        Ok(Some(DictKey::Str(hash, canon)))
+    }
+
+    /// `BUILD`, allowed only in the shape `torch.save` writes for a module's state dict (see the
+    /// module docs): the target is an `OrderedDict` made by `REDUCE` and not built before, the
+    /// state is `{"_metadata": {str: {str: scalar}}}`. The state is popped and discarded. Every
+    /// other `BUILD` is a [`PickleError::ForbiddenOpcode`].
+    fn build(&mut self, at: usize) -> Result<(), PickleError> {
+        let forbidden = PickleError::ForbiddenOpcode(b'b', at);
+        let floor = self.marks.last().copied().unwrap_or(0);
+        let n = self.stack.len();
+        if n < floor + 2 {
+            return Err(forbidden);
+        }
+        let (target, state) = (self.stack[n - 2], self.stack[n - 1]);
+        if !self.ordered_dicts.contains(&target) || !self.is_state_dict_metadata(state)? {
+            return Err(forbidden);
+        }
+        self.ordered_dicts.remove(&target);
+        self.stack.pop();
+        Ok(())
+    }
+
+    /// Visit one node of a `BUILD` state (bounded across the run, so a shared state checked by many
+    /// `BUILD`s cannot cost more than [`PickleLimits::max_container`] visits in total).
+    fn build_visit(&mut self) -> Result<(), PickleError> {
+        if self.build_nodes == 0 {
+            return Err(PickleError::Limit("state dict metadata too large".into()));
+        }
+        self.build_nodes -= 1;
+        Ok(())
+    }
+
+    /// Whether `state` is PyTorch's state-dict metadata: `{"_metadata": {prefix: {key: v}}}` with
+    /// string prefixes and keys and scalar values (`version` is an int; hooks may add others).
+    fn is_state_dict_metadata(&mut self, state: Id) -> Result<bool, PickleError> {
+        self.build_visit()?;
+        let meta = match self.value(state) {
+            Value::Dict(items) if items.len() == 1 => match self.value(items[0].0) {
+                Value::Str(k) if k.as_ref() == "_metadata" => items[0].1,
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        self.build_visit()?;
+        let prefixes = match self.value(meta) {
+            Value::Dict(items) if items.len() <= self.build_nodes => items.clone(),
+            Value::Dict(_) => return Err(PickleError::Limit("state dict metadata too large".into())),
+            _ => return Ok(false),
+        };
+        for (prefix, entry) in prefixes {
+            self.build_visit()?;
+            if !matches!(self.value(prefix), Value::Str(_)) {
+                return Ok(false);
+            }
+            let fields = match self.value(entry) {
+                Value::Dict(items) if items.len() <= self.build_nodes => items.clone(),
+                Value::Dict(_) => return Err(PickleError::Limit("state dict metadata too large".into())),
+                _ => return Ok(false),
+            };
+            for (k, v) in fields {
+                self.build_visit()?;
+                let scalar = matches!(self.value(v), Value::None | Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_));
+                if !matches!(self.value(k), Value::Str(_)) || !scalar {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     // ---- the allow-listed calls ------------------------------------------------------------
@@ -962,13 +1087,19 @@ impl<'a> Vm<'a> {
                 let (Value::Str(text), Value::Str(enc)) = (self.value(a[0]), self.value(a[1])) else {
                     return malformed("_codecs.encode needs (str, encoding)");
                 };
-                if !matches!(enc.to_ascii_lowercase().as_str(), "latin1" | "latin-1" | "iso-8859-1") {
+                if enc.len() > 16 || !matches!(enc.to_ascii_lowercase().as_str(), "latin1" | "latin-1" | "iso-8859-1") {
                     return malformed(format!("_codecs.encode to {}", cut(enc, 32)));
                 }
-                let bytes = text
-                    .chars()
-                    .map(|c| u8::try_from(c as u32).map_err(|_| PickleError::Malformed("non-latin-1 bytes literal".into())))
-                    .collect::<Result<Vec<u8>, _>>()?;
+                let text = Arc::clone(text);
+                // Charged before the copy is built (the arena slot charges it again: a margin).
+                self.charge(text.len())?;
+                let bytes: Vec<u8> = if text.is_ascii() {
+                    text.as_bytes().to_vec()
+                } else {
+                    text.chars()
+                        .map(|c| u8::try_from(c as u32).map_err(|_| PickleError::Malformed("non-latin-1 bytes literal".into())))
+                        .collect::<Result<Vec<u8>, _>>()?
+                };
                 Ok(Value::Bytes(Arc::from(bytes)))
             }
             Global::Storage(_) => malformed("a storage type cannot be called"),
@@ -998,10 +1129,40 @@ impl<'a> Vm<'a> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A dict key: an interned string with its hash (see the module docs), or an int.
+#[derive(Clone, Debug)]
 enum DictKey {
-    Str(Arc<str>),
+    /// Always the canonical allocation of its content ([`Vm::dict_key`]).
+    Str(u64, Arc<str>),
     Int(i64),
+}
+
+impl PartialEq for DictKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Interned: equal content is the same allocation, so no bytes are compared.
+            (DictKey::Str(h, a), DictKey::Str(g, b)) => h == g && Arc::ptr_eq(a, b),
+            (DictKey::Int(a), DictKey::Int(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for DictKey {}
+
+impl Hash for DictKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            DictKey::Str(h, _) => {
+                0u8.hash(state);
+                h.hash(state);
+            }
+            DictKey::Int(i) => {
+                1u8.hash(state);
+                i.hash(state);
+            }
+        }
+    }
 }
 
 /// The allow-list (see the module docs).
@@ -1175,7 +1336,8 @@ pub(crate) mod tests {
 
     #[test]
     fn object_construction_opcodes_are_rejected() {
-        // NEWOBJ, NEWOBJ_EX, OBJ, INST, BUILD, EXT1, text INT / PUT / GET / PERSID, protocol 5 buffers.
+        // NEWOBJ, NEWOBJ_EX, OBJ, INST, BUILD (outside torch's state-dict shape), EXT1, text INT / PUT /
+        // GET / PERSID, protocol 5 buffers.
         for op in [0x81u8, 0x92, b'o', b'i', b'b', 0x82, b'I', b'p', b'g', b'P', 0x97, 0x98, b'S', b'V', b'F', b'L'] {
             let data = P::new().op(b'N').op(op).stop();
             assert!(matches!(run(&data), Err(PickleError::ForbiddenOpcode(o, _)) if o == op), "opcode 0x{op:02x}");
@@ -1386,6 +1548,163 @@ pub(crate) mod tests {
         assert!(long.starts_with(cut.as_str().unwrap()));
     }
 
+
+    #[test]
+    fn shared_keys_are_hashed_once_and_still_compare_by_value() {
+        // One 4 MB key shared by 4,000 dicts: 16 GB of hashing if every SETITEM hashed it again.
+        let big = "k".repeat(4 << 20);
+        let mut p = P::new().str(&big).put(0).op(b'0').op(b']');
+        for _ in 0..4000 {
+            p = p.op(b'}').get(0).get(0).op(b's').op(b'a');
+        }
+        let started = std::time::Instant::now();
+        let out = run(&p.stop()).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+        let Value::List(dicts) = out.get(out.root) else { panic!("not a list") };
+        assert_eq!(dicts.len(), 4000);
+        // Equal keys from different strings still overwrite: {"a": 1, "a": 2, 7: 3, 7: 4} has two.
+        let data = P::new().op(b'}').op(b'(').str("a").int(1).str("a").int(2).int(7).int(3).int(7).int(4).op(b'u').stop();
+        let out = run(&data).unwrap();
+        assert_eq!(out.to_json(out.root, &mut json(4)).unwrap(), serde_json::json!({"a": 2, "7": 4}));
+    }
+
+    #[test]
+    fn codecs_encode_is_charged_and_ascii_is_copied() {
+        // 1,000 calls on a memoised 1 MB ASCII text: refused at the memory limit, quickly.
+        let text = "y".repeat(1 << 20);
+        let mut p = P::new().global("_codecs", "encode").put(0).op(b'0').str(&text).str("latin1").op(0x86).put(1).op(b'0').op(b']');
+        for _ in 0..1000 {
+            p = p.get(0).get(1).op(b'R').op(b'a');
+        }
+        let started = std::time::Instant::now();
+        assert!(matches!(run(&p.stop()), Err(PickleError::Limit(_))));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+        // Latin-1 text still decodes byte for byte; an absurd encoding name is refused.
+        let data = P::new().global("_codecs", "encode").str("a\u{e9}\u{ff}").str("latin1").op(0x86).op(b'R').stop();
+        let out = run(&data).unwrap();
+        assert!(matches!(out.get(out.root), Value::Bytes(b) if b.as_ref() == [b'a', 0xe9, 0xff]));
+        let data = P::new().global("_codecs", "encode").str("a").str(&"x".repeat(100)).op(0x86).op(b'R').stop();
+        assert!(matches!(run(&data), Err(PickleError::Malformed(_))));
+    }
+
+    /// `{prefix: {"version": 1}}` metadata as `torch.save(module.state_dict())` writes it: a
+    /// state `{"_metadata": OrderedDict(...)}` built onto the state dict.
+    fn metadata_state(p: P, prefixes: &[&str]) -> P {
+        let mut p = p.op(b'}').str("_metadata").global("collections", "OrderedDict").op(b')').op(b'R').op(b'(');
+        for prefix in prefixes {
+            p = p.str(prefix).op(b'}').str("version").op(b'K').op(1).op(b's');
+        }
+        p.op(b'u').op(b's')
+    }
+
+    /// A state dict with one tensor, then `BUILD` with the state `state` builds.
+    fn state_dict_with(state: impl FnOnce(P) -> P) -> Vec<u8> {
+        let p = P::new()
+            .global("collections", "OrderedDict")
+            .op(b')')
+            .op(b'R')
+            .op(b'(')
+            .str("enc_p.emb_phone.weight")
+            .tensor("HalfStorage", "0", 4, 0, &[2, 2], &[2, 1])
+            .op(b'u');
+        state(p).op(b'b').stop()
+    }
+
+    #[test]
+    fn torch_state_dict_metadata_is_the_only_build_allowed() {
+        // The torch.save shape: the BUILD state is checked and discarded.
+        let out = run(&state_dict_with(|p| metadata_state(p, &["", "enc_p", "enc_p.emb_phone"]))).unwrap();
+        let items = out.str_items(out.root).unwrap();
+        assert_eq!(items.iter().map(|i| i.0).collect::<Vec<_>>(), ["enc_p.emb_phone.weight"]);
+        assert!(matches!(out.get(items[0].1), Value::Tensor(_)));
+        // Inside a training checkpoint ({"model": state_dict, ...}), as torch writes G_*.pth.
+        let data = P::new()
+            .op(b'}')
+            .op(b'(')
+            .str("model")
+            .global("collections", "OrderedDict")
+            .op(b')')
+            .op(b'R')
+            .str("w")
+            .tensor("FloatStorage", "0", 1, 0, &[1], &[1])
+            .op(b's');
+        let data = metadata_state(data, &[""]).op(b'b').str("iteration").int(5).op(b'u').stop();
+        let out = run(&data).unwrap();
+        assert_eq!(out.str_items(out.root).unwrap().len(), 2);
+
+        let build_refused = |data: &[u8], what: &str| match run(data) {
+            Err(PickleError::ForbiddenOpcode(b'b', _)) => {}
+            other => panic!("{what}: {other:?}"),
+        };
+        // Other states.
+        build_refused(&state_dict_with(|p| p.op(b'N')), "a None state");
+        build_refused(&state_dict_with(|p| p.op(b'}')), "an empty state");
+        build_refused(&state_dict_with(|p| p.op(b'}').str("_metadata").op(b']').op(b's')), "metadata that is a list");
+        build_refused(&state_dict_with(|p| metadata_state(p, &[""]).str("x").int(1).op(b's')), "an extra state key");
+        build_refused(&state_dict_with(|p| p.op(b'}').str("__dict__").op(b'}').op(b's')), "another state key");
+        build_refused(
+            &state_dict_with(|p| {
+                p.op(b'}').str("_metadata").op(b'}').str("").op(b'}').str("version").tensor("FloatStorage", "1", 1, 0, &[1], &[1]).op(b's').op(b's').op(b's')
+            }),
+            "a tensor in the metadata",
+        );
+        build_refused(
+            &state_dict_with(|p| p.op(b'}').str("_metadata").op(b'}').str("").op(b']').op(b's').op(b's')),
+            "a metadata entry that is a list",
+        );
+        build_refused(
+            &state_dict_with(|p| p.op(b'}').str("_metadata").op(b'}').int(3).op(b'}').op(b's').op(b's')),
+            "a non-string prefix",
+        );
+        // Other targets: a plain dict, a list, a tensor, the OrderedDict global itself.
+        build_refused(&metadata_state(P::new().op(b'}'), &[""]).op(b'b').stop(), "BUILD on a plain dict");
+        build_refused(&metadata_state(P::new().op(b']'), &[""]).op(b'b').stop(), "BUILD on a list");
+        build_refused(
+            &metadata_state(P::new().tensor("FloatStorage", "0", 1, 0, &[1], &[1]), &[""]).op(b'b').stop(),
+            "BUILD on a tensor",
+        );
+        build_refused(&metadata_state(P::new().global("collections", "OrderedDict"), &[""]).op(b'b').stop(), "BUILD on a global");
+        // Twice on the same dict.
+        let twice = metadata_state(P::new().global("collections", "OrderedDict").op(b')').op(b'R').put(0), &[""]).op(b'b');
+        let twice = metadata_state(twice.op(b'0').get(0), &[""]).op(b'b').stop();
+        build_refused(&twice, "a second BUILD");
+        // BUILD below a MARK cannot reach the target.
+        build_refused(&P::new().global("collections", "OrderedDict").op(b')').op(b'R').op(b'(').op(b'}').op(b'b').stop(), "below a mark");
+    }
+
+    #[test]
+    fn shared_build_states_are_checked_within_a_budget() {
+        // One metadata table of 1,000 prefixes shared by 10,000 state dicts: 10M visits unbounded.
+        let mut p = P::new().op(b'}').str("_metadata").op(b'}').op(b'(');
+        for i in 0..1000 {
+            p = p.str(&format!("m{i}")).op(b'}');
+        }
+        p = p.op(b'u').op(b's').put(0).op(b'0').op(b']');
+        for _ in 0..10_000 {
+            p = p.global("collections", "OrderedDict").op(b')').op(b'R').get(0).op(b'b').op(b'a');
+        }
+        let started = std::time::Instant::now();
+        assert!(matches!(run(&p.stop()), Err(PickleError::Limit(_))));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn equal_keys_from_separate_strings_are_compared_once() {
+        // Two separate 8 MB strings with the same text, then 20,000 dicts that set both as keys:
+        // 160 GB of comparisons if every SETITEM compared their bytes.
+        let big = "q".repeat(8 << 20);
+        let mut p = P::new().str(&big).put(0).op(b'0').str(&big).put(1).op(b'0').op(b']');
+        for i in 0..20_000 {
+            p = p.op(b'}').get(0).int(i).op(b's').get(1).int(-i).op(b's').op(b'a');
+        }
+        let started = std::time::Instant::now();
+        let out = run(&p.stop()).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+        let Value::List(dicts) = out.get(out.root) else { panic!("not a list") };
+        let Value::Dict(entries) = out.get(dicts[19_999]) else { panic!("not a dict") };
+        assert_eq!(entries.len(), 1, "the second key overwrote the first");
+        assert!(matches!(out.get(entries[0].1), Value::Int(-19_999)));
+    }
 
     /// Random mutations of a valid checkpoint-shaped pickle never panic or hang.
     #[test]

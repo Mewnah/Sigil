@@ -199,7 +199,8 @@ impl OutputSide {
 
 /// The worker's RVC-mode block processing, in its order: input gain, controls, harness
 /// conversion (a failed tick is muted by [`Conceal`] for exactly the owed frames), formant tilt,
-/// output gain. Aux (TTS) mixing is not part of a benchmark block.
+/// output gain. Aux (TTS) mixing is not part of a benchmark block. The hot voice controls
+/// (`rms_mix`, formant semitones, noise scale, silence gate) are set on the harness once.
 pub(super) struct VcTick {
     pub(super) harness: VcStreamHarness,
     conceal: Conceal,
@@ -221,8 +222,10 @@ pub(super) struct TickOut {
 }
 
 impl VcTick {
-    pub(super) fn new(harness: VcStreamHarness, stream: &StreamSpec) -> Self {
+    pub(super) fn new(mut harness: VcStreamHarness, stream: &StreamSpec) -> Self {
         let ch_out = usize::from(stream.output_channels).max(1);
+        // The hot voice controls reach the model once, as the worker forwards them on change.
+        harness.set_voice_controls(&stream.voice_controls());
         Self {
             harness,
             conceal: Conceal::new(ch_out, stream.output_rate),

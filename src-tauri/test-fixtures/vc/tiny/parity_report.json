@@ -1,10 +1,12 @@
 {
   "template": "v2-16k-f0-hifigan",
+  "weights": "",
   "frames": 64,
   "block_frames": 12,
   "window_frames": 49,
   "flow_margin": 24,
   "dec_margin": 13,
+  "latent_offset": 0,
   "rows": [
     {
       "check": "enc.m_p",
@@ -13,7 +15,9 @@
       "rel_l2": 7.295265041048114e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": ""
+      "gate": true,
+      "note": "",
+      "peak": 1.8944697380065918
     },
     {
       "check": "enc.logs_p",
@@ -22,7 +26,9 @@
       "rel_l2": 5.793752475573873e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": ""
+      "gate": true,
+      "note": "",
+      "peak": 1.8464674949645996
     },
     {
       "check": "flowdec",
@@ -31,7 +37,9 @@
       "rel_l2": 3.3941202260465094e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": "64 frames"
+      "gate": true,
+      "note": "64 frames",
+      "peak": 0.5148046016693115
     },
     {
       "check": "chain",
@@ -40,7 +48,9 @@
       "rel_l2": 3.442450436002645e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": ""
+      "gate": true,
+      "note": "",
+      "peak": 0.5148046016693115
     },
     {
       "check": "partial",
@@ -49,7 +59,9 @@
       "rel_l2": 3.634129832005192e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": "R=12 of F=49 frames, vs upstream"
+      "gate": true,
+      "note": "R=12 of F=49 frames, vs reference",
+      "peak": 0.48925846815109253
     },
     {
       "check": "partial",
@@ -58,7 +70,20 @@
       "rel_l2": 1.9095749424090403e-07,
       "tol": 0.0001,
       "ok": true,
-      "note": "vs this graph's full decode"
+      "gate": true,
+      "note": "vs this graph's full decode",
+      "peak": 0.4892585575580597
+    },
+    {
+      "check": "edge",
+      "variant": "fp32",
+      "max_abs": 0.46848107874393463,
+      "rel_l2": 0.16818124653720262,
+      "tol": 0.0001,
+      "ok": false,
+      "gate": false,
+      "note": "window ends at frame 49 of 64 (voicing offset), no lookahead: seam 8 of 12 frames over tol",
+      "peak": 0.5052772760391235
     },
     {
       "check": "fallback",
@@ -67,7 +92,9 @@
       "rel_l2": 0.0,
       "tol": 0.0,
       "ok": true,
-      "note": "graph + weights file on disk == in-memory"
+      "gate": true,
+      "note": "graph + weights file on disk == in-memory",
+      "peak": 0.5148046612739563
     },
     {
       "check": "enc.m_p",
@@ -76,7 +103,9 @@
       "rel_l2": 0.001160572342129209,
       "tol": 0.00947234869003296,
       "ok": true,
-      "note": ""
+      "gate": true,
+      "note": "",
+      "peak": 1.8944697380065918
     },
     {
       "check": "enc.logs_p",
@@ -85,7 +114,9 @@
       "rel_l2": 0.000875222455298702,
       "tol": 0.009232337474822999,
       "ok": true,
-      "note": ""
+      "gate": true,
+      "note": "",
+      "peak": 1.8464674949645996
     },
     {
       "check": "flowdec",
@@ -94,7 +125,9 @@
       "rel_l2": 0.00021773135963509382,
       "tol": 0.005,
       "ok": true,
-      "note": "64 frames"
+      "gate": true,
+      "note": "64 frames",
+      "peak": 0.5148046016693115
     },
     {
       "check": "chain",
@@ -103,7 +136,20 @@
       "rel_l2": 0.00026002213078069123,
       "tol": 0.005,
       "ok": true,
-      "note": ""
+      "gate": false,
+      "note": "enc fp16 -> flowdec fp16 (decides enc fp16)",
+      "peak": 0.5148046016693115
+    },
+    {
+      "check": "chain-mix",
+      "variant": "fp16",
+      "max_abs": 0.0001761913299560547,
+      "rel_l2": 0.00021773135963509382,
+      "tol": 0.005,
+      "ok": true,
+      "gate": true,
+      "note": "enc fp32 -> flowdec fp16",
+      "peak": 0.5148046016693115
     },
     {
       "check": "partial",
@@ -112,7 +158,9 @@
       "rel_l2": 0.0002200173607021291,
       "tol": 0.005,
       "ok": true,
-      "note": "R=12 of F=49 frames, vs upstream"
+      "gate": true,
+      "note": "R=12 of F=49 frames, vs reference",
+      "peak": 0.48925846815109253
     },
     {
       "check": "partial",
@@ -121,7 +169,20 @@
       "rel_l2": 0.0,
       "tol": 0.005,
       "ok": true,
-      "note": "vs this graph's full decode"
+      "gate": true,
+      "note": "vs this graph's full decode",
+      "peak": 0.4892578125
+    },
+    {
+      "check": "edge",
+      "variant": "fp16",
+      "max_abs": 0.4684201776981354,
+      "rel_l2": 0.16817074272099683,
+      "tol": 0.005,
+      "ok": false,
+      "gate": false,
+      "note": "window ends at frame 49 of 64 (voicing offset), no lookahead: seam 4 of 12 frames over tol",
+      "peak": 0.5052772760391235
     },
     {
       "check": "knn",
@@ -130,7 +191,9 @@
       "rel_l2": 6.324222874905899e-08,
       "tol": 0.0001,
       "ok": true,
-      "note": "N=64, T=8"
+      "gate": true,
+      "note": "N=64, T=8",
+      "peak": 4.397273789403711
     },
     {
       "check": "knn",
@@ -139,8 +202,66 @@
       "rel_l2": 6.199341456010304e-08,
       "tol": 0.021987060857776068,
       "ok": true,
-      "note": "N=64, T=8"
+      "gate": true,
+      "note": "N=64, T=8",
+      "peak": 4.397412171555214
     }
   ],
+  "right_edge": {
+    "fp32": [
+      {
+        "window_end": 49,
+        "kind": "voicing offset",
+        "returned_frames": 12,
+        "tol": 0.0001,
+        "seam_frames": 8,
+        "saturated": false,
+        "max_abs": 0.46848107874393463,
+        "last_frame_max_abs": 0.46848107874393463,
+        "last_frame_rel_rms": 0.547589872770168,
+        "per_frame_max_abs": [
+          5.066394805908203e-07,
+          2.0563602447509766e-06,
+          6.22868537902832e-06,
+          4.163384437561035e-05,
+          0.00023165345191955566,
+          0.0004227161407470703,
+          0.0024105608463287354,
+          0.0037466883659362793,
+          0.020123839378356934,
+          0.03284347057342529,
+          0.06067642569541931,
+          0.46848107874393463
+        ]
+      }
+    ],
+    "fp16": [
+      {
+        "window_end": 49,
+        "kind": "voicing offset",
+        "returned_frames": 12,
+        "tol": 0.005,
+        "seam_frames": 4,
+        "saturated": false,
+        "max_abs": 0.4684201776981354,
+        "last_frame_max_abs": 0.4684201776981354,
+        "last_frame_rel_rms": 0.547547904354657,
+        "per_frame_max_abs": [
+          9.381771087646484e-05,
+          0.00010561943054199219,
+          9.763240814208984e-05,
+          0.0001538097858428955,
+          0.00029924511909484863,
+          0.00041106343269348145,
+          0.002393394708633423,
+          0.0038137435913085938,
+          0.02021479606628418,
+          0.032780855894088745,
+          0.060695499181747437,
+          0.4684201776981354
+        ]
+      }
+    ]
+  },
   "ok": true
 }

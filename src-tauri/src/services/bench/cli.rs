@@ -53,6 +53,19 @@ pub(super) fn summary(report: &BenchReport, json: Option<&Path>) -> String {
 
 /// Body of `Sigil.exe --headless bench <spec.json> [--out <dir>]` (frozen P1-S0b contract).
 pub fn headless_bench(spec: &Path, out: Option<&Path>) -> Result<String, String> {
+    // On a thread with the benchmark stack, not Windows' 1 MB main thread.
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("sigil-bench-cli".into())
+            .stack_size(super::BENCH_STACK_BYTES)
+            .spawn_scoped(scope, || headless_bench_on_this_thread(spec, out))
+            .map_err(|e| format!("cannot start the benchmark thread: {e}"))?
+            .join()
+            .map_err(|_| "the benchmark failed unexpectedly".to_string())?
+    })
+}
+
+fn headless_bench_on_this_thread(spec: &Path, out: Option<&Path>) -> Result<String, String> {
     let parsed = BenchSpec::load(spec)?;
     let out_dir = out.map(Path::to_path_buf).unwrap_or_else(|| default_out_dir(spec));
     let cancel = AtomicBool::new(false);

@@ -1,0 +1,820 @@
+{
+  "gates": {
+    "fp32": {
+      "rel_l2": 0.0001
+    },
+    "fp16": {
+      "rel_l2": 0.01,
+      "cosine": 0.9995
+    },
+    "int8": {
+      "rel_l2": 0.07,
+      "cosine": 0.997
+    }
+  },
+  "source_revision": "70ed563897504c756ec94067c12c902c4fd42025",
+  "embedders": {
+    "contentvec": {
+      "id": "vc/embedder-contentvec",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "pass"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 3.822073947967892e-06,
+          "max_abs": 0.00010094046592712402,
+          "cosine": 1.0,
+          "peak": 3.9597549438476562,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.0451899725553813e-06,
+          "max_abs": 1.150369644165039e-05,
+          "cosine": 1.0,
+          "peak": 3.1957039833068848,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.961720207822157e-06,
+          "max_abs": 2.574920654296875e-05,
+          "cosine": 1.0,
+          "peak": 3.865199327468872,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 4.4388737561928415e-06,
+          "max_abs": 1.3947486877441406e-05,
+          "cosine": 1.0,
+          "peak": 2.512151002883911,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0018575520607061163,
+          "max_abs": 0.05293750762939453,
+          "cosine": 0.9999985694885254,
+          "peak": 3.9597549438476562,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0008528964965541249,
+          "max_abs": 0.004210054874420166,
+          "cosine": 0.9999996423721313,
+          "peak": 3.1957039833068848,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0009261112131695655,
+          "max_abs": 0.007512331008911133,
+          "cosine": 0.9999995827674866,
+          "peak": 3.865199327468872,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0035616364096211954,
+          "max_abs": 0.0067321062088012695,
+          "cosine": 0.9999935030937195,
+          "peak": 2.512151002883911,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.052982305716658525,
+          "max_abs": 1.8105606436729431,
+          "cosine": 0.9979597330093384,
+          "peak": 3.9597549438476562,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.04296349834327142,
+          "max_abs": 0.26100897789001465,
+          "cosine": 0.9990997314453125,
+          "peak": 3.1957039833068848,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.038118405802697715,
+          "max_abs": 0.18955814838409424,
+          "cosine": 0.9992851614952087,
+          "peak": 3.865199327468872,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.05969856615835517,
+          "max_abs": 0.12502288818359375,
+          "cosine": 0.9982258677482605,
+          "peak": 2.512151002883911,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "243eef5ee2eb0419a38b622195ac274435ce5bd240493a4784785da3badcaf77"
+        },
+        "int8": {
+          "bytes": 291946517,
+          "sha256": "cf8250cbb4f7b425b8ca971cd290e83fa12eeb8f16689cf3652be3427b282a65"
+        }
+      }
+    },
+    "contentvec-256": {
+      "id": "vc/embedder-contentvec-256",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "pass"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.205998267339309e-06,
+          "max_abs": 3.743171691894531e-05,
+          "cosine": 1.0,
+          "peak": 3.872406244277954,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.3438908354872045e-06,
+          "max_abs": 2.0503997802734375e-05,
+          "cosine": 1.0,
+          "peak": 3.1166434288024902,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.1566695858336576e-06,
+          "max_abs": 1.4901161193847656e-05,
+          "cosine": 1.0,
+          "peak": 3.625443696975708,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 4.570477718552943e-06,
+          "max_abs": 1.7762184143066406e-05,
+          "cosine": 1.0,
+          "peak": 2.570340871810913,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0008025295444288093,
+          "max_abs": 0.01032191514968872,
+          "cosine": 0.9999997019767761,
+          "peak": 3.872406244277954,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0008261476463992515,
+          "max_abs": 0.007313787937164307,
+          "cosine": 0.9999996423721313,
+          "peak": 3.1166434288024902,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0009529759061110124,
+          "max_abs": 0.014610767364501953,
+          "cosine": 0.9999995827674866,
+          "peak": 3.625443696975708,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0013223211588176255,
+          "max_abs": 0.004706859588623047,
+          "cosine": 0.9999992251396179,
+          "peak": 2.570340871810913,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.04560456323021154,
+          "max_abs": 0.6921758651733398,
+          "cosine": 0.9989969730377197,
+          "peak": 3.872406244277954,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0372472889222185,
+          "max_abs": 0.3333117961883545,
+          "cosine": 0.9990257024765015,
+          "peak": 3.1166434288024902,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.04461372031957108,
+          "max_abs": 0.24981558322906494,
+          "cosine": 0.9989668726921082,
+          "peak": 3.625443696975708,
+          "ok": true
+        },
+        {
+          "variant": "int8",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.04514887320190509,
+          "max_abs": 0.12351062893867493,
+          "cosine": 0.9989930987358093,
+          "peak": 2.570340871810913,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 293401793,
+          "sha256": "14c857ed89814d899e767f33b5d392396d07b6d58fa0370255cd0595a09b5a57"
+        },
+        "fp16": {
+          "bytes": 155194474,
+          "sha256": "9f15609e5bb092cd8deb6ba4a341dbc052b90da5f0c947d745b998097f39a9a0"
+        },
+        "int8": {
+          "bytes": 228190338,
+          "sha256": "b0a118dffbad6d2ef177a6abbd2957ef1c588960ee69facca6dce2df2a22442f"
+        }
+      }
+    },
+    "spin-v2": {
+      "id": "vc/embedder-spin-v2",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.7624904903377875e-06,
+          "max_abs": 1.811981201171875e-05,
+          "cosine": 1.0,
+          "peak": 4.3047027587890625,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.383830160366339e-06,
+          "max_abs": 8.64267349243164e-06,
+          "cosine": 1.0,
+          "peak": 4.207859039306641,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.171179825373492e-06,
+          "max_abs": 1.3113021850585938e-05,
+          "cosine": 1.0,
+          "peak": 5.09734582901001,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.7290954837732006e-06,
+          "max_abs": 7.927417755126953e-06,
+          "cosine": 1.0,
+          "peak": 2.5049819946289062,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0010463068434193252,
+          "max_abs": 0.005872845649719238,
+          "cosine": 0.9999995827674866,
+          "peak": 4.3047027587890625,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0014493000115459174,
+          "max_abs": 0.006502628326416016,
+          "cosine": 0.999998927116394,
+          "peak": 4.207859039306641,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.001266286849896882,
+          "max_abs": 0.011338233947753906,
+          "cosine": 0.9999992847442627,
+          "peak": 5.09734582901001,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0032321921170911324,
+          "max_abs": 0.008998513221740723,
+          "cosine": 0.9999947547912598,
+          "peak": 2.5049819946289062,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "556ae152e4eca645610d8c3f5c527a45ff3c37745e569402131ca8d27091f9bb"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "994af6d7d39c4ab3f8c605dc36ddd6d683c33968e28c0224c7921e690104350d"
+        }
+      }
+    },
+    "spin": {
+      "id": "vc/embedder-spin",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.3511545948565446e-06,
+          "max_abs": 1.0609626770019531e-05,
+          "cosine": 1.0,
+          "peak": 5.982247829437256,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.0349462780947717e-06,
+          "max_abs": 7.808208465576172e-06,
+          "cosine": 1.0,
+          "peak": 5.224237442016602,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.4943834832221189e-06,
+          "max_abs": 8.821487426757812e-06,
+          "cosine": 1.0,
+          "peak": 5.574812412261963,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 2.996853865174463e-06,
+          "max_abs": 1.1742115020751953e-05,
+          "cosine": 1.0,
+          "peak": 4.619003772735596,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0008463682326071879,
+          "max_abs": 0.005633831024169922,
+          "cosine": 0.9999995827674866,
+          "peak": 5.982247829437256,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0010976953973733886,
+          "max_abs": 0.004336118698120117,
+          "cosine": 0.999999463558197,
+          "peak": 5.224237442016602,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0011190528011052604,
+          "max_abs": 0.005815982818603516,
+          "cosine": 0.9999994039535522,
+          "peak": 5.574812412261963,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0027798486116661484,
+          "max_abs": 0.009498834609985352,
+          "cosine": 0.9999961256980896,
+          "peak": 4.619003772735596,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "11c07b99f34fb88e28939ddb7d8405ba6567f4d9e5e1ddd70c734864523dad65"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "0211e7cfab2e6fef28ec412e34715456003575ba874b66e04813fcd9a62b425c"
+        }
+      }
+    },
+    "hubert-ja": {
+      "id": "vc/embedder-hubert-ja",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 7.045016041373683e-06,
+          "max_abs": 4.982948303222656e-05,
+          "cosine": 1.0,
+          "peak": 4.85485315322876,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 8.56906481333045e-06,
+          "max_abs": 3.0040740966796875e-05,
+          "cosine": 1.0,
+          "peak": 3.7561490535736084,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 6.352460586359024e-06,
+          "max_abs": 3.789365291595459e-05,
+          "cosine": 1.0,
+          "peak": 4.199446678161621,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 8.634925826111605e-06,
+          "max_abs": 4.5631080865859985e-05,
+          "cosine": 1.0,
+          "peak": 3.054561138153076,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0023941597820229046,
+          "max_abs": 0.019509553909301758,
+          "cosine": 0.9999970197677612,
+          "peak": 4.85485315322876,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0025690387096719376,
+          "max_abs": 0.012602031230926514,
+          "cosine": 0.9999966621398926,
+          "peak": 3.7561490535736084,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0018152645797867067,
+          "max_abs": 0.011914968490600586,
+          "cosine": 0.9999984502792358,
+          "peak": 4.199446678161621,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0026045014278495197,
+          "max_abs": 0.01994800567626953,
+          "cosine": 0.9999960064888,
+          "peak": 3.054561138153076,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "58d73b54efaa70fff7a617644cdb923e1029160a0c8b220aee5d08df7e86393e"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "a9d8f560c69cfd65c2855ca0264c70b4dacac73f6f182cb72ad2abf23acc211c"
+        }
+      }
+    },
+    "hubert-ko": {
+      "id": "vc/embedder-hubert-ko",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 2.02051051325695e-06,
+          "max_abs": 2.372264862060547e-05,
+          "cosine": 1.0,
+          "peak": 4.9800190925598145,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.9658955517688647e-06,
+          "max_abs": 1.2993812561035156e-05,
+          "cosine": 1.0,
+          "peak": 4.123410701751709,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.787305554170091e-06,
+          "max_abs": 1.52587890625e-05,
+          "cosine": 1.0,
+          "peak": 5.3352885246276855,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.0890179568272592e-06,
+          "max_abs": 5.684792995452881e-06,
+          "cosine": 1.0,
+          "peak": 3.598499059677124,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0017888419706495954,
+          "max_abs": 0.01466912031173706,
+          "cosine": 0.9999984502792358,
+          "peak": 4.9800190925598145,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0014896271549328236,
+          "max_abs": 0.009635448455810547,
+          "cosine": 0.999998927116394,
+          "peak": 4.123410701751709,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0019865781689776124,
+          "max_abs": 0.016839027404785156,
+          "cosine": 0.9999980330467224,
+          "peak": 5.3352885246276855,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0008821614793054534,
+          "max_abs": 0.00837785005569458,
+          "cosine": 0.9999997019767761,
+          "peak": 3.598499059677124,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "f19064f4479c9a2ab2ba1a3603f19515b2519c47695f60f57a841a66c7c47b45"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "5424552a33c8b20e8d74f21ff4f6307e76eaa37a369f6a0b8e19719000bbf3d7"
+        }
+      }
+    },
+    "hubert-zh": {
+      "id": "vc/embedder-hubert-zh",
+      "ep": "cpu",
+      "ok": true,
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass",
+        "int8": "absent"
+      },
+      "rows": [
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 1.5159643500033716e-06,
+          "max_abs": 9.655952453613281e-06,
+          "cosine": 1.0,
+          "peak": 4.422278881072998,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.8120902755963825e-06,
+          "max_abs": 6.9141387939453125e-06,
+          "cosine": 1.0,
+          "peak": 4.56979513168335,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 6.817403624210064e-06,
+          "max_abs": 0.0002605915069580078,
+          "cosine": 1.0,
+          "peak": 4.580565452575684,
+          "ok": true
+        },
+        {
+          "variant": "fp32",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 1.754430731897931e-06,
+          "max_abs": 6.496906280517578e-06,
+          "cosine": 1.0,
+          "peak": 4.173198699951172,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.000937538441535587,
+          "max_abs": 0.007662057876586914,
+          "cosine": 0.9999995827674866,
+          "peak": 4.422278881072998,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "jfk.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0009093438459803481,
+          "max_abs": 0.004096269607543945,
+          "cosine": 0.9999997019767761,
+          "peak": 4.56979513168335,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:96000]",
+          "frames": 299,
+          "rel_l2": 0.0011669488791476706,
+          "max_abs": 0.024143338203430176,
+          "cosine": 0.9999994039535522,
+          "peak": 4.580565452575684,
+          "ok": true
+        },
+        {
+          "variant": "fp16",
+          "input": "ja-short.wav[:16123]",
+          "frames": 50,
+          "rel_l2": 0.0009290691690392892,
+          "max_abs": 0.006715536117553711,
+          "cosine": 0.9999995231628418,
+          "peak": 4.173198699951172,
+          "ok": true
+        }
+      ],
+      "files": {
+        "fp32": {
+          "bytes": 377722808,
+          "sha256": "dd324de8a06cc338d7f59d57687aadd692be267286a49e2abb238df628a86679"
+        },
+        "fp16": {
+          "bytes": 197381937,
+          "sha256": "5e4d3319aaac8e340554671a63aa5ea0d0940eca13a43d76602c8f120ee90a45"
+        }
+      }
+    }
+  }
+}

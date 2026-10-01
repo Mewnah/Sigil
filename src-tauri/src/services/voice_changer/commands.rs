@@ -1,6 +1,8 @@
 //! Voice-changer IPC commands: params, enable, start/stop and model slots.
 
+use super::factory::slot_format;
 use super::params::{resolve_rvc_paths, VoiceChangerMode, VoiceChangerParams};
+use super::worker::fill_store_pitch_paths;
 use super::state::{lock, VoiceChangerState, WorkerDoneGuard, WorkerHandle};
 use super::worker::{emit_vc_error, panic_message, run_voice_changer_loop, RunGeneration, WorkerError};
 use serde::Serialize;
@@ -81,9 +83,16 @@ pub(super) async fn start_voice_changer<R: Runtime>(
         // Same rule as the worker and the inspector: resolve the effective RVC EP (preset default
         // only when unset); on the CPU EP a GPU-only F0 runs as fcpe, so preflight checks the fcpe
         // file. The stored choice is kept: the worker falls back and emits `rvc_warning`, and a
-        // later switch to CUDA/DML uses the chosen extractor again.
+        // later switch to CUDA/DML uses the chosen extractor again. An imported template voice
+        // (`sigil-rvc-1`) is checked by the same preflight (its weights and content encoder).
         let mut resolved = lock(&state.rvc).clone();
+        let slot = resolved.slot_dir.trim().to_string();
+        if !slot.is_empty() {
+            // An unreadable or unsupported manifest is refused here with its own message.
+            slot_format(Path::new(&slot))?;
+        }
         let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        fill_store_pitch_paths(&mut resolved, &app_data);
         resolve_rvc_paths(&mut resolved, &app_data)?;
         // Keep the resolved voice folder (slot.json follows it), but not the base-model paths:
         // those stay as the user set them (usually empty = found automatically), so the saved

@@ -1,14 +1,39 @@
-//! RVC generator + HuBERT content encoder (multi-graph ONNX).
+//! RVC generator + HuBERT content encoder (multi-graph ONNX): the legacy full-decode path for
+//! bring-your-own ONNX voices (manifest format `rvc`; template voices run on the Sigil Voice
+//! Engine, `vc::engine`).
+//!
+//! P3-C1 additions (each off by default or only active for exports that need it, so existing
+//! slots behave exactly as before unless the user turns a lever on):
+//! - **fp16 I/O**: generators and content encoders exported with fp16 inputs / outputs (w-okada's
+//!   half-precision exports) run; values are converted at the boundary.
+//! - **Partial decode when the export supports it**: a generator with RVC realtime's `skip_head` /
+//!   `return_length` (/ `return_length2`) inputs decodes only the returned frames; every other
+//!   export falls back to the full decode.
+//! - **Anchored flow noise** ([`RvcModel::set_noise`], opt-in): the `rnd` input gets counter-based
+//!   Gaussian noise anchored to the absolute sample position of each frame instead of the legacy
+//!   zeros. No benchmark has measured it on a bring-your-own voice, so only an explicit
+//!   `anchored_noise: on` enables it here (`engine::presets::byo_lever`; `auto` keeps the zeros).
+//!   The legacy feed's frame grid follows the newest sample, which need not sit on the 160-sample
+//!   grid (512 frames at 48 kHz add 170 or 171 samples per tick), so a frame between two anchored
+//!   frames gets their variance-preserving blend (`cos·n₀ + sin·n₁`): identical noise wherever the
+//!   grids of two ticks coincide, and noise that moves continuously with a sub-frame shift instead
+//!   of jumping a whole frame.
+//! - **Per-slot content encoder**: a manifest naming its own encoder file (`hubert`) or a
+//!   non-ContentVec `embedder` uses it instead of the global HuBERT path.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use ort::session::{Session, SessionInputValue};
-use ort::value::{TensorElementType, TensorRef};
+use half::f16;
+use ort::session::{Session, SessionInputValue, SessionOutputs};
+use ort::value::{DynValue, TensorElementType, TensorRef};
 
-use crate::services::neural_audio::ort_session::{session_builder_for_vc, VcSessionOptions};
+use crate::services::neural_audio::ort_session::{normalize_ep, session_builder_for_vc, VcSessionOptions};
 
 use super::bases::{load_or_infer_manifest, DEFAULT_INFERRED_SAMPLE_RATE};
+use super::engine::content::{resolve_encoder_file, EmbedderKind};
+use super::engine::noise::{AnchoredNoise, NoiseStream, FRAME_STRIDE};
+use super::engine::options::PrecisionMode;
 use super::faiss::FaissIndex;
 use super::manifest::{RvcManifest, RvcVersion};
 use super::traits::{ConversionCtx, PitchExtractor, VoiceConversionModel};
@@ -33,6 +58,9 @@ pub enum RvcPresetProfile {
     Streamer,
     LowLatency,
     Quality,
+    /// Quality shapes on TensorRT-RTX (P3; the accelerator runs on the CUDA rung, and on plain
+    /// CUDA until it is available).
+    StudioTrt,
 }
 
 impl RvcPresetProfile {
@@ -42,14 +70,17 @@ impl RvcPresetProfile {
         match s.trim().to_lowercase().as_str() {
             "low_latency" => Self::LowLatency,
             "quality" => Self::Quality,
+            "studio_trt" => Self::StudioTrt,
             _ => Self::Streamer,
         }
     }
 
+    /// Default EP ladder rung (`cpu` / `cuda`); Studio-TRT's accelerator request is
+    /// `voice_changer::params::preset_default_ep`.
     pub fn default_ep(&self) -> &'static str {
         match self {
             Self::Streamer => "cpu",
-            Self::LowLatency | Self::Quality => "cuda",
+            Self::LowLatency | Self::Quality | Self::StudioTrt => "cuda",
         }
     }
 }
@@ -63,6 +94,19 @@ enum GenRole {
     PitchF,
     Speaker,
     Noise,
+    /// RVC realtime's partial decode: frames to skip before the returned span.
+    SkipHead,
+    /// Frames to return.
+    ReturnLength,
+    /// Decoder output frames (RVC realtime resamples to it; equal to `ReturnLength` here).
+    ReturnLength2,
+}
+
+impl GenRole {
+    /// Float inputs (fp32, or fp16 in half-precision exports); the rest are int64.
+    fn is_float(self) -> bool {
+        matches!(self, GenRole::Phone | GenRole::PitchF | GenRole::Noise)
+    }
 }
 
 fn role_for_name(name: &str) -> Option<GenRole> {
@@ -74,8 +118,99 @@ fn role_for_name(name: &str) -> Option<GenRole> {
         "pitchf" | "nsff0" => Some(GenRole::PitchF),
         "ds" | "sid" | "g" => Some(GenRole::Speaker),
         "rnd" => Some(GenRole::Noise),
+        "skip_head" => Some(GenRole::SkipHead),
+        "return_length" => Some(GenRole::ReturnLength),
+        "return_length2" => Some(GenRole::ReturnLength2),
         _ => None,
     }
+}
+
+/// RVC `f0_to_coarse` (256 bins, mel-scale); unvoiced (and NaN) maps to 1 (bins 1..=255). Shared
+/// with the Sigil Voice Engine.
+pub(crate) fn coarse_pitch(hz: f32) -> i64 {
+    if hz.is_nan() || hz <= 0.0 {
+        return 1;
+    }
+    let f0_mel_min = 1127.0 * (1.0 + F0_MIN_HZ / 700.0).ln();
+    let f0_mel_max = 1127.0 * (1.0 + F0_MAX_HZ / 700.0).ln();
+    let f0_mel = 1127.0 * (1.0 + hz / 700.0).ln();
+    let f0_mel = (f0_mel - f0_mel_min) * (F0_BIN - 2.0) / (f0_mel_max - f0_mel_min) + 1.0;
+    f0_mel.clamp(1.0, F0_BIN - 1.0).round() as i64
+}
+
+/// Flow prior noise fed to a generator's `rnd` input.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum LegacyNoise {
+    /// Zeros (the proven legacy behaviour: the prior's mean).
+    #[default]
+    Zero,
+    /// `N(0,1) × scale` anchored to absolute frames (see `engine::noise`), RVC's 0.66666 by
+    /// default: overlapping ticks get identical noise.
+    Anchored { seed: u64, scale: f32 },
+}
+
+/// fp16 copy of `data` when `half`, else nothing (the fp32 slice is fed directly).
+fn half_copy(data: &[f32], half: bool) -> Vec<f16> {
+    if half {
+        data.iter().map(|&x| f16::from_f32(x)).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// A float input tensor: `half_data` (fp16 exports) or `data` (fp32).
+fn float_value<'a>(shape: Vec<usize>, data: &'a [f32], half_data: &'a [f16], half: bool, what: &str) -> Result<SessionInputValue<'a>, String> {
+    if half {
+        Ok(TensorRef::from_array_view((shape, half_data))
+            .map_err(|e| format!("{what} tensor: {e}"))?
+            .into())
+    } else {
+        Ok(TensorRef::from_array_view((shape, data))
+            .map_err(|e| format!("{what} tensor: {e}"))?
+            .into())
+    }
+}
+
+/// The `rnd` input for `t` frames whose first starts at absolute 16 kHz sample `start_16k` (`[1, C,
+/// t]`, channel-major; negative while the stream's first window is still padded): zeros, or
+/// anchored noise indexed like the Sigil Voice Engine's flow noise (`channel * FRAME_STRIDE +
+/// frame`). A frame starting `r` samples after absolute frame `k` gets `cos(θ)·n[k] + sin(θ)·n[k+1]`
+/// with `θ = (r / 160)·π/2`: exactly `n[k]` on the grid, unit variance everywhere, continuous in the
+/// offset (module docs).
+fn legacy_flow_noise(noise: LegacyNoise, channels: usize, t: usize, start_16k: i64) -> Vec<f32> {
+    let mut out = vec![0.0f32; channels * t];
+    if let LegacyNoise::Anchored { seed, scale } = noise {
+        let gen = AnchoredNoise::new(seed);
+        let hop = HOP_16K as i64;
+        let first = start_16k.div_euclid(hop) as u64;
+        let rem = start_16k.rem_euclid(hop);
+        let theta = rem as f64 / hop as f64 * std::f64::consts::FRAC_PI_2;
+        let (w0, w1) = (theta.cos() as f32, theta.sin() as f32);
+        let mut next = vec![0.0f32; t + 1];
+        for (ch, row) in out.chunks_exact_mut(t.max(1)).enumerate() {
+            let key = (ch as u64).wrapping_mul(FRAME_STRIDE).wrapping_add(first);
+            if rem == 0 {
+                gen.fill(NoiseStream::Flow, key, scale, row);
+                continue;
+            }
+            gen.fill(NoiseStream::Flow, key, scale, &mut next);
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = w0 * next[j] + w1 * next[j + 1];
+            }
+        }
+    }
+    out
+}
+
+/// An output tensor as `(shape, f32 values)`, converting fp16 outputs.
+fn extract_f32(value: &DynValue, what: &str) -> Result<(Vec<usize>, Vec<f32>), String> {
+    if let Ok((shape, data)) = value.try_extract_tensor::<f32>() {
+        return Ok((shape.iter().map(|d| (*d).max(0) as usize).collect(), data.to_vec()));
+    }
+    let (shape, data) = value
+        .try_extract_tensor::<f16>()
+        .map_err(|e| format!("{what} out: {e}"))?;
+    Ok((shape.iter().map(|d| (*d).max(0) as usize).collect(), data.iter().map(|h| h.to_f32()).collect()))
 }
 
 /// Canonical input order by arity, for exports with unrecognised input names.
@@ -93,6 +228,8 @@ fn positional_roles(arity: usize) -> Option<&'static [GenRole]> {
 struct GeneratorInputs {
     names: Vec<String>,
     roles: Vec<GenRole>,
+    /// Per input: the export takes fp16 (float roles only).
+    half: Vec<bool>,
     /// Static last dimension of the phone/feats input (= embedding channels), if declared.
     phone_dim: Option<usize>,
     noise_channels: usize,
@@ -120,28 +257,33 @@ impl GeneratorInputs {
         if has(GenRole::Pitch) != has(GenRole::PitchF) {
             return Err(format!("RVC generator {} has only one of pitch/pitchf ({:?})", path.display(), names));
         }
+        if has(GenRole::SkipHead) != has(GenRole::ReturnLength) || (has(GenRole::ReturnLength2) && !has(GenRole::SkipHead)) {
+            return Err(format!(
+                "RVC generator {} has an incomplete skip_head / return_length set ({:?})",
+                path.display(),
+                names
+            ));
+        }
         let mut phone_dim = None;
         let mut noise_channels = LATENT;
+        let mut half = Vec::with_capacity(roles.len());
         for (input, role) in inputs.iter().zip(roles.iter()) {
-            let expected = match role {
-                GenRole::Phone | GenRole::PitchF | GenRole::Noise => TensorElementType::Float32,
-                GenRole::PhoneLengths | GenRole::Pitch | GenRole::Speaker => TensorElementType::Int64,
-            };
             let actual = input.dtype().tensor_type();
-            if actual != Some(expected) {
+            let ok = if role.is_float() {
+                matches!(actual, Some(TensorElementType::Float32) | Some(TensorElementType::Float16))
+            } else {
+                actual == Some(TensorElementType::Int64)
+            };
+            if !ok {
                 return Err(format!(
-                    "RVC generator {} input '{}' is {:?}, expected {:?}{}",
+                    "RVC generator {} input '{}' is {:?}, expected {}",
                     path.display(),
                     input.name(),
                     actual,
-                    expected,
-                    if actual == Some(TensorElementType::Float16) {
-                        " (fp16 exports are not supported; export the model in fp32)"
-                    } else {
-                        ""
-                    }
+                    if role.is_float() { "Float32 or Float16" } else { "Int64" }
                 ));
             }
+            half.push(actual == Some(TensorElementType::Float16));
             let dims = input.dtype().tensor_shape().map(|s| s.to_vec());
             match (role, dims.as_deref()) {
                 (GenRole::Phone, Some([.., c])) if *c > 0 => phone_dim = Some(*c as usize),
@@ -152,9 +294,15 @@ impl GeneratorInputs {
         Ok(Self {
             names,
             roles,
+            half,
             phone_dim,
             noise_channels,
         })
+    }
+
+    /// The export decodes only the returned frames (RVC realtime's `skip_head` / `return_length`).
+    fn partial_decode(&self) -> bool {
+        self.has(GenRole::SkipHead) && self.has(GenRole::ReturnLength)
     }
 
     fn has(&self, role: GenRole) -> bool {
@@ -197,6 +345,8 @@ fn read_export_metadata(session: &Session) -> Option<ExportMetadata> {
 
 pub struct RvcModel {
     hubert: Session,
+    /// The content encoder takes fp16 audio.
+    hubert_half: bool,
     generator: Session,
     gen_inputs: GeneratorInputs,
     pitch: Box<dyn PitchExtractor>,
@@ -207,7 +357,49 @@ pub struct RvcModel {
     wants_f0: bool,
     silence_rms: f32,
     silence_skip: bool,
+    noise: LegacyNoise,
     warnings: Vec<String>,
+}
+
+/// The content encoder of a legacy slot: a file its manifest names (`hubert`, relative to the
+/// slot or absolute), else the encoder its `embedder` names when that is not ContentVec (from the
+/// model store), else the global HuBERT / ContentVec path. A named file that is missing falls back
+/// to the global path with a warning (older manifests carried the field unused).
+fn slot_content_encoder(
+    manifest: &RvcManifest,
+    inferred: bool,
+    slot_dir: &Path,
+    hubert_path: &str,
+    ep_hint: &str,
+    warnings: &mut Vec<String>,
+) -> Result<PathBuf, String> {
+    if !inferred {
+        if let Some(name) = manifest.hubert.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let p = Path::new(name);
+            let p = if p.is_absolute() { p.to_path_buf() } else { slot_dir.join(p) };
+            if p.is_file() {
+                return Ok(p);
+            }
+            warnings.push(format!(
+                "manifest.json names the content encoder {name}, which is not in {}; using the HuBERT / ContentVec from the settings.",
+                slot_dir.display()
+            ));
+        } else if let Some(embedder) = manifest.embedder.as_deref().filter(|s| !s.trim().is_empty()) {
+            match EmbedderKind::from_manifest(Some(embedder), manifest.emb_channels) {
+                Ok(kind) if !matches!(kind, EmbedderKind::ContentVec768 | EmbedderKind::ContentVec256) => {
+                    let gpu = normalize_ep(ep_hint) != "cpu";
+                    return resolve_encoder_file(kind, None, Some(slot_dir), gpu, PrecisionMode::Auto).map(|r| r.path);
+                }
+                Ok(_) => {}
+                // A name Sigil does not know (Applio's `custom`): the settings' encoder, as before.
+                Err(e) => warnings.push(format!("{e}; using the HuBERT / ContentVec from the settings.")),
+            }
+        }
+    }
+    if hubert_path.trim().is_empty() || !Path::new(hubert_path).is_file() {
+        return Err(format!("HuBERT / ContentVec missing: {}", hubert_path));
+    }
+    Ok(PathBuf::from(hubert_path))
 }
 
 impl RvcModel {
@@ -224,14 +416,17 @@ impl RvcModel {
         if !gen_path.is_file() {
             return Err(format!("RVC generator missing: {}", gen_path.display()));
         }
-        if hubert_path.trim().is_empty() || !Path::new(hubert_path).is_file() {
-            return Err(format!("HuBERT / ContentVec missing: {}", hubert_path));
-        }
+        let mut warnings = Vec::new();
+        let hubert_file = slot_content_encoder(&manifest, inferred, slot_dir, hubert_path, ep_hint, &mut warnings)?;
 
         let hubert = session_builder_for_vc(ep_hint, opts)?
             .component("vc.content")
-            .commit_from_file(hubert_path)
+            .commit_from_file(&hubert_file)
             .map_err(|e| format!("HuBERT load: {}", e))?;
+        let hubert_half = hubert
+            .inputs()
+            .first()
+            .is_some_and(|i| i.dtype().tensor_type() == Some(TensorElementType::Float16));
         let generator = session_builder_for_vc(ep_hint, opts)?
             .component("vc")
             .commit_from_file(&gen_path)
@@ -239,7 +434,6 @@ impl RvcModel {
         let gen_inputs = GeneratorInputs::resolve(&generator, &gen_path)?;
         let has_pitch = gen_inputs.has(GenRole::Pitch);
         let metadata = read_export_metadata(&generator);
-        let mut warnings = Vec::new();
 
         let mut sample_rate_known = !inferred;
         if inferred {
@@ -348,6 +542,7 @@ impl RvcModel {
 
         let mut model = Self {
             hubert,
+            hubert_half,
             generator,
             gen_inputs,
             pitch,
@@ -356,6 +551,7 @@ impl RvcModel {
             wants_f0: has_pitch,
             silence_rms: 0.008,
             silence_skip,
+            noise: LegacyNoise::Zero,
             manifest,
             warnings,
         };
@@ -386,6 +582,20 @@ impl RvcModel {
         &self.warnings
     }
 
+    /// The flow prior noise fed to a generator with an `rnd` input (default zeros, the proven
+    /// legacy behaviour). The factory sets [`LegacyNoise::Anchored`] when the user turned the
+    /// `anchored_noise` lever on for the voice (`engine::presets::byo_lever`: `auto` keeps the
+    /// zeros on bring-your-own voices); generators without `rnd` ignore it.
+    pub fn set_noise(&mut self, noise: LegacyNoise) {
+        self.noise = noise;
+    }
+
+    /// Whether the generator decodes only the returned frames (it has RVC realtime's
+    /// `skip_head` / `return_length` inputs); otherwise every tick decodes the whole context.
+    pub fn partial_decode(&self) -> bool {
+        self.gen_inputs.partial_decode()
+    }
+
     /// Run HuBERT, the pitch extractor and the generator once (silence skip bypassed) on a fixed
     /// 200 ms input. The stream harness warms at the live input shape instead
     /// (`VoiceConversionModel::warmup_at`), which is what GPU kernel selection needs; this stays
@@ -403,6 +613,7 @@ impl RvcModel {
             index_rate: 0.0,
             protect: 0.33,
             speaker_id: self.manifest.speaker_id,
+            stream_pos_16k: 0,
         };
         self.convert_inner(&ctx, false).map(|_| ())
     }
@@ -412,7 +623,8 @@ impl RvcModel {
         let phone = vec![0.0f32; PROBE_FRAMES * emb];
         let pitch = vec![1i64; PROBE_FRAMES];
         let pitchf = vec![0.0f32; PROBE_FRAMES];
-        let audio = self.run_generator(&phone, PROBE_FRAMES, &pitch, &pitchf, self.manifest.speaker_id)?;
+        // The whole probe is returned (skip 0), so a partial-decode export measures the same rate.
+        let audio = self.run_generator(&phone, PROBE_FRAMES, &pitch, &pitchf, self.manifest.speaker_id, 0, PROBE_FRAMES)?;
         let sr = (audio.len() * 100 + PROBE_FRAMES / 2) / PROBE_FRAMES;
         if !(8_000..=96_000).contains(&sr) {
             return Err(format!("{} output samples for {} frames", audio.len(), PROBE_FRAMES));
@@ -425,10 +637,11 @@ impl RvcModel {
         ((frames_16k as u64 * u64::from(self.out_sr) + 8_000) / 16_000) as usize
     }
 
-    /// HuBERT features, time-major `[frames * emb]`.
+    /// HuBERT features, time-major `[frames * emb]` (fp16 exports converted at the boundary).
     fn run_hubert(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
         let n = mono_16k.len();
-        let tensor = TensorRef::from_array_view((vec![1usize, n], mono_16k)).map_err(|e| format!("HuBERT tensor: {}", e))?;
+        let half = half_copy(mono_16k, self.hubert_half);
+        let tensor = float_value(vec![1usize, n], mono_16k, &half, self.hubert_half, "HuBERT")?;
         let name = self
             .hubert
             .inputs()
@@ -439,12 +652,9 @@ impl RvcModel {
             .hubert
             .run(ort::inputs![name.as_str() => tensor])
             .map_err(|e| format!("HuBERT run: {}", e))?;
-        let (shape, data) = outputs[0]
-            .try_extract_tensor::<f32>()
-            .map_err(|e| format!("HuBERT out: {}", e))?;
+        let (dims, data) = extract_f32(&outputs[0], "HuBERT")?;
 
         // Flatten to [T*C] in time-major order. Accepted shapes: [1,T,C], [T,C], [1,C,T].
-        let dims: Vec<usize> = shape.iter().map(|d| (*d).max(0) as usize).collect();
         let emb = self.manifest.emb_channels as usize;
         match dims.as_slice() {
             [1, c, t] if *c == emb && *t != emb => {
@@ -456,7 +666,7 @@ impl RvcModel {
                 }
                 Ok(out)
             }
-            [.., c] if *c == emb => Ok(data.to_vec()),
+            [.., c] if *c == emb => Ok(data),
             _ => Err(format!(
                 "HuBERT output shape {:?} does not carry the model's {} embedding channels \
                  (v1 models need a 256-dim final_proj ContentVec, v2 a 768-dim one)",
@@ -465,68 +675,85 @@ impl RvcModel {
         }
     }
 
-    /// Run the generator on `t` frames, feeding each declared input by role.
-    fn run_generator(&mut self, phone: &[f32], t: usize, pitch: &[i64], pitchf: &[f32], speaker_id: i64) -> Result<Vec<f32>, String> {
+    /// Run the generator on `t` frames, feeding each declared input by role. `start_16k` is the
+    /// absolute 16 kHz sample the first frame starts at (anchored noise); an export with
+    /// `skip_head` / `return_length` decodes only the last `ret` frames, every other export all
+    /// `t`.
+    #[allow(clippy::too_many_arguments)]
+    fn run_generator(
+        &mut self,
+        phone: &[f32],
+        t: usize,
+        pitch: &[i64],
+        pitchf: &[f32],
+        speaker_id: i64,
+        start_16k: i64,
+        ret: usize,
+    ) -> Result<Vec<f32>, String> {
         let emb = self.manifest.emb_channels as usize;
         let lengths = [t as i64];
         let speaker = [speaker_id];
+        let ret = ret.clamp(1, t.max(1));
+        let skip = [(t - ret) as i64];
+        let ret_len = [ret as i64];
         let noise_ch = self.gen_inputs.noise_channels;
         let noise = if self.gen_inputs.has(GenRole::Noise) {
-            vec![0.0f32; noise_ch * t]
+            legacy_flow_noise(self.noise, noise_ch, t, start_16k)
         } else {
             Vec::new()
         };
         let tensor_err = |what: &str, e: ort::Error| format!("{what} tensor: {e}");
-        let mut feed: Vec<(String, SessionInputValue<'_>)> = Vec::with_capacity(6);
-        for (name, role) in self
+        let half_role = |r: GenRole| {
+            self.gen_inputs
+                .roles
+                .iter()
+                .zip(self.gen_inputs.half.iter())
+                .any(|(&x, &h)| x == r && h)
+        };
+        let h_phone = half_copy(phone, half_role(GenRole::Phone));
+        let h_pitchf = half_copy(pitchf, half_role(GenRole::PitchF));
+        let h_noise = half_copy(&noise, half_role(GenRole::Noise));
+        let mut feed: Vec<(String, SessionInputValue<'_>)> = Vec::with_capacity(self.gen_inputs.names.len());
+        for ((name, role), &half) in self
             .gen_inputs
             .names
             .iter()
             .zip(self.gen_inputs.roles.iter())
+            .zip(self.gen_inputs.half.iter())
         {
             let value: SessionInputValue<'_> = match role {
-                GenRole::Phone => TensorRef::from_array_view((vec![1, t, emb], phone))
-                    .map_err(|e| tensor_err("phone", e))?
-                    .into(),
+                GenRole::Phone => float_value(vec![1, t, emb], phone, &h_phone, half, "phone")?,
                 GenRole::PhoneLengths => TensorRef::from_array_view((vec![1usize], &lengths[..]))
                     .map_err(|e| tensor_err("phone_lengths", e))?
                     .into(),
                 GenRole::Pitch => TensorRef::from_array_view((vec![1, t], pitch))
                     .map_err(|e| tensor_err("pitch", e))?
                     .into(),
-                GenRole::PitchF => TensorRef::from_array_view((vec![1, t], pitchf))
-                    .map_err(|e| tensor_err("pitchf", e))?
-                    .into(),
+                GenRole::PitchF => float_value(vec![1, t], pitchf, &h_pitchf, half, "pitchf")?,
                 GenRole::Speaker => TensorRef::from_array_view((vec![1usize], &speaker[..]))
                     .map_err(|e| tensor_err("speaker id", e))?
                     .into(),
-                GenRole::Noise => TensorRef::from_array_view((vec![1, noise_ch, t], &noise[..]))
-                    .map_err(|e| tensor_err("rnd", e))?
+                GenRole::Noise => float_value(vec![1, noise_ch, t], &noise, &h_noise, half, "rnd")?,
+                GenRole::SkipHead => TensorRef::from_array_view((vec![1usize], &skip[..]))
+                    .map_err(|e| tensor_err("skip_head", e))?
+                    .into(),
+                GenRole::ReturnLength | GenRole::ReturnLength2 => TensorRef::from_array_view((vec![1usize], &ret_len[..]))
+                    .map_err(|e| tensor_err("return_length", e))?
                     .into(),
             };
             feed.push((name.clone(), value));
         }
-        let outputs = self
+        let outputs: SessionOutputs<'_> = self
             .generator
             .run(feed)
             .map_err(|e| format!("RVC generator run: {}", e))?;
-        let (_shape, data) = outputs[0]
-            .try_extract_tensor::<f32>()
-            .map_err(|e| format!("RVC audio out: {}", e))?;
-        Ok(data.to_vec())
+        let (_dims, data) = extract_f32(&outputs[0], "RVC audio")?;
+        Ok(data)
     }
 
     /// RVC `f0_to_coarse` (256 bins, mel-scale); unvoiced maps to 1 (bins 1..=255).
     fn f0_to_coarse(hz: f32) -> i64 {
-        // NaN is unvoiced too (it would otherwise reach the generator as coarse bin 0).
-        if hz.is_nan() || hz <= 0.0 {
-            return 1;
-        }
-        let f0_mel_min = 1127.0 * (1.0 + F0_MIN_HZ / 700.0).ln();
-        let f0_mel_max = 1127.0 * (1.0 + F0_MAX_HZ / 700.0).ln();
-        let f0_mel = 1127.0 * (1.0 + hz / 700.0).ln();
-        let f0_mel = (f0_mel - f0_mel_min) * (F0_BIN - 2.0) / (f0_mel_max - f0_mel_min) + 1.0;
-        f0_mel.clamp(1.0, F0_BIN - 1.0).round() as i64
+        coarse_pitch(hz)
     }
 
     fn convert_inner(&mut self, ctx: &ConversionCtx<'_>, allow_silence_skip: bool) -> Result<Vec<f32>, String> {
@@ -612,11 +839,26 @@ impl RvcModel {
             }
         }
 
-        let full = self.run_generator(&phone, p_len, &pitch, &pitchf, ctx.speaker_id)?;
+        // A partial-decode export decodes the returned frames plus a decoder guard (RVC realtime's
+        // graph gives the decoder no left context of its own); every other export decodes all.
+        let ret = if self.gen_inputs.partial_decode() {
+            (want.div_ceil(HOP_16K) + SKIP_DECODER_GUARD_FRAMES).min(p_len)
+        } else {
+            p_len
+        };
+        // The padded window starts `pad` samples before the context (anchored noise follows the
+        // true sample offset, which the legacy feed does not keep on the 160-sample grid).
+        let start_16k = i64::try_from(ctx.stream_pos_16k).unwrap_or(i64::MAX) - pad as i64;
+        let full = self.run_generator(&phone, p_len, &pitch, &pitchf, ctx.speaker_id, start_16k, ret)?;
         let n = out_len.min(full.len());
         Ok(full[full.len() - n..].to_vec())
     }
 }
+
+/// Frames decoded before the returned span by an export with `skip_head` / `return_length`: its
+/// decoder sees only the frames it returns, so a few extra keep its left edge out of the audio
+/// (the measured HiFi-GAN receptive field is 11 frames at 40 kHz, ADR 0004).
+const SKIP_DECODER_GUARD_FRAMES: usize = 12;
 
 /// Nearest 2x upsampling of 50 Hz features onto `p_len` 10 ms frames: frame `j` takes 50 Hz frame
 /// `min(j / 2, last)`, i.e. RVC's duplicated-last-frame + interpolate(scale 2) + `[:p_len]`.
@@ -772,8 +1014,203 @@ mod tests {
         assert_eq!(role_for_name("p_len"), Some(GenRole::PhoneLengths));
         assert_eq!(role_for_name("sid"), Some(GenRole::Speaker));
         assert_eq!(role_for_name("rnd"), Some(GenRole::Noise));
+        assert_eq!(role_for_name("skip_head"), Some(GenRole::SkipHead));
+        assert_eq!(role_for_name("RETURN_LENGTH"), Some(GenRole::ReturnLength));
+        assert_eq!(role_for_name("return_length2"), Some(GenRole::ReturnLength2));
         assert_eq!(role_for_name("x.1"), None);
         assert_eq!(positional_roles(5).map(|r| r.len()), Some(5));
         assert!(positional_roles(2).is_none());
+        assert_eq!(coarse_pitch(220.0), RvcModel::f0_to_coarse(220.0));
+    }
+
+    /// The legacy `rnd` stays zeros unless anchored noise is chosen; anchored noise is the Sigil
+    /// Voice Engine's flow noise for the same absolute frames (overlapping ticks agree on the grid).
+    #[test]
+    fn legacy_rnd_is_zero_or_anchored_to_absolute_frames() {
+        assert!(legacy_flow_noise(LegacyNoise::Zero, 4, 10, 123).iter().all(|&v| v == 0.0));
+        let mode = LegacyNoise::Anchored { seed: 9, scale: 0.66666 };
+        let a = legacy_flow_noise(mode, 3, 20, 1_000 * 160);
+        let b = legacy_flow_noise(mode, 3, 20, 1_005 * 160);
+        for ch in 0..3 {
+            assert_eq!(&a[ch * 20 + 5..ch * 20 + 20], &b[ch * 20..ch * 20 + 15], "channel {ch}");
+        }
+        let mut direct = vec![0.0; 20];
+        AnchoredNoise::new(9).fill(NoiseStream::Flow, 2 * FRAME_STRIDE + 1_000, 0.66666, &mut direct);
+        assert_eq!(&a[40..60], &direct[..]);
+    }
+
+    /// Off the 160-sample grid (the legacy feed at 512 frames / 48 kHz advances 170 or 171 samples
+    /// per tick) the noise moves continuously with the offset: one sample of shift changes each
+    /// frame by about π/320 of its scale, never by a whole frame's jump, and a 160-sample shift is
+    /// exactly one frame. The blend keeps the variance (std ≈ scale) at every offset; the first
+    /// padded window (negative start) is anchored too.
+    #[test]
+    fn legacy_rnd_moves_continuously_off_the_grid() {
+        let mode = LegacyNoise::Anchored { seed: 5, scale: 0.66666 };
+        let (c, t) = (2usize, 400usize);
+        let at = |s: i64| legacy_flow_noise(mode, c, t, s);
+        let base = 12_345i64 * 160;
+        // Walk one frame of offsets sample by sample: no step larger than a small fraction.
+        let mut prev = at(base);
+        let mut worst = 0.0f32;
+        for k in 1..=160 {
+            let cur = at(base + k);
+            let step = prev
+                .iter()
+                .zip(&cur)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            worst = worst.max(step);
+            prev = cur;
+        }
+        // |d/dθ (cos θ n0 + sin θ n1)| <= |n0| + |n1|; per sample dθ = π/320; values stay below 5σ.
+        assert!(worst < 2.0 * 5.0 * 0.66666 * std::f32::consts::PI / 320.0, "largest per-sample step {worst}");
+        // A whole frame of offset is exactly the next anchored frame.
+        let a = at(base);
+        let b = at(base + 160);
+        for ch in 0..c {
+            assert_eq!(&a[ch * t + 1..(ch + 1) * t], &b[ch * t..(ch + 1) * t - 1]);
+        }
+        // The old floor mapping jumped a frame at the wrap: shifting by 159 vs 161 samples now
+        // differs by a little (two samples' worth), not by a frame of fresh noise.
+        let (x, y) = (at(base + 159), at(base + 161));
+        let jump = x.iter().zip(&y).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(jump < 0.2, "{jump}");
+        for s in [base + 1, base + 40, base + 80, base + 159, -37] {
+            let v = at(s);
+            let var = v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>() / v.len() as f64;
+            let std = var.sqrt();
+            assert!((std - 0.66666).abs() < 0.06, "offset {s}: std {std}");
+        }
+    }
+
+    use crate::services::neural_audio::test_onnx::{Attr, Dim, Graph, FLOAT, INT64};
+    use crate::services::neural_audio::vc::test_models;
+    use crate::services::neural_audio::vc::world::DioPitchExtractor;
+
+    /// `TensorProto.DataType.FLOAT16`.
+    const FLOAT16: u64 = 10;
+
+    /// The fake generator of `test_models` (audio = 0.001 × pitchf held for 400 samples), with
+    /// fp16 float inputs / output (`half`) and / or RVC realtime's skip inputs (`skip`: the output
+    /// is the last `return_length` frames).
+    fn fake_generator(half: bool, skip: bool) -> Vec<u8> {
+        let ft = if half { FLOAT16 } else { FLOAT };
+        let emb = test_models::EMB as u64;
+        let mut g = Graph::new();
+        g.input("phone", ft, &[Dim::Fixed(1), Dim::Named("t"), Dim::Fixed(emb)])
+            .input("phone_lengths", INT64, &[Dim::Fixed(1)])
+            .input("pitch", INT64, &[Dim::Fixed(1), Dim::Named("t")])
+            .input("pitchf", ft, &[Dim::Fixed(1), Dim::Named("t")])
+            .input("ds", INT64, &[Dim::Fixed(1)])
+            .input("rnd", ft, &[Dim::Fixed(1), Dim::Fixed(192), Dim::Named("t")]);
+        if skip {
+            g.input("skip_head", INT64, &[Dim::Fixed(1)]).input("return_length", INT64, &[Dim::Fixed(1)]);
+        }
+        g.output("audio", ft, &[Dim::Fixed(1), Dim::Fixed(1), Dim::Named("s")])
+            .init_i64("axes2", &[1], &[2])
+            .init_i64("repeats", &[3], &[1, 1, test_models::HOP as i64])
+            .init_i64("flat", &[3], &[1, 1, -1])
+            .init_f32("gain", &[1], &[test_models::GAIN])
+            .node("Cast", &["pitchf"], &["pf32"], &[Attr::Int("to", FLOAT as i64)])
+            .node("Unsqueeze", &["pf32", "axes2"], &["p3"], &[])
+            .node("Tile", &["p3", "repeats"], &["tiled"], &[])
+            .node("Reshape", &["tiled", "flat"], &["r"], &[])
+            .node("Mul", &["r", "gain"], &["full"], &[]);
+        let last = if skip {
+            g.init_i64("hop", &[1], &[test_models::HOP as i64])
+                .init_i64("big", &[1], &[i64::MAX])
+                .node("Mul", &["skip_head", "hop"], &["start"], &[])
+                .node("Slice", &["full", "start", "big", "axes2"], &["cut"], &[]);
+            "cut"
+        } else {
+            "full"
+        };
+        g.node("Cast", &[last], &["audio"], &[Attr::Int("to", ft as i64)]);
+        g.model_bytes(13)
+    }
+
+    fn convert_with_generator(tag: &str, generator: Vec<u8>) -> (Vec<f32>, bool) {
+        let (root, slot, hubert) = test_models::write_slot(&format!("rvc-{tag}"));
+        for entry in std::fs::read_dir(&slot).unwrap().flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+        std::fs::write(slot.join("gen.onnx"), generator).unwrap();
+        let mut model = RvcModel::load(
+            &slot,
+            hubert.to_str().unwrap(),
+            Box::new(DioPitchExtractor::new()),
+            "cpu",
+            &VcSessionOptions::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(model.output_sample_rate(), 40_000, "{tag}");
+        let partial = model.partial_decode();
+        let audio: Vec<f32> = (0..16_000).map(|i| 0.3 * (std::f32::consts::TAU * 150.0 * i as f32 / 16_000.0).sin()).collect();
+        let ctx = ConversionCtx {
+            mono_16k: &audio,
+            new_frames: 1_600,
+            pitch_shift_semitones: 0.0,
+            index_rate: 0.0,
+            protect: 0.33,
+            speaker_id: 0,
+            stream_pos_16k: 0,
+        };
+        let out = model.convert(&ctx).unwrap();
+        drop(model);
+        let _ = std::fs::remove_dir_all(&root);
+        (out, partial)
+    }
+
+    /// fp16-I/O exports and exports with RVC realtime's skip inputs run, and give the fp32 full
+    /// decode's audio (to fp16 precision).
+    #[test]
+    fn fp16_io_and_skip_exports_match_the_fp32_full_decode() {
+        let (reference, partial) = convert_with_generator("fp32", fake_generator(false, false));
+        assert!(!partial);
+        assert_eq!(reference.len(), 4_000);
+        assert!(reference.iter().filter(|x| (**x - 0.15).abs() < 0.05).count() > 2_000);
+        for (tag, half, skip) in [("fp16", true, false), ("skip", false, true), ("fp16-skip", true, true)] {
+            let (out, partial) = convert_with_generator(tag, fake_generator(half, skip));
+            assert_eq!(partial, skip, "{tag}");
+            assert_eq!(out.len(), reference.len(), "{tag}");
+            let tol = if half { 2e-3 } else { 1e-7 };
+            let err = out.iter().zip(&reference).fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+            assert!(err <= tol, "{tag}: max difference {err}");
+        }
+    }
+
+    /// A manifest naming its own content encoder uses it; a missing one falls back to the settings'
+    /// path with a warning; a SPIN voice without its encoder installed says what to install.
+    #[test]
+    fn legacy_slots_use_their_own_content_encoder() {
+        let (root, slot, hubert) = test_models::write_slot("rvc-own-encoder");
+        let own = slot.join("my_hubert.onnx");
+        std::fs::copy(&hubert, &own).unwrap();
+        let mut warnings = Vec::new();
+        let mut m = RvcManifest { hubert: Some("my_hubert.onnx".into()), ..RvcManifest::default() };
+        let p = slot_content_encoder(&m, false, &slot, "", "cpu", &mut warnings).unwrap();
+        assert_eq!(p, own);
+        assert!(warnings.is_empty());
+        m.hubert = Some("gone.onnx".into());
+        let p = slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap();
+        assert_eq!(p, hubert);
+        assert_eq!(warnings.len(), 1);
+        // An inferred manifest never reads those fields.
+        let p = slot_content_encoder(&m, true, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap();
+        assert_eq!(p, hubert);
+        m.hubert = None;
+        m.embedder = Some("spin-v2".into());
+        let err = slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap_err();
+        assert!(err.contains("vc/embedder-spin-v2"), "{err}");
+        m.embedder = Some("contentvec".into());
+        assert_eq!(slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap(), hubert);
+        // An encoder name Sigil does not know keeps the settings' encoder, with a warning.
+        m.embedder = Some("custom".into());
+        let before = warnings.len();
+        assert_eq!(slot_content_encoder(&m, false, &slot, hubert.to_str().unwrap(), "cpu", &mut warnings).unwrap(), hubert);
+        assert_eq!(warnings.len(), before + 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

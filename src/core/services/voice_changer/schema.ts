@@ -5,9 +5,14 @@ import { zSafe } from "@/utils";
 import { normalizeChunkFramesValue } from "./chunkFrames";
 import {
     AUX_MIC_GATES,
+    DENOISERS,
     EXECUTION_PROVIDERS,
+    F0_RANGES,
     LATENCY_PRESETS,
+    LEVER_MODES,
     PITCH_EXTRACTORS,
+    PRECISIONS,
+    RVC_EXECUTION_PROVIDERS,
     RVC_PROFILES,
     VC_ENUM_DEFAULTS,
     VC_MODES,
@@ -28,10 +33,22 @@ export const LatencyPresetSchema = z.enum(LATENCY_PRESETS);
 /** RVC quality/latency profile (Streamer / Low latency / Quality). */
 export const RvcProfileSchema = z.enum(RVC_PROFILES);
 
-/** `crepe` is a legacy alias of `rmvpe` (normalized on hydration) and is never offered. */
+/** F0 methods (P3 added swiftf0 / crepe / pesto / fusion; the UI offers the baseline plus the capabilities). */
 export const PitchExtractorSchema = z.enum(PITCH_EXTRACTORS);
 
+/** EP ladder rungs (ONNX chunk mode). */
 export const ExecutionProviderSchema = z.enum(EXECUTION_PROVIDERS);
+
+/** RVC EPs: the rungs plus the P3 accelerators (`tensorrt_rtx`, `dml_hp`). */
+export const RvcExecutionProviderSchema = z.enum(RVC_EXECUTION_PROVIDERS);
+
+export const PrecisionSchema = z.enum(PRECISIONS);
+
+export const LeverModeSchema = z.enum(LEVER_MODES);
+
+export const DenoiserSchema = z.enum(DENOISERS);
+
+export const F0RangeSchema = z.enum(F0_RANGES);
 
 export const WorkerPrioritySchema = z.enum(WORKER_PRIORITIES);
 
@@ -89,7 +106,7 @@ export const VoiceChangerStateSchema = z.object({
     /** Streamer / Low latency / Quality — maps to Rust `rvc_preset`. */
     rvcProfile: zSafe(RvcProfileSchema, VC_ENUM_DEFAULTS.rvcProfile),
     /** Execution provider for RVC (HuBERT, pitch extractor, generator) — maps to Rust `rvc_execution_provider`. */
-    rvcExecutionProvider: zSafe(ExecutionProviderSchema, VC_ENUM_DEFAULTS.rvcExecutionProvider),
+    rvcExecutionProvider: zSafe(RvcExecutionProviderSchema, VC_ENUM_DEFAULTS.rvcExecutionProvider),
     pitchExtractor: zSafe(PitchExtractorSchema, VC_ENUM_DEFAULTS.pitchExtractor),
     /** Read when the RVC harness is built (restart to apply). Streamer 64 / Low latency 96 / Quality 192. */
     extraContextMs: zSafe(z.number().min(R.extra_context_ms.min).max(R.extra_context_ms.max), R.extra_context_ms.default),
@@ -115,9 +132,49 @@ export const VoiceChangerStateSchema = z.object({
     workerPriority: zSafe(WorkerPrioritySchema, VC_ENUM_DEFAULTS.workerPriority),
     /** The RVC voice-permission notice was acknowledged (stored by Rust, not in the webview). */
     rvcConsentAcknowledged: zSafe(z.boolean(), false),
+
+    // ---- P3: Sigil Voice Engine (P3-S0; Rust names in `params.ts`, ranges in `contract.ts`) ----
+    /** Slot-store id of the selected voice (`""` = a folder chosen directly, `rvcSlotDir`). */
+    slotId: zSafe(z.string(), ""),
+    /** SVE block (ms); 0 = derived from `chunkFrames`. Restart. */
+    blockMs: zSafe(z.number().min(R.block_ms.min).max(R.block_ms.max), R.block_ms.default),
+    /** SVE lookahead (ms; 0 = off): template voices decode this much future context into every
+     *  returned sample (cleaner joins and voicing) at exactly that much latency. Restart. */
+    lookaheadMs: zSafe(z.number().min(R.lookahead_ms.min).max(R.lookahead_ms.max), R.lookahead_ms.default),
+    precision: zSafe(PrecisionSchema, VC_ENUM_DEFAULTS.precision),
+    /** Per voice. Restart. */
+    f0Range: zSafe(F0RangeSchema, VC_ENUM_DEFAULTS.f0Range),
+    /** Loudness envelope mix (1 = off). Hot, per voice. */
+    rmsMix: zSafe(z.number().min(R.rms_mix.min).max(R.rms_mix.max), R.rms_mix.default),
+    /** True formant shift of the RVC path (semitones). Hot, per voice. */
+    formantSemitones: zSafe(
+        z.number().min(R.formant_semitones.min).max(R.formant_semitones.max),
+        R.formant_semitones.default,
+    ),
+    /** Flow prior noise scale of template voices. Hot. */
+    noiseScale: zSafe(z.number().min(R.noise_scale.min).max(R.noise_scale.max), R.noise_scale.default),
+    /** Silence-gate threshold (RMS dBFS). Hot. */
+    silenceDb: zSafe(z.number().min(R.silence_db.min).max(R.silence_db.max), R.silence_db.default),
+    /** Engine levers (`auto` / `on` / `off` each; Rust names in `VC_LEVERS`). Restart. */
+    partialDecode: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    anchoredNoise: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    nsfPhase0: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    f0Cache: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    gpuKnn: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    ioBinding: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    cudaGraphs: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    gpuPriority: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    governor: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    denoiser: zSafe(DenoiserSchema, VC_ENUM_DEFAULTS.denoiser),
+    hotSlots: zSafe(z.number().int().min(R.hot_slots.min).max(R.hot_slots.max), R.hot_slots.default),
+    vramBudgetMb: zSafe(
+        z.number().int().min(R.vram_budget_mb.min).max(R.vram_budget_mb.max),
+        R.vram_budget_mb.default,
+    ),
 });
 
 export type VoiceChangerState = z.infer<typeof VoiceChangerStateSchema>;
 export type RvcProfile = z.infer<typeof RvcProfileSchema>;
 export type PitchExtractor = z.infer<typeof PitchExtractorSchema>;
 export type ExecutionProvider = z.infer<typeof ExecutionProviderSchema>;
+export type RvcExecutionProvider = z.infer<typeof RvcExecutionProviderSchema>;

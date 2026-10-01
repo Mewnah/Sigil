@@ -1,0 +1,549 @@
+{
+  "family": "ddsp_svc",
+  "model": "DDSP-SVC 6.3 architecture (reflow.yaml) + openvpi PC-NSF-HiFiGAN 44.1k",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.28.0",
+    "ep": "cpu"
+  },
+  "threads": 2,
+  "files": {
+    "ddsp": "ddsp.onnx",
+    "reflow_step": "reflow_step.onnx",
+    "velocity_f": "velocity_f.onnx",
+    "vocoder": "vocoder.onnx",
+    "encoder": "encoder.onnx",
+    "velocity": "velocity.onnx"
+  },
+  "upstream_exporter": {
+    "encoder_cond_tail_vs_upstream": {
+      "snr_db": 21.16,
+      "max_abs": 2.52,
+      "rel_l2": 0.0875,
+      "cosine": 0.99617818,
+      "ref_rms": 3.181
+    },
+    "velocity_int64_t_int_round_chain_audio": {
+      "snr_db": 80.35,
+      "max_abs": 0.000397,
+      "rel_l2": 9.61e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.66,
+        "max_abs": 0.00562,
+        "rel_l2": 4.64e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      }
+    },
+    "velocity_int64_t_int_trunc_chain_audio": {
+      "snr_db": 49.09,
+      "max_abs": 0.00441,
+      "rel_l2": 0.00351,
+      "cosine": 0.999994876,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 57.97,
+        "max_abs": 0.066,
+        "rel_l2": 0.00126,
+        "cosine": 0.999999218,
+        "ref_rms": 5.216
+      }
+    },
+    "encoder_nan_at_f0_0": true
+  },
+  "parity": {
+    "units_tta2x_shared_embedder": {
+      "snr_db": 115.88,
+      "max_abs": 1.29e-05,
+      "rel_l2": 1.61e-06,
+      "cosine": 1.0,
+      "ref_rms": 0.3291,
+      "pass": true
+    },
+    "ddsp_cond": {
+      "snr_db": 85.86,
+      "max_abs": 0.00221,
+      "rel_l2": 5.09e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 3.181,
+      "pass": true
+    },
+    "ddsp_x": {
+      "snr_db": 83.3,
+      "max_abs": 0.000315,
+      "rel_l2": 6.84e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.3385,
+      "pass": true
+    },
+    "chain_mel": {
+      "snr_db": 90.71,
+      "max_abs": 0.00168,
+      "rel_l2": 2.91e-05,
+      "cosine": 1.0,
+      "ref_rms": 4.445,
+      "pass": true
+    },
+    "chain_audio": {
+      "snr_db": 80.33,
+      "max_abs": 0.000398,
+      "rel_l2": 9.62e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.64,
+        "max_abs": 0.00564,
+        "rel_l2": 4.66e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_host_update": {
+      "snr_db": 80.33,
+      "max_abs": 0.000398,
+      "rel_l2": 9.62e-05,
+      "cosine": 0.999999995,
+      "ref_rms": 0.1969,
+      "logmel": {
+        "snr_db": 86.64,
+        "max_abs": 0.00564,
+        "rel_l2": 4.66e-05,
+        "cosine": 0.999999999,
+        "ref_rms": 5.216
+      },
+      "pass": true
+    },
+    "chain_audio_formant0": {
+      "snr_db": 84.6,
+      "max_abs": 9.99e-05,
+      "rel_l2": 5.89e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.1906,
+      "logmel": {
+        "snr_db": 92.17,
+        "max_abs": 0.00142,
+        "rel_l2": 2.46e-05,
+        "cosine": 1.0,
+        "ref_rms": 5.312
+      },
+      "pass": true
+    },
+    "chain_audio_volume_gate": {
+      "snr_db": 83.48,
+      "max_abs": 0.000176,
+      "rel_l2": 6.7e-05,
+      "cosine": 0.999999998,
+      "ref_rms": 0.1249,
+      "logmel": {
+        "snr_db": 91.05,
+        "max_abs": 0.0064,
+        "rel_l2": 2.8e-05,
+        "cosine": 1.0,
+        "ref_rms": 6.956
+      },
+      "pass": true,
+      "threshold_db": -41.0,
+      "muted_fraction": 0.443
+    },
+    "vocoder_sweep_E2_Ds7_4s": {
+      "snr_db": 88.44,
+      "max_abs": 6.46e-05,
+      "rel_l2": 3.78e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 0.1276,
+      "logmel": {
+        "snr_db": 111.48,
+        "max_abs": 0.000648,
+        "rel_l2": 2.67e-06,
+        "cosine": 1.0,
+        "ref_rms": 8.923
+      },
+      "pass": true
+    }
+  },
+  "parity_setup": {
+    "preset": {
+      "name": "upstream_gui",
+      "block": 0.5,
+      "crossfade": 0.04,
+      "extra": 2.0,
+      "steps": 20,
+      "t_start": 0.7
+    },
+    "shapes": {
+      "n44": 110250,
+      "frames": 216,
+      "start_frame": 163,
+      "reflow_frames": 53,
+      "n16": 40000,
+      "units_tta2x": 248,
+      "audio_out": 27136
+    },
+    "source": "jfk.wav",
+    "window_start_s": 0.5,
+    "seed": 0,
+    "formant_shift": 2.0,
+    "f0": "log sweep E2 (82.4 Hz) -> D#7 (2489 Hz) over the decoded frames, +-25 cents vibrato at 5.5 Hz",
+    "weights": "DDSP + LYNXNet2: seeded random (1234); vocoder: openvpi pc_nsf_hifigan_44.1k_hop512_128bin_2025.02",
+    "reference_impl": "upstream Unit2Wav.forward (6.3), PyTorch fp32 CPU; SvcDDSP.infer's volume gate in chain_audio_volume_gate",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  },
+  "timing_conditions": {
+    "gpu_util_pct": 26,
+    "cpu_util_pct": 16.5,
+    "cpu_threads": 16
+  },
+  "cost": {
+    "upstream_gui": {
+      "contentvec": {
+        "host": {
+          "median_ms": 288.049,
+          "p90_ms": 300.868,
+          "min_ms": 233.238,
+          "runs": 10,
+          "block_medians_ms": [
+            292.557,
+            289.905,
+            288.049
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 121.919,
+          "p90_ms": 129.912,
+          "min_ms": 114.02,
+          "runs": 10,
+          "block_medians_ms": [
+            127.38,
+            121.919,
+            125.497
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 37.112,
+          "p90_ms": 44.294,
+          "min_ms": 26.077,
+          "runs": 10,
+          "block_medians_ms": [
+            46.447,
+            37.112,
+            45.333
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 270.208,
+          "p90_ms": 281.143,
+          "min_ms": 231.79,
+          "runs": 10,
+          "block_medians_ms": [
+            277.485,
+            270.208,
+            275.008
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 1710.47,
+          "per_step_ms": 37.112,
+          "rtf": 3.421
+        }
+      },
+      "block_ms": 500.0,
+      "preset": {
+        "name": "upstream_gui",
+        "block": 0.5,
+        "crossfade": 0.04,
+        "extra": 2.0,
+        "steps": 20,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 110250,
+        "frames": 216,
+        "start_frame": 163,
+        "reflow_frames": 53,
+        "n16": 40000,
+        "units_tta2x": 248,
+        "audio_out": 27136
+      }
+    },
+    "sigil_singing": {
+      "contentvec": {
+        "host": {
+          "median_ms": 126.023,
+          "p90_ms": 134.433,
+          "min_ms": 116.193,
+          "runs": 10,
+          "block_medians_ms": [
+            126.023,
+            129.437,
+            136.119
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 54.425,
+          "p90_ms": 56.372,
+          "min_ms": 46.139,
+          "runs": 10,
+          "block_medians_ms": [
+            54.425,
+            56.578,
+            55.268
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 16.12,
+          "p90_ms": 17.13,
+          "min_ms": 14.079,
+          "runs": 10,
+          "block_medians_ms": [
+            16.12,
+            16.793,
+            16.688
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 87.709,
+          "p90_ms": 97.82,
+          "min_ms": 66.457,
+          "runs": 10,
+          "block_medians_ms": [
+            93.187,
+            87.709,
+            94.588
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 555.38,
+          "per_step_ms": 16.12,
+          "rtf": 5.554
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 10,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "sigil_singing_fast": {
+      "contentvec": {
+        "host": {
+          "median_ms": 128.728,
+          "p90_ms": 136.742,
+          "min_ms": 104.036,
+          "runs": 10,
+          "block_medians_ms": [
+            130.092,
+            128.728,
+            134.166
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "ddsp": {
+        "host": {
+          "median_ms": 54.587,
+          "p90_ms": 56.147,
+          "min_ms": 48.124,
+          "runs": 10,
+          "block_medians_ms": [
+            55.818,
+            55.844,
+            54.587
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "reflow_step": {
+        "host": {
+          "median_ms": 15.026,
+          "p90_ms": 16.772,
+          "min_ms": 11.697,
+          "runs": 10,
+          "block_medians_ms": [
+            17.083,
+            17.312,
+            15.026
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "vocoder": {
+        "host": {
+          "median_ms": 93.051,
+          "p90_ms": 96.625,
+          "min_ms": 85.316,
+          "runs": 10,
+          "block_medians_ms": [
+            95.91,
+            93.051,
+            96.025
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "tick": {
+        "host": {
+          "tick_ms": 480.22,
+          "per_step_ms": 15.026,
+          "rtf": 4.802
+        }
+      },
+      "block_ms": 100.0,
+      "preset": {
+        "name": "sigil_singing_fast",
+        "block": 0.1,
+        "crossfade": 0.04,
+        "extra": 1.0,
+        "steps": 5,
+        "t_start": 0.7
+      },
+      "shapes": {
+        "n44": 48510,
+        "frames": 95,
+        "start_frame": 77,
+        "reflow_frames": 18,
+        "n16": 17600,
+        "units_tta2x": 108,
+        "audio_out": 9216
+      }
+    },
+    "note": "tick = 2 x contentvec (tta2x) + ddsp + steps x reflow_step + vocoder; F0 (RMVPE/FCPE) and resampling not included",
+    "graphs": {
+      "contentvec": {
+        "file": "model.fp32.onnx",
+        "bytes": 377722808,
+        "sha256": "428459961c724312a48209a50c6246d9598693071819405f092f0657645b849b"
+      },
+      "ddsp": {
+        "file": "ddsp.onnx",
+        "bytes": 108627252,
+        "sha256": "5be34a8bcc0d5a8ba356abb5d340b85154c2e7972268c2505e9ca4f18f049277"
+      },
+      "encoder": {
+        "file": "encoder.onnx",
+        "bytes": 91867876,
+        "sha256": "eaeca8c2f5d94a5c88810a2af9039f51294ba1437c2d79e5f0d334b7d4abad5a"
+      },
+      "reflow_step": {
+        "file": "reflow_step.onnx",
+        "bytes": 161938190,
+        "sha256": "f23053135fb93ca1b7cb13ef06369e2cfe4b3701c4b836fabff1915c2b14e437"
+      },
+      "velocity": {
+        "file": "velocity.onnx",
+        "bytes": 161936837,
+        "sha256": "5772c202d5d635103f9cbe7529f1c8ad5f43e9b51c72d689647dd958a39ece78"
+      },
+      "velocity_f": {
+        "file": "velocity_f.onnx",
+        "bytes": 161938042,
+        "sha256": "e5895248f3cc9f775e23ac1516deceaaa13391577be05f1f550932ca7bddc60d"
+      },
+      "vocoder": {
+        "file": "vocoder.onnx",
+        "bytes": 56590562,
+        "sha256": "127ed16e88c7b41c47d972c6b75e05338d9329c597c110f0bdb262a5befd7f9d"
+      }
+    }
+  }
+}

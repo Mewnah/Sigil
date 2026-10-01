@@ -22,7 +22,7 @@ use crate::services::neural_audio::ort_session::VcSessionOptions;
 
 // ---- reference bundles (scripts/vc-templates/sigil_layout.py write_bundle) --------------------
 
-struct Bundle {
+pub(super) struct Bundle {
     desc: serde_json::Value,
     bin: Vec<u8>,
 }
@@ -32,6 +32,13 @@ impl Bundle {
         let json = std::fs::read(stem.with_extension("json")).unwrap_or_else(|e| panic!("{}: {e}", stem.display()));
         let bin = std::fs::read(stem.with_extension("bin")).unwrap();
         Bundle { desc: serde_json::from_slice(&json).unwrap(), bin }
+    }
+
+    /// The bundle `<stem>.{json,bin}` when both files exist and the description parses.
+    pub(super) fn try_load(stem: &Path) -> Option<Bundle> {
+        let json = std::fs::read(stem.with_extension("json")).ok()?;
+        let bin = std::fs::read(stem.with_extension("bin")).ok()?;
+        Some(Bundle { desc: serde_json::from_slice(&json).ok()?, bin })
     }
 
     fn meta(&self, key: &str) -> &serde_json::Value {
@@ -248,6 +255,85 @@ fn graph_parity(voice: &ImportedVoice, bundle: &Bundle, precision: Precision, ta
     parity.check("knn", precision, &got, &want, tol, scale_fp16);
 }
 
+/// Relative L2 of a voice's decoded audio against PyTorch's offline output (the T8 corpus metric),
+/// with the inputs and noise of a `parity_test.py` reference bundle, decoded on the CPU from the
+/// slot's weights image and speaker table as the engine decodes them.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ChainRelL2 {
+    /// enc fp32 -> flowdec fp32.
+    pub fp32: f64,
+    /// enc fp16 -> flowdec fp16 (`None`: the weights do not fit half precision).
+    pub fp16: Option<f64>,
+    /// enc fp32 -> flowdec fp16: what the engine runs for fp16 on a GPU (`layout.json`
+    /// `recommended.gpu`; `None` as for `fp16`).
+    pub mixed: Option<f64>,
+}
+
+/// [`ChainRelL2`] of a voice: `template` with the weights image `weights_f32` and the speaker table
+/// `speakers` (`speaker_dim` wide), against `bundle`. Panics on a graph or bundle error (the
+/// caller catches it per voice).
+pub(super) fn chain_rel_l2(template: &layout::Template, weights_f32: &[u8], speakers: &[f32], speaker_dim: usize, bundle: &Bundle) -> ChainRelL2 {
+    let layout = &template.layout;
+    let opts = cpu();
+    let target = EpTarget::new("cpu", 0, &opts);
+    let f16 = writer::f16_image(weights_f32).ok();
+    let images = WeightImages { f32: weights_f32, f16: f16.as_deref() };
+    let (pshape, phone) = bundle.f32("phone");
+    let (_, pitch) = bundle.i64("pitch");
+    let (frames, emb) = (pshape[1], pshape[2]);
+    let c = layout.arch.inter_channels as usize;
+    let upp = layout.arch.upp as usize;
+    let (fm, dm) = (layout.streaming.flow_margin as usize, layout.streaming.dec_margin as usize);
+    let (_, sid) = bundle.i64("sid");
+    let row = sid[0] as usize;
+    let g: Vec<f32> = speakers[row * speaker_dim..(row + 1) * speaker_dim].to_vec();
+    let (_, f0) = bundle.f32("f0");
+    let (_, z_noise) = bundle.f32("z_noise");
+    let (_, src_noise) = bundle.f32("src_noise");
+    let (_, ref_audio) = bundle.f32("ref_audio");
+    let ref_tail = &ref_audio[(fm + dm) * upp..];
+    let enc = |precision: Precision| {
+        let mut session = template_session(template, "enc", precision, Some(&images), target, &[("T", frames as i64)]).unwrap();
+        let mut out = run_f32(&mut session, vec![("phone", vec![1, frames, emb], phone.clone())], vec![("pitch", vec![1, frames], pitch.clone())]);
+        let logs = out.pop().unwrap();
+        (out.pop().unwrap(), logs)
+    };
+    let decode = |precision: Precision, m: &[f32], logs: &[f32]| {
+        let mut fd = template_session(template, "flowdec", precision, Some(&images), target, &[("F", frames as i64), ("S", (frames * upp) as i64)]).unwrap();
+        let feeds = vec![
+            ("m_p", vec![1, c, frames], m.to_vec()),
+            ("logs_p", vec![1, c, frames], logs.to_vec()),
+            ("z_noise", vec![1, c, frames], z_noise.clone()),
+            ("g", vec![1, speaker_dim, 1], g.clone()),
+            ("f0", vec![1, frames], f0.clone()),
+            ("phase0", vec![1, 1], vec![0.0]),
+            ("src_noise", vec![1, frames * upp], src_noise.clone()),
+        ];
+        rel_l2(&run_f32(&mut fd, feeds, vec![]).remove(0), ref_tail)
+    };
+    let (m32, logs32) = enc(Precision::Fp32);
+    let fp32 = decode(Precision::Fp32, &m32, &logs32);
+    let (fp16, mixed) = if f16.is_some() {
+        let (m16, logs16) = enc(Precision::Fp16);
+        (Some(decode(Precision::Fp16, &m16, &logs16)), Some(decode(Precision::Fp16, &m32, &logs32)))
+    } else {
+        (None, None)
+    };
+    ChainRelL2 { fp32, fp16, mixed }
+}
+
+/// The T8 metric on the tiny fixture: well inside 1e-2 for the engine's fp16 mix.
+#[test]
+fn tiny_chain_matches_pytorch_within_the_t8_bound() {
+    let dir = tiny_dir();
+    let voice = import_file(&dir.join("tiny.pth"), &dir).unwrap();
+    let bundle = Bundle::load(&dir.join("reference"));
+    let r = chain_rel_l2(&voice.template, &voice.weights.f32_image, &voice.weights.speakers, voice.weights.speaker_dim, &bundle);
+    eprintln!("tiny chain rel L2: {r:?}");
+    assert!(r.fp32 < 1e-4, "{r:?}");
+    assert!(r.mixed.unwrap() < 1e-2 && r.fp16.unwrap() < 1e-2, "{r:?}");
+}
+
 fn cpu() -> VcSessionOptions {
     VcSessionOptions { intra_threads: Some(2), ..VcSessionOptions::default() }
 }
@@ -314,6 +400,7 @@ fn worker_job_writes_the_slot() {
     assert_eq!(record["template"], "v2-16k-f0-hifigan");
     assert_eq!(record["fp16_ok"], true);
     let slot = out.join("slot");
+    assert!(slot::fp16_checked(&slot), "the fp16 smoke ran: the import cache serves an fp16 request");
     let weights = std::fs::read(slot.join(WEIGHTS_FILE)).unwrap();
     assert_eq!(hex::encode(Sha256::digest(&weights)), record["weights"]["sha256"].as_str().unwrap());
     assert!(slot.join(SPEAKERS_FILE).is_file() && slot.join(IMPORT_RECORD).is_file());
@@ -397,6 +484,34 @@ fn template_mismatches_are_refused() {
     assert!(layout::Layout::parse(&serde_json::to_vec(&v).unwrap()).is_err());
 }
 
+/// Every bundled template either loads (layout version 1) or is refused as a voice kind this build
+/// does not run yet (P3-A's version 2: f0-less, MRF and RefineGAN), never as a damaged install.
+#[test]
+fn bundled_templates_load_or_are_unsupported_voice_kinds() {
+    let dir = bundled_templates();
+    let (mut v1, mut v2) = (0, 0);
+    for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if !entry.path().join(layout::LAYOUT_FILE).is_file() {
+            continue;
+        }
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(entry.path().join(layout::LAYOUT_FILE)).unwrap()).unwrap();
+        match raw["format_version"].as_u64() {
+            Some(1) => {
+                layout::Template::load(&dir, &id).unwrap_or_else(|e| panic!("{id}: {}", e.message));
+                v1 += 1;
+            }
+            _ => {
+                let e = layout::Template::load(&dir, &id).err().unwrap_or_else(|| panic!("{id} loaded"));
+                assert_eq!(e.code, ErrorCode::UnsupportedModel, "{id}: {}", e.message);
+                assert!(e.message.contains("not supported yet"), "{id}: {}", e.message);
+                v2 += 1;
+            }
+        }
+    }
+    assert!(v1 >= 7 && v2 >= 15, "{v1} version-1 and {v2} version-2 templates");
+}
+
 #[test]
 fn bundled_template_layout_is_valid() {
     let t = layout::Template::load(&bundled_templates(), "v2-40k-f0-hifigan").unwrap();
@@ -452,6 +567,7 @@ fn tiny_source() -> SourceInfo {
         kind: "pth",
         pth_entry: None,
         index_entries: Vec::new(),
+        index_entry: None,
     }
 }
 
@@ -518,6 +634,11 @@ fn metadata_entries_are_not_voice_files() {
 
 // ---- slot writing -------------------------------------------------------------------------------
 
+/// [`write_slot`] with the defaults (no index, the name "Tiny").
+fn write_plain(slot: &Path, voice: &ImportedVoice, smoke: &Smoke) -> Result<ImportRecord, ImportError> {
+    write_slot(slot, &SlotContents { voice, smoke, index: None, name: "Tiny", warnings: &[], elapsed: Duration::ZERO })
+}
+
 #[test]
 fn slot_writes_replace_the_folder_as_a_unit() {
     let dir = tiny_dir();
@@ -529,14 +650,14 @@ fn slot_writes_replace_the_folder_as_a_unit() {
     let hidden = || [staging.exists(), backup.exists()];
     let weights = |slot: &Path| std::fs::read(slot.join(WEIGHTS_FILE)).unwrap();
 
-    write_slot(&slot, &voice, &smoke, Duration::ZERO).unwrap();
+    write_plain(&slot, &voice, &smoke).unwrap();
     assert!(SLOT_FILES.iter().all(|f| slot.join(f).is_file()));
     assert_eq!(hidden(), [false, false]);
 
     // A re-import replaces the three files and keeps the folder's other files.
     std::fs::write(slot.join("added_IVF1.index"), b"idx").unwrap();
     std::fs::write(slot.join(WEIGHTS_FILE), b"previous voice").unwrap();
-    write_slot(&slot, &voice, &smoke, Duration::ZERO).unwrap();
+    write_plain(&slot, &voice, &smoke).unwrap();
     assert_eq!(std::fs::read(slot.join("added_IVF1.index")).unwrap(), b"idx");
     assert_eq!(weights(&slot), voice.weights.f32_image);
     assert_eq!(hidden(), [false, false]);
@@ -552,21 +673,22 @@ fn slot_writes_replace_the_folder_as_a_unit() {
 
     // Killed while the other files were being moved over: the next write finishes the move.
     std::fs::create_dir(&backup).unwrap();
-    std::fs::write(backup.join("manifest.json"), b"{}").unwrap();
+    std::fs::write(backup.join("slot.json"), b"{}").unwrap();
     std::fs::write(backup.join(WEIGHTS_FILE), b"older voice").unwrap();
-    write_slot(&slot, &voice, &smoke, Duration::ZERO).unwrap();
-    assert!(slot.join("manifest.json").is_file() && slot.join("added_IVF1.index").is_file());
+    write_plain(&slot, &voice, &smoke).unwrap();
+    assert!(slot.join("slot.json").is_file() && slot.join("added_IVF1.index").is_file());
+    assert!(slot.join(MANIFEST_FILE).is_file());
     assert_eq!(weights(&slot), voice.weights.f32_image);
     assert_eq!(hidden(), [false, false]);
 
     // Failures change nothing: a slot path that is a file, and a recovery that cannot proceed.
     let file_slot = root.join("file");
     std::fs::write(&file_slot, b"x").unwrap();
-    assert_eq!(write_slot(&file_slot, &voice, &smoke, Duration::ZERO).unwrap_err().code, ErrorCode::Io);
+    assert_eq!(write_plain(&file_slot, &voice, &smoke).unwrap_err().code, ErrorCode::Io);
     std::fs::write(&staging, b"not a folder").unwrap();
-    assert!(write_slot(&slot, &voice, &smoke, Duration::ZERO).is_err());
+    assert!(write_plain(&slot, &voice, &smoke).is_err());
     assert_eq!(weights(&slot), voice.weights.f32_image);
-    assert!(slot.join("manifest.json").is_file());
+    assert!(slot.join("slot.json").is_file());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -649,7 +771,8 @@ fn default_voice_parity() {
     let smoke = Smoke::run(&voice, true).unwrap();
     eprintln!("smoke: {:?} fp16 issue: {:?}", smoke.reports, smoke.fp16_issue);
     assert!(smoke.fp16_issue.is_none());
-    write_slot(&parity_dir.join("rust"), &voice, &smoke, started.elapsed()).unwrap();
+    let contents = SlotContents { voice: &voice, smoke: &smoke, index: None, name: "Default voice", warnings: &[], elapsed: started.elapsed() };
+    write_slot(&parity_dir.join("rust"), &contents).unwrap();
 
     let opts = cpu();
     let mut parity = Parity { rows: Vec::new() };
@@ -762,4 +885,279 @@ fn timing(voice: &ImportedVoice, target: EpTarget<'_>, label: &str) {
             precision.variant()
         );
     }
+}
+
+// ---- the slot store end to end (P3-B) -------------------------------------------------------------
+
+fn corpus_file(name: &str) -> PathBuf {
+    super::corpus_tests::fuzz_dir().join("corpus").join(name)
+}
+
+/// Write a worker job and run the worker body in this process (the isolated path is covered by
+/// `worker::tests`).
+fn run_worker_job(source: &Path, out_dir: &Path, index: Option<&Path>, name: Option<&str>) -> serde_json::Value {
+    let job = out_dir.with_extension("job.json");
+    let mut j = serde_json::json!({ "version": 1, "source": source, "out_dir": out_dir, "templates_dir": tiny_dir(), "time_limit_s": 60 });
+    if let Some(ix) = index {
+        j["index"] = serde_json::json!(ix);
+    }
+    if let Some(n) = name {
+        j["name"] = serde_json::json!(n);
+    }
+    std::fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
+    std::fs::write(&job, serde_json::to_vec(&j).unwrap()).unwrap();
+    let text = run_import_worker(&job).unwrap_or_else(|e| panic!("{e}"));
+    let _ = std::fs::remove_file(&job);
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn imported_slots_carry_a_sigil_rvc_manifest_and_their_index() {
+    use crate::services::neural_audio::vc::manifest::{load_slot_manifest, SlotFormat, SIGIL_RVC_FORMAT};
+    let root = temp_dir("manifest");
+    let models = root.join("models");
+    let slot = models.join("tiny");
+    let archive = corpus_file("valid-voice-archive.zip");
+    let record = run_worker_job(&archive, &slot, None, Some("  My Tiny\tVoice "));
+    assert_eq!(record["importer_version"], IMPORTER_VERSION);
+    assert_eq!(record["name"], "My Tiny Voice");
+    assert_eq!(record["index"]["file"], ADOPTED_INDEX_FILE);
+    assert_eq!(record["index"]["origin"], "archive:Tiny/added_IVF2_Flat_nprobe_1_Tiny_v2.index");
+    assert_eq!(record["index"]["dim"], 768);
+
+    let m = load_slot_manifest(&slot).unwrap();
+    assert_eq!(m.slot_format(), SlotFormat::SigilRvc);
+    assert_eq!(m.format, SIGIL_RVC_FORMAT);
+    assert_eq!(m.name.as_deref(), Some("My Tiny Voice"));
+    assert_eq!(m.template.as_deref(), Some("v2-16k-f0-hifigan"));
+    assert_eq!((m.weights.as_deref(), m.speakers.as_deref()), (Some(WEIGHTS_FILE), Some(SPEAKERS_FILE)));
+    assert_eq!((m.sample_rate, m.if_f0, m.emb_channels, m.emb_layer, m.use_final_proj), (16_000, true, 768, 12, false));
+    assert_eq!((m.embedder.as_deref(), m.vocoder.as_deref()), (Some("contentvec"), Some("hifigan")));
+    assert_eq!(m.speaker_count, Some(3));
+    assert_eq!(m.index.as_deref(), Some(ADOPTED_INDEX_FILE));
+    assert_eq!(m.import_record.as_deref(), Some(IMPORT_RECORD));
+    assert_eq!(m.source_sha256.as_deref(), Some(sha256_file(&archive).unwrap().0.as_str()));
+    assert!(m.created_unix_ms.unwrap() > 0 && m.fp16_ok.is_some());
+    // The legacy loader still refuses a template voice; the index file is the archive's bytes.
+    assert!(crate::services::neural_audio::vc::manifest::load_manifest(&slot).is_err());
+    let adopted = std::fs::read(slot.join(ADOPTED_INDEX_FILE)).unwrap();
+    assert_eq!(hex::encode(Sha256::digest(&adopted)), record["index"]["sha256"].as_str().unwrap());
+
+    // Listing: one imported voice with its index; the engine note is the only possible problem.
+    let list = slot::list_slots_with(&models, Some(&tiny_dir())).unwrap();
+    assert_eq!(list.len(), 1);
+    let info = &list[0];
+    assert_eq!((info.id.as_str(), info.name.as_str(), info.format.as_str()), ("tiny", "My Tiny Voice", SIGIL_RVC_FORMAT));
+    assert!(info.has_index);
+    assert_eq!(info.template.as_deref(), Some("v2-16k-f0-hifigan"));
+    if crate::services::neural_audio::vc::engine::available() {
+        assert!(info.problem.is_none(), "{info:?}");
+    } else {
+        assert!(info.problem.as_deref().unwrap().contains("Sigil Voice Engine"), "{info:?}");
+    }
+
+    // The import cache finds the slot by the source's sha256 (and only a matching, intact one).
+    let sha = sha256_file(&archive).unwrap().0;
+    assert_eq!(slot::find_cached_with(&models, &sha, Some(&tiny_dir())).unwrap().id, "tiny");
+    assert!(slot::find_cached_with(&models, &"0".repeat(64), Some(&tiny_dir())).is_none());
+    assert!(slot::find_cached_with(&models, &sha, Some(&bundled_templates())).is_none(), "template missing there");
+    let weights = std::fs::read(slot.join(WEIGHTS_FILE)).unwrap();
+    std::fs::write(slot.join(WEIGHTS_FILE), &weights[..weights.len() - 4]).unwrap();
+    assert!(slot::find_cached_with(&models, &sha, Some(&tiny_dir())).is_none(), "damaged weights");
+    let damaged = slot::slot_info_with(&models, "tiny", Some(&tiny_dir())).unwrap();
+    assert!(damaged.problem.as_deref().unwrap().contains("damaged"), "{damaged:?}");
+    std::fs::write(slot.join(WEIGHTS_FILE), &weights).unwrap();
+
+    // Re-import of the bare .pth (no index of its own): the adopted index and the voice's
+    // settings are kept, the manifest is rewritten.
+    std::fs::write(slot.join("slot.json"), br#"{"version":1,"pitch_semitones":5}"#).unwrap();
+    let record = run_worker_job(&tiny_dir().join("tiny.pth"), &slot, None, None);
+    assert_eq!(record["index"]["origin"], "kept");
+    assert_eq!(record["name"], "tiny", "default name: the file stem");
+    let m = load_slot_manifest(&slot).unwrap();
+    assert_eq!(m.index.as_deref(), Some(ADOPTED_INDEX_FILE));
+    assert_eq!(std::fs::read(slot.join(ADOPTED_INDEX_FILE)).unwrap(), adopted);
+    assert!(std::fs::read_to_string(slot.join("slot.json")).unwrap().contains("pitch_semitones"));
+    assert_eq!(m.source_sha256.as_deref(), Some(sha256_file(&tiny_dir().join("tiny.pth")).unwrap().0.as_str()));
+    assert!(!slot::fp16_checked(&slot), "no fp16 smoke ran");
+
+    // The kept index must fit: a previous index of another width is removed, with a warning.
+    let manifest_path = slot.join(MANIFEST_FILE);
+    let mut mj: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    mj["emb_channels"] = serde_json::json!(256);
+    std::fs::write(&manifest_path, serde_json::to_vec(&mj).unwrap()).unwrap();
+    let record = run_worker_job(&tiny_dir().join("tiny.pth"), &slot, None, None);
+    assert!(record["index"].is_null(), "{record}");
+    let notes: Vec<&str> = record["warnings"].as_array().unwrap().iter().filter_map(|w| w.as_str()).collect();
+    assert!(notes.iter().any(|w| w.contains("removed") && w.contains("256-channel")), "{notes:?}");
+    assert!(!slot.join(ADOPTED_INDEX_FILE).exists(), "the old index file is gone");
+    assert!(load_slot_manifest(&slot).unwrap().index.is_none());
+
+    // Another voice imported into the slot does not inherit the previous voice's index.
+    let record = run_worker_job(&archive, &slot, None, None);
+    assert_eq!(record["index"]["origin"], "archive:Tiny/added_IVF2_Flat_nprobe_1_Tiny_v2.index");
+    let other = corpus_file("valid-training-G_2333.pth");
+    let record = run_worker_job(&other, &slot, None, Some("Other"));
+    assert!(record["index"].is_null(), "{record}");
+    let notes: Vec<&str> = record["warnings"].as_array().unwrap().iter().filter_map(|w| w.as_str()).collect();
+    assert!(notes.iter().any(|w| w.contains("removed") && w.contains("another voice")), "{notes:?}");
+    assert!(!slot.join(ADOPTED_INDEX_FILE).exists());
+    assert!(slot.join("slot.json").is_file(), "the voice settings stay with the slot");
+    // ... while the same voice re-imported (its retrained save) keeps its own index.
+    let record = run_worker_job(&archive, &slot, None, None);
+    assert_eq!(record["index"]["file"], ADOPTED_INDEX_FILE);
+    let renamed = root.join("Tiny_e300_s6000.pth");
+    std::fs::copy(tiny_dir().join("tiny.pth"), &renamed).unwrap();
+    let record = run_worker_job(&renamed, &slot, None, None);
+    assert_eq!(record["index"]["origin"], "kept", "{record}");
+
+    // An explicit index that does not fit the voice is a warning, never a failed import.
+    let wrong = root.join("wrong.index");
+    let mut raw = Vec::new();
+    raw.extend_from_slice(&256u32.to_le_bytes());
+    raw.extend_from_slice(&1u32.to_le_bytes());
+    raw.extend(std::iter::repeat_n(0u8, 256 * 4));
+    std::fs::write(&wrong, &raw).unwrap();
+    let record = run_worker_job(&tiny_dir().join("tiny.pth"), &models.join("other"), Some(&wrong), None);
+    assert!(record["index"].is_null(), "{record}");
+    let notes: Vec<&str> = record["warnings"].as_array().unwrap().iter().filter_map(|w| w.as_str()).collect();
+    assert!(notes.iter().any(|w| w.contains("256-channel")), "{notes:?}");
+    std::fs::write(&wrong, b"garbage").unwrap();
+    let record = run_worker_job(&tiny_dir().join("tiny.pth"), &models.join("other2"), Some(&wrong), None);
+    assert!(record["index"].is_null());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn imported_voices_merge_by_weight() {
+    let root = temp_dir("merge");
+    let models = root.join("models");
+    run_worker_job(&tiny_dir().join("tiny.pth"), &models.join("a"), None, Some("Alpha"));
+    run_worker_job(&corpus_file("valid-state-dict.pth"), &models.join("b"), None, Some("Beta"));
+    // Make B's weights different: every weight doubled.
+    let wb: Vec<u8> = std::fs::read(models.join("b").join(WEIGHTS_FILE))
+        .unwrap()
+        .chunks_exact(4)
+        .flat_map(|c| (2.0 * f32::from_le_bytes([c[0], c[1], c[2], c[3]])).to_le_bytes())
+        .collect();
+    std::fs::write(models.join("b").join(WEIGHTS_FILE), &wb).unwrap();
+    let spec = slot::MergeSpec { a: "a".into(), b: "b".into(), weight_a: 0.25, name: "Blend".into() };
+    let info = slot::merge_slots(&models, &spec).unwrap();
+    assert_eq!((info.id.as_str(), info.name.as_str(), info.has_index), ("blend", "Blend", false));
+    let wa = std::fs::read(models.join("a").join(WEIGHTS_FILE)).unwrap();
+    let merged = std::fs::read(models.join("blend").join(WEIGHTS_FILE)).unwrap();
+    assert_eq!(merged.len(), wa.len());
+    let f = |c: &[u8]| f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+    for ((m, a), b) in merged.chunks_exact(4).zip(wa.chunks_exact(4)).zip(wb.chunks_exact(4)).take(5000) {
+        let want = (0.25 * f(a) as f64 + 0.75 * f(b) as f64) as f32;
+        assert_eq!(f(m), want);
+    }
+    let m = crate::services::neural_audio::vc::manifest::load_slot_manifest(&models.join("blend")).unwrap();
+    assert_eq!((m.template.as_deref(), m.source_sha256.as_deref(), m.index.as_deref()), (Some("v2-16k-f0-hifigan"), None, None));
+    let rec: serde_json::Value = serde_json::from_slice(&std::fs::read(models.join("blend").join(IMPORT_RECORD)).unwrap()).unwrap();
+    assert_eq!((rec["merge"]["a"]["id"].as_str(), rec["merge"]["weight_a"].as_f64()), (Some("a"), Some(0.25)));
+
+    // Refused: a weight outside 0..1, the same voice twice, an unknown slot, a BYO voice.
+    for (a, b, w) in [("a", "b", 1.5f32), ("a", "a", 0.5), ("a", "zz", 0.5)] {
+        let e = slot::merge_slots(&models, &slot::MergeSpec { a: a.into(), b: b.into(), weight_a: w, name: String::new() }).unwrap_err();
+        assert!(e.starts_with("job:"), "{e}");
+    }
+    std::fs::create_dir_all(models.join("byo")).unwrap();
+    std::fs::write(models.join("byo").join("gen.onnx"), b"x").unwrap();
+    let e = slot::merge_slots(&models, &slot::MergeSpec { a: "a".into(), b: "byo".into(), weight_a: 0.5, name: String::new() }).unwrap_err();
+    assert!(e.contains("not an imported voice"), "{e}");
+    // Different embedders cannot be merged.
+    let mpath = models.join("b").join(MANIFEST_FILE);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&mpath).unwrap()).unwrap();
+    v["embedder"] = serde_json::json!("hubert-ja");
+    std::fs::write(&mpath, serde_json::to_vec(&v).unwrap()).unwrap();
+    let e = slot::merge_slots(&models, &spec).unwrap_err();
+    assert!(e.starts_with("unsupported_model:") && e.contains("embedders"), "{e}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn archive_choices_skip_training_by_products() {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let pick = |v: &[&str]| choose_pth(&s(v)).map(|(p, _)| p);
+    assert_eq!(choose_pth(&s(&["v/Kira.pth", "v/G_2333.pth", "v/D_2333.pth", "f0G40k.pth"])).unwrap(), ("v/Kira.pth".into(), None));
+    assert_eq!(pick(&["G_100.pth", "G_2333.pth", "D_2333.pth"]).unwrap(), "G_2333.pth", "the latest generator");
+    assert_eq!(pick(&["G_latest.pth", "G_9.pth"]).unwrap(), "G_latest.pth");
+    assert_eq!(choose_pth(&s(&["a.pth", "b.pth"])).unwrap_err().code, ErrorCode::AmbiguousArchive);
+    // One voice saved at several training stages: the latest step (Applio and RVC names), or the
+    // final export when the archive has one; with a note saying which.
+    let (p, note) = choose_pth(&s(&["w/Kira_100e_2000s.pth", "w/Kira_300e_6000s.pth", "w/kira_e20_s400.pth", "w/D_2333.pth"])).unwrap();
+    assert_eq!(p, "w/Kira_300e_6000s.pth");
+    let note = note.unwrap();
+    assert!(note.contains("3 saves") && note.contains("step 6000") && note.contains("Kira_300e_6000s.pth"), "{note}");
+    assert_eq!(pick(&["Kira_e10_s100.pth", "Kira_e30_s300.pth", "Kira.pth"]).unwrap(), "Kira.pth", "the final export");
+    assert_eq!(pick(&["Kira_25e_500s_best_epoch.pth", "Kira_25e_500s.pth"]).unwrap(), "Kira_25e_500s.pth");
+    assert_eq!(pick(&["Kira_25e_500s_best_epoch.pth", "Kira_20e_400s.pth"]).unwrap(), "Kira_25e_500s_best_epoch.pth");
+    // Not one voice, or no single latest file: still ambiguous.
+    for many in [
+        &["Kira_100e_2000s.pth", "Mira_300e_6000s.pth"][..],
+        &["a/Kira_e10_s100.pth", "b/Kira_e10_s100.pth"],
+        &["a/Kira.pth", "b/Kira.pth", "Kira_e1_s2.pth"],
+        &["Kira_e10_s100.pth", "Other.pth"],
+    ] {
+        assert_eq!(choose_pth(&s(many)).unwrap_err().code, ErrorCode::AmbiguousArchive, "{many:?}");
+    }
+    assert_eq!(voice_stem("x/Kira_V2_e300_s6000.pth"), "kira_v2");
+    assert_eq!(voice_stem("Kira_300e_6000s_best_epoch.pth"), "kira");
+    for plain in ["Kira_final.pth", "my_voice_e.pth", "_e1_s2.pth", "Kira_e1_x2.pth", "Kira_1e_2.pth"] {
+        assert_eq!(voice_stem(plain), plain.trim_end_matches(".pth").to_lowercase(), "{plain}");
+    }
+    // An index named after the voice is matched without the save suffix.
+    let (ix, _) = choose_index(&s(&["added_IVF9_Other_v2.index", "added_IVF9_Kira_v2.index"]), "Kira_e300_s6000.pth");
+    assert_eq!(ix.as_deref(), Some("added_IVF9_Kira_v2.index"));
+    assert_eq!(choose_pth(&s(&["D_1.pth"])).unwrap_err().code, ErrorCode::NotACheckpoint);
+    assert_eq!(choose_pth(&[]).unwrap_err().code, ErrorCode::NotACheckpoint);
+    for yes in ["G_2333.pth", "D_1.pth", "f0G40k.pth", "f0D48k.pth", "G32k.pth", "a/D40k.pth", "G_latest.pth"] {
+        assert!(is_training_artifact(yes), "{yes}");
+    }
+    for no in ["Gojo.pth", "Diana_v2.pth", "G_.pth", "model.pth", "G_2333.index", "D.pth"] {
+        assert!(!is_training_artifact(no), "{no}");
+    }
+    let (ix, warn) = choose_index(&s(&["v/trained_IVF1_v.index", "v/added_IVF1_v.index"]), "v/v.pth");
+    assert_eq!((ix.as_deref(), warn), (Some("v/added_IVF1_v.index"), None));
+    let (ix, warn) = choose_index(&s(&["added_Other.index", "added_Kira_v2.index"]), "Kira.pth");
+    assert_eq!(ix.as_deref(), Some("added_Kira_v2.index"));
+    assert!(warn.unwrap().contains("2 retrieval indexes"));
+    assert_eq!(choose_index(&s(&["trained_x.index"]), "x.pth"), (None, None));
+    assert_eq!(choose_index(&s(&["my.index"]), "x.pth").0.as_deref(), Some("my.index"));
+}
+
+#[test]
+fn names_are_cleaned() {
+    assert_eq!(clean_name("  a\tb\u{0}c  ").as_deref(), Some("a b c"));
+    assert_eq!(clean_name(" \n "), None);
+    assert_eq!(clean_name(&"é".repeat(200)).unwrap().chars().count(), MAX_NAME_CHARS);
+    let voice = import_file(&tiny_dir().join("tiny.pth"), &tiny_dir()).unwrap();
+    assert_eq!(display_name(Some("  "), &voice), "tiny");
+    assert_eq!(display_name(Some("Kira"), &voice), "Kira");
+}
+
+#[test]
+fn templates_are_found_by_architecture_when_the_folder_is_named_otherwise() {
+    // A template folder renamed away from the canonical id is still found by scanning.
+    let root = temp_dir("scan");
+    let src = tiny_dir().join("v2-16k-f0-hifigan");
+    let raw = std::fs::read_to_string(src.join(layout::LAYOUT_FILE)).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    v["template"] = serde_json::json!("tiny-renamed");
+    v["arch"]["vocoder"] = serde_json::json!("HiFi-GAN");
+    let dst = root.join("tiny-renamed");
+    std::fs::create_dir_all(&dst).unwrap();
+    for e in std::fs::read_dir(&src).unwrap().flatten() {
+        std::fs::copy(e.path(), dst.join(e.file_name())).unwrap();
+    }
+    std::fs::write(dst.join(layout::LAYOUT_FILE), serde_json::to_vec(&v).unwrap()).unwrap();
+    // A broken folder next to it does not hide it.
+    std::fs::create_dir_all(root.join("broken")).unwrap();
+    std::fs::write(root.join("broken").join(layout::LAYOUT_FILE), b"{").unwrap();
+    let voice = import_file(&tiny_dir().join("tiny.pth"), &root).unwrap();
+    assert_eq!(voice.template.layout.template, "tiny-renamed");
+    let direct = import_file(&tiny_dir().join("tiny.pth"), &tiny_dir()).unwrap();
+    assert_eq!(voice.weights.f32_image, direct.weights.f32_image);
+    let _ = std::fs::remove_dir_all(&root);
 }

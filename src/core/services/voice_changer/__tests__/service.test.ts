@@ -29,6 +29,10 @@ const emit = (name: string, payload: unknown) => handlers.get(name)?.({ payload 
 /** Rust side: stored params plus a hook to change what `set` returns. */
 let stored: VoiceChangerParamsRust;
 let running = false;
+/** `voice_changer_get_capabilities` reply (null = an older backend without it). */
+let capsReply: unknown = null;
+/** `voice_changer_list_slots` reply. */
+let slotRows: Record<string, unknown>[] = [];
 let onSet: (p: VoiceChangerParamsRust) => VoiceChangerParamsRust | Promise<VoiceChangerParamsRust> = (p) => p;
 
 function rustDefaults(): VoiceChangerParamsRust {
@@ -54,6 +58,13 @@ function installBackend() {
                 return null;
             case "plugin:voice-changer|get_voice_changer_metrics":
                 return { buffer_ms: 1, process_ms: 2, chunk_ms: 10 };
+            case "plugin:voice-changer|voice_changer_get_capabilities":
+                if (capsReply === null) throw new Error("not allowed");
+                return structuredClone(capsReply);
+            case "plugin:voice-changer|voice_changer_list_slots":
+                return structuredClone(slotRows);
+            case "plugin:voice-changer|voice_changer_get_autotune":
+                return null;
             default:
                 throw new Error(`unexpected ${cmd}`);
         }
@@ -82,6 +93,8 @@ beforeEach(() => {
     vi.mocked(toast.error).mockClear();
     stored = rustDefaults();
     running = false;
+    capsReply = null;
+    slotRows = [];
     onSet = (p) => p;
     storage = new MemStorage();
     vi.stubGlobal("localStorage", storage);
@@ -124,7 +137,8 @@ describe("VoiceChangerService hydration", () => {
         expect(vc.latencyBudgetMs).toBe(650);
         expect(vc.auxMicGate).toBe("mute");
         expect(vc.workerPriority).toBe("protect_game");
-        expect(vc.pitchExtractor).toBe("rmvpe");
+        // Since P3 `crepe` is a value of its own (CREPE-tiny), no longer an alias of rmvpe.
+        expect(vc.pitchExtractor).toBe("crepe");
         expect(vc.rvcConsentAcknowledged).toBe(true);
         expect(vc.chunkFrames).toBe(1024);
         // Hydration alone writes nothing back.
@@ -371,16 +385,20 @@ describe("params sync", () => {
         expect(s.state.voiceChanger.indexRate).toBe(0.4);
     });
 
-    it("a params event is ignored while a sync is in flight, and its re-read is dropped when a sync follows", async () => {
+    it("a params event's payload is not adopted; while a sync is in flight Rust is read after it, and a read older than a sync is dropped", async () => {
         const s = await started();
         let releaseSet: (() => void) | null = null;
         onSet = (p) => new Promise((r) => (releaseSet = () => r(p)));
         const pending = s.setPitch(4);
         await Promise.resolve();
         emit("voice_changer:params", { ...toRustParams(s.state.voiceChanger), index_rate: 0.9 });
+        expect(invoke.mock.calls.filter(([c]) => c === "plugin:voice-changer|get_voice_changer_params")).toHaveLength(1);
         releaseSet!();
         await pending;
-        expect(invoke.mock.calls.filter(([c]) => c === "plugin:voice-changer|get_voice_changer_params")).toHaveLength(1);
+        // Hydration, then one read once the sync was done (Rust may have changed something after it
+        // handled that set); the stale payload itself is never adopted.
+        expect(invoke.mock.calls.filter(([c]) => c === "plugin:voice-changer|get_voice_changer_params")).toHaveLength(2);
+        await new Promise((r) => setTimeout(r, 0));
         expect(s.state.voiceChanger.indexRate).not.toBe(0.9);
 
         // The event arrives with nothing pending; its re-read is still in flight when the user changes
@@ -506,3 +524,313 @@ describe("voice_changer:error", () => {
         ]);
     });
 });
+
+describe("P3: settings changes while running (restart only when the engine shape changed)", () => {
+    const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === `plugin:voice-changer|${cmd}`).length;
+
+    async function runningRvc() {
+        stored = { ...rustDefaults(), mode: "rvc", rvc_consent_acknowledged: true, rvc_slot_dir: "C:/m/alto", slot_id: "alto" };
+        running = true;
+        const s = await started();
+        expect(s.state.isRunning).toBe(true);
+        return s;
+    }
+
+    it("voice controls apply live, and a voice, F0 method or range change switches without a restart", async () => {
+        const s = await runningRvc();
+        await s.update({ rmsMix: 0.4, formantSemitones: -2, noiseScale: 0.5, silenceDb: -50, indexRate: 0.6 });
+        expect(stored.rms_mix).toBe(0.4);
+        await s.selectVoice({ id: "bass", path: "C:/m/bass" });
+        expect(stored).toMatchObject({ rvc_slot_dir: "C:/m/bass", slot_id: "bass" });
+        await s.update({ pitchExtractor: "dio", f0Range: "singing" });
+        expect(calls("stop_voice_changer")).toBe(0);
+    });
+
+    it("an engine-shape change restarts the running engine once", async () => {
+        const s = await runningRvc();
+        await s.update({ precision: "fp16" });
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(calls("start_voice_changer")).toBe(1);
+        emit("voice_changer:started", null);
+        // The engine now runs fp16: a hot change afterwards does not restart again.
+        await s.update({ rmsMix: 0.9 });
+        expect(calls("stop_voice_changer")).toBe(1);
+    });
+
+    it("concurrent shape changes restart the engine once", async () => {
+        const s = await runningRvc();
+        await Promise.all([s.update({ precision: "fp16" }), s.update({ hotSlots: 3 }), s.update({ blockMs: 60 })]);
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(calls("start_voice_changer")).toBe(1);
+        expect(stored).toMatchObject({ precision: "fp16", hot_slots: 3, block_ms: 60 });
+    });
+
+    it("a shape edit made without a restart is applied by the next change", async () => {
+        const s = await runningRvc();
+        s.state.voiceChanger.blockMs = 60; // e.g. typed, not committed yet
+        await s.update({ rmsMix: 0.2 });
+        expect(calls("stop_voice_changer")).toBe(1);
+    });
+
+    it("RVC engine settings do not restart another mode; a voice hotkey switches into RVC (restart)", async () => {
+        stored = { ...rustDefaults(), mode: "classic", rvc_consent_acknowledged: true };
+        running = true;
+        const s = await started();
+        await s.update({ precision: "fp16", cudaGraphs: "on" });
+        expect(calls("stop_voice_changer")).toBe(0);
+        await s.selectVoice({ id: "alto", path: "C:/m/alto" }, { ensureRvc: true });
+        expect(stored.mode).toBe("rvc");
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(calls("start_voice_changer")).toBe(1);
+    });
+
+    it("presets and tuned settings go through the same rules", async () => {
+        const s = await runningRvc();
+        // Re-applying the preset the engine already runs changes nothing, so it does not restart.
+        await s.applyRvcProfile("streamer");
+        expect(calls("stop_voice_changer")).toBe(0);
+        await s.applyRvcProfile("quality");
+        expect(stored).toMatchObject({ rvc_preset: "quality", rvc_execution_provider: "cuda", pitch_extractor: "rmvpe", extra_context_ms: 192 });
+        expect(calls("stop_voice_changer")).toBe(1);
+        emit("voice_changer:started", null);
+        expect(await s.applyTuning({ rvc_execution_provider: "cuda", block_ms: 40, mode: "classic", rvc_slot_dir: "C:/x" })).toBe(true);
+        expect(stored).toMatchObject({ rvc_execution_provider: "cuda", block_ms: 40, mode: "rvc", rvc_slot_dir: "C:/m/alto" });
+        expect(calls("stop_voice_changer")).toBe(2);
+        expect(await s.applyTuning({ unknown: 1 })).toBe(false);
+    });
+});
+
+describe("P3: capabilities, TensorRT progress, new error codes and hotkeys", () => {
+    it("reads the capabilities (normalized) and keeps the baseline without the command", async () => {
+        const s = await started();
+        expect(s.state.capabilitiesLoaded).toBe(false);
+        expect(s.state.capabilities.pitch_extractors).toEqual(["fcpe", "rmvpe", "dio"]);
+        capsReply = { pitch_extractors: ["swiftf0", "bogus"], rvc_execution_providers: ["dml_hp"], importer: true, max_hot_slots: 4 };
+        const caps = await s.refreshCapabilities();
+        expect(caps.pitch_extractors).toEqual(["fcpe", "rmvpe", "dio", "swiftf0"]);
+        expect(s.state.capabilities).toMatchObject({ importer: true, max_hot_slots: 4 });
+        expect(s.state.capabilitiesLoaded).toBe(true);
+    });
+
+    it("tracks TensorRT engine builds per component and clears them on stop", async () => {
+        vi.useFakeTimers();
+        try {
+            running = true;
+            const s = await started();
+            emit("voice_changer:trt_progress", { component: "vc.flowdec", stage: "building", fraction: 0.4, message: "", elapsed_ms: 9000 });
+            emit("voice_changer:trt_progress", { component: "vc.enc", stage: "cache_hit", fraction: 1, message: "", elapsed_ms: 30 });
+            emit("voice_changer:trt_progress", { component: "vc.flowdec", stage: "building", fraction: 7, message: "", elapsed_ms: 12000 });
+            expect(s.state.trt.map((r) => [r.component, r.stage, r.fraction])).toEqual([
+                ["vc.flowdec", "building", 1],
+                ["vc.enc", "cache_hit", 1],
+            ]);
+            await vi.advanceTimersByTimeAsync(7000);
+            expect(s.state.trt.map((r) => r.component)).toEqual(["vc.flowdec"]);
+            emit("voice_changer:trt_progress", { component: "vc.flowdec", stage: "failed", fraction: 0, message: "no TensorRT-RTX", elapsed_ms: 13000 });
+            await vi.advanceTimersByTimeAsync(7000);
+            expect(s.state.trt.map((r) => r.stage)).toEqual(["failed"]);
+            emit("voice_changer:stopped", null);
+            expect(s.state.trt).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("tells the user about lost / restored devices and the denoiser", async () => {
+        await started();
+        emit("voice_changer:error", { code: "device_lost", message: "The microphone disconnected." });
+        emit("voice_changer:error", { code: "device_restored", message: "The microphone is back." });
+        emit("voice_changer:error", { code: "denoiser_warning", message: "gtcrn: model missing" });
+        expect(String(vi.mocked(toast.warning).mock.calls[0][0])).toContain("voice_changer.toast_warning_device_lost");
+        expect(String(vi.mocked(toast.info).mock.calls[0][0])).toContain("voice_changer.toast_info_device_restored");
+        expect(String(vi.mocked(toast.warning).mock.calls[1][0])).toContain("voice_changer.toast_warning_denoiser");
+    });
+
+    it("hotkeys toggle the engine and step through the voices", async () => {
+        stored = { ...rustDefaults(), mode: "rvc", rvc_consent_acknowledged: true, rvc_slot_dir: "C:/m/a" };
+        slotRows = [
+            { id: "a", name: "A", path: "C:/m/a", format: "sigil-rvc-1" },
+            { id: "b", name: "B", path: "C:/m/b", format: "sigil-rvc-1", problem: "broken" },
+            { id: "c", name: "C", path: "C:/m/c", format: "rvc" },
+        ];
+        capsReply = { slot_formats: ["rvc", "sigil-rvc-1"] };
+        const s = await started();
+        await s.runShortcut("vcNextVoice");
+        expect(stored.rvc_slot_dir).toBe("C:/m/c");
+        await s.runShortcut("vcNextVoice");
+        expect(stored.rvc_slot_dir).toBe("C:/m/a");
+        await s.runShortcut("vcPrevVoice");
+        expect(stored.rvc_slot_dir).toBe("C:/m/c");
+        // No voice assigned to hotkey 1 (the app settings do not carry the assignments here).
+        await s.runShortcut("vcVoice1");
+        expect(stored.rvc_slot_dir).toBe("C:/m/c");
+        expect(String(vi.mocked(toast.info).mock.calls.at(-1)?.[0])).toContain("hotkey_no_voice_assigned");
+        await s.runShortcut("vcToggle");
+        expect(invoke.mock.calls.some(([c]) => c === "plugin:voice-changer|start_voice_changer")).toBe(true);
+        await s.runShortcut("muteMic");
+    });
+
+    it("a voice hotkey selects its assigned voice", async () => {
+        stored = { ...rustDefaults(), mode: "classic" };
+        slotRows = [
+            { id: "kira", name: "Kira", path: "C:/m/kira", format: "sigil-rvc-1" },
+            { id: "gone", name: "Gone", path: "C:/m/gone", format: "sigil-rvc-1", problem: "the template is missing" },
+        ];
+        capsReply = { slot_formats: ["rvc", "sigil-rvc-1"] };
+        vi.stubGlobal("window", { ApiServer: { state: { vcHotkeyVoices: ["gone", "kira"] } } });
+        const s = await started();
+        await s.runShortcut("vcVoice1");
+        expect(stored.rvc_slot_dir).toBe("");
+        expect(String(vi.mocked(toast.warning).mock.calls.at(-1)?.[0])).toContain("hotkey_voice_unusable");
+        await s.runShortcut("vcVoice2");
+        expect(stored).toMatchObject({ mode: "rvc", rvc_slot_dir: "C:/m/kira", slot_id: "kira" });
+        // RVC without the permission notice: the hotkey says where to confirm it.
+        await s.runShortcut("vcToggle");
+        expect(s.state.rvcConsentPending).toBe(true);
+        expect(String(vi.mocked(toast.info).mock.calls.at(-1)?.[0])).toContain("hotkey_consent_needed");
+    });
+});
+
+describe("P3-G review: restarts, failed voice switches, TensorRT rows and live recording", () => {
+    const START = "plugin:voice-changer|start_voice_changer";
+    const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).length;
+
+    /** The mocked backend, with `override` answering first (`undefined`: fall through). */
+    function overrideBackend(override: (cmd: string, args?: Record<string, unknown>) => unknown) {
+        const base = invoke.getMockImplementation()!;
+        invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+            const r = await override(cmd, args);
+            return r === undefined ? base(cmd, args) : r;
+        });
+    }
+
+    async function runningRvc() {
+        stored = { ...rustDefaults(), mode: "rvc", rvc_consent_acknowledged: true, rvc_slot_dir: "C:/m/alto", slot_id: "alto", pitch_semitones: 3 };
+        slotRows = [
+            { id: "alto", name: "Alto", path: "C:/m/alto", format: "sigil-rvc-1" },
+            { id: "bass", name: "Bass", path: "C:/m/bass", format: "sigil-rvc-1" },
+        ];
+        capsReply = { slot_formats: ["rvc", "sigil-rvc-1"] };
+        running = true;
+        const s = await started();
+        expect(s.state.isRunning).toBe(true);
+        return s;
+    }
+
+    it("a failed restart resolves false (no rejection) and does not fail a concurrent change", async () => {
+        const s = await runningRvc();
+        overrideBackend((cmd) => {
+            if (cmd === START) throw "missing base model: rmvpe";
+            return undefined;
+        });
+        const results = await Promise.all([s.update({ precision: "fp16" }), s.update({ hotSlots: 3 })]);
+        expect(results).toEqual([false, true]);
+        expect(calls(START)).toBe(1);
+        expect(String(vi.mocked(toast.error).mock.calls.at(-1)?.[0])).toContain("voice_changer.toast_start_failed");
+        expect(s.state.isRunning).toBe(false);
+        expect(await s.syncParamsAndRestartIfRunning()).toBe(true); // stopped: nothing to restart
+    });
+
+    it("a voice hotkey whose restart fails does not report the voice as selected", async () => {
+        stored = { ...rustDefaults(), mode: "classic", rvc_consent_acknowledged: true };
+        slotRows = [{ id: "kira", name: "Kira", path: "C:/m/kira", format: "sigil-rvc-1" }];
+        capsReply = { slot_formats: ["rvc", "sigil-rvc-1"] };
+        running = true;
+        const s = await started();
+        overrideBackend((cmd) => {
+            if (cmd === START) throw "no voice model";
+            return undefined;
+        });
+        vi.mocked(toast.info).mockClear();
+        await expect(s.runShortcut("vcNextVoice")).resolves.toBeUndefined();
+        expect(stored).toMatchObject({ mode: "rvc", rvc_slot_dir: "C:/m/kira" });
+        expect(vi.mocked(toast.info).mock.calls.some(([m]) => String(m).includes("hotkey_voice_selected"))).toBe(false);
+    });
+
+    it("a failed voice switch: the selection follows Rust back to the voice that plays, with its slot id", async () => {
+        const s = await runningRvc();
+        await s.selectVoice({ id: "bass", path: "C:/m/bass" });
+        expect(s.state.voiceChanger).toMatchObject({ rvcSlotDir: "C:/m/bass", slotId: "bass" });
+        // Rust: the load failed, the worker went back to alto (its values, but not its slot id).
+        stored = { ...stored, rvc_slot_dir: "C:/m/alto", pitch_semitones: 3 };
+        emit("voice_changer:error", { code: "rvc_load", message: "bass: content encoder not installed" });
+        emit("voice_changer:params", structuredClone(stored));
+        await vi.waitFor(() => expect(stored.slot_id).toBe("alto"));
+        expect(s.state.voiceChanger).toMatchObject({ rvcSlotDir: "C:/m/alto", slotId: "alto", pitch: 3 });
+        expect(calls("plugin:voice-changer|stop_voice_changer")).toBe(0);
+    });
+
+    it("a params event while a set is in flight is read again once the sync is done", async () => {
+        const s = await runningRvc();
+        await s.selectVoice({ id: "bass", path: "C:/m/bass" });
+        // Rust handles the next set at once but its reply is delivered later.
+        let deliver: () => void = () => {};
+        const gate = new Promise<void>((r) => (deliver = r));
+        overrideBackend(async (cmd, args) => {
+            if (cmd !== "plugin:voice-changer|set_voice_changer_params") return undefined;
+            stored = structuredClone(args!.params as VoiceChangerParamsRust);
+            const reply = structuredClone(stored);
+            await gate;
+            return reply;
+        });
+        const pending = s.update({ rmsMix: 0.3 });
+        await Promise.resolve();
+        // Meanwhile the switch to bass failed: Rust went back to alto and said so.
+        stored = { ...stored, rvc_slot_dir: "C:/m/alto", pitch_semitones: 3 };
+        emit("voice_changer:params", structuredClone(stored));
+        deliver();
+        await pending;
+        await vi.waitFor(() => expect(s.state.voiceChanger.rvcSlotDir).toBe("C:/m/alto"));
+        expect(s.state.voiceChanger).toMatchObject({ pitch: 3, rmsMix: 0.3 });
+    });
+
+    it("TensorRT rows only for the voice changer's own run", async () => {
+        const row = { component: "vc.flowdec", stage: "building", fraction: 0.2, message: "", elapsed_ms: 900 };
+        const s = await started(); // stopped
+        // An autotune or benchmark build (only while stopped) is not the voice changer's.
+        emit("voice_changer:trt_progress", row);
+        expect(s.state.trt).toEqual([]);
+        emit("voice_changer:started", null);
+        emit("voice_changer:trt_progress", row);
+        expect(s.state.trt).toHaveLength(1);
+        running = true;
+        await s.stop();
+        expect(s.state.trt).toEqual([]);
+        // The stopped worker's build keeps reporting until it ends.
+        emit("voice_changer:trt_progress", { ...row, fraction: 0.6 });
+        expect(s.state.trt).toEqual([]);
+    });
+
+    it("a live recording runs through a settings restart", async () => {
+        vi.useFakeTimers();
+        try {
+            const s = await runningRvc();
+            overrideBackend((cmd) => {
+                if (cmd === VC_LIVE_START) return null;
+                if (cmd === VC_LIVE_STOP) return { seconds: 120, ticks: 1, report_dir: "C:/r/live", metrics: {} };
+                return undefined;
+            });
+            expect(await s.bench.startLiveRecord(120)).toBe(true);
+            const restart = s.update({ precision: "fp16" }); // stop, 80 ms, start
+            await vi.advanceTimersByTimeAsync(40);
+            emit("voice_changer:stopped", null);
+            await vi.advanceTimersByTimeAsync(60);
+            expect(await restart).toBe(true);
+            emit("voice_changer:started", null);
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(calls(VC_LIVE_STOP)).toBe(0);
+            expect(s.bench.state.liveRecord.recording).toBe(true);
+            // A real stop ends it (Rust after 2 s): collected then.
+            await s.stop();
+            await vi.advanceTimersByTimeAsync(3_000);
+            expect(calls(VC_LIVE_STOP)).toBe(1);
+            expect(s.bench.state.liveRecord).toMatchObject({ recording: false, summary: { report_dir: "C:/r/live" } });
+            s.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+const VC_LIVE_START = "plugin:voice-changer|voice_changer_live_record_start";
+const VC_LIVE_STOP = "plugin:voice-changer|voice_changer_live_record_stop";

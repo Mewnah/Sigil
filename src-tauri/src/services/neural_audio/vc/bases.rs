@@ -1,9 +1,19 @@
 //! RVC base-model paths under `app_data/voice-changer/base/` and slot manifest helpers.
+//!
+//! Two kinds of voice slot are preflighted here ([`preflight_rvc`]):
+//! - bring-your-own ONNX generators (format `rvc`, with or without `manifest.json`): the content
+//!   encoder comes from the explicit path or the legacy `base/` candidates;
+//! - imported template voices (format `sigil-rvc-1`, written by `import::slot`): their weights
+//!   must be present and the content encoder their manifest names must be installed, found by
+//!   the engine's own rule ([`resolve_embedder`] runs `engine::content::resolve_encoder_file`: the
+//!   explicit path only for ContentVec, then the model store entry `vc/embedder-*`, then, for
+//!   ContentVec 768 / 256, the legacy `voice-changer/base/` names), so a voice that passes the
+//!   preflight is one the engine can load.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::manifest::{load_manifest, RvcManifest, RvcVersion};
+use super::manifest::{load_manifest, load_slot_manifest, RvcManifest, RvcVersion, SlotFormat};
 
 /// Known filenames we auto-resolve when inspector paths are empty.
 const HUBERT_CANDIDATES: &[&str] = &[
@@ -90,6 +100,32 @@ pub fn resolve_rmvpe(explicit: &str, app_data: &Path, slot_dir: &Path) -> Option
     )
 }
 
+/// The content-encoder file of an imported voice in `slot_dir`, found exactly as the engine finds it
+/// (`engine::content::resolve_encoder_file`, for either device class): the explicit path only for
+/// a ContentVec voice (it must exist; the other encoders always come from their store entry),
+/// then the model-store entry of the manifest's embedder (any installed precision variant), then,
+/// for ContentVec 768 / 256, the legacy names in `voice-changer/base/` (the slot's
+/// `../../base`) and the slot. `embedder` is the manifest's name; `None` means ContentVec of the
+/// voice's width. The error is the engine's.
+pub fn resolve_embedder(explicit: &str, embedder: Option<&str>, emb_channels: u32, slot_dir: &Path) -> Result<PathBuf, String> {
+    use super::engine::content::{resolve_encoder_file, EmbedderKind};
+    use super::engine::options::PrecisionMode;
+    let kind = EmbedderKind::from_manifest(embedder, emb_channels)?;
+    let t = explicit.trim();
+    let explicit = (!t.is_empty()).then(|| Path::new(t));
+    let mut first_err = None;
+    // A GPU run prefers the fp16 variant, a CPU run fp32 / int8: either installed variant counts.
+    for gpu in [true, false] {
+        match resolve_encoder_file(kind, explicit, Some(slot_dir), gpu, PrecisionMode::Auto) {
+            Ok(r) => return Ok(r.path),
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    Err(first_err.unwrap_or_else(|| format!("the {} content encoder is not installed", kind.as_str())))
+}
+
 /// Ensure `app_data/voice-changer/{base,models}` exist.
 pub fn ensure_voice_changer_dirs(app_data: &Path) -> Result<(), String> {
     fs::create_dir_all(base_models_dir(app_data)).map_err(|e| e.to_string())?;
@@ -97,7 +133,7 @@ pub fn ensure_voice_changer_dirs(app_data: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn find_generator_onnx(slot_dir: &Path) -> Option<String> {
+pub(crate) fn find_generator_onnx(slot_dir: &Path) -> Option<String> {
     const NAMES: &[&str] = &["gen.onnx", "model.onnx", "rvc.onnx", "G.onnx"];
     for name in NAMES {
         if slot_dir.join(name).is_file() {
@@ -126,7 +162,7 @@ fn find_generator_onnx(slot_dir: &Path) -> Option<String> {
 
 /// Pick the slot's retrieval index: well-known names first, then any `*.index`, preferring
 /// RVC's `added_*` files over `trained_*` ones (a trained-only index holds no vectors).
-fn find_index_file(slot_dir: &Path) -> Option<String> {
+pub(crate) fn find_index_file(slot_dir: &Path) -> Option<String> {
     for name in ["added_IVF256_Flat_nprobe_1.index", "added.index", "index.index"] {
         if slot_dir.join(name).is_file() {
             return Some(name.to_string());
@@ -182,6 +218,7 @@ pub fn load_or_infer_manifest(slot_dir: &Path) -> Result<(RvcManifest, bool), St
         index,
         speaker_id: 0,
         hubert: None,
+        ..RvcManifest::default()
     };
     Ok((m, true))
 }
@@ -206,14 +243,24 @@ pub fn preflight_rvc(
     if !slot.is_dir() {
         return Err(format!("RVC model slot folder not found: {}", slot.display()));
     }
-    // Validates manifest.json (or that a generator exists to infer one from); never writes.
-    let _manifest = load_or_infer_manifest(&slot)?;
-    let hubert_path = resolve_hubert(hubert, app_data, &slot).ok_or_else(|| {
-        format!(
-            "HuBERT / ContentVec ONNX not found. Set the path or place hubert_base.onnx / contentvec.onnx under {}",
-            base_models_dir(app_data).display()
-        )
-    })?;
+    let template_voice = if slot.join("manifest.json").is_file() {
+        load_slot_manifest(&slot).ok().filter(|m| m.slot_format() == SlotFormat::SigilRvc)
+    } else {
+        None
+    };
+    let hubert_path = match &template_voice {
+        Some(m) => preflight_template_voice(&slot, m, hubert)?,
+        None => {
+            // Validates manifest.json (or that a generator exists to infer one from); never writes.
+            let _manifest = load_or_infer_manifest(&slot)?;
+            resolve_hubert(hubert, app_data, &slot).ok_or_else(|| {
+                format!(
+                    "HuBERT / ContentVec ONNX not found. Set the path or place hubert_base.onnx / contentvec.onnx under {}",
+                    base_models_dir(app_data).display()
+                )
+            })?
+        }
+    };
     let pitch = pitch_extractor.trim().to_lowercase();
     let fcpe_path = if matches!(pitch.as_str(), "dio" | "rmvpe" | "crepe") {
         PathBuf::new()
@@ -236,6 +283,34 @@ pub fn preflight_rvc(
         resolve_rmvpe(rmvpe, app_data, &slot)
     };
     Ok((slot, hubert_path, fcpe_path, rmvpe_path))
+}
+
+/// Preflight of an imported template voice (format `sigil-rvc-1`): the engine runs in this build,
+/// its weights are present and its content encoder resolves the way the engine resolves it
+/// ([`resolve_embedder`]). Returns the HuBERT / ContentVec path from the settings unchanged (the
+/// engine uses it only for a ContentVec voice and says so otherwise), or an empty path when it is
+/// unset and the engine's shared encoder pool resolves the slot's embedder itself (so it can pick
+/// the precision variant for the EP).
+fn preflight_template_voice(slot: &Path, m: &RvcManifest, hubert: &str) -> Result<PathBuf, String> {
+    if !super::engine::available() {
+        return Err(format!(
+            "{} holds an imported voice; the Sigil Voice Engine that runs imported voices is not available in this build yet",
+            slot.display()
+        ));
+    }
+    for f in [m.weights.as_deref().unwrap_or("weights.f32.bin"), m.speakers.as_deref().unwrap_or("speakers.f32.bin")] {
+        if f.contains(['/', '\\']) || f.contains("..") || !slot.join(f).is_file() {
+            return Err(format!("{f} is missing in {}; import the voice again", slot.display()));
+        }
+    }
+    resolve_embedder(hubert, m.embedder.as_deref(), m.emb_channels, slot).map_err(|e| {
+        let mut msg = e;
+        if let Some(first) = msg.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        msg
+    })?;
+    Ok(PathBuf::from(hubert.trim()))
 }
 
 #[cfg(test)]
@@ -304,6 +379,126 @@ mod tests {
         assert_eq!(m.sample_rate, 48_000);
         assert_eq!(m.version, RvcVersion::V1);
         assert_eq!(m.emb_channels, 256);
+    }
+
+    /// The installed model-store file of an embedder, if any (tests adapt to the machine's store).
+    fn store(name: &str) -> Option<PathBuf> {
+        use crate::services::neural_audio::vc::assets;
+        let id = assets::embedder_id(name)?;
+        [Some("fp32"), None, Some("fp16"), Some("int8")].into_iter().find_map(|v| assets::model_file(id, v))
+    }
+
+    /// `<app_data>/voice-changer/models/<name>` with a template-voice manifest, its weights and
+    /// speakers (`extra` is spliced into the manifest JSON).
+    fn template_slot(app: &Path, name: &str, extra: &str) -> PathBuf {
+        let slot = models_dir(app).join(name);
+        fs::create_dir_all(&slot).unwrap();
+        let manifest = format!(
+            r#"{{"format":"sigil-rvc-1","template":"v2-40k-f0-hifigan","weights":"weights.f32.bin","speakers":"speakers.f32.bin"{extra}}}"#
+        );
+        fs::write(slot.join("manifest.json"), manifest).unwrap();
+        fs::write(slot.join("weights.f32.bin"), b"w").unwrap();
+        fs::write(slot.join("speakers.f32.bin"), b"s").unwrap();
+        slot
+    }
+
+    #[test]
+    fn template_voices_are_preflighted_by_their_manifest() {
+        let slot = TempSlot::new("tpl");
+        let app = TempSlot::new("tpl-app");
+        fs::write(
+            slot.0.join("manifest.json"),
+            br#"{"format":"sigil-rvc-1","template":"v2-40k-f0-hifigan","weights":"weights.f32.bin","speakers":"speakers.f32.bin","embedder":"spin-v2"}"#,
+        )
+        .unwrap();
+        let err = preflight_rvc(&slot.0.to_string_lossy(), "", "", "", "dio", &app.0).unwrap_err();
+        if super::super::engine::available() {
+            assert!(err.contains("weights.f32.bin"), "{err}");
+            // A ContentVec voice: the settings path is its encoder and must exist.
+            let cv = template_slot(&app.0, "cv", r#","embedder":"contentvec""#);
+            let err = preflight_rvc(&cv.to_string_lossy(), "C:/no/such/encoder.onnx", "", "", "dio", &app.0).unwrap_err();
+            assert!(err.contains("encoder") && err.contains("C:/no/such"), "{err}");
+            let enc = cv.join("custom.onnx");
+            fs::write(&enc, b"x").unwrap();
+            let (_, hubert, _, _) = preflight_rvc(&cv.to_string_lossy(), &enc.to_string_lossy(), "", "", "dio", &app.0).unwrap();
+            assert_eq!(hubert, enc);
+        } else {
+            assert!(err.contains("Sigil Voice Engine"), "{err}");
+        }
+        // Never refused as "not an ONNX generator" by the legacy loader, never written to.
+        assert!(!err.contains("ONNX generator"));
+        assert!(!slot.0.join("gen.onnx").exists());
+    }
+
+    /// The preflight agrees with the engine: a HuBERT path set for bring-your-own voices does not
+    /// stand in for another embedder, and a v1 voice finds the legacy 256-channel names.
+    #[test]
+    fn template_preflight_resolves_encoders_like_the_engine() {
+        if !super::super::engine::available() {
+            return;
+        }
+        let app = TempSlot::new("tpl-enc");
+        let global = app.0.join("hubert_base.onnx");
+        fs::write(&global, b"x").unwrap();
+        for embedder in ["hubert-ja", "spin-v2"] {
+            let slot = template_slot(&app.0, embedder, &format!(r#","embedder":"{embedder}""#));
+            let got = preflight_rvc(&slot.to_string_lossy(), &global.to_string_lossy(), "", "", "dio", &app.0);
+            match store(embedder) {
+                None => {
+                    let err = got.unwrap_err();
+                    assert!(err.contains(embedder) && err.contains("not installed"), "{embedder}: {err}");
+                }
+                // Installed: it passes, and the settings path is handed on unchanged (the engine says
+                // it is not used for this voice).
+                Some(_) => assert_eq!(got.unwrap().1, global, "{embedder}"),
+            }
+        }
+        // v1 (256 channels): `voice-changer/base/vec-256-layer-9.onnx` is the engine's legacy name.
+        let v1 = template_slot(&app.0, "v1", r#","version":"v1""#);
+        if store("contentvec-256").is_none() {
+            let err = preflight_rvc(&v1.to_string_lossy(), "", "", "", "dio", &app.0).unwrap_err();
+            assert!(err.contains("contentvec-256"), "{err}");
+        }
+        fs::create_dir_all(base_models_dir(&app.0)).unwrap();
+        fs::write(base_models_dir(&app.0).join("vec-256-layer-9.onnx"), b"x").unwrap();
+        let (_, hubert, _, _) = preflight_rvc(&v1.to_string_lossy(), "", "", "", "dio", &app.0).unwrap();
+        assert_eq!(hubert, PathBuf::new(), "the engine resolves it");
+        assert!(resolve_embedder("", None, 256, &v1).is_ok());
+        // A 768 voice does not take the 256 file.
+        if store("contentvec").is_none() {
+            assert!(resolve_embedder("", None, 768, &v1).is_err());
+        }
+    }
+
+    #[test]
+    fn embedders_resolve_explicit_then_store_then_legacy() {
+        let app = TempSlot::new("emb-app");
+        let slot = models_dir(&app.0).join("voice");
+        fs::create_dir_all(&slot).unwrap();
+        let custom = slot.join("custom.onnx");
+        fs::write(&custom, b"x").unwrap();
+        // The explicit path is a ContentVec voice's encoder (and must exist) ...
+        assert_eq!(resolve_embedder(&custom.to_string_lossy(), None, 768, &slot), Ok(custom.clone()));
+        assert!(resolve_embedder("C:/no/such/encoder.onnx", None, 768, &slot).is_err());
+        // ... and never another embedder's.
+        if store("spin-v2").is_none() {
+            assert!(resolve_embedder(&custom.to_string_lossy(), Some("spin-v2"), 768, &slot).is_err());
+        }
+        // ContentVec 768 falls back to the legacy base folder when the store has none.
+        let base = base_models_dir(&app.0);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("hubert_base.onnx"), b"x").unwrap();
+        let cv = resolve_embedder("", None, 768, &slot).unwrap();
+        assert!(store("contentvec").is_some() || cv == base.join("hubert_base.onnx"), "{}", cv.display());
+        // The other embedders only come from the model store.
+        for (name, width) in [("hubert-ja", 768), ("spin-v2", 768)] {
+            if store(name).is_none() {
+                assert!(resolve_embedder("", Some(name), width, &slot).is_err(), "{name}");
+            }
+        }
+        // Unknown embedders and widths that do not match are the engine's errors.
+        assert!(resolve_embedder("", Some("wavlm-large"), 768, &slot).unwrap_err().contains("wavlm-large"));
+        assert!(resolve_embedder("", Some("spin-v2"), 256, &slot).is_err());
     }
 
     #[test]

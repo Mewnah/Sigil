@@ -1,0 +1,31 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "Sigil Voice Engine on the CPU (the Streamer preset: GPU EPs off): the voice in ${SLOT}, ${PITCH_CPU} F0 (SwiftF0 runs as FCPE while a build cannot run it), 80 ms engine blocks on the 512-frame device block, the int8 content encoder when the CPU has VNNI. Offline compute (T4 streamer RTF), a wall-clock paced run (T4 CPU cores), the H3 simulation (4 game threads at 60 %: T1 streamer, T4) and fidelity against the offline ceiling (T5). Materialized by run-perf-gate.ps1 -Profile p3.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64, "worker_priority": "auto" },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER_CPU}",
+    "execution_provider": "cpu",
+    "pitch_extractor": "${PITCH_CPU}",
+    "preset": "streamer",
+    "block_ms": 80,
+    "build": "${BUILD}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline" },
+    { "mode": "paced", "name": "paced", "seconds": 20, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h3-game", "profile": "h3_cpu_game", "seconds": 20, "warmup_s": 1 },
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1,
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu" }
+    }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": true }
+}

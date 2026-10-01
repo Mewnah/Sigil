@@ -1,0 +1,926 @@
+{
+  "format": "sigil-rvc-template-matrix",
+  "format_version": 1,
+  "templates": [
+    {
+      "id": "v1-32k-f0-hifigan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 13,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 13,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 16,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 732706
+    },
+    {
+      "id": "v1-32k-nof0-hifigan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 13,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 13,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 14,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 699616
+    },
+    {
+      "id": "v1-40k-f0-hifigan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 15,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 685812
+    },
+    {
+      "id": "v1-40k-nof0-hifigan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 13,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 653735
+    },
+    {
+      "id": "v1-48k-f0-hifigan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 12,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 12,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 12,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 733840
+    },
+    {
+      "id": "v1-48k-nof0-hifigan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 12,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 12,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 14,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 699614
+    },
+    {
+      "id": "v2-24k-f0-hifigan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 12,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 12,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 15,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 684585
+    },
+    {
+      "id": "v2-24k-f0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nsf-harmonics"
+      ],
+      "dec_margin": 12,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 12,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 16,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 665060
+    },
+    {
+      "id": "v2-24k-f0-refinegan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "layout_version": 2,
+      "features": [
+        "adain-noise-pool",
+        "flowdec-inputs-by-layout",
+        "linear-f0"
+      ],
+      "dec_margin": 89,
+      "latent_offset": 77,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 89,
+      "f0_lookahead_frames": 1,
+      "seam_frames_fp32": 21,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 1009393
+    },
+    {
+      "id": "v2-24k-nof0-hifigan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 12,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 12,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 15,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 654057
+    },
+    {
+      "id": "v2-32k-f0-hifigan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 14,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 685227
+    },
+    {
+      "id": "v2-32k-f0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nsf-harmonics"
+      ],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 10,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 665559
+    },
+    {
+      "id": "v2-32k-f0-refinegan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "layout_version": 2,
+      "features": [
+        "adain-noise-pool",
+        "flowdec-inputs-by-layout",
+        "linear-f0"
+      ],
+      "dec_margin": 89,
+      "latent_offset": 77,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 89,
+      "f0_lookahead_frames": 1,
+      "seam_frames_fp32": 22,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 1014769
+    },
+    {
+      "id": "v2-32k-nof0-hifigan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 14,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 653945
+    },
+    {
+      "id": "v2-40k-f0-hifigan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 13,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 685813
+    },
+    {
+      "id": "v2-40k-f0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nsf-harmonics"
+      ],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 11,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 666167
+    },
+    {
+      "id": "v2-40k-f0-refinegan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "layout_version": 2,
+      "features": [
+        "adain-noise-pool",
+        "flowdec-inputs-by-layout",
+        "linear-f0"
+      ],
+      "dec_margin": 87,
+      "latent_offset": 76,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 88,
+      "f0_lookahead_frames": 1,
+      "seam_frames_fp32": 29,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 1020043
+    },
+    {
+      "id": "v2-40k-nof0-hifigan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 11,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 11,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 11,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 653766
+    },
+    {
+      "id": "v2-48k-f0-hifigan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "layout_version": 1,
+      "features": [],
+      "dec_margin": 10,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 10,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 16,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 686773
+    },
+    {
+      "id": "v2-48k-f0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nsf-harmonics"
+      ],
+      "dec_margin": 10,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 10,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 14,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 666987
+    },
+    {
+      "id": "v2-48k-f0-refinegan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "layout_version": 2,
+      "features": [
+        "adain-noise-pool",
+        "flowdec-inputs-by-layout",
+        "linear-f0"
+      ],
+      "dec_margin": 85,
+      "latent_offset": 75,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 85,
+      "f0_lookahead_frames": 1,
+      "seam_frames_fp32": 26,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 1025613
+    },
+    {
+      "id": "v2-48k-nof0-hifigan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "layout_version": 2,
+      "features": [
+        "flowdec-inputs-by-layout",
+        "nof0"
+      ],
+      "dec_margin": 10,
+      "latent_offset": 0,
+      "flow_receptive_right": 24,
+      "dec_receptive_right_frames": 10,
+      "f0_lookahead_frames": 0,
+      "seam_frames_fp32": 17,
+      "recommended": {
+        "enc": {
+          "cpu": "fp32",
+          "gpu": "fp32"
+        },
+        "flowdec": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        },
+        "knn": {
+          "cpu": "fp32",
+          "gpu": "fp16"
+        }
+      },
+      "bytes": 654141
+    }
+  ],
+  "unsupported": [
+    {
+      "id": "v1-24k-f0-hifigan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "hifigan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-24k-f0-refinegan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-24k-f0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-24k-nof0-hifigan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "hifigan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-24k-nof0-refinegan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-24k-nof0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "No trainer has an RVC v1 24 kHz configuration (24 kHz is Applio's, v2 only)."
+    },
+    {
+      "id": "v1-32k-f0-refinegan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "reason": "RefineGAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-32k-f0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "reason": "MRF HiFi-GAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-32k-nof0-refinegan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v1-32k-nof0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v1-40k-f0-refinegan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "reason": "RefineGAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-40k-f0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "reason": "MRF HiFi-GAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-40k-nof0-refinegan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v1-40k-nof0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v1-48k-f0-refinegan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "refinegan",
+      "reason": "RefineGAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-48k-f0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": true,
+      "vocoder": "mrf-hifigan",
+      "reason": "MRF HiFi-GAN voices come from Applio, which trains RVC v2 (768-channel ContentVec) models only."
+    },
+    {
+      "id": "v1-48k-nof0-refinegan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v1-48k-nof0-mrf-hifigan",
+      "version": "v1",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v2-24k-nof0-refinegan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v2-24k-nof0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 24000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v2-32k-nof0-refinegan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v2-32k-nof0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 32000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v2-40k-nof0-refinegan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v2-40k-nof0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 40000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    },
+    {
+      "id": "v2-48k-nof0-refinegan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "refinegan",
+      "reason": "Applio trains RefineGAN only with pitch guidance (its Synthesizer builds no f0-less RefineGAN)."
+    },
+    {
+      "id": "v2-48k-nof0-mrf-hifigan",
+      "version": "v2",
+      "sample_rate": 48000,
+      "f0": false,
+      "vocoder": "mrf-hifigan",
+      "reason": "Applio trains MRF HiFi-GAN only with pitch guidance (its Synthesizer builds no f0-less MRF generator)."
+    }
+  ],
+  "total_bytes": 16297221
+}

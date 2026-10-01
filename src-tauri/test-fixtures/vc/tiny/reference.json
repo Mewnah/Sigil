@@ -15,7 +15,8 @@
       "fp16": 0.005
     },
     "fp16_tolerance_scaled_by_peak": true,
-    "source": "upstream RVC SynthesizerTrnMs768NSFsid.infer, PyTorch fp32, fixed noise"
+    "source": "upstream RVC SynthesizerTrnMs*NSFsid[_nono].infer, PyTorch fp32, fixed noise",
+    "layout_version": 1
   },
   "tensors": [
     {

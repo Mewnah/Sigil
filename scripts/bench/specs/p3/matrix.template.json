@@ -1,0 +1,25 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "One cell of run-matrix.ps1: the voice in ${SLOT} on ${EP}, ${PITCH} F0, ${BLOCK_MS} ms engine blocks on a ${BLOCK_FRAMES}-frame device block, ${EXTRA_MS} ms extra context, ${PRECISION} precision, preset ${PRESET}, levers ${LEVERS}. Offline compute and a paced run on the virtual clock (real compute, no sleeps).",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "precision": "${PRECISION}",
+    "block_ms": ${BLOCK_MS},
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline" },
+    { "mode": "paced", "name": "paced", "seconds": 8, "clock": "virtual", "warmup_s": 1 }
+  ],
+  "output": { "write_timeline": false, "write_audio": false }
+}

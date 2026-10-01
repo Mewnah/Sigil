@@ -52,7 +52,6 @@
     "microsoft-cognitiveservices-speech-sdk": "^1.48.0",
     "nanoid": "^4.0.2",
     "obs-websocket-js": "^5.0.8",
-    "openai": "^6.33.0",
     "peerjs": "^1.5.5",
     "postcss": "^8.5.8",
     "pubsub-js": "^1.9.5",

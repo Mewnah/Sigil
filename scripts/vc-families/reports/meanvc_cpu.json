@@ -1,0 +1,363 @@
+{
+  "family": "meanvc",
+  "model": "MeanVC2 40ms_40ms (HF ASLP-lab/MeanVC2 @39cdd195)",
+  "env": {
+    "python": "3.12.10",
+    "torch": "2.3.1+cu121",
+    "onnxruntime": "1.28.0",
+    "ep": "cpu"
+  },
+  "threads": 2,
+  "files": {
+    "fbank": "fbank.onnx",
+    "asr": "asr.onnx",
+    "gtm": "gtm.onnx",
+    "dit": "dit.onnx",
+    "dit_step": "dit_step.onnx",
+    "vocos": "vocos.onnx"
+  },
+  "parity": {
+    "fbank_utterance": {
+      "snr_db": 109.18,
+      "max_abs": 0.00303,
+      "rel_l2": 3.47e-06,
+      "cosine": 1.0,
+      "ref_rms": 16.07,
+      "pass": true
+    },
+    "asr_12_calls": {
+      "snr_db": 121.75,
+      "max_abs": 7.63e-06,
+      "rel_l2": 8.17e-07,
+      "cosine": 1.0,
+      "ref_rms": 1.62,
+      "pass": true
+    },
+    "asr_att_cache_after": {
+      "snr_db": 122.93,
+      "max_abs": 4.29e-06,
+      "rel_l2": 7.13e-07,
+      "cosine": 1.0,
+      "ref_rms": 1.152,
+      "pass": true
+    },
+    "gtm": {
+      "snr_db": 133.4,
+      "max_abs": 1.07e-06,
+      "rel_l2": 2.14e-07,
+      "cosine": 1.0,
+      "ref_rms": 0.5724,
+      "pass": true
+    },
+    "dit_5_calls": {
+      "snr_db": 120.76,
+      "max_abs": 4.65e-06,
+      "rel_l2": 9.16e-07,
+      "cosine": 1.0,
+      "ref_rms": 1.129,
+      "pass": true
+    },
+    "chain_bn_up": {
+      "snr_db": 104.69,
+      "max_abs": 0.000121,
+      "rel_l2": 5.83e-06,
+      "cosine": 1.0,
+      "ref_rms": 1.703,
+      "pass": true
+    },
+    "chain_mel": {
+      "snr_db": 102.48,
+      "max_abs": 7.87e-05,
+      "rel_l2": 7.51e-06,
+      "cosine": 1.0,
+      "ref_rms": 0.4251,
+      "pass": true
+    },
+    "chain_audio": {
+      "snr_db": 59.23,
+      "max_abs": 0.00475,
+      "rel_l2": 0.00109,
+      "cosine": 0.999999404,
+      "ref_rms": 0.1071,
+      "logmel": {
+        "snr_db": 82.16,
+        "max_abs": 0.0287,
+        "rel_l2": 7.8e-05,
+        "cosine": 0.999999997,
+        "ref_rms": 7.959
+      },
+      "pass": true
+    },
+    "vocos_24_frames": {
+      "snr_db": 88.91,
+      "max_abs": 2.47e-07,
+      "rel_l2": 3.58e-05,
+      "cosine": 0.999999999,
+      "ref_rms": 0.0004784,
+      "logmel": {
+        "snr_db": 131.79,
+        "max_abs": 2.1e-05,
+        "rel_l2": 2.57e-07,
+        "cosine": 1.0,
+        "ref_rms": 11.05
+      },
+      "pass": true
+    },
+    "crossfade_linspace_bitexact": {
+      "equal": true,
+      "pass": true
+    }
+  },
+  "parity_setup": {
+    "source": "jfk.wav",
+    "seconds": 11.0,
+    "seed": 42,
+    "speaker": "seeded random unit vector (numpy default_rng(1234))",
+    "reference_impl": "upstream run_rt.VCRunner.process_file, PyTorch fp32 CPU (40ms model, 2 ODE steps)",
+    "chunks": 69,
+    "dit_calls": 552,
+    "output_samples": 176480,
+    "graphs": {
+      "asr": {
+        "file": "asr.onnx",
+        "bytes": 75781551,
+        "sha256": "f15e38fd3aee130d3eeab7a8eceb628bdef916cf813ddfbcfacc2fddb5fe50a4"
+      },
+      "dit": {
+        "file": "dit.onnx",
+        "bytes": 53539418,
+        "sha256": "07b2ca239a0bd1f7e99ee01e916fa1cfbc09739a2af10b1adbb612424be02911"
+      },
+      "dit_step": {
+        "file": "dit_step.onnx",
+        "bytes": 53539573,
+        "sha256": "623713a15c704d98385ebc192ade35c70377460c84ed09ce4b93d18efe04f036"
+      },
+      "fbank": {
+        "file": "fbank.onnx",
+        "bytes": 906697,
+        "sha256": "9d5ab6bb30f6e4a50a97fdfe2834d018584f5737c9b583718e453f3878dacc61"
+      },
+      "gtm": {
+        "file": "gtm.onnx",
+        "bytes": 17441981,
+        "sha256": "eb6b2974bf039cd416e5a07f25c6add819264eace2a82058c4564854c08bb565"
+      },
+      "vocos": {
+        "file": "vocos.onnx",
+        "bytes": 34849583,
+        "sha256": "7fcf85deeb5e56a973f596e82f5fa37d154ac030a1434f6c9b893fe6c871f21a"
+      }
+    }
+  },
+  "timing_conditions": {
+    "gpu_util_pct": 34,
+    "cpu_util_pct": 13.7,
+    "cpu_threads": 16
+  },
+  "cost": {
+    "threads1": {
+      "fbank": {
+        "host": {
+          "median_ms": 0.083,
+          "p90_ms": 0.087,
+          "min_ms": 0.08,
+          "runs": 100,
+          "block_medians_ms": [
+            0.083,
+            0.084,
+            0.087
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "asr": {
+        "host": {
+          "median_ms": 2.428,
+          "p90_ms": 2.596,
+          "min_ms": 2.264,
+          "runs": 100,
+          "block_medians_ms": [
+            2.518,
+            2.428,
+            2.482
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        }
+      },
+      "dit_step": {
+        "host": {
+          "median_ms": 1.705,
+          "p90_ms": 1.792,
+          "min_ms": 1.627,
+          "runs": 100,
+          "block_medians_ms": [
+            1.751,
+            1.726,
+            1.705
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        }
+      },
+      "vocos": {
+        "host": {
+          "median_ms": 1.27,
+          "p90_ms": 1.328,
+          "min_ms": 1.247,
+          "runs": 100,
+          "block_medians_ms": [
+            1.27,
+            1.277,
+            1.27
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "per_chunk": {
+        "host_steps1": {
+          "per_40ms_chunk_ms": 4.21,
+          "rtf": 0.105
+        },
+        "host_steps2": {
+          "per_40ms_chunk_ms": 5.915,
+          "rtf": 0.148
+        }
+      }
+    },
+    "threads2": {
+      "fbank": {
+        "host": {
+          "median_ms": 0.092,
+          "p90_ms": 0.096,
+          "min_ms": 0.072,
+          "runs": 100,
+          "block_medians_ms": [
+            0.093,
+            0.092,
+            0.092
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "asr": {
+        "host": {
+          "median_ms": 2.755,
+          "p90_ms": 2.835,
+          "min_ms": 2.126,
+          "runs": 100,
+          "block_medians_ms": [
+            2.771,
+            2.767,
+            2.755
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        }
+      },
+      "dit_step": {
+        "host": {
+          "median_ms": 2.08,
+          "p90_ms": 2.122,
+          "min_ms": 1.464,
+          "runs": 100,
+          "block_medians_ms": [
+            2.103,
+            2.08,
+            2.088
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        }
+      },
+      "vocos": {
+        "host": {
+          "median_ms": 1.433,
+          "p90_ms": 1.46,
+          "min_ms": 1.055,
+          "runs": 100,
+          "block_medians_ms": [
+            1.439,
+            1.441,
+            1.433
+          ]
+        },
+        "session": {
+          "dims_pinned": true
+        }
+      },
+      "per_chunk": {
+        "host_steps1": {
+          "per_40ms_chunk_ms": 4.913,
+          "rtf": 0.123
+        },
+        "host_steps2": {
+          "per_40ms_chunk_ms": 6.994,
+          "rtf": 0.175
+        }
+      }
+    },
+    "once_per_voice": {
+      "gtm": {
+        "host": {
+          "median_ms": 0.223,
+          "p90_ms": 0.233,
+          "min_ms": 0.201,
+          "runs": 10,
+          "block_medians_ms": [
+            0.228,
+            0.229,
+            0.223
+          ]
+        },
+        "session": {
+          "dims_pinned": false
+        }
+      }
+    },
+    "note": "per 40 ms output chunk = fbank(2880 samples)/4 + asr/2 + steps x dit_step + vocos(6 frames); upstream processes 160 ms audio chunks (2 ASR calls, 4 DiT chunks). The speaker encoder (WavLM-Large + ECAPA) runs once per reference voice and is not included.",
+    "graphs": {
+      "asr": {
+        "file": "asr.onnx",
+        "bytes": 75781551,
+        "sha256": "f15e38fd3aee130d3eeab7a8eceb628bdef916cf813ddfbcfacc2fddb5fe50a4"
+      },
+      "dit": {
+        "file": "dit.onnx",
+        "bytes": 53539418,
+        "sha256": "07b2ca239a0bd1f7e99ee01e916fa1cfbc09739a2af10b1adbb612424be02911"
+      },
+      "dit_step": {
+        "file": "dit_step.onnx",
+        "bytes": 53539573,
+        "sha256": "623713a15c704d98385ebc192ade35c70377460c84ed09ce4b93d18efe04f036"
+      },
+      "fbank": {
+        "file": "fbank.onnx",
+        "bytes": 906697,
+        "sha256": "9d5ab6bb30f6e4a50a97fdfe2834d018584f5737c9b583718e453f3878dacc61"
+      },
+      "gtm": {
+        "file": "gtm.onnx",
+        "bytes": 17441981,
+        "sha256": "eb6b2974bf039cd416e5a07f25c6add819264eace2a82058c4564854c08bb565"
+      },
+      "vocos": {
+        "file": "vocos.onnx",
+        "bytes": 34849583,
+        "sha256": "7fcf85deeb5e56a973f596e82f5fa37d154ac030a1434f6c9b893fe6c871f21a"
+      }
+    }
+  }
+}

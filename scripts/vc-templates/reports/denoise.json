@@ -1,0 +1,402 @@
+{
+  "ep": "cpu",
+  "gtcrn": {
+    "si_sdr_in_db": -0.03215861041098833,
+    "si_sdr_out_db": 10.22883415222168,
+    "improvement_db": 10.260992762632668,
+    "frames": 251,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "mix",
+          "dtype": "float32",
+          "shape": [
+            1,
+            257,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "conv_cache",
+          "dtype": "float32",
+          "shape": [
+            2,
+            1,
+            16,
+            16,
+            33
+          ]
+        },
+        {
+          "name": "tra_cache",
+          "dtype": "float32",
+          "shape": [
+            2,
+            3,
+            1,
+            1,
+            16
+          ]
+        },
+        {
+          "name": "inter_cache",
+          "dtype": "float32",
+          "shape": [
+            2,
+            1,
+            33,
+            16
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "enh",
+          "dtype": "float32",
+          "shape": [
+            1,
+            257,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "conv_cache_out",
+          "dtype": "float32",
+          "shape": [
+            2,
+            1,
+            16,
+            16,
+            33
+          ]
+        },
+        {
+          "name": "tra_cache_out",
+          "dtype": "float32",
+          "shape": [
+            2,
+            3,
+            1,
+            1,
+            16
+          ]
+        },
+        {
+          "name": "inter_cache_out",
+          "dtype": "float32",
+          "shape": [
+            2,
+            1,
+            33,
+            16
+          ]
+        }
+      ],
+      "opset": 11
+    },
+    "file": {
+      "path": "vc/denoise-gtcrn/model.onnx",
+      "bytes": 535190,
+      "sha256": "b4718df6228e7bdf1a8a435cf98f838636eb2fd331acabf86ba87c5192ebcb87"
+    }
+  },
+  "dpdfnet": {
+    "state_size": 56436,
+    "noise_attenuation_db": 10.161202078899764,
+    "ok": true,
+    "contract": {
+      "inputs": [
+        {
+          "name": "spec",
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            481,
+            2
+          ]
+        },
+        {
+          "name": "state_in",
+          "dtype": "float32",
+          "shape": [
+            56436
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "spec_e",
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            481,
+            2
+          ]
+        },
+        {
+          "name": "state_out",
+          "dtype": "float32",
+          "shape": [
+            56436
+          ]
+        }
+      ],
+      "opset": 17
+    },
+    "file": {
+      "path": "vc/denoise-dpdfnet/model.onnx",
+      "bytes": 10493337,
+      "sha256": "7f0575a5cec0ba4ffd8f8bd657e06d007e4ccdd955d76faab922b9d3291dc14b"
+    }
+  },
+  "dfn3": {
+    "shapes": {
+      "m": [
+        1,
+        1,
+        50,
+        32
+      ],
+      "coefs": [
+        1,
+        50,
+        96,
+        10
+      ],
+      "lsnr": [
+        1,
+        50,
+        1
+      ]
+    },
+    "mask_range": [
+      0.0016243457794189453,
+      0.9738554954528809
+    ],
+    "ok": true,
+    "archive": {
+      "bytes": 7983136,
+      "sha256": "c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616",
+      "members": [
+        "tmp/export/enc.onnx",
+        "tmp/export/erb_dec.onnx",
+        "tmp/export/df_dec.onnx",
+        "tmp/export/config.ini"
+      ],
+      "strip": 2
+    },
+    "contract": {
+      "enc.onnx": {
+        "inputs": [
+          {
+            "name": "feat_erb",
+            "dtype": "float32",
+            "shape": [
+              1,
+              1,
+              "S",
+              32
+            ]
+          },
+          {
+            "name": "feat_spec",
+            "dtype": "float32",
+            "shape": [
+              1,
+              2,
+              "S",
+              96
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "e0",
+            "dtype": "float32",
+            "shape": [
+              "Relue0_dim_0",
+              64,
+              "S",
+              "Relue0_dim_3"
+            ]
+          },
+          {
+            "name": "e1",
+            "dtype": "float32",
+            "shape": [
+              "Relue1_dim_0",
+              64,
+              "S",
+              "Relue0_dim_3"
+            ]
+          },
+          {
+            "name": "e2",
+            "dtype": "float32",
+            "shape": [
+              "Relue2_dim_0",
+              64,
+              "S",
+              "Relue0_dim_3"
+            ]
+          },
+          {
+            "name": "e3",
+            "dtype": "float32",
+            "shape": [
+              "Relue3_dim_0",
+              64,
+              "S",
+              "Relue0_dim_3"
+            ]
+          },
+          {
+            "name": "emb",
+            "dtype": "float32",
+            "shape": [
+              "Reluemb_dim_0",
+              "S",
+              "Reluemb_dim_2"
+            ]
+          },
+          {
+            "name": "c0",
+            "dtype": "float32",
+            "shape": [
+              "Reluc0_dim_0",
+              64,
+              "S",
+              "Relue0_dim_3"
+            ]
+          },
+          {
+            "name": "lsnr",
+            "dtype": "float32",
+            "shape": [
+              "Addlsnr_dim_0",
+              "S",
+              1
+            ]
+          }
+        ],
+        "opset": 12
+      },
+      "erb_dec.onnx": {
+        "inputs": [
+          {
+            "name": "emb",
+            "dtype": "float32",
+            "shape": [
+              1,
+              "S",
+              512
+            ]
+          },
+          {
+            "name": "e3",
+            "dtype": "float32",
+            "shape": [
+              1,
+              64,
+              "S",
+              8
+            ]
+          },
+          {
+            "name": "e2",
+            "dtype": "float32",
+            "shape": [
+              1,
+              64,
+              "S",
+              8
+            ]
+          },
+          {
+            "name": "e1",
+            "dtype": "float32",
+            "shape": [
+              1,
+              64,
+              "S",
+              16
+            ]
+          },
+          {
+            "name": "e0",
+            "dtype": "float32",
+            "shape": [
+              1,
+              64,
+              "S",
+              32
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "m",
+            "dtype": "float32",
+            "shape": [
+              "Sigmoidm_dim_0",
+              1,
+              "S",
+              "Sigmoidm_dim_3"
+            ]
+          }
+        ],
+        "opset": 12
+      },
+      "df_dec.onnx": {
+        "inputs": [
+          {
+            "name": "emb",
+            "dtype": "float32",
+            "shape": [
+              1,
+              "S",
+              512
+            ]
+          },
+          {
+            "name": "c0",
+            "dtype": "float32",
+            "shape": [
+              1,
+              64,
+              "S",
+              96
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "coefs",
+            "dtype": "float32",
+            "shape": [
+              "Addcoefs_dim_0",
+              "S",
+              "Addcoefs_dim_2",
+              10
+            ]
+          },
+          {
+            "name": "235",
+            "dtype": "float32",
+            "shape": [
+              "Sigmoid235_dim_0",
+              "Sigmoid235_dim_1",
+              1
+            ]
+          }
+        ],
+        "opset": 12
+      }
+    }
+  }
+}

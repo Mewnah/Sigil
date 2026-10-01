@@ -15,15 +15,42 @@
 //! accounted length and the tick's owed frames are still taken from the backlog, so the caller's
 //! fallback audio (`last_owed_frames()` frames) slots into exactly the same timeline an error-free
 //! run would produce.
+//!
+//! **Fixed-block mode** (P3-C1, a model whose `fixed_block()` is `Some(block)`: the Sigil Voice
+//! Engine). The resampled 16 kHz input goes through a pre-accumulator and the model is called
+//! with exactly `block` new samples at one fixed context length (the model's
+//! `configure_stream`), whatever the device block is, so its sessions run one tensor shape
+//! (CUDA graphs, IOBinding) and `stream_pos_16k` advances by exactly `block` per call (a multiple
+//! of the 160-sample hop keeps the noise, F0 cache and NSF phase on the absolute frame grid). The
+//! pre-accumulator starts with [`FIXED_LEAD_16K`] samples of silence, which absorbs the input
+//! resampler's floor / ceil jitter, so a block is never a call late. When the device block and the
+//! model block do not line up, converted audio arrives in block-sized bursts; playback starts (and
+//! re-primes after an underrun) holding back exactly the cushion the bursts need from the tick it
+//! starts on, so it never underruns between blocks and runs at the same latency whichever tick that
+//! is (the deficit bounds come from the rates at construction; zero cushion when the device block
+//! is the model block). The lowest latency comes from a device block equal to the model block.
+//! Every length-accounting guarantee above holds unchanged.
 
 use rubato::{calculate_cutoff, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
-use super::traits::{ConversionCtx, VoiceConversionModel};
+use super::engine::governor::QualityLevel;
+use super::traits::{ConversionCtx, StreamReport, VoiceControls, VoiceConversionModel};
 
 /// Frames per output-side resampler call, at the model output rate.
 const OUT_RESAMPLE_CHUNK: usize = 64;
 /// Output backlog cap, in expected ticks; older samples beyond it are dropped.
 const MAX_PENDING_TICKS: usize = 4;
+/// Fixed-block mode: silence the pre-accumulator starts with (16 kHz samples, 0.25 ms). It covers
+/// the input resampler's cumulative deviation from the exact rate (at most
+/// [`RESAMPLER_JITTER_16K`]), so a model block completes on the device tick the exact rate says it
+/// should, never one tick late (it may complete one tick early).
+pub const FIXED_LEAD_16K: usize = 4;
+/// Largest deviation (16 kHz samples, either way) of the input resampler's cumulative output from
+/// the exact rate after its pre-roll (rubato's floor / ceil per call plus the pre-roll's share).
+const RESAMPLER_JITTER_16K: usize = 2;
+/// Device ticks simulated to size the fixed-block output hold-back (covers every phase relation
+/// of a device block and a model block that the voice changer's rates produce).
+const HOLD_BACK_SIM_TICKS: u64 = 200_000;
 /// Score penalty (per unit of distance from the window centre, relative to half the window) that
 /// keeps SOLA offsets from drifting to an edge of the search window.
 const SOLA_CENTER_BIAS: f32 = 0.05;
@@ -40,6 +67,9 @@ struct SolaStitcher {
     overlap: usize,
     search: usize,
     prev_tail: Vec<f32>,
+    /// The last join: `(offset - centre, normalized cross-correlation of the tail and the aligned
+    /// chunk)`, `None` when the tail was silent or too short (seam telemetry for benchmarks).
+    last_join: Option<(isize, f32)>,
 }
 
 impl SolaStitcher {
@@ -49,7 +79,20 @@ impl SolaStitcher {
             overlap,
             search: overlap / 2,
             prev_tail: Vec::new(),
+            last_join: None,
         }
+    }
+
+    /// Normalized cross-correlation of the held-back tail with `chunk[off..off + n]`.
+    fn ncc_at(&self, chunk: &[f32], n: usize, off: usize) -> f32 {
+        let tail = &self.prev_tail[..n];
+        let cand = &chunk[off..off + n];
+        let te: f64 = tail.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
+        let ce: f64 = cand.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
+        if te <= 1e-10 || ce <= 1e-12 {
+            return 0.0;
+        }
+        (f64::from(dot(tail, cand)) / (te * ce).sqrt()) as f32
     }
 
     /// Alignment search window requested from the model beyond `block + overlap`.
@@ -110,6 +153,7 @@ impl SolaStitcher {
             out.extend_from_slice(chunk);
             out.resize(block, 0.0);
             self.hold_silence();
+            self.last_join = None;
             return out;
         }
         let ov = self.overlap.min(block).min(chunk.len() - block);
@@ -124,6 +168,8 @@ impl SolaStitcher {
         } else {
             center
         };
+        let tail_live = n >= 8 && self.prev_tail[..n].iter().any(|&x| x != 0.0);
+        self.last_join = tail_live.then(|| (off as isize - center as isize, self.ncc_at(chunk, n, off)));
         // `off <= window`, so `w` always holds at least `block + ov` samples.
         let w = &chunk[off..];
         for (i, (&old, &new)) in self.prev_tail[..n].iter().zip(w.iter()).enumerate() {
@@ -246,6 +292,9 @@ pub struct VcStreamHarness {
     model_in_sr: u32,
     model_out_sr: u32,
     ring_16k: Vec<f32>,
+    /// Absolute 16 kHz index one past the ring's newest sample (the priming silence counts), so
+    /// `ring_16k[0]` is at `ring_end_16k - ring_16k.len()` (`ConversionCtx::stream_pos_16k`).
+    ring_end_16k: u64,
     extra_samples: usize,
     /// Fewest ring samples before the model is called (HuBERT receptive field + hop). The ring
     /// starts zero-filled to its steady length, which is never below this, so the check is only
@@ -278,6 +327,115 @@ pub struct VcStreamHarness {
     /// Device frames (per channel) owed by the most recent `push_and_convert`, set even when it
     /// returned `Err`.
     last_owed_frames: usize,
+    /// Fixed-block mode (see the module docs); `None` = the legacy per-device-block feed.
+    fixed: Option<FixedFeed>,
+}
+
+/// State of fixed-block mode.
+struct FixedFeed {
+    /// New 16 kHz samples per model call.
+    block_16k: usize,
+    /// Ring (context) length of every model call.
+    context_16k: usize,
+    /// Resampled input waiting for a whole block (starts with [`FIXED_LEAD_16K`] zeros).
+    acc: Vec<f32>,
+    /// Output hold-back (device frames) covering block-sized bursts from any start (part of
+    /// `prime_margin`): `deficit_max − deficit_min`.
+    hold_back: usize,
+    /// Largest deficit `owed − produced` (device frames) of the steady stream (blocks on time,
+    /// [`fixed_deficit_bounds`]).
+    deficit_max: f64,
+    /// Device output frames per model block (exact).
+    block_out: f64,
+    /// The jitter cushion every start keeps on top of the burst cushion.
+    jitter: usize,
+    /// Model blocks converted (failed ones included) and device frames owed since the stream
+    /// started: the deficit of the tick playback starts on.
+    blocks_total: u64,
+    owed_total: u64,
+}
+
+impl FixedFeed {
+    /// Converted frames to keep back when playback starts on the current tick: the jitter cushion
+    /// plus the deficit growth still ahead (`deficit_max − deficit now`). Every start then runs at
+    /// the same steady latency, the smallest one that never runs dry.
+    fn start_cushion(&self) -> usize {
+        let now = self.owed_total as f64 - self.blocks_total as f64 * self.block_out;
+        self.jitter + (self.deficit_max - now).max(0.0).ceil() as usize
+    }
+}
+
+/// Output hold-back (device output frames) a fixed-block stream needs so the block-sized bursts of
+/// converted audio never leave playback short between two blocks, whatever tick playback starts
+/// (or re-primes after an underrun) on.
+///
+/// After device tick `n` the exact-rate feed has delivered `E(n) = floor(n·P·in16/din)` samples
+/// (`P` = device frames per tick) and `O(n)` output frames are owed. The live pre-accumulator holds
+/// `E(n)` plus its [`FIXED_LEAD_16K`] lead, give or take the resampler's
+/// [`RESAMPLER_JITTER_16K`]: never less than `E(n)` (the lead covers the jitter) and at most
+/// `E(n) + lead + jitter`. So the blocks converted by tick `n` lie between
+/// `m_late(n) = floor(E(n)/b)` and `m_early(n) = floor((E(n) + lead + jitter)/b)` (a block can
+/// complete one tick before the exact rate says, which moves an early start earlier too). With the
+/// deficit `D(n) = O(n) − produced(n)`, playback started at tick `s` never runs dry iff
+/// `D(n) − D(s)` stays within the hold-back for every `n ≥ s`; `D` is periodic, so the bound that
+/// holds for every start and every jitter is `max D_late − min D_early` over a period (counted from
+/// the first block). Zero when the device block is the model block or a whole number of them
+/// (every block completes exactly when its audio is due).
+fn fixed_hold_back(process_frames: usize, device_in_sr: u32, device_out_sr: u32, model_in_sr: u32, block_16k: usize) -> usize {
+    let (most, least) = fixed_deficit_bounds(process_frames, device_in_sr, device_out_sr, model_in_sr, block_16k);
+    let worst = most - least;
+    if worst.is_finite() && worst > 0.0 {
+        worst.ceil() as usize
+    } else {
+        0
+    }
+}
+
+/// `(max D_late, min D_early)` of [`fixed_hold_back`] (device frames; `(0, 0)` when no block ever
+/// completes in the simulated ticks).
+fn fixed_deficit_bounds(process_frames: usize, device_in_sr: u32, device_out_sr: u32, model_in_sr: u32, block_16k: usize) -> (f64, f64) {
+    let (p, din, dout, min) = (
+        process_frames.max(1) as u128,
+        u128::from(device_in_sr.max(1)),
+        u128::from(device_out_sr.max(1)),
+        u128::from(model_in_sr.max(1)),
+    );
+    let b = block_16k.max(1) as u128;
+    // The deficit is periodic: after `period` ticks the feed is a whole number of blocks and the
+    // owed output a whole number of frames again. Two periods (plus the ticks before the first
+    // block) cover every phase; the cap only matters for pathological rates.
+    let gcd = |mut x: u128, mut y: u128| {
+        while y != 0 {
+            (x, y) = (y, x % y);
+        }
+        x.max(1)
+    };
+    let a = din * b / gcd(p * min, din * b);
+    let c = din / gcd(p * dout, din);
+    let period = a / gcd(a, c) * c;
+    let first_block = (b * din).div_ceil(p * min);
+    let ticks = (first_block + 2 * period).min(u128::from(HOLD_BACK_SIM_TICKS));
+    let early_by = (FIXED_LEAD_16K + RESAMPLER_JITTER_16K) as u128;
+    let block_out = (b * dout) as f64 / min as f64;
+    let (mut most, mut least) = (f64::NEG_INFINITY, f64::INFINITY);
+    for n in 1..=ticks {
+        let fed = n * p * min / din;
+        // Output frames owed through tick n (the harness's rounding carry starts at half a unit).
+        let owed = ((n * p * dout + din / 2) / din) as f64;
+        let late = fed / b;
+        if late > 0 {
+            most = most.max(owed - late as f64 * block_out);
+        }
+        let early = (fed + early_by) / b;
+        if early > 0 {
+            least = least.min(owed - early as f64 * block_out);
+        }
+    }
+    if most.is_finite() && least.is_finite() {
+        (most, least)
+    } else {
+        (0.0, 0.0)
+    }
 }
 
 /// Quiet 150 Hz tone (voiced for the pitch extractor, above any silence gate) used for warmup.
@@ -306,10 +464,15 @@ impl VcStreamHarness {
         let model_out_sr = model.output_sample_rate().max(1);
         let process_frames = process_frames.max(160);
         let min_context = model.min_context_samples();
+        // Fixed-block mode (module docs): the model's own block, whatever the device block is.
+        let fixed_block = model.fixed_block().filter(|&b| b > 0);
 
         // The crossfade can never span more than one emitted block, so clamp it to the expected
         // block length; a larger overlap would only add latency and ring size.
-        let block_expected = ((process_frames as u64 * u64::from(model_out_sr)) / u64::from(device_in_sr)).max(1) as usize;
+        let block_expected = match fixed_block {
+            Some(block) => ((block as u64 * u64::from(model_out_sr)) / u64::from(model_in_sr)).max(1) as usize,
+            None => ((process_frames as u64 * u64::from(model_out_sr)) / u64::from(device_in_sr)).max(1) as usize,
+        };
         let overlap = crossfade_samples.max(64).min(block_expected);
         let sola = SolaStitcher::new(overlap);
         // +2 output samples of slack so rounding never shrinks the search window below `search`.
@@ -318,47 +481,100 @@ impl VcStreamHarness {
             u64::from(model_out_sr),
         ) as usize;
 
-        // Warm the model at the steady-state input shape (same ring trim and `want` as
-        // `convert_block`) so GPU execution providers pick kernels for the shapes live ticks use,
-        // before the first spoken tick. The input resampler yields the floor or the ceiling of
-        // the exact per-block count, so both ring lengths are warmed when they differ (the model
-        // may pad them to different tensor shapes; an identical shape costs one quick run).
         let exact_new = process_frames as u64 * u64::from(model_in_sr);
         let new_hi = div_ceil_u64(exact_new, u64::from(device_in_sr)) as usize;
         let new_lo = (exact_new / u64::from(device_in_sr)) as usize;
-        let steady_news: &[usize] = if new_lo == new_hi || new_lo == 0 {
-            &[new_hi]
-        } else {
-            &[new_hi, new_lo]
-        };
-        for &steady_new in steady_news {
-            let steady_want = steady_new + sola_tail_in;
-            let steady_ring = extra_samples.saturating_add(steady_new).max(steady_want).max(min_context);
-            let tone = warmup_tone(steady_ring, model_in_sr);
-            let warm_ctx = ConversionCtx {
-                mono_16k: &tone,
-                new_frames: steady_want,
-                pitch_shift_semitones: 0.0,
-                index_rate: 0.0,
-                protect: 0.33,
-                speaker_id: 0,
-            };
-            if let Err(e) = model.warmup_at(&warm_ctx) {
-                tracing::warn!("voice changer: warm-up at the live shape ({steady_ring} samples) failed: {e}");
+        let (ring_prefill, fixed) = match fixed_block {
+            Some(block) => {
+                // One shape for the whole stream: the model sizes its context for this block and
+                // SOLA tail, then is warmed once at exactly that shape.
+                let want = block + sola_tail_in;
+                let context = model
+                    .configure_stream(block, want, extra_samples)?
+                    .max(want)
+                    .max(min_context)
+                    .max(block);
+                let tone = warmup_tone(context, model_in_sr);
+                let warm_ctx = ConversionCtx {
+                    mono_16k: &tone,
+                    new_frames: want,
+                    pitch_shift_semitones: 0.0,
+                    index_rate: 0.0,
+                    protect: 0.33,
+                    speaker_id: 0,
+                    stream_pos_16k: 0,
+                };
+                if let Err(e) = model.warmup_at(&warm_ctx) {
+                    tracing::warn!("voice changer: warm-up at the fixed shape ({context} samples) failed: {e}");
+                }
+                let mut acc = Vec::with_capacity(block + new_hi + FIXED_LEAD_16K + 16);
+                acc.resize(FIXED_LEAD_16K, 0.0);
+                let (deficit_max, deficit_min) = fixed_deficit_bounds(process_frames, device_in_sr, device_out_sr, model_in_sr, block);
+                let hold_back = fixed_hold_back(process_frames, device_in_sr, device_out_sr, model_in_sr, block);
+                // The ring starts as if silence had been flowing, so the first block completes the
+                // steady context and `stream_pos_16k` stays on the model's block grid.
+                let feed = FixedFeed {
+                    block_16k: block,
+                    context_16k: context,
+                    acc,
+                    hold_back,
+                    deficit_max: deficit_max.max(deficit_min),
+                    block_out: block as f64 * f64::from(device_out_sr) / f64::from(model_in_sr),
+                    jitter: 0,
+                    blocks_total: 0,
+                    owed_total: 0,
+                };
+                (context - block, Some(feed))
             }
-        }
-
-        // Start the ring as if silence had already been flowing: after the first block is appended
-        // and trimmed it holds exactly the steady ring length, so every live call (the first one
-        // included) uses a shape warmed above, with full context from the first tick. The zeros
-        // are what the model would have heard before capture started. The shortest steady block
-        // needs the most history; `ring_prefill` covers it, and longer blocks are trimmed.
-        let shortest_new = steady_news.iter().copied().min().unwrap_or(new_hi);
-        let ring_prefill = extra_samples
-            .max(sola_tail_in)
-            .max(min_context.saturating_sub(shortest_new));
-        let mut ring_16k = Vec::with_capacity(ring_prefill + new_hi + sola_tail_in + min_context + 8192);
+            None => {
+                // Warm the model at the steady-state input shape (same ring trim and `want` as
+                // `convert_block`) so GPU execution providers pick kernels for the shapes live
+                // ticks use, before the first spoken tick. The input resampler yields the floor or
+                // the ceiling of the exact per-block count, so both ring lengths are warmed when
+                // they differ (the model may pad them to different tensor shapes; an identical
+                // shape costs one quick run).
+                let steady_news: &[usize] = if new_lo == new_hi || new_lo == 0 {
+                    &[new_hi]
+                } else {
+                    &[new_hi, new_lo]
+                };
+                for &steady_new in steady_news {
+                    let steady_want = steady_new + sola_tail_in;
+                    let steady_ring = extra_samples.saturating_add(steady_new).max(steady_want).max(min_context);
+                    let tone = warmup_tone(steady_ring, model_in_sr);
+                    let warm_ctx = ConversionCtx {
+                        mono_16k: &tone,
+                        new_frames: steady_want,
+                        pitch_shift_semitones: 0.0,
+                        index_rate: 0.0,
+                        protect: 0.33,
+                        speaker_id: 0,
+                        stream_pos_16k: 0,
+                    };
+                    if let Err(e) = model.warmup_at(&warm_ctx) {
+                        tracing::warn!("voice changer: warm-up at the live shape ({steady_ring} samples) failed: {e}");
+                    }
+                }
+                // Start the ring as if silence had already been flowing: after the first block is
+                // appended and trimmed it holds exactly the steady ring length, so every live call
+                // (the first one included) uses a shape warmed above, with full context from the
+                // first tick. The zeros are what the model would have heard before capture
+                // started. The shortest steady block needs the most history; `ring_prefill` covers
+                // it, and longer blocks are trimmed.
+                let shortest_new = steady_news.iter().copied().min().unwrap_or(new_hi);
+                let prefill = extra_samples
+                    .max(sola_tail_in)
+                    .max(min_context.saturating_sub(shortest_new));
+                (prefill, None)
+            }
+        };
+        let ring_cap = match &fixed {
+            Some(f) => f.context_16k + f.block_16k,
+            None => ring_prefill + new_hi + sola_tail_in + min_context + 8192,
+        };
+        let mut ring_16k = Vec::with_capacity(ring_cap);
         ring_16k.resize(ring_prefill, 0.0);
+        let mut fixed = fixed;
 
         let mut in_resampler = StreamResampler::new(device_in_sr, model_in_sr, process_frames)?;
         // The resampler's first call returns `output_delay()` fewer samples (its look-ahead), which
@@ -374,15 +590,28 @@ impl VcStreamHarness {
         let out_per_16k = f64::from(device_out_sr) / f64::from(model_in_sr);
         // Worst-case per-tick shortfall: FIFO residue (< one resampler chunk) plus +-1 sample of
         // rounding in each counting stage.
-        let prime_margin = ((OUT_RESAMPLE_CHUNK + 1) as f64 * out_per_model + 3.0 * out_per_16k).ceil() as usize + 4;
+        let jitter_margin = ((OUT_RESAMPLE_CHUNK + 1) as f64 * out_per_model + 3.0 * out_per_16k).ceil() as usize + 4;
         let need_expected = div_ceil_u64(process_frames as u64 * u64::from(device_out_sr), u64::from(device_in_sr)) as usize;
-        let pending_cap = MAX_PENDING_TICKS * need_expected + prime_margin;
+        let (prime_margin, pending_cap) = match fixed.as_mut() {
+            // Fixed blocks: the burst cushion is held back on top of the jitter margin (at most the
+            // hold-back; `FixedFeed::start_cushion` sizes it for the tick playback starts on), and
+            // the backlog may hold a whole converted block on top of the legacy allowance.
+            Some(f) => {
+                f.jitter = jitter_margin;
+                let block_out = (f.block_16k as f64 * out_per_16k).ceil() as usize;
+                let margin = jitter_margin + f.hold_back;
+                (margin, MAX_PENDING_TICKS * need_expected + margin + block_out)
+            }
+            None => (jitter_margin, MAX_PENDING_TICKS * need_expected + jitter_margin),
+        };
 
+        let ring_end_16k = ring_16k.len() as u64;
         Ok(Self {
             model,
             model_in_sr,
             model_out_sr,
             ring_16k,
+            ring_end_16k,
             extra_samples,
             min_context,
             sola,
@@ -407,6 +636,7 @@ impl VcStreamHarness {
             prime_margin,
             pending_cap,
             last_owed_frames: 0,
+            fixed,
         })
     }
 
@@ -417,11 +647,57 @@ impl VcStreamHarness {
         self.last_owed_frames
     }
 
+    /// `(block, context)` in model-input samples when the harness runs in fixed-block mode (a model
+    /// with `fixed_block()`), else `None`. For latency accounting (benchmark, telemetry) and for
+    /// callers that size the device block to the model block (then the output hold-back is zero).
+    pub fn fixed_shape(&self) -> Option<(usize, usize)> {
+        self.fixed.as_ref().map(|f| (f.block_16k, f.context_16k))
+    }
+
+    /// Seam telemetry of the most recent model block's SOLA join: `(offset from the nominal rejoin
+    /// point in model samples, normalized cross-correlation of the held-back tail and the aligned new
+    /// audio)`; `None` when the tail was silent. Overlaps that agree join near offset 0 with a
+    /// correlation near 1 (benchmarks, the click detector's context).
+    #[allow(dead_code)] // P3-C1 API for the benchmark (P3-F).
+    pub fn last_join(&self) -> Option<(isize, f32)> {
+        self.sola.last_join
+    }
+
+    /// Output hold-back (device frames) of fixed-block mode on top of the jitter cushion: what the
+    /// block-sized output bursts need when the device block and the model block do not line up
+    /// (see the module docs); `0` in the legacy mode.
+    pub fn fixed_hold_back_frames(&self) -> usize {
+        self.fixed.as_ref().map_or(0, |f| f.hold_back)
+    }
+
+    /// The model's outcomes, levers and warnings after this harness configured its stream
+    /// ([`VoiceConversionModel::stream_report`]; `None` when the model reports nothing new). Read by
+    /// `voice_changer::factory` (`LoadedVoice::load`) to refresh what a voice reports.
+    pub fn model_report(&self) -> Option<StreamReport> {
+        self.model.stream_report()
+    }
+
     pub fn set_controls(&mut self, pitch_shift: f32, index_rate: f32, protect: f32, speaker_id: i64) {
         self.pitch_shift = pitch_shift;
         self.index_rate = index_rate;
         self.protect = protect;
         self.speaker_id = speaker_id;
+    }
+
+    /// Hot per-voice controls (P3; forwarded to the model, which ignores them unless it has a post
+    /// stage). Call between ticks when they change.
+    pub fn set_voice_controls(&mut self, controls: &VoiceControls) {
+        self.model.set_voice_controls(controls);
+    }
+
+    /// The governor's quality level (P3-E); whether the model applied it.
+    pub fn apply_quality(&mut self, level: &QualityLevel) -> bool {
+        self.model.apply_quality(level)
+    }
+
+    /// Tell the model its stream had a gap or restarted (it drops caches keyed to the old timeline).
+    pub fn reset_model_stream(&mut self) {
+        self.model.reset_stream();
     }
 
     /// Convert one tick of capture audio; returns exactly the device frames owed for it
@@ -442,6 +718,9 @@ impl VcStreamHarness {
         let (need_frames, carry) = scale_with_carry(in_frames, self.device_out_sr, self.device_in_sr, self.need_frames_carry);
         self.need_frames_carry = carry;
         self.last_owed_frames = need_frames;
+        if let Some(f) = self.fixed.as_mut() {
+            f.owed_total += need_frames as u64;
+        }
 
         let mut first_err: Option<String> = None;
         let mut model_out: Vec<f32> = Vec::new();
@@ -457,8 +736,33 @@ impl VcStreamHarness {
             }
             // On a model error `convert_block` still appends the block's accounted length (as
             // silence), so the stream downstream advances exactly as on success.
-            if let Err(e) = self.convert_block(&mono_16k, &mut model_out) {
-                first_err.get_or_insert(e);
+            match self.fixed.as_mut() {
+                None => {
+                    if let Err(e) = self.convert_block(&mono_16k, &mut model_out) {
+                        first_err.get_or_insert(e);
+                    }
+                }
+                Some(feed) => {
+                    // Fixed blocks: the pre-accumulator hands the model exactly `block` samples per
+                    // call (zero, one or more calls per device block).
+                    let block = feed.block_16k;
+                    let mut acc = std::mem::take(&mut feed.acc);
+                    acc.extend_from_slice(&mono_16k);
+                    let mut start = 0;
+                    let mut blocks = 0u64;
+                    while acc.len() - start >= block {
+                        if let Err(e) = self.convert_block(&acc[start..start + block], &mut model_out) {
+                            first_err.get_or_insert(e);
+                        }
+                        start += block;
+                        blocks += 1;
+                    }
+                    acc.drain(..start);
+                    if let Some(feed) = self.fixed.as_mut() {
+                        feed.acc = acc;
+                        feed.blocks_total += blocks;
+                    }
+                }
             }
         }
         if let Err(e) = self.out_resampler.push(&model_out, &mut self.out_pending) {
@@ -480,12 +784,16 @@ impl VcStreamHarness {
         self.block_out_carry = carry;
 
         self.ring_16k.extend_from_slice(mono_16k);
+        self.ring_end_16k += new_frames as u64;
         let want = new_frames.saturating_add(self.sola_tail_in);
-        let max_ring = self
-            .extra_samples
-            .saturating_add(new_frames)
-            .max(want)
-            .max(self.min_context);
+        let max_ring = match &self.fixed {
+            Some(feed) => feed.context_16k,
+            None => self
+                .extra_samples
+                .saturating_add(new_frames)
+                .max(want)
+                .max(self.min_context),
+        };
         if self.ring_16k.len() > max_ring {
             let drop = self.ring_16k.len() - max_ring;
             self.ring_16k.drain(..drop);
@@ -506,6 +814,7 @@ impl VcStreamHarness {
             index_rate: self.index_rate,
             protect: self.protect,
             speaker_id: self.speaker_id,
+            stream_pos_16k: self.ring_end_16k - self.ring_16k.len() as u64,
         };
         let result = self.model.convert(&ctx).and_then(|chunk| {
             // NaN / inf would poison the SOLA tail, the output resampler's filter state and the
@@ -539,9 +848,19 @@ impl VcStreamHarness {
         }
         let mut mono_out: Vec<f32> = Vec::with_capacity(need);
         if !self.primed {
-            // Keep `prime_margin` samples back as the jitter cushion; lead with silence.
-            if self.out_pending.len() > self.prime_margin {
-                let take = (self.out_pending.len() - self.prime_margin).min(need);
+            // Keep the cushion back; lead with silence. Fixed blocks keep what the burst pattern
+            // still needs from this tick on and drop the older excess (converted priming silence or
+            // switch-priming history), so every start runs at the same, smallest safe latency.
+            let (keep, trim) = match &self.fixed {
+                Some(f) => (f.start_cushion(), true),
+                None => (self.prime_margin, false),
+            };
+            if self.out_pending.len() > keep {
+                let excess = self.out_pending.len() - keep;
+                if trim && excess > need {
+                    self.out_pending.drain(..excess - need);
+                }
+                let take = excess.min(need);
                 mono_out.resize(need - take, 0.0);
                 mono_out.extend(self.out_pending.drain(..take));
                 self.primed = true;
@@ -1154,6 +1473,353 @@ mod tests {
             // And the errors really did disturb the guarded windows (the test is not vacuous).
             let (guard_err, _) = max_error_at_lag(&out[..err_at[0] + guard], &reference, lag, err_at[0], &[]);
             assert!(guard_err > 0.1, "{r_in}->{r_out}: error window looks clean ({guard_err})");
+        }
+    }
+
+    /// `(stream_pos_16k, context)` of every call.
+    type PosLog = Vec<(u64, Vec<f32>)>;
+
+    /// Records the absolute position and the context of every call (P3-S0: `stream_pos_16k`).
+    struct PosModel {
+        seen: Arc<Mutex<PosLog>>,
+    }
+
+    impl VoiceConversionModel for PosModel {
+        fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+            self.seen.lock().unwrap().push((ctx.stream_pos_16k, ctx.mono_16k.to_vec()));
+            Ok(vec![0.0; ctx.new_frames])
+        }
+
+        fn input_sample_rate(&self) -> u32 {
+            16_000
+        }
+
+        fn output_sample_rate(&self) -> u32 {
+            16_000
+        }
+
+        fn min_context_samples(&self) -> usize {
+            MIN_CTX
+        }
+    }
+
+    /// `stream_pos_16k` names the absolute index of `mono_16k[0]`: consecutive ticks agree on every
+    /// sample they share, and the window only ever moves forward.
+    #[test]
+    fn stream_position_anchors_every_context_sample() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut h = VcStreamHarness::new(Box::new(PosModel { seen: seen.clone() }), 48_000, 44_100, 1, 2, 1_600, 320, 480).unwrap();
+        let input: Vec<f32> = (0..96_000).map(|i| (i as f32 * 0.0137).sin() * 0.3 + (i as f32 * 0.00071).cos() * 0.2).collect();
+        for chunk in input.chunks(480) {
+            h.push_and_convert(chunk).unwrap();
+        }
+        let seen = seen.lock().unwrap();
+        assert!(seen.len() > 100, "{} calls", seen.len());
+        for w in seen.windows(2) {
+            let ((p0, a), (p1, b)) = (&w[0], &w[1]);
+            let (end0, end1) = (p0 + a.len() as u64, p1 + b.len() as u64);
+            assert!(end1 > end0 && p1 >= p0, "the window moves forward");
+            for abs in (*p1).max(*p0)..end0.min(end1) {
+                assert_eq!(a[(abs - p0) as usize], b[(abs - p1) as usize], "sample {abs}");
+            }
+        }
+    }
+
+    // ---- fixed-block mode (P3-C1) ------------------------------------------------------------
+
+    /// `(stream_pos_16k, context length, new_frames)` of every call.
+    type FixedLog = Arc<Mutex<Vec<(u64, usize, usize)>>>;
+
+    /// A fixed-block model: context = `extra + block` (at least `want`) rounded up to 160, like the
+    /// Sigil Voice Engine's plans. Returns 0.5 (or the upsampled input with `passthrough`) and fails
+    /// on the listed calls.
+    struct FixedStub {
+        block: usize,
+        out_sr: u32,
+        passthrough: bool,
+        context: usize,
+        want: usize,
+        fail_calls: Vec<usize>,
+        calls: usize,
+        log: FixedLog,
+        warm: Arc<Mutex<Vec<(usize, usize)>>>,
+    }
+
+    impl FixedStub {
+        fn boxed(block: usize, out_sr: u32, passthrough: bool, fail_calls: Vec<usize>) -> (Box<FixedStub>, FixedLog) {
+            let log: FixedLog = Arc::new(Mutex::new(Vec::new()));
+            let stub = FixedStub {
+                block,
+                out_sr,
+                passthrough,
+                context: 0,
+                want: 0,
+                fail_calls,
+                calls: 0,
+                log: log.clone(),
+                warm: Arc::new(Mutex::new(Vec::new())),
+            };
+            (Box::new(stub), log)
+        }
+    }
+
+    impl VoiceConversionModel for FixedStub {
+        fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+            assert_eq!(ctx.mono_16k.len(), self.context, "fixed context");
+            assert_eq!(ctx.new_frames, self.want, "fixed want");
+            self.log.lock().unwrap().push((ctx.stream_pos_16k, ctx.mono_16k.len(), ctx.new_frames));
+            self.calls += 1;
+            if self.fail_calls.contains(&self.calls) {
+                return Err("stub failure".into());
+            }
+            if self.passthrough {
+                let n = ctx.new_frames;
+                if self.out_sr == 16_000 {
+                    return Ok(ctx.mono_16k[ctx.mono_16k.len() - n..].to_vec());
+                }
+                return Ok(upsample_tail(ctx.mono_16k, n, self.out_sr));
+            }
+            let len = (ctx.new_frames as u64 * u64::from(self.out_sr) + 8_000) / 16_000;
+            Ok(vec![0.5; len as usize])
+        }
+
+        fn input_sample_rate(&self) -> u32 {
+            16_000
+        }
+
+        fn output_sample_rate(&self) -> u32 {
+            self.out_sr
+        }
+
+        fn min_context_samples(&self) -> usize {
+            MIN_CTX
+        }
+
+        fn warmup_at(&mut self, ctx: &ConversionCtx<'_>) -> Result<(), String> {
+            self.warm.lock().unwrap().push((ctx.mono_16k.len(), ctx.new_frames));
+            Ok(())
+        }
+
+        fn fixed_block(&self) -> Option<usize> {
+            Some(self.block)
+        }
+
+        fn configure_stream(&mut self, block: usize, want: usize, extra: usize) -> Result<usize, String> {
+            assert_eq!(block, self.block);
+            assert!(want > block, "the SOLA tail is part of want");
+            self.want = want;
+            self.context = (extra + block).max(want).max(MIN_CTX).div_ceil(160) * 160;
+            Ok(self.context)
+        }
+    }
+
+    /// Every call has the model's block, context and want; positions advance by exactly one block
+    /// on the model's grid; the long-run length is exact; after priming there is never an underrun
+    /// (the output never dips to silence); errors keep the accounting of an error-free run.
+    #[test]
+    fn fixed_blocks_have_one_shape_exact_length_and_no_underruns() {
+        // (device in, device out, model out, channels, device block, model block @ 16 kHz)
+        let cases: &[(u32, u32, u32, usize, usize, usize)] = &[
+            (48_000, 48_000, 40_000, 1, 1_920, 640),  // device block = model block
+            (44_100, 48_000, 40_000, 1, 1_764, 640),  // same at 44.1 kHz (non-integer resampler)
+            (48_000, 48_000, 40_000, 2, 512, 640),    // unrelated blocks
+            (48_000, 44_100, 32_000, 1, 480, 1_280),  // several device blocks per model block
+            (44_100, 44_100, 48_000, 1, 441, 320),
+            (48_000, 48_000, 48_000, 1, 4_800, 640),  // several model blocks per device block
+            (16_000, 48_000, 40_000, 1, 160, 320),
+            // A model block can complete one device tick early (the pre-accumulator's lead): the
+            // hold-back must hold from that earlier start (review of P3-C1: these underran).
+            (44_100, 44_100, 40_000, 1, 160, 640),
+            (44_100, 44_100, 40_000, 1, 160, 1_280),
+            (44_100, 44_100, 48_000, 1, 320, 1_280),
+            (44_100, 44_100, 40_000, 1, 704, 1_280),
+        ];
+        for &(r_in, r_out, m_out, ch, frames, block) in cases {
+            let label = format!("{r_in}->{r_out} model {m_out} ch{ch} frames {frames} block {block}");
+            for fails in [Vec::new(), vec![7usize, 8, 40]] {
+                let (model, log) = FixedStub::boxed(block, m_out, false, fails.clone());
+                let mut h = VcStreamHarness::new(model, r_in, r_out, ch, ch, 1_600, 320, frames).unwrap();
+                let (b, context) = h.fixed_shape().expect("fixed mode");
+                assert_eq!(b, block, "{label}");
+                assert_eq!(context % 160, 0, "{label}");
+                let input = vec![0.1f32; frames * ch];
+                let owed = |n: usize| ((n as u64 * u64::from(r_out) + u64::from(r_in / 2)) / u64::from(r_in)) as usize;
+                let (mut total, mut errors) = (0usize, 0usize);
+                let mut primed_at: Option<usize> = None;
+                // At least 600 device blocks and 60 model blocks.
+                let ticks = 600usize.max(60 * block * r_in as usize / (frames * 16_000));
+                for tick in 1..=ticks {
+                    let need = owed(tick * frames) - owed((tick - 1) * frames);
+                    match h.push_and_convert(&input) {
+                        Ok(out) => {
+                            assert_eq!(out.len(), need * ch, "{label} tick {tick}");
+                            if fails.is_empty() {
+                                if let Some(t) = primed_at {
+                                    // The output resampler's start-up ringing settles within two
+                                    // ticks of the first converted audio.
+                                    if tick > t + 2 {
+                                        assert!(out.iter().all(|v| (v - 0.5).abs() < 0.02), "{label}: underrun at tick {tick}");
+                                    }
+                                } else if out.iter().any(|v| (v - 0.5).abs() < 0.02) {
+                                    primed_at = Some(tick);
+                                }
+                            }
+                        }
+                        Err(_) => errors += 1,
+                    }
+                    assert_eq!(h.last_owed_frames(), need, "{label} tick {tick}");
+                    total += need;
+                    assert!(h.out_pending.len() <= h.pending_cap, "{label} tick {tick}");
+                }
+                assert_eq!(total, owed(ticks * frames), "{label}");
+                let log = log.lock().unwrap();
+                assert!(!log.is_empty(), "{label}");
+                for (k, &(pos, len, want)) in log.iter().enumerate() {
+                    assert_eq!(pos, (k * block) as u64, "{label}: call {k} position");
+                    assert_eq!(len, context, "{label}");
+                    assert!(want > block);
+                }
+                // The model ran once per `block` input samples (the lead and the resampler pre-roll
+                // shift the count by at most one block).
+                let fed = (ticks * frames) as f64 * 16_000.0 / f64::from(r_in);
+                assert!((log.len() as f64 - fed / block as f64).abs() <= 1.5, "{label}: {} calls for {fed} samples", log.len());
+                if fails.is_empty() {
+                    let t = primed_at.expect("primed");
+                    // Priming takes the model blocks that fill the cushion, one more for the
+                    // resamplers' start-up delay, plus a device block or two.
+                    let block_ticks = (block as f64 * f64::from(r_in) / (16_000.0 * frames as f64)).ceil() as usize;
+                    let block_out = block as f64 * f64::from(r_out) / 16_000.0;
+                    let blocks = (h.prime_margin as f64 / block_out).ceil() as usize + 1;
+                    assert!(t <= blocks * block_ticks + 3, "{label}: primed at tick {t}");
+                } else {
+                    assert_eq!(errors, fails.len(), "{label}");
+                }
+            }
+        }
+    }
+
+    /// The output hold-back is zero when the device block is the model block (or a whole number of
+    /// them): every block completes exactly when its audio is due. Otherwise it covers the deficit
+    /// of the bursts, which never exceeds one model block of output plus one device block.
+    #[test]
+    fn fixed_hold_back_is_only_what_bursts_need() {
+        assert_eq!(fixed_hold_back(1_920, 48_000, 48_000, 16_000, 640), 0);
+        assert_eq!(fixed_hold_back(1_764, 44_100, 48_000, 16_000, 640), 0);
+        assert_eq!(fixed_hold_back(3_840, 48_000, 48_000, 16_000, 640), 0);
+        assert_eq!(fixed_hold_back(1_920, 48_000, 44_100, 16_000, 640), 0);
+        for &(frames, r_in, r_out, block) in &[
+            (512usize, 48_000u32, 48_000u32, 640usize),
+            (441, 44_100, 48_000, 640),
+            (1_000, 48_000, 44_100, 960),
+            (480, 48_000, 48_000, 640),
+            (960, 48_000, 48_000, 640),
+        ] {
+            let hb = fixed_hold_back(frames, r_in, r_out, 16_000, block);
+            let need = frames * r_out as usize / r_in as usize;
+            let block_out = block * r_out as usize / 16_000;
+            assert!(hb > 0 && hb <= block_out + need, "{frames}@{r_in} block {block}: {hb}");
+        }
+        // The periodic simulation equals a brute-force one over many more ticks.
+        let brute = |p: u128, din: u128, dout: u128, b: u128| -> usize {
+            let (mut most, mut least) = (f64::NEG_INFINITY, f64::INFINITY);
+            for n in 1..=60_000u128 {
+                let fed = n * p * 16_000 / din;
+                let owed = ((n * p * dout + din / 2) / din) as f64;
+                let (late, early) = (fed / b, (fed + 6) / b);
+                if late > 0 {
+                    most = most.max(owed - (late * b * dout) as f64 / 16_000.0);
+                }
+                if early > 0 {
+                    least = least.min(owed - (early * b * dout) as f64 / 16_000.0);
+                }
+            }
+            let worst = most - least;
+            if worst > 0.0 { worst.ceil() as usize } else { 0 }
+        };
+        for &(p, din, dout, b) in &[
+            (512u128, 48_000u128, 48_000u128, 640u128),
+            (441, 44_100, 48_000, 640),
+            (1_000, 48_000, 44_100, 960),
+            (480, 48_000, 44_100, 1_280),
+            (256, 44_100, 44_100, 320),
+            (160, 44_100, 44_100, 640),
+            (704, 44_100, 44_100, 1_280),
+        ] {
+            assert_eq!(fixed_hold_back(p as usize, din as u32, dout as u32, 16_000, b as usize), brute(p, din, dout, b), "{p}@{din}->{dout} block {b}");
+        }
+        // The early-completing first block (44.1 kHz, 160-frame ticks, 40 ms blocks: the exact
+        // feed reaches 638.5 samples at tick 11, the lead completes the block there) is covered:
+        // more than the 1604 frames a start at tick 12 alone would need.
+        assert!(fixed_hold_back(160, 44_100, 44_100, 16_000, 640) > 1_604);
+        // Reported by the harness in fixed mode only.
+        let (model, _) = FixedStub::boxed(640, 40_000, false, Vec::new());
+        let h = VcStreamHarness::new(model, 48_000, 48_000, 1, 1, 0, 320, 1_920).unwrap();
+        assert_eq!(h.fixed_hold_back_frames(), 0);
+        let (model, _) = FixedStub::boxed(640, 40_000, false, Vec::new());
+        let h = VcStreamHarness::new(model, 48_000, 48_000, 1, 1, 0, 320, 512).unwrap();
+        assert!(h.fixed_hold_back_frames() > 0);
+        let (legacy, _) = stub(40_000, Vec::new());
+        let h = VcStreamHarness::new(legacy, 48_000, 48_000, 1, 1, 0, 320, 512).unwrap();
+        assert_eq!((h.fixed_shape(), h.fixed_hold_back_frames()), (None, 0));
+    }
+
+    /// Fixed-block mode is warmed once, at the one live shape, and `configure_stream` sees the
+    /// SOLA tail in `want`.
+    #[test]
+    fn fixed_blocks_warm_the_one_live_shape() {
+        let (mut model, log) = FixedStub::boxed(640, 40_000, false, Vec::new());
+        let warm = Arc::new(Mutex::new(Vec::new()));
+        model.warm = warm.clone();
+        let mut h = VcStreamHarness::new(model, 44_100, 48_000, 1, 1, 1_600, 320, 441).unwrap();
+        let (_, context) = h.fixed_shape().unwrap();
+        let warmed = warm.lock().unwrap().clone();
+        assert_eq!(warmed.len(), 1);
+        assert_eq!(warmed[0].0, context);
+        let input = vec![0.1f32; 441];
+        for _ in 0..200 {
+            h.push_and_convert(&input).unwrap();
+        }
+        let log = log.lock().unwrap();
+        // 200 × 441 frames at 44.1 kHz = 2 s = 50 blocks of 40 ms.
+        assert!(log.len() >= 48, "{} calls", log.len());
+        assert!(log.iter().all(|&(_, len, want)| (len, want) == warmed[0]));
+        // want = block + the SOLA tail (overlap + search + 2 samples at 40 kHz, in 16 kHz samples).
+        assert_eq!(warmed[0].1, 640 + h.sola_tail_in);
+    }
+
+    /// An identity model in fixed-block mode is a constant delay (no drift, no block-boundary
+    /// glitches), with or without matching device blocks; matching blocks add no hold-back.
+    #[test]
+    fn fixed_block_passthrough_is_a_constant_delay() {
+        for &(m_out, r_in, r_out, frames, block) in &[
+            (16_000u32, 48_000u32, 48_000u32, 1_920usize, 640usize),
+            (48_000, 44_100, 48_000, 1_764, 640),
+            (48_000, 48_000, 48_000, 512, 640),
+            (16_000, 48_000, 44_100, 480, 320),
+            // A first block one tick early (the pre-accumulator's lead), several device blocks per
+            // model block.
+            (40_000, 44_100, 44_100, 160, 640),
+        ] {
+            let (model, _) = FixedStub::boxed(block, m_out, true, Vec::new());
+            let mut h = VcStreamHarness::new(model, r_in, r_out, 1, 1, 1_024, 320, frames).unwrap();
+            let ticks = (8.0 * f64::from(r_in) / frames as f64) as usize;
+            let mut out = Vec::new();
+            for tick in 0..ticks {
+                let input: Vec<f32> = (0..frames)
+                    .map(|i| multitone((tick * frames + i) as f64 / f64::from(r_in)) as f32)
+                    .collect();
+                out.extend(h.push_and_convert(&input).unwrap());
+            }
+            let reference = reference_at(out.len(), r_out);
+            let start = out.len() / 3;
+            let lag = fit_lag(&out, &reference, start);
+            let (max_err, checked) = max_error_at_lag(&out, &reference, lag, start, &[]);
+            assert!(checked > 100_000);
+            assert!(max_err < 0.03, "{r_in}->{r_out} frames {frames} block {block}: max error {max_err} at lag {lag}");
+            // The delay is the block, the SOLA overlap, the resamplers and the cushions: well under
+            // two model blocks plus a device block.
+            let bound = (2 * block) as f64 * f64::from(r_out) / 16_000.0 + frames as f64 * f64::from(r_out) / f64::from(r_in) + 400.0;
+            assert!((lag as f64) < bound, "{r_in}->{r_out} frames {frames} block {block}: lag {lag} >= {bound}");
         }
     }
 }

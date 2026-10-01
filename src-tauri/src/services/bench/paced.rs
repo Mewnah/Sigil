@@ -40,7 +40,7 @@ use crate::services::rt_thread::{self, WorkerPriority};
 
 use super::engine::{AlgorithmicLatency, Engine, ModelTimes};
 use super::load_sim::{LoadCpu, LoadHandle, LoadReport};
-use super::metrics::{cores, insert_summary, process_cpu_time, thread_cpu_time, Metrics, Summary, VramPeak};
+use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, thread_cpu_time, Metrics, Summary, VramPeak};
 use super::report::{RunOutcome, TickRecord};
 use super::spec::{ClockKind, PacedRun, StreamSpec};
 use super::vc_rt::{InputSide, OutputSide, Pushed, VcTick};
@@ -308,11 +308,12 @@ fn latency_recovery(latencies: &[(f64, f64)], records: &mut [StallRecord], clock
 /// Run on a dedicated thread (the worker priority policy applies to it alone); load generators
 /// run beside it for the whole run.
 pub(super) fn run_paced(p: &PacedInput<'_>) -> Result<RunOutcome, String> {
-    let load = LoadHandle::start(&p.run.load)?;
+    let load = LoadHandle::start_kind(&p.run.load, p.run.gpu_load_kind)?;
     let tally = load.cpu_tally();
     let result = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("sigil-bench-paced".into())
+            .stack_size(super::BENCH_STACK_BYTES)
             .spawn_scoped(scope, || paced_worker(p, &tally))
             .map_err(|e| format!("cannot start the benchmark thread: {e}"))?
             .join()
@@ -512,15 +513,16 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
             ClockKind::Simulated => declared,
         };
         clock.charge(compute);
+        let (converted_ms, calls) = times
+            .lock()
+            .map(|t| {
+                let new = &t.convert_ms[model_before.min(t.convert_ms.len())..];
+                (new.iter().sum::<f64>(), new.len() as u32)
+            })
+            .unwrap_or((0.0, 0));
         let model_ms = match clock_kind {
             ClockKind::Simulated => declared.as_secs_f64() * 1000.0,
-            _ => {
-                times
-                    .lock()
-                    .map(|t| t.convert_ms[model_before.min(t.convert_ms.len())..].iter().sum())
-                    .unwrap_or(0.0)
-                    + declared.as_secs_f64() * 1000.0
-            }
+            _ => converted_ms + declared.as_secs_f64() * 1000.0,
         };
         let failed = out.error.is_some();
         if let Some(e) = out.error {
@@ -538,6 +540,7 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
             age_ms,
             compute_ms: compute.as_secs_f64() * 1000.0,
             model_ms,
+            calls,
             stall_ms,
             waiting_ms: waiting as f64 * 1000.0 / f64::from(r_in),
             dropped_ms: (dropped.frames as u64 + dropped.overflow_frames) as f64 * 1000.0 / f64::from(r_in),
@@ -576,10 +579,20 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
 
     let mut m = Metrics::new();
     let compute: Vec<f64> = timeline.iter().map(|t| t.compute_ms).collect();
-    let rtf: Vec<f64> = compute.iter().map(|c| c / block_ms).collect();
+    // A fixed-block model converts one model block every few device blocks: its real-time budget
+    // is the longer of the two (the harness holds output back to cover the bursts).
+    let budget_ms = p
+        .engine
+        .fixed_block()
+        .map_or(block_ms, |b| block_ms.max(b as f64 / 16.0));
+    let basis = super::metrics::budget_basis(&timeline);
+    let rtf: Vec<f64> = basis.iter().map(|c| c / budget_ms).collect();
     insert_summary(&mut m, "block_ms", &compute);
     insert_summary(&mut m, "rtf", &rtf);
-    let model: Vec<f64> = timeline.iter().map(|t| t.model_ms).collect();
+    insert_summary(&mut m, "call_ms", &super::metrics::call_compute(&timeline));
+    // Per model call, like offline runs (the ticks where a fixed-block engine only accumulates
+    // would otherwise count as 0 ms).
+    let model: Vec<f64> = timeline.iter().filter(|t| t.calls > 0).map(|t| t.model_ms / f64::from(t.calls)).collect();
     insert_summary(&mut m, "model_ms", &model);
     let ages: Vec<f64> = timeline.iter().map(|t| t.age_ms).collect();
     insert_summary(&mut m, "block_age_ms", &ages);
@@ -590,9 +603,15 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     m.insert("blocks".into(), timeline.len() as f64);
     m.insert(
         "over_budget_ratio".into(),
-        compute.iter().filter(|&&c| c > block_ms).count() as f64 / compute.len().max(1) as f64,
+        basis.iter().filter(|&&c| c > budget_ms).count() as f64 / basis.len().max(1) as f64,
     );
-    let (warmup_ms, model_errors) = times.lock().map(|t| (t.warmup_ms, t.errors)).unwrap_or((0.0, 0));
+    let (warmup_ms, model_errors, skipped) = times
+        .lock()
+        .map(|t| {
+            insert_components(&mut m, &t.components);
+            (t.warmup_ms, t.errors, t.skipped)
+        })
+        .unwrap_or((0.0, 0, 0));
     m.insert("model_errors".into(), model_errors as f64);
     m.insert("algorithmic_latency_ms".into(), p.probe.ms);
     m.insert("engine_load_ms".into(), p.engine.info.load_ms);
@@ -636,6 +655,7 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         "clock_seconds": clock_s,
         "block_frames": block,
         "block_ms": block_ms,
+        "budget_ms": budget_ms,
         "capture_callback_frames": cap_cb,
         "playback_callback_frames": out_cb,
         "latency_budget_frames": budget_frames,
@@ -649,12 +669,14 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         "stalls": stall_records,
         "vram_peak_process_mb": vram.peak_mb,
         "worker_priority": priority.as_str(),
+        "silent_ticks": skipped,
     });
     Ok(RunOutcome {
         metrics: m,
         details,
         timeline,
         audio: sim.audio.map(|a| (a, r_out, ch_out)),
+        extra_audio: Vec::new(),
     })
 }
 
@@ -675,8 +697,15 @@ mod tests {
     const CUSHION_MS: f64 = 80.0;
 
     fn paced(spec: &BenchSpec, input: &[f32]) -> RunOutcome {
-        let engine = build_engine(&spec.engine, WorkerPriority::Auto, spec.seed).unwrap();
-        let probe = probe_algorithmic_latency(&spec.stream, engine.info.output_rate, engine.info.min_context_samples).unwrap();
+        let engine = build_engine(&spec.engine, &spec.stream, WorkerPriority::Auto, spec.seed).unwrap();
+        let probe = probe_algorithmic_latency(
+            &spec.stream,
+            engine.info.output_rate,
+            engine.info.min_context_samples,
+            engine.fixed_block(),
+            engine.info.model_delay_ms,
+        )
+        .unwrap();
         let RunSpec::Paced(run) = &spec.runs[0] else { panic!() };
         let cancel = AtomicBool::new(false);
         run_paced(&PacedInput {

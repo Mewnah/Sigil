@@ -1,4 +1,270 @@
 //! Median smoother + confidence gate for F0 contours (hop-160 grid).
+//!
+//! Two post-processing chains live here:
+//! - [`smooth_f0`]: the legacy chain of FCPE / RMVPE / Dio (neighbour octave gate, then a
+//!   scipy-style median). Unchanged by P3, so the proven path sounds exactly as before.
+//! - [`F0Post`] with [`F0PostConfig`] (P3-D, the pitch bank: SwiftF0, CREPE-tiny, PESTO and F0
+//!   fusion): an **octave island gate** that folds short runs sitting an octave (or two) away from
+//!   the frames on both sides back by whole octaves, instead of averaging them away; a median whose
+//!   edges replicate the end frames (the newest frame of a streaming slice is the one the voice is
+//!   decoded with, so it is never pulled toward a zero pad); and the F0 range of the voice
+//!   ([`F0Limits`]: speech 50-1100 Hz, singing up to 2.5 kHz). Runs that touch the newest edge are
+//!   never folded: without the audio after them a real leap and an octave error look the same, so
+//!   the gate leaves them to the extractor (F0 fusion arbitrates those with a second extractor).
+
+use super::engine::options::F0Range;
+
+/// F0 search range of a voice, in Hz. Frames outside it are unvoiced.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct F0Limits {
+    pub min_hz: f32,
+    pub max_hz: f32,
+}
+
+impl F0Limits {
+    /// RVC's speech range (`f0_min = 50`, `f0_max = 1100`).
+    pub const SPEECH: F0Limits = F0Limits {
+        min_hz: 50.0,
+        max_hz: 1100.0,
+    };
+    /// Singing: up to 2.5 kHz (the extractors themselves top out near 2 kHz: SwiftF0 2093.75 Hz,
+    /// CREPE / RMVPE about 2006 Hz).
+    pub const SINGING: F0Limits = F0Limits {
+        min_hz: 50.0,
+        max_hz: 2500.0,
+    };
+
+    pub fn for_range(range: F0Range) -> F0Limits {
+        match range {
+            F0Range::Speech => F0Limits::SPEECH,
+            F0Range::Singing => F0Limits::SINGING,
+        }
+    }
+
+    pub fn contains(&self, hz: f32) -> bool {
+        hz >= self.min_hz && hz <= self.max_hz
+    }
+}
+
+/// Configuration of [`F0Post`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct F0PostConfig {
+    pub limits: F0Limits,
+    /// Longest run of 10 ms frames the octave gate folds (0 = gate off). A run longer than this is
+    /// taken as real (a register change, a leap in a song).
+    pub max_island_frames: usize,
+    /// How close (cents) a run must sit to a whole number of octaves from its neighbours to count as
+    /// an octave error.
+    pub octave_tolerance_cents: f32,
+    /// Adjacent voiced frames further apart than this (cents) start a new run.
+    pub jump_cents: f32,
+    /// Unvoiced frames that may separate two runs of one voiced segment (the gate looks across
+    /// them).
+    pub max_gap_frames: usize,
+    /// Odd median window over the contour, unvoiced frames included (1 = off); the edges replicate
+    /// the end frames.
+    pub median_frames: usize,
+}
+
+impl F0PostConfig {
+    /// The pitch bank's defaults for `range`. Singing folds only shorter islands (a sung leap that
+    /// comes back quickly is still music).
+    pub fn for_range(range: F0Range) -> F0PostConfig {
+        match range {
+            F0Range::Speech => F0PostConfig {
+                limits: F0Limits::SPEECH,
+                max_island_frames: 5,
+                octave_tolerance_cents: 250.0,
+                jump_cents: 600.0,
+                max_gap_frames: 3,
+                median_frames: 3,
+            },
+            F0Range::Singing => F0PostConfig {
+                limits: F0Limits::SINGING,
+                max_island_frames: 3,
+                octave_tolerance_cents: 150.0,
+                jump_cents: 600.0,
+                max_gap_frames: 2,
+                median_frames: 3,
+            },
+        }
+    }
+
+    /// Range limits only (no gate, no median): for contours that were already post-processed.
+    #[allow(dead_code)] // Used by tests (stand-in extractors) and callers with smoothed contours.
+    pub fn limits_only(limits: F0Limits) -> F0PostConfig {
+        F0PostConfig {
+            limits,
+            max_island_frames: 0,
+            octave_tolerance_cents: 0.0,
+            jump_cents: 600.0,
+            max_gap_frames: 0,
+            median_frames: 1,
+        }
+    }
+}
+
+/// A run of voiced frames: `[start, end)` plus its median pitch (log2 Hz).
+#[derive(Clone, Copy, Debug)]
+struct Run {
+    start: usize,
+    end: usize,
+    log2: f32,
+}
+
+/// The pitch bank's post-processing (see the module docs). Allocation-free once its scratch has
+/// grown to the longest contour it has processed.
+#[derive(Default)]
+pub struct F0Post {
+    runs: Vec<Run>,
+    tmp: Vec<f32>,
+    win: Vec<f32>,
+}
+
+impl F0Post {
+    pub fn new() -> F0Post {
+        F0Post::default()
+    }
+
+    /// Octave island gate, median and range limits, in place.
+    pub fn process(&mut self, f0: &mut [f32], cfg: &F0PostConfig) {
+        for v in f0.iter_mut() {
+            if !(v.is_finite() && *v > 0.0) {
+                *v = 0.0;
+            }
+        }
+        if cfg.max_island_frames > 0 {
+            // Two passes: folding one island can make its neighbour an island of its own.
+            for _ in 0..2 {
+                if !self.octave_gate(f0, cfg) {
+                    break;
+                }
+            }
+        }
+        if cfg.median_frames > 1 {
+            self.median(f0, cfg.median_frames);
+        }
+        for v in f0.iter_mut() {
+            if *v > 0.0 && !cfg.limits.contains(*v) {
+                *v = 0.0;
+            }
+        }
+    }
+
+    /// Split `f0` into runs of voiced frames (see [`F0PostConfig::jump_cents`]).
+    fn collect_runs(&mut self, f0: &[f32], cfg: &F0PostConfig) {
+        self.runs.clear();
+        self.tmp.clear();
+        let jump = cfg.jump_cents / 1200.0;
+        let mut i = 0;
+        while i < f0.len() {
+            if f0[i] <= 0.0 {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut prev = f0[i].log2();
+            i += 1;
+            while i < f0.len() && f0[i] > 0.0 && (f0[i].log2() - prev).abs() <= jump {
+                prev = f0[i].log2();
+                i += 1;
+            }
+            self.tmp.clear();
+            self.tmp.extend(f0[start..i].iter().map(|v| v.log2()));
+            let mid = self.tmp.len() / 2;
+            let (_, &mut log2, _) = self.tmp.select_nth_unstable_by(mid, f32::total_cmp);
+            self.runs.push(Run { start, end: i, log2 });
+        }
+    }
+
+    /// One pass of the octave island gate; returns whether anything was folded.
+    fn octave_gate(&mut self, f0: &mut [f32], cfg: &F0PostConfig) -> bool {
+        self.collect_runs(f0, cfg);
+        let n = f0.len();
+        let tol = cfg.octave_tolerance_cents / 1200.0;
+        let jump = cfg.jump_cents / 1200.0;
+        let near_octaves = |d: f32| -> Option<i32> {
+            let k = d.round();
+            (k != 0.0 && k.abs() <= 2.0 && (d - k).abs() <= tol).then_some(k as i32)
+        };
+        let mut folded = false;
+        for k in 0..self.runs.len() {
+            let r = self.runs[k];
+            let len = r.end - r.start;
+            if len > cfg.max_island_frames {
+                continue;
+            }
+            // Never fold a run that reaches the newest frame: nothing after it confirms an error.
+            if r.end >= n {
+                continue;
+            }
+            let joined = |a: &Run, b: &Run| b.start.saturating_sub(a.end) <= cfg.max_gap_frames;
+            let prev = (k > 0).then(|| self.runs[k - 1]).filter(|p| joined(p, &r));
+            let next = self.runs.get(k + 1).copied().filter(|q| joined(&r, q));
+            let shift = match (prev, next) {
+                (Some(p), Some(q)) => {
+                    // Both sides agree with each other and put this run a whole octave away.
+                    if (p.log2 - q.log2).abs() > jump {
+                        continue;
+                    }
+                    let reference = 0.5 * (p.log2 + q.log2);
+                    match near_octaves(r.log2 - reference) {
+                        Some(o) if (p.end - p.start) + (q.end - q.start) > len => o,
+                        _ => continue,
+                    }
+                }
+                // The first or last run of a segment (an onset or an ending): only a clearly longer
+                // run on its other side decides.
+                (None, Some(q)) | (Some(q), None) => {
+                    if (q.end - q.start) < 3 * len {
+                        continue;
+                    }
+                    match near_octaves(r.log2 - q.log2) {
+                        Some(o) => o,
+                        None => continue,
+                    }
+                }
+                (None, None) => continue,
+            };
+            let scale = (-(shift as f32)).exp2();
+            for v in &mut f0[r.start..r.end] {
+                if *v > 0.0 {
+                    *v *= scale;
+                }
+            }
+            self.runs[k].log2 -= shift as f32;
+            folded = true;
+        }
+        folded
+    }
+
+    /// Median over an odd window, unvoiced (0) frames included, the edges replicating the end
+    /// frames.
+    fn median(&mut self, f0: &mut [f32], window: usize) {
+        let w = window.clamp(1, 9) | 1;
+        let half = w / 2;
+        let n = f0.len();
+        if n == 0 || half == 0 {
+            return;
+        }
+        self.tmp.clear();
+        self.tmp.extend_from_slice(f0);
+        for (i, out) in f0.iter_mut().enumerate() {
+            self.win.clear();
+            for k in 0..w {
+                let j = (i + k).saturating_sub(half).min(n - 1);
+                self.win.push(self.tmp[j]);
+            }
+            self.win.sort_unstable_by(f32::total_cmp);
+            *out = self.win[half];
+        }
+    }
+}
+
+/// Cents between two positive frequencies (`a` over `b`).
+pub fn cents(a: f32, b: f32) -> f32 {
+    1200.0 * (a / b).log2()
+}
 
 /// Replace octave-jump frames with their neighbours' mean, then median-smooth.
 ///
@@ -130,5 +396,187 @@ mod tests {
         let mut f0 = vec![100.0, 100.0, 400.0, 100.0, 100.0];
         smooth_f0(&mut f0, 3);
         assert!(f0.iter().all(|&v| (v - 100.0).abs() < 1e-3), "{f0:?}");
+    }
+}
+
+#[cfg(test)]
+mod post_tests {
+    use super::*;
+
+    fn speech() -> F0PostConfig {
+        F0PostConfig::for_range(F0Range::Speech)
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn folds_an_interior_octave_island_back() {
+        // A 3-frame octave-up error inside a steady 150 Hz run is folded by one octave (not
+        // averaged away, not unvoiced).
+        let mut f0 = vec![150.0, 151.0, 152.0, 304.0, 306.0, 308.0, 154.0, 155.0, 156.0, 157.0];
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        let want = [150.0, 151.0, 152.0, 152.0, 153.0, 154.0, 154.0, 155.0, 156.0, 157.0];
+        for (a, b) in f0.iter().zip(want) {
+            assert!(close(*a, b), "{f0:?}");
+        }
+        // Octave down and two octaves up are folded too.
+        let mut f0 = vec![200.0; 12];
+        f0[4] = 100.0;
+        f0[5] = 100.5;
+        f0[9] = 800.0;
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert!(f0.iter().all(|&v| (v - 200.0).abs() <= 1.01), "{f0:?}");
+    }
+
+    #[test]
+    fn keeps_real_leaps_and_the_newest_edge() {
+        // A register change that stays (longer than the island limit) is real.
+        let mut f0 = vec![150.0; 6];
+        f0.extend(vec![300.0; 8]);
+        let before = f0.clone();
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert_eq!(f0, before);
+        // A jump at the newest frames is not folded: nothing after it confirms an error.
+        let mut f0 = vec![150.0; 10];
+        f0.extend([300.0, 300.0]);
+        let before = f0.clone();
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert_eq!(f0, before);
+        // Neither is a jump that is not near a whole octave (a fifth).
+        let mut f0 = vec![150.0; 12];
+        f0[5] = 225.0;
+        f0[6] = 225.0;
+        let before = f0.clone();
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert_eq!(f0, before);
+    }
+
+    #[test]
+    fn looks_across_short_unvoiced_gaps_and_at_segment_ends() {
+        // Island separated by one unvoiced frame on each side.
+        let mut f0 = vec![120.0, 121.0, 122.0, 0.0, 244.0, 246.0, 0.0, 123.0, 124.0, 125.0, 126.0];
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert!(close(f0[4], 122.0) && close(f0[5], 123.0), "{f0:?}");
+        // An onset that starts an octave high for two frames, then a long steady run.
+        let mut f0 = vec![0.0, 0.0, 400.0, 402.0, 200.0, 201.0, 202.0, 203.0, 204.0, 205.0, 206.0];
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert!(close(f0[2], 200.0) && close(f0[3], 201.0), "{f0:?}");
+        // An island in a different segment (a long gap) is left alone.
+        let mut f0 = vec![120.0, 121.0, 122.0, 0.0, 0.0, 0.0, 0.0, 0.0, 244.0, 246.0, 0.0, 0.0];
+        let before = f0.clone();
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        assert_eq!(f0, before);
+    }
+
+    #[test]
+    fn median_replicates_the_edges_and_limits_apply() {
+        // The newest frame keeps its value (no pull toward a zero pad), unlike smooth_f0, which
+        // gives [0, 150, 151, 152, 151] here.
+        let mut f0 = vec![0.0, 150.0, 152.0, 151.0, 153.0];
+        F0Post::new().process(&mut f0, &speech());
+        assert_eq!(f0, vec![0.0, 150.0, 151.0, 152.0, 153.0]);
+        // Isolated voiced frames and single dropouts behave like the legacy median.
+        let mut f0 = vec![0.0, 0.0, 200.0, 0.0, 0.0, 110.0, 111.0, 0.0, 112.0, 113.0, 113.0];
+        F0Post::new().process(&mut f0, &speech());
+        assert_eq!(&f0[..5], &[0.0; 5]);
+        assert_eq!(f0[7], 111.0);
+        // Range: 1500 Hz is outside speech, inside singing; 40 Hz is outside both.
+        let mut f0 = vec![1500.0, 1500.0, 1500.0, 40.0, 40.0, 40.0];
+        F0Post::new().process(&mut f0, &F0PostConfig::limits_only(F0Limits::SPEECH));
+        assert_eq!(f0, vec![0.0; 6]);
+        let mut f0 = vec![1500.0, 1500.0, 1500.0, 40.0, 40.0, 40.0];
+        F0Post::new().process(&mut f0, &F0PostConfig::for_range(F0Range::Singing));
+        assert_eq!(f0, vec![1500.0, 1500.0, 1500.0, 0.0, 0.0, 0.0]);
+        // Non-finite input never survives.
+        let mut f0 = vec![f32::NAN, 120.0, f32::INFINITY, -3.0, 121.0];
+        F0Post::new().process(&mut f0, &speech());
+        assert!(f0.iter().all(|v| v.is_finite() && *v >= 0.0), "{f0:?}");
+        assert!(close(cents(200.0, 100.0), 1200.0));
+    }
+
+    #[test]
+    fn an_octave_error_across_an_octave_trap_signal_is_repaired() {
+        // Octave traps: alternating half / double errors of 1-4 frames over a slow glide.
+        let truth: Vec<f32> = (0..60).map(|i| 140.0 * (i as f32 * 0.004).exp2()).collect();
+        let mut f0 = truth.clone();
+        for &(s, len, factor) in &[(5usize, 1usize, 2.0f32), (14, 3, 0.5), (27, 4, 2.0), (40, 2, 4.0), (50, 1, 0.5)] {
+            for v in &mut f0[s..s + len] {
+                *v *= factor;
+            }
+        }
+        F0Post::new().process(
+            &mut f0,
+            &F0PostConfig {
+                median_frames: 1,
+                ..speech()
+            },
+        );
+        for (i, (a, b)) in f0.iter().zip(&truth).enumerate() {
+            assert!(cents(*a, *b).abs() < 1.0, "frame {i}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn process_is_allocation_free_once_warm() {
+        use crate::services::neural_audio::gpu::alloc_probe::allocations_during;
+        let mut post = F0Post::new();
+        let base: Vec<f32> = (0..60)
+            .map(|i| if i % 17 < 3 { 0.0 } else { 150.0 + i as f32 })
+            .collect();
+        let mut f0 = base.clone();
+        post.process(&mut f0, &speech());
+        let mut f0 = base.clone();
+        let ((), n) = allocations_during(|| post.process(&mut f0, &speech()));
+        assert_eq!(n, 0);
     }
 }

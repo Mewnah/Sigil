@@ -18,7 +18,8 @@
 //!   from disk); `outside_rvc` (`{ "pitch_semitones", "formant_shift" }`) holds the other modes'
 //!   pitch and formant while RVC mode (whose voices bring their own) is active.
 //! - `slot.json`: `{ "version": 1, "pitch_semitones", "formant_shift", "index_rate", "protect",
-//!   "pitch_extractor", "speaker_id" }`, every field optional.
+//!   "pitch_extractor", "speaker_id", "rms_mix", "formant_semitones", "f0_range" }`, every field
+//!   optional (the last three were added by P3-S0; older files simply lack them).
 //!
 //! Loading is lenient per field: a field this build does not understand (a newer build's enum
 //! value such as a new `mode`, or a changed type) is dropped and logged, and everything else is
@@ -238,6 +239,13 @@ pub(super) struct SlotSettingsFile {
     pub(super) pitch_extractor: Option<String>,
     #[serde(default)]
     pub(super) speaker_id: Option<i64>,
+    // ---- P3 per-voice values (P3-S0) ----
+    #[serde(default)]
+    pub(super) rms_mix: Option<f32>,
+    #[serde(default)]
+    pub(super) formant_semitones: Option<f32>,
+    #[serde(default)]
+    pub(super) f0_range: Option<String>,
 }
 
 /// Where a loaded value came from.

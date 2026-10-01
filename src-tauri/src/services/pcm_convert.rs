@@ -1,11 +1,11 @@
 //! Float32 PCM in ~[-1, 1] for DSP / ML from cpal device buffers.
 //!
-//! [`build_input_stream_f32`] opens an input stream in the device's native sample format and hands
-//! every callback buffer to `on_data` as an interleaved f32 slice without allocating: f32 devices
-//! pass their buffer straight through, other formats are converted into a scratch buffer that is
-//! preallocated for [`SCRATCH_SECONDS`] of audio (it grows once if a driver ever delivers more).
-//! [`build_input_stream_f32_timed`] is the same with cpal's [`InputCallbackInfo`] (capture and
-//! callback timestamps) passed along; the capture hub turns it into a QPC capture time per block.
+//! [`build_input_stream_f32_timed`] opens an input stream in the device's native sample format and
+//! hands every callback buffer to `on_data` as an interleaved f32 slice without allocating, with
+//! cpal's [`InputCallbackInfo`] (capture and callback timestamps; the capture hub turns them into a
+//! QPC capture time per block): f32 devices pass their buffer straight through, other formats are
+//! converted into a scratch buffer that is preallocated for [`SCRATCH_SECONDS`] of audio (it grows
+//! once if a driver ever delivers more).
 
 use cpal::traits::DeviceTrait;
 use cpal::{BuildStreamError, Device, InputCallbackInfo, SampleFormat, SizedSample, Stream, StreamConfig, StreamError, SupportedStreamConfig};
@@ -85,18 +85,10 @@ where
 }
 
 /// Open an input stream in the device's native sample format (every format cpal defines) and hand
-/// each callback buffer to `on_data` as interleaved f32 PCM in ~[-1, 1], without allocating.
-pub fn build_input_stream_f32<D, E>(device: &Device, config: &SupportedStreamConfig, mut on_data: D, on_error: E) -> Result<Stream, String>
-where
-    D: FnMut(&[f32]) + Send + 'static,
-    E: FnMut(StreamError) + Send + 'static,
-{
-    build_input_stream_f32_timed(device, config, move |data: &[f32], _: &InputCallbackInfo| on_data(data), on_error)
-}
-
-/// [`build_input_stream_f32`] with cpal's callback info (capture / callback timestamps) passed to
-/// `on_data`. `config` may be an output device's config when `device` is a render endpoint opened
-/// for WASAPI loopback.
+/// each callback buffer to `on_data` as interleaved f32 PCM in ~[-1, 1], without allocating, with
+/// cpal's callback info (capture / callback timestamps). `config` may be an output device's config
+/// when `device` is a render endpoint opened for WASAPI loopback. (The untimed variant went away
+/// in P3, when the voice changer moved onto the capture hub.)
 pub fn build_input_stream_f32_timed<D, E>(device: &Device, config: &SupportedStreamConfig, mut on_data: D, on_error: E) -> Result<Stream, String>
 where
     D: FnMut(&[f32], &InputCallbackInfo) + Send + 'static,
