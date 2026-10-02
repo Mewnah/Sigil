@@ -1,3 +1,4 @@
+import { isCancelMarker } from "@/core/services/translation/sequencer";
 import { IVRCTarget } from "../types";
 import { sendOsc }    from "./utils";
 import chunk          from "lodash/chunk";
@@ -88,6 +89,8 @@ class VRC_KillFrenzyTarget implements IVRCTarget {
 
   // enqueue sentence
   async pushFinal(value: string) {
+    // STT's "[...]" marker (a sentence cut off by mute / stop) is caption punctuation, not something to show.
+    if (!value.trim() || isCancelMarker(value)) return;
     if (this.state.splitSentences) {
       const sentenceSplit = chunk(value, 128).map(str => str.join(""));
       this.queue.push(...sentenceSplit);

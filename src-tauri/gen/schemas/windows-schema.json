@@ -2235,10 +2235,10 @@
           "markdownDescription": "Denies the oauth_loopback_start command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`\n- `allow-list-loopback-processes`",
           "type": "string",
           "const": "audio:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-input-devices`\n- `allow-list-output-devices`\n- `allow-start-audio-capture`\n- `allow-stop-audio-capture`\n- `allow-start-utterance-capture`\n- `allow-stop-utterance-capture`\n- `allow-take-utterance`\n- `allow-get-device-snapshot`\n- `allow-set-capture-mute`\n- `allow-get-capture-status`\n- `allow-list-loopback-processes`"
         },
         {
           "description": "Enables the get_capture_status command without any pre-configured scope.",
@@ -2257,6 +2257,12 @@
           "type": "string",
           "const": "audio:allow-list-input-devices",
           "markdownDescription": "Enables the list_input_devices command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_loopback_processes command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-list-loopback-processes",
+          "markdownDescription": "Enables the list_loopback_processes command without any pre-configured scope."
         },
         {
           "description": "Enables the list_output_devices command without any pre-configured scope.",
@@ -2317,6 +2323,12 @@
           "type": "string",
           "const": "audio:deny-list-input-devices",
           "markdownDescription": "Denies the list_input_devices command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_loopback_processes command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-list-loopback-processes",
+          "markdownDescription": "Denies the list_loopback_processes command without any pre-configured scope."
         },
         {
           "description": "Denies the list_output_devices command without any pre-configured scope.",
@@ -2401,6 +2413,72 @@
           "type": "string",
           "const": "bench:deny-run-benchmark",
           "markdownDescription": "Denies the run_benchmark command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-caption-window-open`\n- `allow-caption-window-set-options`\n- `allow-caption-window-close`\n- `allow-caption-window-status`\n- `allow-caption-window-reset-position`",
+          "type": "string",
+          "const": "caption-window:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-caption-window-open`\n- `allow-caption-window-set-options`\n- `allow-caption-window-close`\n- `allow-caption-window-status`\n- `allow-caption-window-reset-position`"
+        },
+        {
+          "description": "Enables the caption_window_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:allow-caption-window-close",
+          "markdownDescription": "Enables the caption_window_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the caption_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:allow-caption-window-open",
+          "markdownDescription": "Enables the caption_window_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the caption_window_reset_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:allow-caption-window-reset-position",
+          "markdownDescription": "Enables the caption_window_reset_position command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the caption_window_set_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:allow-caption-window-set-options",
+          "markdownDescription": "Enables the caption_window_set_options command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the caption_window_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:allow-caption-window-status",
+          "markdownDescription": "Enables the caption_window_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the caption_window_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:deny-caption-window-close",
+          "markdownDescription": "Denies the caption_window_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the caption_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:deny-caption-window-open",
+          "markdownDescription": "Denies the caption_window_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the caption_window_reset_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:deny-caption-window-reset-position",
+          "markdownDescription": "Denies the caption_window_reset_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the caption_window_set_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:deny-caption-window-set-options",
+          "markdownDescription": "Denies the caption_window_set_options command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the caption_window_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "caption-window:deny-caption-window-status",
+          "markdownDescription": "Denies the caption_window_status command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-chatterbox-endpoint`\n- `allow-get-chatterbox-voices`\n- `allow-check-chatterbox-availability`",
@@ -4641,6 +4719,48 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-edge-tts-speak`\n- `allow-edge-tts-cancel`\n- `allow-edge-tts-list-voices`",
+          "type": "string",
+          "const": "edge-tts:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-edge-tts-speak`\n- `allow-edge-tts-cancel`\n- `allow-edge-tts-list-voices`"
+        },
+        {
+          "description": "Enables the edge_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:allow-edge-tts-cancel",
+          "markdownDescription": "Enables the edge_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the edge_tts_list_voices command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:allow-edge-tts-list-voices",
+          "markdownDescription": "Enables the edge_tts_list_voices command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the edge_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:allow-edge-tts-speak",
+          "markdownDescription": "Enables the edge_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the edge_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:deny-edge-tts-cancel",
+          "markdownDescription": "Denies the edge_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the edge_tts_list_voices command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:deny-edge-tts-list-voices",
+          "markdownDescription": "Denies the edge_tts_list_voices command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the edge_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "edge-tts:deny-edge-tts-speak",
+          "markdownDescription": "Denies the edge_tts_speak command without any pre-configured scope."
+        },
+        {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-fish-endpoint`\n- `allow-get-fish-voices`\n- `allow-fish-speak-to-sink`\n- `allow-check-fish-availability`",
           "type": "string",
           "const": "fish-speech:default",
@@ -6423,6 +6543,48 @@
           "markdownDescription": "This enables all file write related commands without any pre-configured accessible paths."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-gemini-tts-speak`\n- `allow-gemini-tts-cancel`\n- `allow-gemini-tts-check`",
+          "type": "string",
+          "const": "gemini-tts:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-gemini-tts-speak`\n- `allow-gemini-tts-cancel`\n- `allow-gemini-tts-check`"
+        },
+        {
+          "description": "Enables the gemini_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:allow-gemini-tts-cancel",
+          "markdownDescription": "Enables the gemini_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the gemini_tts_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:allow-gemini-tts-check",
+          "markdownDescription": "Enables the gemini_tts_check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the gemini_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:allow-gemini-tts-speak",
+          "markdownDescription": "Enables the gemini_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gemini_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:deny-gemini-tts-cancel",
+          "markdownDescription": "Denies the gemini_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gemini_tts_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:deny-gemini-tts-check",
+          "markdownDescription": "Denies the gemini_tts_check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gemini_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "gemini-tts:deny-gemini-tts-speak",
+          "markdownDescription": "Denies the gemini_tts_speak command without any pre-configured scope."
+        },
+        {
           "description": "No features are enabled by default, as we believe\nthe shortcuts can be inherently dangerous and it is\napplication specific if specific shortcuts should be\nregistered or unregistered.\n",
           "type": "string",
           "const": "global-shortcut:default",
@@ -6487,6 +6649,60 @@
           "type": "string",
           "const": "global-shortcut:deny-unregister-all",
           "markdownDescription": "Denies the unregister_all command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-gpt-sovits-speak`\n- `allow-gpt-sovits-cancel`\n- `allow-gpt-sovits-check`\n- `allow-gpt-sovits-set-weights`",
+          "type": "string",
+          "const": "gpt-sovits:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-gpt-sovits-speak`\n- `allow-gpt-sovits-cancel`\n- `allow-gpt-sovits-check`\n- `allow-gpt-sovits-set-weights`"
+        },
+        {
+          "description": "Enables the gpt_sovits_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:allow-gpt-sovits-cancel",
+          "markdownDescription": "Enables the gpt_sovits_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the gpt_sovits_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:allow-gpt-sovits-check",
+          "markdownDescription": "Enables the gpt_sovits_check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the gpt_sovits_set_weights command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:allow-gpt-sovits-set-weights",
+          "markdownDescription": "Enables the gpt_sovits_set_weights command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the gpt_sovits_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:allow-gpt-sovits-speak",
+          "markdownDescription": "Enables the gpt_sovits_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gpt_sovits_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:deny-gpt-sovits-cancel",
+          "markdownDescription": "Denies the gpt_sovits_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gpt_sovits_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:deny-gpt-sovits-check",
+          "markdownDescription": "Denies the gpt_sovits_check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gpt_sovits_set_weights command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:deny-gpt-sovits-set-weights",
+          "markdownDescription": "Denies the gpt_sovits_set_weights command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the gpt_sovits_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "gpt-sovits:deny-gpt-sovits-speak",
+          "markdownDescription": "Denies the gpt_sovits_speak command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-start-tracking`\n- `allow-stop-tracking`",
@@ -6675,16 +6891,34 @@
           "markdownDescription": "Denies the llm_server_stop command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-local-tts-models`\n- `allow-load-local-tts`\n- `allow-speak-local-tts`\n- `allow-synthesize-local-tts`\n- `allow-cancel-local-tts`\n- `allow-unload-local-tts`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-local-tts-models`\n- `allow-load-local-tts`\n- `allow-speak-local-tts`\n- `allow-synthesize-local-tts`\n- `allow-cancel-local-tts`\n- `allow-unload-local-tts`\n- `allow-pocket-tts-speak`\n- `allow-pocket-tts-cancel`\n- `allow-pocket-tts-unload`\n- `allow-chatterbox-local-speak`\n- `allow-chatterbox-local-cancel`\n- `allow-chatterbox-local-unload`",
           "type": "string",
           "const": "local-tts:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-local-tts-models`\n- `allow-load-local-tts`\n- `allow-speak-local-tts`\n- `allow-synthesize-local-tts`\n- `allow-cancel-local-tts`\n- `allow-unload-local-tts`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-list-local-tts-models`\n- `allow-load-local-tts`\n- `allow-speak-local-tts`\n- `allow-synthesize-local-tts`\n- `allow-cancel-local-tts`\n- `allow-unload-local-tts`\n- `allow-pocket-tts-speak`\n- `allow-pocket-tts-cancel`\n- `allow-pocket-tts-unload`\n- `allow-chatterbox-local-speak`\n- `allow-chatterbox-local-cancel`\n- `allow-chatterbox-local-unload`"
         },
         {
           "description": "Enables the cancel_local_tts command without any pre-configured scope.",
           "type": "string",
           "const": "local-tts:allow-cancel-local-tts",
           "markdownDescription": "Enables the cancel_local_tts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the chatterbox_local_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-chatterbox-local-cancel",
+          "markdownDescription": "Enables the chatterbox_local_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the chatterbox_local_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-chatterbox-local-speak",
+          "markdownDescription": "Enables the chatterbox_local_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the chatterbox_local_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-chatterbox-local-unload",
+          "markdownDescription": "Enables the chatterbox_local_unload command without any pre-configured scope."
         },
         {
           "description": "Enables the list_local_tts_models command without any pre-configured scope.",
@@ -6697,6 +6931,24 @@
           "type": "string",
           "const": "local-tts:allow-load-local-tts",
           "markdownDescription": "Enables the load_local_tts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pocket_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-pocket-tts-cancel",
+          "markdownDescription": "Enables the pocket_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pocket_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-pocket-tts-speak",
+          "markdownDescription": "Enables the pocket_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pocket_tts_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:allow-pocket-tts-unload",
+          "markdownDescription": "Enables the pocket_tts_unload command without any pre-configured scope."
         },
         {
           "description": "Enables the speak_local_tts command without any pre-configured scope.",
@@ -6723,6 +6975,24 @@
           "markdownDescription": "Denies the cancel_local_tts command without any pre-configured scope."
         },
         {
+          "description": "Denies the chatterbox_local_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-chatterbox-local-cancel",
+          "markdownDescription": "Denies the chatterbox_local_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the chatterbox_local_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-chatterbox-local-speak",
+          "markdownDescription": "Denies the chatterbox_local_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the chatterbox_local_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-chatterbox-local-unload",
+          "markdownDescription": "Denies the chatterbox_local_unload command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_local_tts_models command without any pre-configured scope.",
           "type": "string",
           "const": "local-tts:deny-list-local-tts-models",
@@ -6733,6 +7003,24 @@
           "type": "string",
           "const": "local-tts:deny-load-local-tts",
           "markdownDescription": "Denies the load_local_tts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pocket_tts_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-pocket-tts-cancel",
+          "markdownDescription": "Denies the pocket_tts_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pocket_tts_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-pocket-tts-speak",
+          "markdownDescription": "Denies the pocket_tts_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pocket_tts_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-tts:deny-pocket-tts-unload",
+          "markdownDescription": "Denies the pocket_tts_unload command without any pre-configured scope."
         },
         {
           "description": "Denies the speak_local_tts command without any pre-configured scope.",
@@ -7323,16 +7611,34 @@
           "markdownDescription": "Denies the openai_speech_speak command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`\n- `allow-listen-start`\n- `allow-listen-stop`\n- `allow-listen-status`",
           "type": "string",
           "const": "osc:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-send`\n- `allow-bind-status`\n- `allow-listen-start`\n- `allow-listen-stop`\n- `allow-listen-status`"
         },
         {
           "description": "Enables the bind_status command without any pre-configured scope.",
           "type": "string",
           "const": "osc:allow-bind-status",
           "markdownDescription": "Enables the bind_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the listen_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:allow-listen-start",
+          "markdownDescription": "Enables the listen_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the listen_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:allow-listen-status",
+          "markdownDescription": "Enables the listen_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the listen_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:allow-listen-stop",
+          "markdownDescription": "Enables the listen_stop command without any pre-configured scope."
         },
         {
           "description": "Enables the send command without any pre-configured scope.",
@@ -7345,6 +7651,24 @@
           "type": "string",
           "const": "osc:deny-bind-status",
           "markdownDescription": "Denies the bind_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the listen_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:deny-listen-start",
+          "markdownDescription": "Denies the listen_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the listen_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:deny-listen-status",
+          "markdownDescription": "Denies the listen_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the listen_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "osc:deny-listen-stop",
+          "markdownDescription": "Denies the listen_stop command without any pre-configured scope."
         },
         {
           "description": "Denies the send command without any pre-configured scope.",
@@ -7635,6 +7959,48 @@
           "markdownDescription": "Denies the get_system_info command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-text-readings-annotate`\n- `allow-text-readings-status`\n- `allow-text-readings-unload`",
+          "type": "string",
+          "const": "text-readings:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-text-readings-annotate`\n- `allow-text-readings-status`\n- `allow-text-readings-unload`"
+        },
+        {
+          "description": "Enables the text_readings_annotate command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:allow-text-readings-annotate",
+          "markdownDescription": "Enables the text_readings_annotate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the text_readings_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:allow-text-readings-status",
+          "markdownDescription": "Enables the text_readings_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the text_readings_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:allow-text-readings-unload",
+          "markdownDescription": "Enables the text_readings_unload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the text_readings_annotate command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:deny-text-readings-annotate",
+          "markdownDescription": "Denies the text_readings_annotate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the text_readings_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:deny-text-readings-status",
+          "markdownDescription": "Denies the text_readings_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the text_readings_unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "text-readings:deny-text-readings-unload",
+          "markdownDescription": "Denies the text_readings_unload command without any pre-configured scope."
+        },
+        {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-set-endpoint`\n- `allow-set-api-key`\n- `allow-get-languages`\n- `allow-translate`\n- `allow-detect-language`\n- `allow-check-availability`\n- `allow-deepl-translate`\n- `allow-deepl-usage`\n- `allow-deepl-languages`",
           "type": "string",
           "const": "translate:default",
@@ -7749,10 +8115,136 @@
           "markdownDescription": "Denies the translate command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-begin-utterance`\n- `allow-push-pcm`\n- `allow-end-utterance`\n- `allow-cancel-utterance`\n- `allow-flush-sink`\n- `allow-get-sink-status`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-tts-helper-start`\n- `allow-tts-helper-stop`\n- `allow-tts-helper-status`\n- `allow-tts-helper-list`\n- `allow-qwen-tts-prepare-clone`\n- `allow-sbv2-import-model`\n- `allow-sbv2-list-models`\n- `allow-sbv2-remove-model`\n- `allow-sbv2-speak`\n- `allow-sbv2-cancel`",
+          "type": "string",
+          "const": "tts-helpers:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-tts-helper-start`\n- `allow-tts-helper-stop`\n- `allow-tts-helper-status`\n- `allow-tts-helper-list`\n- `allow-qwen-tts-prepare-clone`\n- `allow-sbv2-import-model`\n- `allow-sbv2-list-models`\n- `allow-sbv2-remove-model`\n- `allow-sbv2-speak`\n- `allow-sbv2-cancel`"
+        },
+        {
+          "description": "Enables the qwen_tts_prepare_clone command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-qwen-tts-prepare-clone",
+          "markdownDescription": "Enables the qwen_tts_prepare_clone command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sbv2_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-sbv2-cancel",
+          "markdownDescription": "Enables the sbv2_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sbv2_import_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-sbv2-import-model",
+          "markdownDescription": "Enables the sbv2_import_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sbv2_list_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-sbv2-list-models",
+          "markdownDescription": "Enables the sbv2_list_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sbv2_remove_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-sbv2-remove-model",
+          "markdownDescription": "Enables the sbv2_remove_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sbv2_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-sbv2-speak",
+          "markdownDescription": "Enables the sbv2_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tts_helper_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-tts-helper-list",
+          "markdownDescription": "Enables the tts_helper_list command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tts_helper_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-tts-helper-start",
+          "markdownDescription": "Enables the tts_helper_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tts_helper_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-tts-helper-status",
+          "markdownDescription": "Enables the tts_helper_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tts_helper_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:allow-tts-helper-stop",
+          "markdownDescription": "Enables the tts_helper_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the qwen_tts_prepare_clone command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-qwen-tts-prepare-clone",
+          "markdownDescription": "Denies the qwen_tts_prepare_clone command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sbv2_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-sbv2-cancel",
+          "markdownDescription": "Denies the sbv2_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sbv2_import_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-sbv2-import-model",
+          "markdownDescription": "Denies the sbv2_import_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sbv2_list_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-sbv2-list-models",
+          "markdownDescription": "Denies the sbv2_list_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sbv2_remove_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-sbv2-remove-model",
+          "markdownDescription": "Denies the sbv2_remove_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sbv2_speak command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-sbv2-speak",
+          "markdownDescription": "Denies the sbv2_speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tts_helper_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-tts-helper-list",
+          "markdownDescription": "Denies the tts_helper_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tts_helper_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-tts-helper-start",
+          "markdownDescription": "Denies the tts_helper_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tts_helper_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-tts-helper-status",
+          "markdownDescription": "Denies the tts_helper_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tts_helper_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-helpers:deny-tts-helper-stop",
+          "markdownDescription": "Denies the tts_helper_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-begin-utterance`\n- `allow-push-pcm`\n- `allow-end-utterance`\n- `allow-cancel-utterance`\n- `allow-flush-sink`\n- `allow-get-sink-status`\n- `allow-set-mic-policy`",
           "type": "string",
           "const": "tts-sink:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-begin-utterance`\n- `allow-push-pcm`\n- `allow-end-utterance`\n- `allow-cancel-utterance`\n- `allow-flush-sink`\n- `allow-get-sink-status`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-begin-utterance`\n- `allow-push-pcm`\n- `allow-end-utterance`\n- `allow-cancel-utterance`\n- `allow-flush-sink`\n- `allow-get-sink-status`\n- `allow-set-mic-policy`"
         },
         {
           "description": "Enables the begin_utterance command without any pre-configured scope.",
@@ -7791,6 +8283,12 @@
           "markdownDescription": "Enables the push_pcm command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_mic_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-sink:allow-set-mic-policy",
+          "markdownDescription": "Enables the set_mic_policy command without any pre-configured scope."
+        },
+        {
           "description": "Denies the begin_utterance command without any pre-configured scope.",
           "type": "string",
           "const": "tts-sink:deny-begin-utterance",
@@ -7825,6 +8323,12 @@
           "type": "string",
           "const": "tts-sink:deny-push-pcm",
           "markdownDescription": "Denies the push_pcm command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_mic_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "tts-sink:deny-set-mic-policy",
+          "markdownDescription": "Denies the set_mic_policy command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-speak`\n- `allow-speak-to-sink`\n- `allow-get-voices`",
@@ -8457,10 +8961,88 @@
           "markdownDescription": "Denies the vosk_model_zip_relative_path command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-vr-overlay-start`\n- `allow-vr-overlay-set-config`\n- `allow-vr-overlay-stop`\n- `allow-vr-overlay-status`\n- `allow-vr-overlay-set-text`\n- `allow-vr-overlay-recenter`",
+          "type": "string",
+          "const": "vr-overlay:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-vr-overlay-start`\n- `allow-vr-overlay-set-config`\n- `allow-vr-overlay-stop`\n- `allow-vr-overlay-status`\n- `allow-vr-overlay-set-text`\n- `allow-vr-overlay-recenter`"
+        },
+        {
+          "description": "Enables the vr_overlay_recenter command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-recenter",
+          "markdownDescription": "Enables the vr_overlay_recenter command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vr_overlay_set_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-set-config",
+          "markdownDescription": "Enables the vr_overlay_set_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vr_overlay_set_text command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-set-text",
+          "markdownDescription": "Enables the vr_overlay_set_text command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vr_overlay_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-start",
+          "markdownDescription": "Enables the vr_overlay_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vr_overlay_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-status",
+          "markdownDescription": "Enables the vr_overlay_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vr_overlay_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:allow-vr-overlay-stop",
+          "markdownDescription": "Enables the vr_overlay_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_recenter command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-recenter",
+          "markdownDescription": "Denies the vr_overlay_recenter command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_set_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-set-config",
+          "markdownDescription": "Denies the vr_overlay_set_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_set_text command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-set-text",
+          "markdownDescription": "Denies the vr_overlay_set_text command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-start",
+          "markdownDescription": "Denies the vr_overlay_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-status",
+          "markdownDescription": "Denies the vr_overlay_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vr_overlay_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "vr-overlay:deny-vr-overlay-stop",
+          "markdownDescription": "Denies the vr_overlay_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`\n- `allow-set-lan-access`\n- `allow-regenerate-lan-token`",
           "type": "string",
           "const": "web:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-open-browser`\n- `allow-pubsub-broadcast`\n- `allow-config`\n- `allow-server-status`\n- `allow-set-origin-check`\n- `allow-set-lan-access`\n- `allow-regenerate-lan-token`"
         },
         {
           "description": "Enables the config command without any pre-configured scope.",
@@ -8481,10 +9063,22 @@
           "markdownDescription": "Enables the pubsub_broadcast command without any pre-configured scope."
         },
         {
+          "description": "Enables the regenerate_lan_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-regenerate-lan-token",
+          "markdownDescription": "Enables the regenerate_lan_token command without any pre-configured scope."
+        },
+        {
           "description": "Enables the server_status command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-server-status",
           "markdownDescription": "Enables the server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_lan_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-set-lan-access",
+          "markdownDescription": "Enables the set_lan_access command without any pre-configured scope."
         },
         {
           "description": "Enables the set_origin_check command without any pre-configured scope.",
@@ -8511,10 +9105,22 @@
           "markdownDescription": "Denies the pubsub_broadcast command without any pre-configured scope."
         },
         {
+          "description": "Denies the regenerate_lan_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-regenerate-lan-token",
+          "markdownDescription": "Denies the regenerate_lan_token command without any pre-configured scope."
+        },
+        {
           "description": "Denies the server_status command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-server-status",
           "markdownDescription": "Denies the server_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_lan_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-set-lan-access",
+          "markdownDescription": "Denies the set_lan_access command without any pre-configured scope."
         },
         {
           "description": "Denies the set_origin_check command without any pre-configured scope.",
@@ -8631,10 +9237,16 @@
           "markdownDescription": "Denies the save_window_state command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-speak`\n- `allow-get-voices`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-speak`\n- `allow-get-voices`\n- `allow-speak-to-sink`\n- `allow-cancel-speak-to-sink`",
           "type": "string",
           "const": "windows-tts:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-speak`\n- `allow-get-voices`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-speak`\n- `allow-get-voices`\n- `allow-speak-to-sink`\n- `allow-cancel-speak-to-sink`"
+        },
+        {
+          "description": "Enables the cancel_speak_to_sink command without any pre-configured scope.",
+          "type": "string",
+          "const": "windows-tts:allow-cancel-speak-to-sink",
+          "markdownDescription": "Enables the cancel_speak_to_sink command without any pre-configured scope."
         },
         {
           "description": "Enables the get_voices command without any pre-configured scope.",
@@ -8649,6 +9261,18 @@
           "markdownDescription": "Enables the speak command without any pre-configured scope."
         },
         {
+          "description": "Enables the speak_to_sink command without any pre-configured scope.",
+          "type": "string",
+          "const": "windows-tts:allow-speak-to-sink",
+          "markdownDescription": "Enables the speak_to_sink command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_speak_to_sink command without any pre-configured scope.",
+          "type": "string",
+          "const": "windows-tts:deny-cancel-speak-to-sink",
+          "markdownDescription": "Denies the cancel_speak_to_sink command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_voices command without any pre-configured scope.",
           "type": "string",
           "const": "windows-tts:deny-get-voices",
@@ -8659,6 +9283,12 @@
           "type": "string",
           "const": "windows-tts:deny-speak",
           "markdownDescription": "Denies the speak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the speak_to_sink command without any pre-configured scope.",
+          "type": "string",
+          "const": "windows-tts:deny-speak-to-sink",
+          "markdownDescription": "Denies the speak_to_sink command without any pre-configured scope."
         }
       ]
     },

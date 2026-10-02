@@ -18,6 +18,8 @@ import { Native } from "./Native";
 import { OpenAIAudio } from "./OpenAIAudio";
 import { Vosk } from "./Vosk";
 import { Whisper } from "./Whisper";
+import { GeminiLive } from "./GeminiLive";
+import { ReadingsSection } from "@/core/services/readings/ReadingsSection";
 import "../../stt-replacements-modal";
 
 // STT inspector (P2-S0 split of inspector_stt.tsx): this file and Local / Whisper are P2-E's; Vosk, Moonshine,
@@ -121,6 +123,7 @@ const Inspector_STT: FC = () => {
           { label: "Edge", value: STT_Backends.edge },
           { label: "Azure", value: STT_Backends.azure },
           { label: "Deepgram", value: STT_Backends.deepgram },
+          { label: t("stt.provider_gemini_live"), value: STT_Backends.geminiLive },
           { label: t("stt.provider_openai_audio"), value: STT_Backends.openai_audio },
           { label: t("stt.provider_native"), value: STT_Backends.native },
           { label: t("stt.provider_moonshine_legacy"), value: STT_Backends.moonshine },
@@ -142,6 +145,7 @@ const Inspector_STT: FC = () => {
         {backend === STT_Backends.moonshine && <Moonshine />}
         {backend === STT_Backends.openai_audio && <OpenAIAudio />}
         {backend === STT_Backends.local && <Local />}
+        {backend === STT_Backends.geminiLive && <GeminiLive />}
         {(backend === STT_Backends.native || backend === STT_Backends.browser) && <Native />}
       </Inspector.Deactivatable>
 
@@ -167,6 +171,9 @@ const Inspector_STT: FC = () => {
         <ShortcutField shortcut="muteMic" label="stt.shortcut_mute" />
         <Inspector.Description>{t("stt.shortcut_desc")}</Inspector.Description>
       </>}
+
+      {/* P6-L: Japanese / Chinese readings of captions (scaffolded by P6-S0; renders nothing until implemented). */}
+      <ReadingsSection />
 
     </Inspector.Content>
   </Inspector.Body>

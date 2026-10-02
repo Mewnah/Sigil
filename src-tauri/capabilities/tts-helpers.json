@@ -1,0 +1,11 @@
+{
+  "identifier": "tts-helpers",
+  "description": "IPC for the tts-helpers plugin (helper-process TTS engines under process_host: Qwen3-TTS, Style-Bert-VITS2 / AIVMX and the experimental ggml engines, P6-E/F/G) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "tts-helpers:default"
+  ]
+}

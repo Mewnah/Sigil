@@ -25,6 +25,8 @@ export interface SttTextMeta {
   lang?: string;
   /** Smart Turn: the speaker probably finished their turn after this final (commit hint only). */
   turnEnd?: boolean;
+  /** Audio event tags of a final (`emotion:*`, `event:*`, `lang:*`; P6-S0, published as `TextEvent.tags`). */
+  tags?: string[];
 }
 
 /** Severity of an engine status line (styling only; errors that end a session go through `onStop`). */

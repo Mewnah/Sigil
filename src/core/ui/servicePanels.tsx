@@ -8,6 +8,7 @@ import {
   RiMicFill,
   RiRecordCircleFill,
   RiSparklingFill,
+  RiTeamFill,
   RiTranslate2,
   RiTwitchFill,
   RiUserVoiceFill,
@@ -27,6 +28,7 @@ const Inspector_Discord = lazy(() => import("./inspector/inspector_discord"));
 const Inspector_Kick = lazy(() => import("./inspector/inspector_kick"));
 const Inspector_OBS = lazy(() => import("./inspector/inspector_obs"));
 const Inspector_VoiceChanger = lazy(() => import("./inspector/voice_changer"));
+const Inspector_Others = lazy(() => import("./inspector/inspector_others"));
 
 export type ServiceNavGroup = "live" | "integrations";
 
@@ -114,6 +116,20 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     SidebarIcon: RiMagicFill,
     sidebarTooltipFallback: "Voice Changer",
     sidebarOrder: 9,
+    sidebarSection: "integrations",
+  },
+  {
+    // P6-A (scaffolded by P6-S0): other players' captions and reverse translation.
+    tab: Services.others,
+    Inspector: Inspector_Others,
+    title: "Other Players",
+    navGroup: "live",
+    navOrder: 5,
+    NavIcon: RiTeamFill,
+    SidebarIcon: RiTeamFill,
+    sidebarTooltipI18nKey: "others.title",
+    sidebarTooltipFallback: "Other Players",
+    sidebarOrder: 10,
     sidebarSection: "integrations",
   },
   {

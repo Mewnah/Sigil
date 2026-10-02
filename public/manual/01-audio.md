@@ -104,7 +104,7 @@ Sidebar → **Text to Speech**.
 Each backend needs different fields (voice, endpoint, API keys). See [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#text-to-speech).
 
 - **Kokoro / Piper (local)** is the default for new desktop installs: natural voices that run on this PC (Kokoro speaks English, Japanese, Chinese, Spanish, French, Hindi, Italian and Portuguese; Piper voices cover many more languages). Pick a voice model and a voice, agree to the one-time download in the panel (about 360 MB for Kokoro), and use **Preview** to listen. Existing users on browser or Windows voices are asked once whether to switch.
-- **Play speech on** chooses where speech goes: the **output device**, the **voice changer** (your converted voice speaks the text; while the voice changer is stopped it plays on the device), or **both**. The microphone can be lowered or muted while TTS plays (voice changer → **Microphone while TTS plays**). Web Speech and Windows voices always play by themselves on their device.
+- **Play speech on** chooses where speech goes: the **output device**, the **voice changer** (your converted voice speaks the text; while the voice changer is stopped it plays on the device), or **both**. The microphone can be lowered or muted while TTS plays (voice changer → **Microphone while TTS plays**). Web Speech voices always play by themselves on the default device; every other backend, Windows voices included, can use **Play speech on**.
 - The **output device** lists your Windows audio devices; names saved by older versions are updated automatically.
 - **OpenAI-compatible (HTTP)** works with Kokoro-FastAPI, Chatterbox, vLLM (Voxtral-4B-TTS, IndexTTS-2.5, VoxCPM2) and Qwen3-TTS servers: pick a preset, check the voice with **Test voice**.
 

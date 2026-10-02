@@ -21,6 +21,9 @@ import Service_Models from "./services/models";
 import Service_Sysinfo from "./services/sysinfo";
 import Service_Resources from "./services/resources";
 import Service_AudioDevices from "./services/audioDevices";
+import Service_Others from "./services/others";
+import Service_Overlay from "./services/overlay";
+import Service_Readings from "./services/readings";
 import { ensureLlmServerHost } from "./services/llm_server";
 import { initSystemLogListeners, pushSystemLog } from "./services/systemLog";
 import i18n from "i18next";
@@ -53,6 +56,12 @@ class ApiServer {
   public readonly resources = new Service_Resources();
   /** Capture-hub device events: picker refresh, STT restart after device changes (P1-C). */
   public readonly audioDevices = new Service_AudioDevices();
+  /** Other players: loopback captions on `others.stt` and reverse translation on `others.translation` (P6-A). */
+  public readonly others = new Service_Others();
+  /** Caption window and SteamVR caption overlay (P6-B; settings `captionWindow` and `services.vrc.data.overlay`). */
+  public readonly overlay = new Service_Overlay();
+  /** Japanese / Chinese readings of captions on `readings.stt` (P6-L; settings `readings`). */
+  public readonly readings = new Service_Readings();
 
   get state() {
     return this._state.state;
@@ -181,6 +190,10 @@ class ApiServer {
       // P4-B: state events + idle stop of a llama-server nobody leases (e.g. after a webview reload).
       { label: "Local model server", run: run(() => ensureLlmServerHost()) },
       { label: "Audio devices", run: run(() => this.audioDevices.init()) },
+      // P6 streamer features (P6-S0): everything off by default.
+      { label: "Other players", run: run(() => this.others.init()) },
+      { label: "Caption overlay", run: run(() => this.overlay.init()) },
+      { label: "Readings", run: run(() => this.readings.init()) },
     ];
   }
 }

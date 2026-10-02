@@ -1,0 +1,367 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "In-process voice-cloning TTS (P6-I): Kyutai Pocket TTS through sherpa-onnx (local_tts::pocket, CPU) and Chatterbox Multilingual V3 as KitsuMate's split-speed ONNX export on Sigil's ONNX Runtime (local_tts::chatterbox_ort).",
+    "Pocket: the sherpa-onnx 1.13.8 packages of the 2026-01-26 English model, sha256 from the GitHub release asset digests (release-tts-models).",
+    "Chatterbox: KitsuMate/chatterbox-multilingual-v3-onnx at commit 3f44461db006cc1ffb553cda02d6f6841125288a (exported from ResembleAI/chatterbox 5bb1f6ee, t3_mtl23ls_v3 + s3gen), sha256 from the repository's manifest.json (checked against the downloaded small graphs). The split-speed CPU layout; the fp16 flow step is a separate optional entry for graphics cards. chinese_words.txt is not installed: Sigil segments Chinese with jieba-rs's dictionary (the same jieba dictionary the file was extracted from)."
+  ],
+  "entries": [
+    {
+      "id": "tts/pocket-tts-en-int8",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-01-26",
+      "title": "Pocket TTS (English)",
+      "description": "Kyutai's small voice-cloning model on the processor: speaks English in the voice of any clip from your voice library, about two cores. About 98 MB download.",
+      "license": "CC-BY-4.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2",
+          "size": 98336520,
+          "sha256": "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "vocab.json",
+              "token_scores.json",
+              "test_wavs/*.wav",
+              "LICENSE",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/pocket-tts-en",
+      "family": "tts",
+      "kind": "model",
+      "version": "2026-01-26",
+      "title": "Pocket TTS (English, full precision)",
+      "description": "Pocket TTS without int8 quantization: the same voices, a little slower. About 168 MB download.",
+      "license": "CC-BY-4.0",
+      "status": "published",
+      "requires": [
+        "runtime/sherpa-onnx"
+      ],
+      "files": [
+        {
+          "path": "sherpa-onnx-pocket-tts-2026-01-26.tar.bz2",
+          "size": 168148625,
+          "sha256": "61422a478ef09d9b2c067261fb822e11786e0c86842c76d8633b7069968be7b5",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-2026-01-26.tar.bz2",
+              "revision": "tts-models"
+            }
+          ],
+          "archive": {
+            "format": "tar.bz2",
+            "strip": 1,
+            "include": [
+              "*.onnx",
+              "vocab.json",
+              "token_scores.json",
+              "test_wavs/*.wav",
+              "LICENSE",
+              "README.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/chatterbox-mtl-v3",
+      "family": "tts",
+      "kind": "model",
+      "version": "v3-3f44461",
+      "title": "Chatterbox Multilingual V3",
+      "description": "Resemble AI's voice-cloning model for 23 languages, run by Sigil on your graphics card or processor: speaks in the voice of any clip from your voice library. About 1.8 GB download.",
+      "license": "MIT (model); BSD-3-Clause, Apache-2.0 (language tables)",
+      "status": "published",
+      "files": [
+        {
+          "path": "onnx/speech_encoder_slim.onnx",
+          "size": 1298297,
+          "sha256": "f17cde8d02e62713d9b2effc69a44bddf29fe5a7c4f6edf7121baed67c18faa5",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/speech_encoder_slim.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/speech_encoder_slim.onnx.data",
+          "size": 598057056,
+          "sha256": "100af79e803af9a1772240069fb4fb2cffb39aef7c32200cefdd5d92459cab69",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/speech_encoder_slim.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/token_embedding.onnx",
+          "size": 5842,
+          "sha256": "7e70760aa14023c9dbc3cb2a7bd98214f765ebf77b0dc0851a00c81a6eefa543",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/token_embedding.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/token_embedding.onnx.data",
+          "size": 68808704,
+          "sha256": "fce08f1cca5657c8373103558e23126977b9e633881f35038855df0017bd291d",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/token_embedding.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/static_language_model_int8.onnx",
+          "size": 112456,
+          "sha256": "93fd79ca1aaa500ad96e9cff30292d249276a9fc94387169bcb7cb10ed7e0210",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/static_language_model_int8.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/static_language_model_int8.onnx.data",
+          "size": 530044992,
+          "sha256": "b455435ba3bb7593d503778e832bd94abf481a73c9722981ab8dfd3a05cab7a5",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/static_language_model_int8.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/flow_prepare_slim.onnx",
+          "size": 285857,
+          "sha256": "017b89038172ba02a3aa099b8de0804fd7573ab34089a23947aa1fde4eed5d2d",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/flow_prepare_slim.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/flow_prepare_slim.onnx.data",
+          "size": 185464832,
+          "sha256": "63e02f938147256fda34cbfa80e0d03abecdbbe02cc64f96b6b5762ea586f469",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/flow_prepare_slim.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/flow_step_slim.onnx",
+          "size": 286124928,
+          "sha256": "4c45789f929f7728bc1c0f6b7ec50a9b1e787847e708cc78bf615d837750ae96",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/flow_step_slim.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/vocoder_prefix_sum.onnx",
+          "size": 298493,
+          "sha256": "b460bc8ba7ff04966e33475a3928dc1e89aa8dd21f287d5685fd856d724d6b9f",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/vocoder_prefix_sum.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/vocoder_prefix_sum.onnx.data",
+          "size": 83456896,
+          "sha256": "7e0887b8eda26d789beecb1ea761469276309f8191bd0c1655a57b3c90bdf100",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/vocoder_prefix_sum.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 48236,
+          "sha256": "c8889d91e083486df2454fcda24ef11a1586247ac3ed2b81cf6b6b91070053ee",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/tokenizer.json",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "Cangjie5_TC.json",
+          "size": 1606311,
+          "sha256": "17d8d0230a8a495be2823167ff0f943a990a629e12500521d392e822e2051cde",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/Cangjie5_TC.json",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "japanese_readings.tsv",
+          "size": 13457110,
+          "sha256": "1c784d4e4bbfbefdb92722e9ede06d94ba1d097673c9d0996f35147055812c72",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/japanese_readings.tsv",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "russian_stress.tsv",
+          "size": 2168548,
+          "sha256": "506327dff0fae12281a4d3be097e6177295c86f00e66aedd5a6d82d8970c5f8a",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/russian_stress.tsv",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "LICENSE",
+          "size": 1067,
+          "sha256": "4248e910a928849fe5815a0f9236e17fa07768d95b9193212752c464b93d6caa",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/LICENSE",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "size": 2310,
+          "sha256": "8babaaeb194eb4819313216926c58aab1a7affbb7527d3f77433bef6686b4ae4",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/THIRD_PARTY_NOTICES.md",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "licenses/UniDic-BSD-3-Clause.txt",
+          "size": 1545,
+          "sha256": "1a64915534f223c139f4bfd2a221dc2d7c049521eadf17bc7017987e64878287",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/licenses/UniDic-BSD-3-Clause.txt",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "licenses/stressonnx-Apache-2.0.txt",
+          "size": 11548,
+          "sha256": "de186a8114d2ed4ee19a69dc67dea96f56045c21fd911524da27192745c4d3c2",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/licenses/stressonnx-Apache-2.0.txt",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/chatterbox-mtl-v3-gpu-flow",
+      "family": "tts",
+      "kind": "model",
+      "version": "v3-3f44461",
+      "title": "Chatterbox Multilingual V3: graphics card speed-up",
+      "description": "A half-precision decoder step for Chatterbox on graphics cards (faster there, not used on the processor). About 144 MB download.",
+      "license": "MIT",
+      "status": "published",
+      "requires": [
+        "tts/chatterbox-mtl-v3"
+      ],
+      "files": [
+        {
+          "path": "onnx/flow_step_fp16.onnx",
+          "size": 1180860,
+          "sha256": "38d69d938b6a3a06cc5807fe2e1d54f8fbcda1358b65eb6095e83c45bba56149",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/flow_step_fp16.onnx",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        },
+        {
+          "path": "onnx/flow_step_fp16.onnx.data",
+          "size": 142372864,
+          "sha256": "4830432892cda6077372e70e08f65b3be039eec53bf006cb59f0c67e5ad22587",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/KitsuMate/chatterbox-multilingual-v3-onnx/resolve/3f44461db006cc1ffb553cda02d6f6841125288a/onnx/flow_step_fp16.onnx.data",
+              "revision": "3f44461db006cc1ffb553cda02d6f6841125288a"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

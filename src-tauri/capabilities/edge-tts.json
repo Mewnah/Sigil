@@ -1,0 +1,11 @@
+{
+  "identifier": "edge-tts",
+  "description": "IPC for the edge-tts plugin (Microsoft Edge Read-aloud voices into the TTS sink, P6-H) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "edge-tts:default"
+  ]
+}

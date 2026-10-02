@@ -73,13 +73,15 @@ interface NllbConfig {
  * - `translate` sends canonical codes; Rust maps them to FLORES-200. An unknown source (`from` "") is guessed from
  *   the script here (`guessLanguage`) and, for Latin text, in Rust. Finals use the slice's beam width, interims are
  *   greedy. An aborted request is cancelled in Rust (`nllb_cancel`) at its next decoding step.
- * - `stop` unloads the model (about 1 GB of memory) unless a newer engine instance already uses it.
+ * - `stop` unloads the model (about 1 GB of memory) only when no other engine instance still uses it: the main
+ *   translation pipeline and the Other players' reverse pipeline (P6-A) can run NLLB at the same time, so the users
+ *   are counted like Bergamot's (P6-I0).
  *
  * Owned by P4-D.
  */
 export class Translation_NllbService implements ITranslationEngine {
-  /** The engine instance that owns the loaded model (the last one started): only it unloads on `stop`. */
-  static #owner: Translation_NllbService | null = null;
+  /** Engine instances that started (or are starting) the model and have not stopped: the last one to stop unloads it. */
+  static readonly #users = new Set<Translation_NllbService>();
 
   #host: TranslationEngineHost | null = null;
   #config: NllbConfig | null = null;
@@ -113,7 +115,7 @@ export class Translation_NllbService implements ITranslationEngine {
       beam: cfg.beam,
     };
 
-    Translation_NllbService.#owner = this;
+    Translation_NllbService.#users.add(this);
     this.#host?.status({ text: i18n.t("transl.nllb_status_loading") || "", level: "info", progress: null });
     try {
       await raceWithSignal(
@@ -189,10 +191,9 @@ export class Translation_NllbService implements ITranslationEngine {
     return from === "" || toFlores(from) !== null;
   }
 
-  /** Unload the model if this instance is the one that loaded it last. */
+  /** Forget this instance; the last user unloads the model. */
   #release(): void {
-    if (Translation_NllbService.#owner !== this) return;
-    Translation_NllbService.#owner = null;
-    void invoke("plugin:mt-local|nllb_unload").catch(() => {});
+    if (!Translation_NllbService.#users.delete(this)) return;
+    if (Translation_NllbService.#users.size === 0) void invoke("plugin:mt-local|nllb_unload").catch(() => {});
   }
 }

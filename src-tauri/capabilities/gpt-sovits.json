@@ -1,0 +1,11 @@
+{
+  "identifier": "gpt-sovits",
+  "description": "IPC for the gpt-sovits plugin (GPT-SoVITS api_v2 client into the TTS sink, P6-G) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "gpt-sovits:default"
+  ]
+}

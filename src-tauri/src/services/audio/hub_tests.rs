@@ -178,6 +178,7 @@ impl CaptureBackend for FakeBackend {
             SourceSpec::Input(n) => (Some(n.clone()), false),
             SourceSpec::DefaultLoopback => (self.0.default_output.lock().unwrap().map(str::to_string), true),
             SourceSpec::Loopback(n) => (Some(n.clone()), true),
+            SourceSpec::Process(exe) => (Some(format!("process:{exe}")), true),
         };
         let name = name.ok_or("No default device")?;
         let devices = self.0.devices.lock().unwrap();

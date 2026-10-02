@@ -1,0 +1,11 @@
+{
+  "identifier": "text-readings",
+  "description": "IPC for the text-readings plugin (Japanese hiragana / romaji and Chinese pinyin readings of captions, P6-L) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "text-readings:default"
+  ]
+}

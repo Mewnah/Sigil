@@ -21,7 +21,18 @@
  * peer-supplied `emotes` (the host rescans with its own emote cache) and neutralizes tag-like `<`
  * sequences in the text ({@link neutralizeMarkup}).
  */
-import { ObsCaptionEnvelopeSchema, TextEventSchema, TextEventSource, type BaseEvent, type ObsCaptionEnvelope, type TextEvent } from "@/types";
+import {
+  ObsCaptionEnvelopeSchema,
+  OthersEventSource,
+  ReadingsEventSchema,
+  ReadingsEventSource,
+  TextEventSchema,
+  TextEventSource,
+  type BaseEvent,
+  type ObsCaptionEnvelope,
+  type ReadingsEvent,
+  type TextEvent,
+} from "@/types";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
@@ -159,10 +170,30 @@ export function sanitizeEmotes(emotes: unknown): Record<string, string> {
   return out;
 }
 
+/** `topic` is `root` or one of its children (`root.*`). */
+function inHierarchy(topic: string, root: string): boolean {
+  return topic === root || topic.startsWith(`${root}.`);
+}
+
+/** Readings as a client keeps them: every text field markup-neutralized (P6-S0). */
+function sanitizeReadingsEvent(event: ReadingsEvent): ReadingsEvent {
+  const n = (s: string | undefined) => (s === undefined ? undefined : neutralizeMarkup(s));
+  return {
+    ...event,
+    value: neutralizeMarkup(event.value),
+    hiragana: n(event.hiragana),
+    romaji: n(event.romaji),
+    pinyin: n(event.pinyin),
+    segments: event.segments?.map((s) => ({ text: neutralizeMarkup(s.text), reading: n(s.reading) })),
+  };
+}
+
 /**
- * For the /client PeerJS bridge (frames from the host it connected to): validates `text.*` frames
- * with {@link TextEventSchema}, keeps only safe emote URLs ({@link sanitizeEmotes}) and neutralizes
- * markup in the text. Other topics pass through unchanged. Returns null for malformed frames.
+ * For the /client PeerJS bridge (frames from the host it connected to): validates caption frames
+ * (`text.*` and other players' `others.*`, P6-S0) with {@link TextEventSchema}, keeps only safe
+ * emote URLs ({@link sanitizeEmotes}) and neutralizes markup in the text; `readings.*` frames
+ * (P6-S0) must match {@link ReadingsEventSchema} and get every string neutralized. Other topics pass
+ * through unchanged. Returns null for malformed frames.
  */
 export function sanitizeClientPubSubFrame(msg: unknown): BaseEvent | null {
   if (!msg || typeof msg !== "object" || Array.isArray(msg))
@@ -170,7 +201,11 @@ export function sanitizeClientPubSubFrame(msg: unknown): BaseEvent | null {
   const { topic, data } = msg as { topic?: unknown; data?: unknown };
   if (typeof topic !== "string" || !topic)
     return null;
-  if (topic !== TextEventSource.any && !topic.startsWith(`${TextEventSource.any}.`))
+  if (inHierarchy(topic, ReadingsEventSource.any)) {
+    const readings = ReadingsEventSchema.safeParse(data);
+    return readings.success ? { topic, data: sanitizeReadingsEvent(readings.data) } : null;
+  }
+  if (!inHierarchy(topic, TextEventSource.any) && !inHierarchy(topic, OthersEventSource.any))
     return { topic, data };
   const text = TextEventSchema.safeParse(data);
   if (!text.success)

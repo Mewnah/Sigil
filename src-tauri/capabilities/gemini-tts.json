@@ -1,0 +1,11 @@
+{
+  "identifier": "gemini-tts",
+  "description": "IPC for the gemini-tts plugin (Google Gemini TTS into the TTS sink; key in a header only, P6-H) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "gemini-tts:default"
+  ]
+}

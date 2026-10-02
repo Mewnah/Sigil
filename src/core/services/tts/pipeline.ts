@@ -26,7 +26,7 @@ import { isSinkCancelled, type SinkPcm } from "../sound/sink";
 import { clampedOr } from "./num";
 import type { TTS_State } from "./schema";
 import { splitSentences, type SentenceOptions } from "./sentence";
-import { ITTSService, errorMessage, isAbortError, ttsOutputMode } from "./types";
+import { ITTSService, TtsSinkContext, errorMessage, isAbortError, ttsOutputMode } from "./types";
 
 /** The sink calls the pipeline needs (`TtsSinkClient` in the app; a fake in tests). */
 export interface TtsSinkApi {
@@ -328,5 +328,256 @@ export class TtsPipeline {
     for (const job of candidates) {
       if (!job.finished && !known.has(job.id)) this.#finish(job);
     }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Fallback chain (P6-H): a cloud voice with the local voice behind it
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * Why a cloud TTS request failed. The Rust cloud plugins (`edge-tts`, `gemini-tts`) reject with a tag in square
+ * brackets, `cloud-tts:` plus the kind, optionally followed by `:partial` and `:retry=` plus milliseconds, then the
+ * message (Rust `edge_tts::cloud`; parsed by `FAILURE_TAG` below). Spelled out in words because Tailwind's class
+ * scanner reads the bracketed form as an arbitrary property and breaks `pnpm build`.
+ */
+export type TtsFailureKind =
+  | "network"
+  | "rate_limited"
+  | "unavailable"
+  | "stalled"
+  | "auth"
+  | "rejected"
+  | "no_audio"
+  | "other";
+
+export const TTS_FAILURE_KINDS: readonly TtsFailureKind[] = [
+  "network",
+  "rate_limited",
+  "unavailable",
+  "stalled",
+  "auth",
+  "rejected",
+  "no_audio",
+  "other",
+];
+
+/** A parsed cloud failure. */
+export interface TtsFailure {
+  kind: TtsFailureKind;
+  /** Audio of the sentence was already played (or queued) before it failed. */
+  partial: boolean;
+  /** When the service said to try again (ms), if it did. */
+  retryAfterMs: number | null;
+  /** The readable message (without the tag). */
+  message: string;
+  /** The error carried the cloud tag (an untagged error is not the service's: sink, IPC). */
+  tagged: boolean;
+}
+
+const FAILURE_TAG = /^\s*\[cloud-tts:([a-z_]+)((?::[a-z]+(?:=\d+)?)*)\]\s*/;
+
+/** Parse a cloud plugin's error (see {@link TtsFailure}); anything else is an untagged `other`. */
+export function parseTtsFailure(error: unknown): TtsFailure {
+  const text = errorMessage(error);
+  const m = FAILURE_TAG.exec(text);
+  if (!m) return { kind: "other", partial: false, retryAfterMs: null, message: text, tagged: false };
+  const kind = (TTS_FAILURE_KINDS as readonly string[]).includes(m[1]) ? (m[1] as TtsFailureKind) : "other";
+  let partial = false;
+  let retryAfterMs: number | null = null;
+  for (const flag of m[2].split(":").filter(Boolean)) {
+    if (flag === "partial") partial = true;
+    else if (flag.startsWith("retry=")) {
+      const ms = Number(flag.slice("retry=".length));
+      if (Number.isFinite(ms) && ms >= 0) retryAfterMs = ms;
+    }
+  }
+  return { kind, partial, retryAfterMs, message: text.slice(m[0].length).trim() || text, tagged: true };
+}
+
+/** How long the fallback chain bypasses a failing service (ms). */
+export interface FallbackBreakerOptions {
+  /** First pause after a network failure, 5xx or stall; doubles with each failure in a row. */
+  baseOpenMs: number;
+  /** Longest such pause. */
+  maxOpenMs: number;
+  /** Pause after a 429 without a retry hint. */
+  rateLimitMs: number;
+  /** Pause after a refused key / voice / model (settings problems), and the cap of any retry hint. */
+  hardOpenMs: number;
+}
+
+export const DEFAULT_FALLBACK_BREAKER: FallbackBreakerOptions = {
+  baseOpenMs: 15_000,
+  maxOpenMs: 5 * 60_000,
+  rateLimitMs: 60_000,
+  hardOpenMs: 10 * 60_000,
+};
+
+/** What a failure did to the breaker. */
+export interface BreakerVerdict {
+  /** The service was healthy until now: tell the user once. */
+  opened: boolean;
+  /** Sentences go to the fallback until then (epoch ms); 0 = not open (a failure of one sentence only). */
+  openUntil: number;
+}
+
+/**
+ * Circuit breaker of the fallback chain (pure; the clock is injectable). While open, sentences go straight to the
+ * fallback, so an outage costs nothing after its first sentence. When the pause ends, the next sentence tries the
+ * service again (half-open): success closes the breaker, another failure re-opens it for longer.
+ *
+ * - Network failures, 5xx, stalls and unknown failures: 15 s, then 30 s, 60 s ... up to 5 min (or the service's retry
+ *   hint when longer).
+ * - 429 / quota: the service's retry hint, else 60 s.
+ * - A refused key, voice or model: 10 min (the settings must change; restarting the backend resets it).
+ * - A sentence the service could not say (`no_audio`): that sentence only.
+ */
+export class FallbackBreaker {
+  #openUntil = 0;
+  #failures = 0;
+  #healthy = true;
+
+  constructor(
+    private readonly opts: FallbackBreakerOptions = DEFAULT_FALLBACK_BREAKER,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  /** Where the next sentence goes. */
+  route(): "primary" | "fallback" {
+    return this.now() < this.#openUntil ? "fallback" : "primary";
+  }
+
+  /** The service failed at least once and has not succeeded since. */
+  get degraded(): boolean {
+    return !this.#healthy;
+  }
+
+  get openUntil(): number {
+    return this.#openUntil;
+  }
+
+  /** The service spoke a sentence. Returns true when it recovered from failures. */
+  success(): boolean {
+    const recovered = !this.#healthy;
+    this.#healthy = true;
+    this.#failures = 0;
+    this.#openUntil = 0;
+    return recovered;
+  }
+
+  failure(f: Pick<TtsFailure, "kind" | "retryAfterMs">): BreakerVerdict {
+    if (f.kind === "no_audio") return { opened: false, openUntil: 0 };
+    const o = this.opts;
+    const hint = f.retryAfterMs != null ? Math.min(f.retryAfterMs, o.hardOpenMs) : null;
+    this.#failures++;
+    let pause: number;
+    switch (f.kind) {
+      case "rate_limited":
+        pause = hint ?? o.rateLimitMs;
+        break;
+      case "auth":
+      case "rejected":
+        pause = o.hardOpenMs;
+        break;
+      default:
+        pause = Math.max(Math.min(o.baseOpenMs * 2 ** Math.min(this.#failures - 1, 20), o.maxOpenMs), hint ?? 0);
+        break;
+    }
+    const opened = this.#healthy;
+    this.#healthy = false;
+    this.#openUntil = this.now() + pause;
+    return { opened, openUntil: this.#openUntil };
+  }
+
+  reset(): void {
+    this.#openUntil = 0;
+    this.#failures = 0;
+    this.#healthy = true;
+  }
+}
+
+/** Speaks one sentence into a begun sink utterance (ITTSService v2 `synthesizeToSink` shape). */
+export type TtsSinkSpeaker = (text: string, sink: TtsSinkContext, signal: AbortSignal) => Promise<void>;
+
+/** A sentence that did not go to the service as planned. */
+export interface TtsFallbackEvent {
+  /** Why (`null` = the breaker was already open: the service was not asked). */
+  failure: TtsFailure | null;
+  /** This failure opened the breaker (the first failure after the service worked): tell the user. */
+  opened: boolean;
+  /** The fallback spoke the sentence (false: part of it already played, or no fallback is available). */
+  spokenByFallback: boolean;
+}
+
+export interface TtsFallbackChainOptions {
+  /** The cloud voice. Rejects with a tagged failure ({@link parseTtsFailure}). */
+  primary: TtsSinkSpeaker;
+  /**
+   * The local voice, or `null` when there is none (switched off, not downloaded, failed to load). May wait for a
+   * model that is still loading.
+   */
+  fallback: () => Promise<TtsSinkSpeaker | null>;
+  breaker?: FallbackBreaker;
+  /** A sentence failed on the service, or went to the fallback while the breaker is open (see {@link TtsFallbackEvent}). */
+  onFallback?: (event: TtsFallbackEvent) => void;
+  /** The service spoke again after failing. */
+  onRecovered?: () => void;
+}
+
+/**
+ * The fallback chain of a cloud TTS backend (P6-H): each sentence goes to the service; when the service fails (no
+ * connection, 429, 5xx, a stall, a refused request) the same sentence is spoken by the local voice into the same sink
+ * utterance at once, and the breaker keeps the next sentences on the local voice until the service is worth trying
+ * again. The first audio of a failed sentence therefore comes from the local voice right after the failure (a stall
+ * is detected by the plugin's short timeout), and every later sentence of an outage starts on the local voice
+ * without waiting.
+ *
+ * - A failure after part of the sentence already played is not spoken again (that would repeat words); the breaker
+ *   still opens, so the next sentence uses the local voice.
+ * - Stop / skip (the signal) never fall back. Errors that do not come from the service (the sink, IPC) and failures
+ *   without a fallback are thrown, so the pipeline reports them.
+ * - With the breaker open and no fallback available, the service is still asked (there is nothing better to do).
+ */
+export class TtsFallbackChain {
+  readonly breaker: FallbackBreaker;
+
+  constructor(private readonly opts: TtsFallbackChainOptions) {
+    this.breaker = opts.breaker ?? new FallbackBreaker();
+  }
+
+  async synthesize(text: string, sink: TtsSinkContext, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    if (this.breaker.route() === "fallback") {
+      const fallback = await this.opts.fallback();
+      if (signal.aborted) return;
+      if (fallback) {
+        this.opts.onFallback?.({ failure: null, opened: false, spokenByFallback: true });
+        await fallback(text, sink, signal);
+        return;
+      }
+    }
+    try {
+      await this.opts.primary(text, sink, signal);
+    } catch (error) {
+      if (signal.aborted || isAbortError(error) || isSinkCancelled(error)) throw error;
+      const failure = parseTtsFailure(error);
+      if (!failure.tagged) throw error;
+      const { opened } = this.breaker.failure(failure);
+      if (failure.partial) {
+        this.opts.onFallback?.({ failure, opened, spokenByFallback: false });
+        return;
+      }
+      const fallback = await this.opts.fallback();
+      if (signal.aborted) return;
+      if (!fallback) {
+        this.opts.onFallback?.({ failure, opened, spokenByFallback: false });
+        throw new Error(failure.message);
+      }
+      this.opts.onFallback?.({ failure, opened, spokenByFallback: true });
+      await fallback(text, sink, signal);
+      return;
+    }
+    if (!signal.aborted && this.breaker.success()) this.opts.onRecovered?.();
   }
 }

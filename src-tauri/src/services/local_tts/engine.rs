@@ -25,6 +25,7 @@
 //! The engine is generic over the model loader and the sink ([`Loader`], [`SinkPort`]) so the
 //! queue, cancellation and caching are tested without sherpa-onnx or an audio device.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -143,6 +144,32 @@ pub trait Synth {
 pub trait Loader: Send + Sync {
     fn resolve(&self, model: &str, voice: &str, language: Option<&str>, threads: Option<u32>) -> Result<Resolved, String>;
     fn open(&self, resolved: &Resolved) -> Result<Box<dyn Synth>, String>;
+
+    /// A text rewrite for the resolved model, created when it loads and kept while it stays
+    /// loaded; applied to every request before chunking. Default: none. The store loader gives
+    /// Kokoro's Japanese voices OpenJTalk kana readings for kanji and digits (espeak-ng reads kanji
+    /// as Mandarin) when the `text/jpreprocess-naist-jdic` dictionary is installed (P6-I0).
+    fn text_reader(&self, _resolved: &Resolved) -> Option<Arc<dyn TextReader>> {
+        None
+    }
+}
+
+/// Rewrites request text before synthesis (see [`Loader::text_reader`]).
+pub trait TextReader: Send + Sync {
+    fn read(&self, text: &str) -> Result<String, String>;
+}
+
+/// `text` through the loaded model's [`TextReader`]; the text as written when there is none or
+/// the reader fails (never fails the request).
+fn read_text<'t>(reader: Option<&dyn TextReader>, text: &'t str) -> Cow<'t, str> {
+    match reader.map(|r| r.read(text)) {
+        Some(Ok(read)) => Cow::Owned(read),
+        Some(Err(e)) => {
+            tracing::warn!(target: "sigil::tts", "local TTS: text reading failed ({e}); speaking the text as written");
+            Cow::Borrowed(text)
+        }
+        None => Cow::Borrowed(text),
+    }
 }
 
 /// Pushes into one sink utterance.
@@ -606,6 +633,7 @@ impl Engine {
             }
             info.sample_rate = synth.sample_rate();
             warm_up(synth.as_mut(), &voice, resolved.language.as_deref());
+            let reader = self.loader.text_reader(&resolved);
             tracing::info!(
                 target: "sigil::tts",
                 "local TTS: loaded {} ({}) in {} ms",
@@ -618,6 +646,7 @@ impl Engine {
                 synth,
                 info,
                 speed_factor,
+                reader,
             });
         } else if let Some(l) = loaded.as_mut() {
             l.speed_factor = speed_factor;
@@ -648,7 +677,7 @@ impl Engine {
         let rate = l.synth.sample_rate();
         let speed = sanitize_speed(request.speed) * l.speed_factor;
         let first_clause = self.sink.queued_ms() < CRITICAL_AHEAD_MS;
-        let chunks = text::chunks(&request.text, first_clause);
+        let chunks = text::chunks(&read_text(l.reader.as_deref(), &request.text), first_clause);
         let max_push = ((rate as f32 * PUSH_SECONDS) as usize).max(1);
         let mut frames: u64 = 0;
         let mut first_audio: Option<Duration> = None;
@@ -701,7 +730,7 @@ impl Engine {
         let rate = l.synth.sample_rate();
         let speed = sanitize_speed(request.speed) * l.speed_factor;
         let mut samples = Vec::new();
-        for chunk in text::chunks(&request.text, false) {
+        for chunk in text::chunks(&read_text(l.reader.as_deref(), &request.text), false) {
             if cancel.load(Ordering::Acquire) {
                 return Err(CANCELLED.into());
             }
@@ -722,6 +751,8 @@ struct Loaded {
     synth: Box<dyn Synth>,
     info: LocalTtsModelInfo,
     speed_factor: f32,
+    /// [`Loader::text_reader`] of the model (held while it stays loaded).
+    reader: Option<Arc<dyn TextReader>>,
 }
 
 /// Drop a model; a panic while freeing it is logged instead of ending the worker.

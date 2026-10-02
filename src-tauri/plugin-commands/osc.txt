@@ -3,3 +3,7 @@
 # with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
 send
 bind_status
+# P6-C: VRChat OSC receiver (MuteSelf; OSCQuery with a fixed-port fallback).
+listen_start
+listen_stop
+listen_status

@@ -33,6 +33,10 @@ pub struct CpalBackend;
 
 impl CaptureBackend for CpalBackend {
     fn resolve(&self, spec: &SourceSpec) -> Result<ResolvedDevice, String> {
+        // Per-process loopback (P6-A) is not a cpal device.
+        if let SourceSpec::Process(exe) = spec {
+            return super::loopback_process::resolve(exe);
+        }
         let host = cpal::default_host();
         let (device, loopback) = resolve_cpal_device(&host, spec)?;
         let name = device.name().map_err(|e| format!("Audio device name: {e}"))?;
@@ -50,6 +54,9 @@ impl CaptureBackend for CpalBackend {
     }
 
     fn open(&self, device: ResolvedDevice, sink: StreamSink, errors: ErrorSink) -> Result<Box<dyn CaptureStream>, String> {
+        if super::loopback_process::is_process_device(&device) {
+            return super::loopback_process::open(device, sink, errors);
+        }
         let handle = match device.handle.and_then(|h| h.downcast::<CpalHandle>().ok()) {
             Some(handle) => *handle,
             None => {

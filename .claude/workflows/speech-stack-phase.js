@@ -86,15 +86,17 @@ for (const id of (A.scaffoldIds || [])) {
   scaffoldReports.push(r)
   log('Scaffold ' + id + ': ' + (r ? r.status : 'FAILED'))
 }
-const scaffoldText = JSON.stringify(scaffoldReports.filter(Boolean).map(r => ({ ws_id: r.ws_id, status: r.status, summary: r.summary, known_issues: r.known_issues })))
+// A.scaffoldNotes / A.priorReports / A.stopAfter let a relaunch reuse work finished outside this run.
+const scaffoldText = A.scaffoldNotes || JSON.stringify(scaffoldReports.filter(Boolean).map(r => ({ ws_id: r.ws_id, status: r.status, summary: r.summary, known_issues: r.known_issues })))
 
 // ── Implement ──
 phase('Implement')
 const reports = await pool(A.implementIds || [], CONC, id => agent(
   COMMON + '\n\nSCAFFOLD RESULTS (stubs and frozen signatures you can rely on):\n' + scaffoldText + '\n\nYOUR WORKSTREAM: ' + id + '. Implement it completely and to a high standard (this is production code for real users; quality first). Add focused tests. Meet its acceptance criteria. If something is genuinely infeasible here, implement the documented fallback and explain in known_issues. Report every hotspot change you need.',
   { label: 'impl:' + id, phase: 'Implement', schema: REPORT }))
-const okReports = reports.filter(Boolean)
+const okReports = (A.priorReports || []).concat(reports.filter(Boolean))
 log('Implemented: ' + okReports.map(r => r.ws_id + '=' + r.status).join(', '))
+if (A.stopAfter === 'Implement') return { scaffoldReports, reports: reports.filter(Boolean) }
 
 // ── Integrate ──
 phase('Integrate')

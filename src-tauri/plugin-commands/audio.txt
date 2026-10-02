@@ -13,3 +13,5 @@ take_utterance
 get_device_snapshot
 set_capture_mute
 get_capture_status
+# P6-A per-process loopback (scaffolded by P6-S0): processes the Others picker can capture.
+list_loopback_processes

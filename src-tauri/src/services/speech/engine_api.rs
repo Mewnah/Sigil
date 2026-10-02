@@ -247,6 +247,10 @@ pub struct PipelineConfig {
     /// utterances are reported and, with `retain_pcm`, kept for `take_pipeline_utterance`.
     /// Explicit, so a capture-only pipeline stays engine-free whatever the router would plan.
     pub capture_only: bool,
+    /// P6-L A/B (default off): drop closed segments the FireRedVAD music / singing gate
+    /// (`speech::music_gate`) hears as music or singing, before any engine sees them
+    /// (`speech:utterance` kind `dropped`, reason `music`). Off when the model is not installed.
+    pub music_gate: bool,
 }
 
 impl Default for PipelineConfig {
@@ -267,6 +271,7 @@ impl Default for PipelineConfig {
             max_backlog: 3,
             retain_pcm: false,
             capture_only: false,
+            music_gate: false,
         }
     }
 }

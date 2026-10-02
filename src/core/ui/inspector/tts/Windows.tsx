@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import Inspector from "../components";
 import { InputRange, InputSelect } from "../components/input";
+import { TtsOutputDevice } from "./Routing";
 
 type WindowsToken = {
   id: string;
@@ -23,20 +24,25 @@ export const Windows: FC = () => {
     invoke<WindowsConfig>("plugin:windows-tts|get_voices").then(setConfig);
   }, []);
 
+  // Windows voices play through the TTS sink since P6-J, so the output is the same device picker as every other sink
+  // backend. A device saved from the old SAPI output list (a token id ending in `\MMAudioOut\{endpoint}`) still plays
+  // (the sink resolves it), and is migrated once to the endpoint's name (the label SAPI reports is the cpal name).
+  useEffect(() => {
+    const saved = window.ApiServer.state.services.tts.data.windows.device;
+    if (!config || !/\\MMAudioOut\\/i.test(saved)) return;
+    const match = config.devices.find(d => d.id === saved);
+    if (match?.label) handleUpdate("device", match.label);
+  }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return <>
     <Inspector.SubHeader>{t('tts.windows_title')}</Inspector.SubHeader>
-    <InputSelect
-      value={data.device}
-      onValueChange={e => handleUpdate("device", e)}
-      options={config?.devices.map(d => ({ label: d.label, value: d.id })) || []}
-      label="common.field_output_device" />
-    {/* <InputNativeAudioOutput label="Audio Output" value={pr.device} onChange={e => handleUpdate("device", e)} /> */}
+    <TtsOutputDevice label="common.field_output_device" value={data.device} onChange={e => handleUpdate("device", e)} />
     <InputSelect
       value={data.voice}
       onValueChange={e => handleUpdate("voice", e)}
       options={config?.voices.map(d => ({ ...d, value: d.id })) || []}
       label="tts.field_voice" />
-    <InputRange value={data.volume} onChange={e => handleUpdate("volume", e.target.value)} label="common.field_volume" step="0.05" min="0" max="1" />
+    <InputRange value={data.volume} onChange={e => handleUpdate("volume", e.target.value)} label="common.field_volume" step="0.05" min="0" max="2" />
     <InputRange value={data.rate} onChange={e => handleUpdate("rate", e.target.value)} label="common.field_rate" step="0.05" min="0.1" max="5" />
   </>
 }

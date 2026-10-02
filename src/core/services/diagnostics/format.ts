@@ -39,6 +39,13 @@ export function componentKey(component: string): string | null {
     "tts.kitten": "tts_kitten",
     "stt.vad": "stt_vad",
     "stt.turn": "stt_turn",
+    // P6: music filter (P6-L), Chatterbox (P6-I), Style-Bert-VITS2 (P6-G).
+    "stt.music": "stt_music",
+    "tts.chatterbox": "tts_chatterbox",
+    "tts.chatterbox.flow": "tts_chatterbox_flow",
+    "tts.chatterbox.vocoder": "tts_chatterbox_vocoder",
+    "tts.sbv2": "tts_sbv2",
+    "tts.sbv2.bert": "tts_sbv2_bert",
   };
   return known[component] ?? null;
 }
@@ -53,6 +60,12 @@ export function componentLabel(component: string): string {
     "tts.kitten": "Local TTS",
     "stt.vad": "Speech detection",
     "stt.turn": "End-of-turn detection",
+    "stt.music": "Music filter",
+    "tts.chatterbox": "Chatterbox language model",
+    "tts.chatterbox.flow": "Chatterbox decoder",
+    "tts.chatterbox.vocoder": "Chatterbox vocoder",
+    "tts.sbv2": "Style-Bert-VITS2 voice",
+    "tts.sbv2.bert": "Style-Bert-VITS2 Japanese BERT",
   };
   return labels[component] ?? component;
 }

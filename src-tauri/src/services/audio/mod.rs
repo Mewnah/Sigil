@@ -37,6 +37,8 @@ pub mod device_resolve;
 pub mod device_watch;
 pub mod hub;
 pub mod loopback;
+/// Per-process loopback (`process:<exe>` sources, P6-A; scaffolded by P6-S0).
+pub mod loopback_process;
 pub mod speech_capture;
 pub mod stream;
 pub mod utterance_capture;
@@ -377,7 +379,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_capture_status,
             utterance_capture::start_utterance_capture,
             utterance_capture::stop_utterance_capture,
-            utterance_capture::take_utterance
+            utterance_capture::take_utterance,
+            loopback_process::list_loopback_processes
         ])
         .build()
 }

@@ -1,0 +1,11 @@
+# Tauri IPC commands of the `vr-overlay` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P6-B (SteamVR caption overlay); scaffolded by P6-S0.
+vr_overlay_start
+vr_overlay_set_config
+vr_overlay_stop
+vr_overlay_status
+vr_overlay_set_text
+# P6-B: place a world-attached overlay in front of the user again.
+vr_overlay_recenter

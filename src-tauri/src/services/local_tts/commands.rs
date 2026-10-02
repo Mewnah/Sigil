@@ -29,6 +29,24 @@
 //! - `plugin:local-tts|unload_local_tts` → `void` (frees the model).
 //!
 //! Fields added by P2-H (additive): [`LocalTtsVoice::gender`], [`LocalTtsModelInfo::default_voice`].
+//!
+//! # Voice-cloning engines (P6-S0; frozen, change only through INTEGRATE)
+//! P6-I's in-process cloning engines are registered here and live in their own modules (TS mirror
+//! `RustCloningTtsRequest`; each takes a [`CloningTtsRequest`] whose reference is a voice-library
+//! voice, read with `voice_library::reference_clip`, speaker data cached with
+//! `voice_library::read_cache` / `write_cache` under the engine's own backend name):
+//! - Kyutai Pocket TTS on the CPU ([`super::pocket`]): `pocket_tts_speak { request, utteranceId }`
+//!   → [`SpeakReport`], `pocket_tts_cancel { utteranceId? }`, `pocket_tts_unload`.
+//! - Chatterbox Multilingual V3 on Sigil's ONNX Runtime ([`super::chatterbox_ort`]):
+//!   `chatterbox_local_speak { request, utteranceId }` → [`SpeakReport`],
+//!   `chatterbox_local_cancel { utteranceId? }`, `chatterbox_local_unload`.
+//!
+//! Additive meaning (P6-I, recorded by P6-I0): a speak call with an empty `request.text` only loads
+//! the model and prepares the reference voice (the TS backends send it at Start, so a missing voice
+//! or download fails there). It needs no sink utterance (`utteranceId` may be `""`) and returns a
+//! [`SpeakReport`] with `frames: 0`. Signatures are unchanged.
+//!
+//! Models come from `model-catalog/tts-cloning.json` (P6-I).
 
 use std::sync::Arc;
 
@@ -73,6 +91,39 @@ impl Default for LocalTtsRequest {
             language: None,
             text: String::new(),
             threads: None,
+        }
+    }
+}
+
+/// One sentence for a voice-cloning engine (P6-S0, TS `RustCloningTtsRequest`): Pocket TTS and
+/// Chatterbox Multilingual (P6-I).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CloningTtsRequest {
+    /// Catalog id (`tts/...`); "" = the engine's default model.
+    pub model: String,
+    /// Voice-library voice to clone (`voice_library::valid_voice_id`); "" = the engine's built-in voice.
+    pub reference_voice_id: String,
+    pub text: String,
+    /// Language hint (normalized code) for multilingual models; `None` = detect / the model default.
+    pub language: Option<String>,
+    pub speed: f32,
+    /// Inference threads (`None` = engine default; real-time engines use 1-4).
+    pub threads: Option<u32>,
+    /// Engine-specific options (`exaggeration`, `cfgWeight`, `temperature`, ...); `null` or an object.
+    pub options: serde_json::Value,
+}
+
+impl Default for CloningTtsRequest {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            reference_voice_id: String::new(),
+            text: String::new(),
+            language: None,
+            speed: 1.0,
+            threads: None,
+            options: serde_json::Value::Null,
         }
     }
 }
@@ -162,13 +213,16 @@ async fn unload_local_tts() -> Result<(), String> {
     answer(ENGINE.unload()).await
 }
 
-/// Load the sherpa runtime early when a local voice is installed: `SherpaRuntime::load` refuses
-/// once another `onnxruntime.dll` is in the process (ADR 0002), so the earlier the better. Cheap
-/// (a few ms, two DLLs); never downloads.
+/// Load the sherpa runtime early when a local voice (or a Pocket TTS model, which runs on the same
+/// runtime) is installed: `SherpaRuntime::load` refuses once another `onnxruntime.dll` is in the
+/// process (ADR 0002), so the earlier the better. Cheap (a few ms, two DLLs); never downloads.
 fn preload_runtime() {
     let any_installed = super::catalog::all()
         .iter()
-        .any(|m| crate::services::model_store::installed_path(&m.id).is_some());
+        .any(|m| crate::services::model_store::installed_path(&m.id).is_some())
+        || super::pocket::MODELS
+            .iter()
+            .any(|id| crate::services::model_store::installed_path(id).is_some());
     if !any_installed {
         return;
     }
@@ -192,6 +246,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             synthesize_local_tts,
             cancel_local_tts,
             unload_local_tts,
+            // P6-I voice-cloning engines (scaffolded by P6-S0).
+            super::pocket::pocket_tts_speak,
+            super::pocket::pocket_tts_cancel,
+            super::pocket::pocket_tts_unload,
+            super::chatterbox_ort::chatterbox_local_speak,
+            super::chatterbox_ort::chatterbox_local_cancel,
+            super::chatterbox_ort::chatterbox_local_unload,
         ])
         .build()
 }
@@ -220,5 +281,19 @@ mod tests {
         let bare = serde_json::to_value(LocalTtsVoice::default()).unwrap();
         assert!(bare.get("gender").is_none(), "gender is left out when unknown");
         assert!(bare.get("language").is_some(), "language stays (null) as frozen");
+    }
+
+    #[test]
+    fn cloning_request_wire_names_are_frozen() {
+        let r: CloningTtsRequest =
+            serde_json::from_str(r#"{"referenceVoiceId":"alice-1a2b","text":"hi","options":{"cfgWeight":0.5}}"#).unwrap();
+        assert_eq!(r.reference_voice_id, "alice-1a2b");
+        assert_eq!(r.speed, 1.0);
+        assert!(r.model.is_empty() && r.language.is_none() && r.threads.is_none());
+        assert_eq!(r.options["cfgWeight"], 0.5);
+        let v = serde_json::to_value(CloningTtsRequest::default()).unwrap();
+        for key in ["model", "referenceVoiceId", "text", "language", "speed", "threads", "options"] {
+            assert!(v.get(key).is_some(), "missing {key}");
+        }
     }
 }

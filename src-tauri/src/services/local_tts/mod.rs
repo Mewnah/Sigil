@@ -20,8 +20,13 @@
 //! (2 threads: 0.40-0.47); load ≈ 1.1-1.4 s. The int8 build is not faster (RTF ≈ 1.0) and is not in
 //! the catalog. Piper medium RTF ≈ 0.04 idle; Kitten mini ≈ 0.6. Sigil's ONNX Runtime runs the same
 //! Kokoro graph at 0.23-0.24 once its CPU memory arena is on (see [`kokoro_ort`]).
+//!
+//! P6 voice cloning (P6-I; scaffolded by P6-S0, commands registered in [`commands`]):
+//! [`pocket`] (Kyutai Pocket TTS, CPU) and [`chatterbox_ort`] (Chatterbox Multilingual V3 on
+//! Sigil's ONNX Runtime), both cloning voice-library voices.
 
 pub mod catalog;
+pub mod chatterbox_ort;
 pub mod commands;
 pub mod engine;
 pub mod kitten;
@@ -29,6 +34,7 @@ pub mod kokoro;
 pub mod kokoro_ort;
 pub mod models;
 pub mod piper;
+pub mod pocket;
 pub mod text;
 pub mod voices;
 

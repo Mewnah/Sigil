@@ -436,6 +436,7 @@ fn legacy_pipeline_config(
         max_backlog: decode.max_backlog.unwrap_or(3),
         retain_pcm: false,
         capture_only: false,
+        music_gate: false,
     }
 }
 

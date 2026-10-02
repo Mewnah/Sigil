@@ -1,12 +1,23 @@
-import { BaseEvent, IServiceInterface, PartialWithRequired, ServiceNetworkState, TextEvent, TextEventSource, TextEventType } from "@/types";
+import { BaseEvent, CaptionEventSource, IServiceInterface, OthersEventSource, PartialWithRequired, ReadingsEventSource, ServiceNetworkState, TextEvent, TextEventSource, TextEventType } from "@/types";
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
 import PubSub from "pubsub-js";
 import i18n from "i18next";
 import { toast } from "react-toastify";
-import { proxy } from "valtio";
+import { proxy, subscribe } from "valtio";
 import { proxyMap, subscribeKey } from "valtio/utils";
+import {
+  isValidLanToken,
+  lanLinkAddress,
+  lanRefusalFromCloseCode,
+  linkSocketUrl,
+  normalizeLanToken,
+  parseLinkAddress,
+  type LanAccessMode,
+  type LanAccessSettings,
+  type LinkAddress,
+} from "@/shared/services/peer/lanAccess";
 
 import { z } from "zod";
 import {
@@ -48,11 +59,24 @@ export type ExternalMicLifecycleHandler = (active: boolean) => void;
 
 export { PUBSUB_STT_EXTERNAL_COMMAND, PUBSUB_STT_EXTERNAL_STATE };
 
+/** LAN access part of {@link WebServerStatus} (Rust `LanStatus`; never contains the token). */
+export type WebLanStatus = {
+  /** The requested `lanAccess.mode`. */
+  mode: LanAccessMode;
+  /** The mode being served; differs from `mode` while a switch failed (see `error`), null while not listening. */
+  boundMode: LanAccessMode | null;
+  /** The listening address, e.g. `0.0.0.0:3030`. */
+  boundAddress: string | null;
+  /** Whether a valid LAN token is in force. */
+  tokenSet: boolean;
+  legacyNoToken: boolean;
+};
+
 /** `plugin:web|server_status` / `web:server_status` payload (Rust `WebServerStatus`). */
 export type WebServerStatus = {
   state: "starting" | "listening" | "failed" | "stopped";
   port: number;
-  /** Bind / server error when `state` is `failed` or `stopped`. */
+  /** Bind / server error when `state` is `failed` or `stopped`, or why a LAN mode switch did not happen while `listening`. */
   error: string | null;
   /** Whether the Origin allow-list is enforced right now. */
   originCheck: boolean;
@@ -60,15 +84,37 @@ export type WebServerStatus = {
   originCheckSetting: boolean;
   /** `SIGIL_LAN_ORIGIN_CHECK` override (wins over the setting), or null. */
   originCheckEnv: boolean | null;
+  /** LAN security stage 2 (P6-D). */
+  lan: WebLanStatus;
 };
 
-/** `web:origin_rejected` payload (Rust `OriginRejection`), throttled per origin in Rust. */
+/** Refusal reasons of the LAN token / mode (stage 2). */
+export type WebLanRefusalReason = "missing_token" | "invalid_token" | "lan_disabled";
+
+/**
+ * `web:origin_rejected` payload (Rust `AccessRejection`), throttled per origin (or peer address) in
+ * Rust: refused or revoked `/pubsub` and `/peer` connections, by the Origin allow-list (stage 1) or
+ * the LAN token and mode (stage 2).
+ */
 export type WebOriginRejection = {
   route: string;
   origin: string | null;
   remote: string | null;
-  reason: "foreign_origin" | "null_origin" | "malformed_origin" | "missing_origin_remote";
+  reason: "foreign_origin" | "null_origin" | "malformed_origin" | "missing_origin_remote" | WebLanRefusalReason;
 };
+
+/** Reply of `plugin:web|regenerate_lan_token`. */
+type LanTokenReply = { token: string; status: WebServerStatus };
+
+/** The settings the host web server follows (a valtio proxy: the persisted root state). */
+export type HostWebServerSettings = { lanOriginCheck: boolean; lanAccess: LanAccessSettings };
+
+const LAN_REFUSAL_REASONS: ReadonlySet<string> = new Set<WebLanRefusalReason>(["missing_token", "invalid_token", "lan_disabled"]);
+
+/** The `lanAccess` values Rust is told about, as one comparable string. */
+function lanAccessKey(lan: LanAccessSettings): string {
+  return JSON.stringify([lan.mode, lan.token, lan.legacyNoToken === true]);
+}
 
 /** Minimum gap between "blocked a connection" toasts (Rust already throttles per origin). */
 const ORIGIN_REJECTED_TOAST_GAP_MS = 20_000;
@@ -103,7 +149,8 @@ class Service_PubSub implements IServiceInterface {
 
   #socket?: WebSocket;
   #linkIntentionalClose = false;
-  #linkFullAddress: string | null = null;
+  /** The other Sigil this host links to (address and remote LAN token), while linking. */
+  #link: LinkAddress | null = null;
   #linkReconnectAttempts = 0;
   #linkReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #linkPingTimer: ReturnType<typeof setInterval> | null = null;
@@ -115,6 +162,10 @@ class Service_PubSub implements IServiceInterface {
   /** Ids (`mid`) of messages this host originated, relayed or accepted: repeats are dropped. */
   readonly #seenMessageIds = new RecentMessageIds();
   #hostWebServerAttached = false;
+  /** The host's persisted settings, once {@link attachHostWebServer} ran. */
+  #hostSettings?: HostWebServerSettings;
+  /** {@link lanAccessKey} of the `lanAccess` values last handled (pushed or regenerated). */
+  #lastLanKey = "";
   #lastServerStatusToast = "";
   #lastOriginToastAt = 0;
   /** Local web server status (host app only; null until known). */
@@ -210,14 +261,16 @@ class Service_PubSub implements IServiceInterface {
   }
 
   /**
-   * Host app, after settings and i18n are loaded: keep the Rust Origin-check kill switch in sync
-   * with `settings.lanOriginCheck` (a valtio proxy), and surface a failed web-server bind and
-   * refused WebSocket connections as toasts. Idempotent.
+   * Host app, after settings and i18n are loaded: keep the Rust web server in sync with the
+   * persisted settings (a valtio proxy) — the Origin-check kill switch (`lanOriginCheck`) and LAN
+   * access (`lanAccess`: mode, token, legacy; P6-D) — make sure a LAN token exists, and surface a
+   * failed web-server bind and refused WebSocket connections as toasts. Idempotent.
    */
-  async attachHostWebServer(settings: { lanOriginCheck: boolean }) {
+  async attachHostWebServer(settings: HostWebServerSettings) {
     if (!window.Config.isServer() || !window.Config.isApp() || this.#hostWebServerAttached)
       return;
     this.#hostWebServerAttached = true;
+    this.#hostSettings = settings;
 
     const pushOriginCheck = (enabled: boolean) =>
       invoke<WebServerStatus>("plugin:web|set_origin_check", { enabled })
@@ -225,15 +278,76 @@ class Service_PubSub implements IServiceInterface {
         .catch((e) => console.warn("[pubsub] set_origin_check failed", e));
     subscribeKey(settings, "lanOriginCheck", (enabled) => void pushOriginCheck(enabled !== false));
 
+    // `lanAccess` may be patched field by field or replaced whole: watch the root, compare values.
+    this.#lastLanKey = lanAccessKey(settings.lanAccess);
+    subscribe(settings, () => {
+      const key = lanAccessKey(settings.lanAccess);
+      if (key === this.#lastLanKey)
+        return;
+      this.#lastLanKey = key;
+      void this.#syncLanAccess();
+    });
+
     try {
       await listen<WebServerStatus>("web:server_status", (e) => this.#onServerStatus(e.payload));
       await listen<WebOriginRejection>("web:origin_rejected", (e) => this.#onOriginRejected(e.payload));
     } catch (e) {
       console.warn("[pubsub] web server event listeners failed", e);
     }
+    await this.#syncLanAccess();
     // The reply carries the current status, so a bind failure from before the webview was
     // listening is surfaced too.
     await pushOriginCheck(settings.lanOriginCheck !== false);
+  }
+
+  /**
+   * Push `lanAccess` to Rust; when the persisted token is missing (first start) or malformed,
+   * generate one (Rust) and store it, which pushes again through the settings subscription.
+   */
+  async #syncLanAccess() {
+    const settings = this.#hostSettings;
+    if (!settings)
+      return;
+    const lan = settings.lanAccess;
+    const payload: LanAccessSettings = {
+      mode: lan.mode === "localhost" ? "localhost" : "lan",
+      token: normalizeLanToken(lan.token) ?? "",
+      legacyNoToken: lan.legacyNoToken === true,
+    };
+    try {
+      this.#onServerStatus(await invoke<WebServerStatus>("plugin:web|set_lan_access", { settings: payload }));
+    } catch (e) {
+      console.warn("[pubsub] set_lan_access failed", e);
+    }
+    if (!isValidLanToken(lan.token))
+      await this.regenerateLanToken();
+    else if (payload.token !== lan.token)
+      settings.lanAccess.token = payload.token; // store the canonical form
+  }
+
+  /**
+   * Host app: make a new LAN token (Rust's CSPRNG), put it in force at once (devices on other
+   * machines still using the old one are disconnected) and persist it in `lanAccess.token`.
+   * Returns the token, or null when it failed (a toast says why).
+   */
+  async regenerateLanToken(): Promise<string | null> {
+    const settings = this.#hostSettings;
+    if (!settings)
+      return null;
+    try {
+      const reply = await invoke<LanTokenReply>("plugin:web|regenerate_lan_token");
+      // Rust already has it: the settings subscription only needs to push it if something else changed.
+      this.#lastLanKey = lanAccessKey({ ...settings.lanAccess, token: reply.token });
+      settings.lanAccess.token = reply.token;
+      this.#onServerStatus(reply.status);
+      return reply.token;
+    } catch (e) {
+      console.error("[pubsub] regenerate_lan_token failed", e);
+      toast.error(i18n.t("toasts.lan_token_regenerate_failed", { error: e instanceof Error ? e.message : String(e) }), {
+        toastId: "lan-token-regenerate",
+      });
+      return null;
+    }
   }
 
   #onServerStatus(status: WebServerStatus) {
@@ -259,6 +373,12 @@ class Service_PubSub implements IServiceInterface {
     if (now - this.#lastOriginToastAt < ORIGIN_REJECTED_TOAST_GAP_MS)
       return;
     this.#lastOriginToastAt = now;
+    if (LAN_REFUSAL_REASONS.has(rejection.reason)) {
+      const remote = (rejection.remote ?? "?").slice(0, 64);
+      const key = rejection.reason === "lan_disabled" ? "toasts.web_lan_disabled_refused" : "toasts.web_lan_token_refused";
+      toast.warn(i18n.t(key, { remote }), { toastId: "web-lan-refused", autoClose: 12_000 });
+      return;
+    }
     const who = rejection.origin ?? rejection.remote ?? "?";
     toast.warn(i18n.t("toasts.web_origin_rejected", { origin: who.slice(0, 120) }), {
       toastId: "web-origin-rejected",
@@ -277,6 +397,10 @@ class Service_PubSub implements IServiceInterface {
     this.registerEvent({ label: "AI: Rewritten Text", value: TextEventSource.transform });
     this.registerEvent({ label: "AI: Original Text (Synced)", value: TextEventSource.transform_source });
     this.registerEvent({ label: "Any text source", value: TextEventSource.any });
+    // P6-S0: other players (P6-A) and readings (P6-L); outside `text.*`, so "Any text source" never hears them.
+    this.registerEvent({ label: "Other players: Speech-to-Text", value: OthersEventSource.stt });
+    this.registerEvent({ label: "Other players: Translation", value: OthersEventSource.translation });
+    this.registerEvent({ label: "Readings (romaji / pinyin)", value: ReadingsEventSource.stt });
 
     // Track final text on the host (desktop app): STT, TTS pipeline, typed input, etc. (PubSub bubbles text.* → "text".)
     !window.Config.isClient() &&
@@ -331,7 +455,8 @@ class Service_PubSub implements IServiceInterface {
     this.publishLocally(msg);
     this.#fanOutPubSubRemote(topic, data, [this.#sessionId], this.#newMessageId(), true);
   }
-  publishText(topic: TextEventSource, textData: PartialWithRequired<TextEvent, "type" | "value">) {
+  /** Publish a caption: own text (`text.*`) or other players' (`others.*`, P6-A). */
+  publishText(topic: CaptionEventSource, textData: PartialWithRequired<TextEvent, "type" | "value">) {
     let data = this.applyEmotes(textData);
     this.publish(topic, data);
   }
@@ -344,7 +469,8 @@ class Service_PubSub implements IServiceInterface {
     return PubSub.subscribe(eventname, (_, data) => fn(data));
   }
 
-  public subscribeText(source: TextEventSource, fn: (value?: TextEvent, eventName?: string) => void, allowEmpty = false) {
+  /** Subscribe to a caption topic (`text.*` or `others.*`); `text` hears every `text.*` but never `others.*`. */
+  public subscribeText(source: CaptionEventSource, fn: (value?: TextEvent, eventName?: string) => void, allowEmpty = false) {
     return PubSub.subscribe(source, (eventName, data: TextEvent) => {
       if (allowEmpty)
         fn(data, eventName);
@@ -357,10 +483,19 @@ class Service_PubSub implements IServiceInterface {
     value: ServiceNetworkState.disconnected
   });
 
-  copyLinkAddress() {
+  /**
+   * Copy this host's Link apps address for another Sigil: `<LAN IP>:<port>?token=<LAN token>`
+   * (P6-D; pasting it there fills the address and the remote token). `ip` picks another of this
+   * PC's addresses.
+   */
+  copyLinkAddress(ip?: string) {
     const conf = window.Config.serverNetwork;
-    navigator.clipboard.writeText(`${conf.ip}:${conf.port}`)
-    toast.success(i18n.t("toasts.copied"));
+    const token = normalizeLanToken(window.ApiServer?.state?.lanAccess?.token) ?? "";
+    navigator.clipboard.writeText(lanLinkAddress(ip || conf.ip, conf.port, token));
+    if (this.webServer.status?.lan?.mode === "localhost")
+      toast.warn(i18n.t("toasts.lan_access_this_pc_only"), { toastId: "lan-this-pc-only" });
+    else
+      toast.success(i18n.t("toasts.copied"));
   }
 
   #clearLinkSchedulers() {
@@ -393,7 +528,7 @@ class Service_PubSub implements IServiceInterface {
   }
 
   #scheduleLinkReconnect() {
-    if (this.#linkIntentionalClose || !this.#linkFullAddress || this.#linkReconnectTimer)
+    if (this.#linkIntentionalClose || !this.#link || this.#linkReconnectTimer)
       return;
     if (this.#linkReconnectAttempts >= LINK_PUBSUB_MAX_ATTEMPTS) {
       toast.error(i18n.t("toasts.pubsub_failed"));
@@ -411,8 +546,8 @@ class Service_PubSub implements IServiceInterface {
   }
 
   #openLinkSocket() {
-    const fullAddress = this.#linkFullAddress;
-    if (!fullAddress || this.#linkIntentionalClose)
+    const link = this.#link;
+    if (!link || this.#linkIntentionalClose)
       return;
 
     try {
@@ -423,7 +558,8 @@ class Service_PubSub implements IServiceInterface {
     this.#socket = undefined;
     this.#stopLinkPing();
 
-    const wsUrl = `ws://${fullAddress}/pubsub?id=${window.ApiServer.state.id}-${Date.now()}`;
+    // The other Sigil's LAN token rides along as `&token=` (P6-D).
+    const wsUrl = linkSocketUrl(link, `${window.ApiServer.state.id}-${Date.now()}`);
     const socket = new WebSocket(wsUrl);
     this.#socket = socket;
 
@@ -440,16 +576,28 @@ class Service_PubSub implements IServiceInterface {
       this.#startLinkPing();
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event?: CloseEvent) => {
       clearTimeout(connectTimeout);
       this.#stopLinkPing();
-      if (this.#socket === socket)
+      const wasCurrent = this.#socket === socket;
+      if (wasCurrent)
         this.#socket = undefined;
       if (this.#linkIntentionalClose) {
         this.serviceState.state = ServiceNetworkState.disconnected;
         return;
       }
       this.serviceState.state = ServiceNetworkState.disconnected;
+      // The other Sigil refused this link (missing / old token, or it accepts only its own PC):
+      // retrying cannot help until the user pastes its address again.
+      const refusal = lanRefusalFromCloseCode(event?.code);
+      if (refusal && wasCurrent) {
+        toast.error(i18n.t(refusal === "token" ? "toasts.link_token_refused" : "toasts.link_lan_disabled"), {
+          toastId: "link-refused",
+          autoClose: 15_000,
+        });
+        this.linkDisconnect();
+        return;
+      }
       this.#scheduleLinkReconnect();
     };
 
@@ -458,14 +606,21 @@ class Service_PubSub implements IServiceInterface {
     };
   }
 
+  /**
+   * Link to the Sigil at `linkAddress`: `<IPv4>:<port>`, optionally with `?token=<its LAN token>`
+   * (P6-D; Settings stores the remote token that way). Needed when that Sigil is on another PC.
+   */
   linkConnect() {
-    const ipValidator = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]):[0-9]+$/;
-    const fullAddress = window.ApiServer.state.linkAddress;
-    if (!fullAddress.match(ipValidator))
+    const link = parseLinkAddress(window.ApiServer.state.linkAddress ?? "");
+    if (!link)
       return;
+    if (link.tokenInvalid) {
+      toast.error(i18n.t("settings.link_remote_token_invalid"), { toastId: "link-token-invalid" });
+      return;
+    }
 
     const conf = window.Config.serverNetwork;
-    if (`${conf.ip}:${conf.port}` === fullAddress) {
+    if (`${conf.ip}:${conf.port}` === `${link.host}:${link.port}`) {
       toast.error(i18n.t("toasts.cannot_connect_self"));
       return;
     }
@@ -473,14 +628,14 @@ class Service_PubSub implements IServiceInterface {
     this.#clearLinkSchedulers();
     this.#linkIntentionalClose = false;
     this.#linkReconnectAttempts = 0;
-    this.#linkFullAddress = fullAddress;
+    this.#link = link;
     this.serviceState.state = ServiceNetworkState.connecting;
     this.#openLinkSocket();
   }
 
   linkDisconnect() {
     this.#linkIntentionalClose = true;
-    this.#linkFullAddress = null;
+    this.#link = null;
     this.#clearLinkSchedulers();
     try {
       this.#socket?.close();

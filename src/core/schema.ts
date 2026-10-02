@@ -8,6 +8,10 @@ import { Service_Transform_Schema } from "./services/transform/schema";
 import { Service_TTS_Schema } from "./services/tts/schema";
 import { Service_Twitch_Schema } from "./services/twitch/schema";
 import { Service_VRC_Schema } from "./services/vrc/schema";
+// P6-S0 (after the existing slices, so module evaluation order is unchanged for them).
+import { Service_Others_Schema } from "./services/others/schema";
+import { CaptionWindow_Schema } from "./services/overlay/schema";
+import { Readings_Schema } from "./services/readings/schema";
 
 import type { Services } from "@/services-registry";
 import type { ModelMirror } from "@/types";
@@ -42,6 +46,9 @@ export const MODEL_MIRRORS = [
 ] as const satisfies readonly ModelMirror[];
 assertTypes<(typeof MODEL_MIRRORS)[number], ModelMirror>();
 
+/** Values of `lanAccess.mode` (P6-D): bind all IPv4 interfaces (token for LAN clients) or 127.0.0.1 only. */
+export const LAN_ACCESS_MODES = ["lan", "localhost"] as const;
+
 const zodServiceSchemaFactory = <Data extends z.ZodTypeAny>(schema: Data) => {
   return z.object({
     showActionButton: zSafe(z.coerce.boolean(), false),
@@ -58,6 +65,24 @@ export const BackendSchema = z.object({
    * which blocks cross-site WebSocket hijacking. `false` only to debug a client with an unexpected Origin.
    */
   lanOriginCheck: zSafe(z.boolean(), true),
+  /**
+   * LAN security stage 2 (P6-S0; owned by P6-D). User decisions: LAN on with a persistent token, same-PC clients
+   * (loopback) exempt, a regenerate button, and a legacy toggle that is off.
+   * - `mode`: `lan` (bind all IPv4 interfaces, as before; non-loopback clients need the token) or `localhost` (bind
+   *   127.0.0.1 only).
+   * - `token`: persistent random token ("" until generated on first start); travels as the PeerJS key and `?token=`
+   *   on `/pubsub` and every served page. Regenerating it invalidates saved LAN links (OBS on another PC, Link apps).
+   * - `legacyNoToken`: accept LAN clients without the token (stage 1 behaviour; shown with a caution label).
+   */
+  lanAccess: z.object({
+    mode: zSafe(z.enum(LAN_ACCESS_MODES), "lan"),
+    token: zSafe(z.string(), ""),
+    legacyNoToken: zSafe(z.boolean(), false),
+  }).default({}),
+  /** Always-on-top, click-through caption window (P6-B; `./services/overlay/schema.ts`). Off by default. */
+  captionWindow: CaptionWindow_Schema,
+  /** Japanese / Chinese readings of captions on `readings.stt` (P6-L; `./services/readings/schema.ts`). Off by default. */
+  readings: Readings_Schema,
   /**
    * Model store (P1): preferred download mirror, pushed to Rust with `plugin:model-store|set_store_config`.
    * "auto" keeps each catalog entry's source order (Hugging Face, hf-mirror, ModelScope, GitHub release,
@@ -123,6 +148,8 @@ export const BackendSchema = z.object({
     kick: zodServiceSchemaFactory(Service_Kick_Schema).default({}),
     discord: zodServiceSchemaFactory(Service_Discord_Schema).default({}),
     obs: zodServiceSchemaFactory(Service_OBS_Schema).default({}),
+    /** Other players (P6-A). */
+    others: zodServiceSchemaFactory(Service_Others_Schema).default({}),
   }).default({})
 }).default({});
 export type BackendState = z.infer<typeof BackendSchema>;
@@ -144,6 +171,7 @@ export const PERSISTED_SERVICE_KEYS = [
   "kick",
   "discord",
   "obs",
+  "others",
 ] as const satisfies readonly PersistedHostServiceKey[];
 
 export function isPersistedServiceKey(id: string): id is PersistedHostServiceKey {

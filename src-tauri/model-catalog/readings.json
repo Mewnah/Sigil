@@ -1,0 +1,8 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Readings of captions (text_readings, P6-L). No entries of its own: the Japanese readings use the NAIST-JDIC dictionary built for jpreprocess 0.15, catalogued once as text/jpreprocess-naist-jdic in runtime-sbv2.json and shared with the Style-Bert-VITS2 frontend (catalog ids are unique across fragments; text_readings::japanese::DICTIONARY_ID names it). Chinese readings use data bundled in the build (jieba-rs's dictionary, the pinyin crate's table and text_readings/zh_phrases.txt).",
+    "If the shared entry ever moves here, keep its id: installed copies are found by id."
+  ],
+  "entries": []
+}

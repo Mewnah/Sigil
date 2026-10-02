@@ -1,0 +1,26 @@
+{
+  "$comment": [
+    "Pinned source of the runtime/s2-server-* packs (P6-F): s2.cpp (rodrigomatta, Fish Audio Research License), the C++/ggml port of Fish Audio S2 Pro. Upstream publishes no Windows binaries, so Sigil builds the server program itself (build.ps1).",
+    "The archive hash is pinned on the first fetch: build.ps1 -PinFirstFetch downloads the archive once (one request), prints its size and sha256 and writes them here; every later build refuses an archive that does not match. The same applies to the ggml submodule, when the commit has one (its commit is read from the GitHub contents API at that first fetch).",
+    "Upgrade: change commit, commit_date and catalog_version together (catalog_version = <first 7 of commit>-s<shim_revision>), clear the archive pins, run -PinFirstFetch, review the source, then bump the version and zip names of runtime/s2-server-* in src-tauri/model-catalog/tts-ggml-experimental.json."
+  ],
+  "name": "s2.cpp",
+  "repo": "https://github.com/rodrigomatta/s2.cpp",
+  "license": "Fish Audio Research License",
+  "commit": "2c33261938da1a41d713768b1b391b4d368d7d2c",
+  "commit_date": "2026-05-27",
+  "shim_revision": 1,
+  "catalog_version": "2c33261-s1",
+  "archive": {
+    "url": "https://codeload.github.com/rodrigomatta/s2.cpp/tar.gz/2c33261938da1a41d713768b1b391b4d368d7d2c",
+    "file": "s2.cpp-2c33261938da.tar.gz",
+    "sha256": null,
+    "size": null
+  },
+  "ggml": null,
+  "cuda": {
+    "toolkit": "13.2",
+    "architectures": "75-real;80-virtual;86-real;89-real;120a-real",
+    "$comment": "As the qwentts and transcribe packs: Turing, Ampere, Ada and Blackwell as native code, compute_80 PTX for the driver to JIT anything in between or newer (CUDA 13 has no Maxwell, Pascal or Volta)."
+  }
+}

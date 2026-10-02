@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use super::catalog::{self, Family, VoiceSet};
 use super::commands::{LocalTtsModelInfo, LocalTtsRequest, LocalTtsVoice};
 use super::engine::{
-    sanitize_speed, warm_up_text, Engine, LoadKey, Loader, OpenPlan, PcmWriter, Resolved, SinkPort, Synth, VoiceChoice,
+    sanitize_speed, warm_up_text, Engine, LoadKey, Loader, OpenPlan, PcmWriter, Resolved, SinkPort, Synth, TextReader, VoiceChoice,
     CANCELLED, WORKER_STOPPED,
 };
 use super::kokoro::{self, KokoroSetup};
@@ -823,6 +823,28 @@ impl Loader for FakeLoader {
             }),
         }))
     }
+
+    fn text_reader(&self, resolved: &Resolved) -> Option<Arc<dyn TextReader>> {
+        match resolved.key.model.as_str() {
+            "reads-text" => Some(Arc::new(FakeReader { fail: false })),
+            "reader-fails" => Some(Arc::new(FakeReader { fail: true })),
+            _ => None,
+        }
+    }
+}
+
+/// Stands in for the Kokoro Japanese reader: "kanji" becomes "KANA" (or the reader fails).
+struct FakeReader {
+    fail: bool,
+}
+
+impl TextReader for FakeReader {
+    fn read(&self, text: &str) -> Result<String, String> {
+        if self.fail {
+            return Err("the dictionary broke".into());
+        }
+        Ok(text.replace("kanji", "KANA"))
+    }
 }
 
 /// Generates 10 samples per character, in two batches, value = speed. Panics on texts containing
@@ -1005,6 +1027,23 @@ fn wait_until(what: &str, cond: impl Fn() -> bool) {
         assert!(t0.elapsed() < Duration::from_secs(5), "timed out waiting for {what}");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn a_text_reader_rewrites_requests_and_a_failing_one_keeps_the_text() {
+    let (engine, rec, sink) = fake_engine(Duration::from_secs(60));
+    sink.begin("u1");
+    engine.speak(req("reads-text", "Read kanji now."), "u1".into()).blocking_recv().unwrap().expect("speaks");
+    assert_eq!(texts(&rec).last().map(String::as_str), Some("Read KANA now."));
+    let read = engine.synthesize(req("reads-text", "More kanji.")).blocking_recv().unwrap().expect("synthesizes");
+    assert!(!read.samples.is_empty());
+    assert_eq!(texts(&rec).last().map(String::as_str), Some("More KANA."));
+    sink.begin("u2");
+    engine.speak(req("reader-fails", "Keep kanji."), "u2".into()).blocking_recv().unwrap().expect("speaks as written");
+    assert_eq!(texts(&rec).last().map(String::as_str), Some("Keep kanji."));
+    sink.begin("u3");
+    engine.speak(req("m", "No kanji reader."), "u3".into()).blocking_recv().unwrap().expect("speaks");
+    assert_eq!(texts(&rec).last().map(String::as_str), Some("No kanji reader."));
 }
 
 #[test]

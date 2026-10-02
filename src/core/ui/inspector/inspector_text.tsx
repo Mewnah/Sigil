@@ -43,6 +43,7 @@ const SourceInspector: FC<{ id: string }> = ({ id }) => {
       label="common.field_text_source"
       value={isSynced ? TextEventSource.stt : data.sourceMain}
       onChange={e => up("sourceMain", e)}
+      includeOthers
     />
 
     <div className="contents">

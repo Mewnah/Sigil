@@ -271,6 +271,56 @@ pub(crate) fn match_output_device(saved: &str, names: &[String]) -> Option<usize
     None
 }
 
+/// What a SAPI audio-output token id names (P6-J: the Windows voice backend saved SAPI token ids
+/// as its device before it played through the sink).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SapiOutput<'a> {
+    /// `...\MMAudioOut\{0.0.0.00000000}.{guid}`: an MMDevice endpoint id.
+    Endpoint(&'a str),
+    /// `...\MMAudioOut\<device name>` (older SAPI builds name WinMM devices).
+    Name(&'a str),
+}
+
+/// The device inside a SAPI audio-output token id
+/// (`HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\AudioOutput\TokenEnums\MMAudioOut\...`), or
+/// `None` for anything else (a device name).
+pub(crate) fn sapi_output(wanted: &str) -> Option<SapiOutput<'_>> {
+    const MARKER: &str = "\\audiooutput\\tokenenums\\mmaudioout\\";
+    let wanted = wanted.trim();
+    let at = wanted.to_ascii_lowercase().find(MARKER)?;
+    // ASCII lower-casing keeps byte offsets.
+    let tail = wanted[at + MARKER.len()..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    Some(if tail.starts_with('{') {
+        SapiOutput::Endpoint(tail)
+    } else {
+        SapiOutput::Name(tail)
+    })
+}
+
+/// Friendly name of the active render endpoint with MMDevice id `id` (what cpal lists). COM must
+/// be initialized on the calling thread (cpal's enumeration does it).
+#[cfg(windows)]
+fn endpoint_friendly_name(id: &str) -> Option<String> {
+    let devices = wasapi::DeviceCollection::new(&wasapi::Direction::Render).ok()?;
+    let count = devices.get_nbr_devices().ok()?;
+    (0..count).find_map(|i| {
+        let device = devices.get_device_at_index(i).ok()?;
+        let dev_id = device.get_id().ok()?;
+        dev_id
+            .eq_ignore_ascii_case(id)
+            .then(|| device.get_friendlyname().ok())
+            .flatten()
+    })
+}
+
+#[cfg(not(windows))]
+fn endpoint_friendly_name(_id: &str) -> Option<String> {
+    None
+}
+
 /// The app's output backend (cpal default host: WASAPI shared mode on Windows).
 pub(crate) struct CpalBackend;
 
@@ -282,14 +332,21 @@ fn resolve(host: &cpal::Host, wanted: &str) -> Result<(cpal::Device, String), St
         let name = device.name().unwrap_or_else(|_| "default".to_string());
         return Ok((device, name.trim().to_string()));
     }
+    // Enumerating through cpal first also initializes COM on this thread for the SAPI lookup.
     let devices: Vec<cpal::Device> = host.output_devices().map_err(|e| format!("Listing output devices failed: {e}"))?.collect();
     let names: Vec<String> = devices.iter().map(|d| d.name().unwrap_or_default()).collect();
-    match match_output_device(wanted, &names) {
+    let name = match sapi_output(wanted) {
+        Some(SapiOutput::Endpoint(id)) => endpoint_friendly_name(id)
+            .ok_or_else(|| "The output device chosen for the Windows voice is not connected".to_string())?,
+        Some(SapiOutput::Name(n)) => n.to_string(),
+        None => wanted.to_string(),
+    };
+    match match_output_device(&name, &names) {
         Some(i) => {
             let name = names[i].trim().to_string();
             Ok((devices.into_iter().nth(i).expect("index"), name))
         }
-        None => Err(format!("Output device '{}' not found", wanted.trim())),
+        None => Err(format!("Output device '{}' not found", name.trim())),
     }
 }
 
@@ -473,6 +530,45 @@ mod tests {
         assert!((buf[99] - 0.8).abs() < 1e-6);
         let tail = &buf[100..];
         assert!(tail.windows(2).all(|w| w[1] <= w[0]) && tail[0] < 0.8 && *tail.last().unwrap() < 0.01);
+    }
+
+    /// SAPI audio-output token ids (the Windows voice's saved device before P6-J) name an endpoint
+    /// or a device; anything else is a plain device name.
+    #[test]
+    fn sapi_output_tokens_are_recognized() {
+        let endpoint = r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\AudioOutput\TokenEnums\MMAudioOut\{0.0.0.00000000}.{bcbda104-4ccc-469a-a938-4aa029f34f59}";
+        assert_eq!(
+            sapi_output(endpoint),
+            Some(SapiOutput::Endpoint("{0.0.0.00000000}.{bcbda104-4ccc-469a-a938-4aa029f34f59}"))
+        );
+        assert_eq!(
+            sapi_output(r" hkey_local_machine\software\microsoft\speech\audiooutput\tokenenums\mmaudioout\Speakers (Realtek(R) Audio) "),
+            Some(SapiOutput::Name("Speakers (Realtek(R) Audio)"))
+        );
+        assert_eq!(sapi_output(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\AudioOutput\TokenEnums\MMAudioOut\"), None);
+        assert_eq!(sapi_output("Speakers (Realtek(R) Audio)"), None);
+        assert_eq!(sapi_output(""), None);
+    }
+
+    /// A SAPI endpoint token resolves to the friendly name cpal lists (real devices; skipped when
+    /// this machine has no SAPI outputs).
+    #[cfg(windows)]
+    #[test]
+    fn sapi_endpoint_tokens_resolve_to_cpal_names() {
+        let host = cpal::default_host();
+        let Ok(devices) = host.output_devices() else { return };
+        let names: Vec<String> = devices.filter_map(|d| d.name().ok()).collect();
+        let Ok(collection) = wasapi::DeviceCollection::new(&wasapi::Direction::Render) else { return };
+        let Ok(count) = collection.get_nbr_devices() else { return };
+        for i in 0..count {
+            let Ok(device) = collection.get_device_at_index(i) else { continue };
+            let Ok(id) = device.get_id() else { continue };
+            let token = format!(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\AudioOutput\TokenEnums\MMAudioOut\{id}");
+            let Some(SapiOutput::Endpoint(eid)) = sapi_output(&token) else { panic!("{token}") };
+            let name = endpoint_friendly_name(eid).expect("an active endpoint has a name");
+            assert!(match_output_device(&name, &names).is_some(), "{name:?} in {names:?}");
+        }
+        assert_eq!(endpoint_friendly_name("{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}"), None);
     }
 
     #[test]

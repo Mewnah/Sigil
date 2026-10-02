@@ -9,6 +9,7 @@ import { Translation_Backends } from "./schema";
 import { Translation_AzureService } from "./services/azure";
 import { Translation_BergamotService } from "./services/bergamot";
 import { Translation_DeeplService } from "./services/deepl";
+import { isLiveTranslatedStt } from "./services/geminiLive";
 import { Translation_LibreTranslateService } from "./services/libretranslate";
 import { Translation_LlmService } from "./services/llm";
 import { Translation_NllbService } from "./services/nllb";
@@ -139,6 +140,8 @@ class Service_Translation implements IServiceInterface {
   }
 
   #onText(stream: TranslationStream, e: Parameters<TranslationPipeline["push"]>[1]) {
+    // Gemini Live Translate already publishes its own translation on text.translation (P6-K).
+    if (stream === "stt" && isLiveTranslatedStt(e)) return;
     this.#pipeline.push(stream, e);
   }
 }

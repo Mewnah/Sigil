@@ -24,4 +24,9 @@ export const STT_Local_Schema = z.object({
   hotwords: zSafe(z.coerce.string(), ""),
   /** Whole-utterance hallucination filter and repeat-loop removal on finals (Rust `speech_core::hallucination`). */
   hallucinationFilter: zSafe(z.coerce.boolean(), true),
+  /**
+   * P6-L A/B (P6-S0): drop utterances the FireRedVAD gate hears as music or singing before any engine sees them
+   * (`RustSpeechPipelineConfig.musicGate`). Off by default; needs its model installed.
+   */
+  musicGate: zSafe(z.coerce.boolean(), false),
 }).default({});

@@ -279,18 +279,40 @@
     const port = /^[0-9]{1,5}$/.test(portParam) ? portParam : (servedByWebServer && location.port) || "3030";
     const pageHost = servedByWebServer ? location.hostname : "localhost";
     const host = pageHost.includes(":") && !pageHost.startsWith("[") ? `[${pageHost}]` : pageHost;
+    // LAN token (Sigil Settings → LAN access): needed only when this page runs on another device.
+    const token = (query.get("token") || "").trim();
+    const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : "";
+    // Close codes Sigil uses when it refuses this page: no or an old LAN token / this PC only.
+    const CLOSE_LAN_UNAUTHORIZED = 4401;
+    const CLOSE_LAN_DISABLED = 4403;
 
     let socket = null;
     let reconnectDelay = 1000;
     let reconnectTimer = null;
+    // Sigil refuses a page after the WebSocket upgrade (close 4401 / 4403 right away), so `onopen`
+    // fires for a refused socket too: a connection counts once it stayed open this long or
+    // delivered a message. The refusal is reported once until then, not on every retry.
+    const CONFIRM_MS = 1500;
+    let confirmTimer = null;
+    let refusalWarned = false;
+
+    function confirmConnected(ws) {
+      if (socket !== ws || confirmTimer === null) return;
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      reconnectDelay = 1000;
+      refusalWarned = false;
+    }
 
     function connect() {
-      const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=inputfield-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+      const ws = new WebSocket(`ws://${host}:${port}/pubsub?id=inputfield-${Math.random().toString(36).slice(2)}-${Date.now()}${tokenQuery}`);
       socket = ws;
       ws.onopen = () => {
-        reconnectDelay = 1000;
+        clearTimeout(confirmTimer);
+        confirmTimer = setTimeout(() => confirmConnected(ws), CONFIRM_MS);
       };
       ws.onmessage = (msg) => {
+        confirmConnected(ws);
         try {
           const parsed = JSON.parse(msg.data);
           const topic = parsed && parsed.topic;
@@ -300,11 +322,20 @@
           addRowNode(data.value, topic);
         } catch (err) { console.log(err) }
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (socket !== ws) return;
         socket = null;
+        clearTimeout(confirmTimer);
+        confirmTimer = null;
+        const refused = !!event && (event.code === CLOSE_LAN_UNAUTHORIZED || event.code === CLOSE_LAN_DISABLED);
+        if (refused && !refusalWarned) {
+          refusalWarned = true;
+          console.warn(event.code === CLOSE_LAN_DISABLED
+            ? "Sigil only accepts connections from its own PC (Settings → LAN access)."
+            : "Sigil refused this page: its LAN token is missing or out of date.");
+        }
         clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectTimer = setTimeout(connect, refused ? 30000 : reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 15000);
       };
     }

@@ -13,6 +13,7 @@ Detailed reference for **STT/TTS backends**, **reliability**, **voice changer** 
 - [GPU acceleration, diagnostics and logs](#gpu-acceleration-diagnostics-and-logs)
 - [Text-to-speech behaviour](#text-to-speech-behaviour)
 - [Translation and AI transform](#translation-and-ai-transform)
+- [Streamer features and extended voices](#streamer-features-and-extended-voices)
 - [Local web server and LAN pages](#local-web-server-and-lan-pages)
 - [Local speech package (ONNX)](#local-speech-package-onnx)
 - [Sidecar scripts (repo)](#sidecar-scripts-repo)
@@ -32,13 +33,20 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 | **Kokoro / Piper (local)** | Nothing to run: pick a voice model and voice, then agree to its one-time download in the panel (Kokoro v1.0 with the runtime: about 360 MB). The default for new desktop installs. See [Speech on this PC](#local-voices-kokoro--piper-local). |
 | **OpenAI-compatible (HTTP)** | A server exposing `POST /v1/audio/speech`: pick a **preset** (Kokoro-FastAPI, Chatterbox, Voxtral-4B-TTS / IndexTTS-2.5 / VoxCPM2 on vLLM-Omni, qwentts `tts-server`) or a custom **base URL**, a **model** and a **voice**; the key is optional and goes only in the `Authorization` header. |
 | **Native (browser)** | Select a **voice** in Text to Speech settings. |
-| **Windows** | **Output device** and **voice** (native Windows SAPI). |
+| **Windows** | **Voice** (native Windows SAPI); the output device is optional (empty uses the app's output device). Plays through Sigil's TTS output since P6. |
 | **Azure** | Speech **key**, **region/location**, **voice**. The output device is optional (empty uses the app's output device). |
 | **Uberduck** | **API key** and **voice** (v1 API; the old secret is no longer used). |
 | **VOICEVOX / AivisSpeech** | **Engine preset**: VOICEVOX (`http://localhost:50021`), AivisSpeech (`http://localhost:10101`) or a custom URL, plus a speaker. Plain `http` works only for an engine on this PC. |
 | **Fish Speech** | **Endpoint**. Self-hosted fish-speech needs an **API key** only when started with `--api-key`. For Fish Audio's hosted API use `https://api.fish.audio`, your key and a **model** such as `s2.1-pro-free`. |
 | **Kokoro / Melo / Chatterbox (server)** | **Endpoint** (and voice/speaker where applicable), often localhost for self-hosted stacks. Kokoro-FastAPI and Chatterbox settings run through the OpenAI-compatible client (Kokoro: `{endpoint}/v1`, model `kokoro`); for Kokoro without a server use **Kokoro / Piper (local)**. |
 | **ONNX (local)** | A Hugging Face repo (KittenML 0.8 repos install as verified catalog packages) or a voice folder on this PC; runs on the same in-process engine as Kokoro / Piper (local). |
+| **Edge voices** | Nothing: pick a voice (keyless, Microsoft's unofficial Read Aloud service). Falls back to Kokoro when the service fails. See [Cloud voices](#cloud-voices-with-a-local-fallback-edge-gemini). |
+| **Gemini TTS** | A free Google AI Studio **key**, a model and a voice. Falls back to Kokoro. |
+| **Pocket TTS** / **Chatterbox Multilingual** | The model download (98 MB / 1.8 GB); Chatterbox also needs a **voice-library voice**. See [Local cloning and GPU voices](#local-cloning-and-gpu-voices). |
+| **Qwen3-TTS** | The model downloads and an imported runtime pack (Vulkan, CUDA 13 or processor); a library voice for cloning. |
+| **Experimental GPU voices** | An engine (Magpie, Breeze, OmniVoice, Fish S2 Pro), its runtime pack and model. |
+| **Style-Bert-VITS2 / AivisSpeech** | The Japanese BERT and dictionary downloads, then an imported `.aivmx` voice. |
+| **GPT-SoVITS** | Your `api_v2` server URL (default `http://127.0.0.1:9880`), weights and a reference clip. |
 
 ### Speech-to-text
 
@@ -52,6 +60,7 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 | **Groq Whisper (free cloud)** | A free API key from [console.groq.com/keys](https://console.groq.com/keys). Model `whisper-large-v3-turbo` (default) or `whisper-large-v3`. Speech is sent to Groq. See [Groq preset](#groq-whisper-preset). |
 | **Deepgram** | **API key** and **language**. Model: Nova-3 (default) or Nova-2. |
 | **Azure** | **Key**, **location**, **language**. Optional **phrase end silence** (100–5000 ms, default 500). |
+| **Gemini Live** | Your Gemini **key** (or the Translation settings' Gemini key). Transcribe or Live Translate (preview). See [Gemini Live](#gemini-live-speech-to-text). |
 | **Azure / Deepgram / native** | Keys or browser permissions as prompted in the STT inspector. Azure and Deepgram capture in the webview, so their **device** pickers list **browser (Web Audio)** microphones, not the native cpal devices used by the Rust-captured engines. |
 
 ## Remote client
@@ -309,7 +318,7 @@ Stored as the `openai_audio` backend with preset `groq` (shown as **Groq Whisper
 
 ### Pubsub trust (external STT)
 
-Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**. The handshake must pass the [Origin allow-list](#local-web-server-and-lan-pages), so a website open in a browser cannot connect, and the host applies an inbound topic allow-list to everything it receives. There is still **no cryptographic auth**: a non-browser tool on the LAN can forge an Origin header and inject STT-shaped traffic (token auth is planned as LAN security stage 2). **mic.html** always connects to the Sigil that served it (`?host=` is ignored) and reconnects by itself after Sigil restarts. See [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md#network-security-and-threat-model).
+Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**. The handshake must pass the [Origin allow-list](#local-web-server-and-lan-pages), so a website open in a browser cannot connect, and the host applies an inbound topic allow-list to everything it receives. Since LAN security stage 2 a tool on another PC also needs the LAN token; `mic.html` on this PC needs none (opened from a LAN link it forwards `?token=` and explains a refusal). The token is not encryption: the LAN traffic is still plain HTTP / WebSocket. **mic.html** always connects to the Sigil that served it (`?host=` is ignored) and reconnects by itself after Sigil restarts. See [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md#network-security-and-threat-model).
 
 ### Implementation hardening (recent)
 
@@ -564,7 +573,7 @@ The audio callback threads (capture, output, monitor) register with MMCSS **Pro 
 
 ### TTS through the voice changer
 
-Text-to-speech reaches the voice changer through the TTS panel's **Play speech on** setting (**Output device**, **Voice changer** or **Both**), which applies to every backend that plays through Sigil's TTS output (all except Web Speech and Windows SAPI). While the voice changer is stopped, speech routed to it plays on the output device instead. Speech is queued sentence by sentence **and never truncated**: the queue accepts audio while less than 60 s is waiting, and a single clip can be up to 10 minutes; **Skip** and **Stop speaking** also cut speech already queued in the voice changer (with a 5 ms fade). **Microphone while TTS plays**: **Mix with TTS** (default), **Lower the microphone** (about −12 dB) or **Mute the microphone**, with a 250 ms hold between sentences.
+Text-to-speech reaches the voice changer through the TTS panel's **Play speech on** setting (**Output device**, **Voice changer** or **Both**), which applies to every backend that plays through Sigil's TTS output (all except Web Speech). While the voice changer is stopped, speech routed to it plays on the output device instead. Speech is queued sentence by sentence **and never truncated**: the queue accepts audio while less than 60 s is waiting, and a single clip can be up to 10 minutes; **Skip** and **Stop speaking** also cut speech already queued in the voice changer (with a 5 ms fade). **Microphone while TTS plays**: **Mix with TTS** (default), **Lower the microphone** (about −12 dB, the voice changer's own mixer) or **Mute the microphone**, with a 250 ms hold between sentences. With **Mute**, Sigil also closes the voice changer's microphone at the capture hub while speech plays into it, and keeps it closed between the sentences of one reply (up to 2 s while the next sentence is still being synthesized, about 330 ms after the last one).
 
 ### Settings persistence
 
@@ -597,7 +606,7 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## GPU acceleration, diagnostics and logs
 
-**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection, end-of-turn detection), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**. The **Models & Runtimes** tab's **GPU and runtimes** card shows which acceleration options this PC supports and why not.
+**Settings → GPU & diagnostics** shows the execution providers in use per component (voice changer model, content encoder, pitch model, ONNX voice model, local TTS, speech detection, end-of-turn detection, music filter, the Chatterbox language model / decoder / vocoder, the Style-Bert-VITS2 voice and BERT), the graphics adapters, a **Test GPU acceleration** button, the NVIDIA runtime pack and **Open log folder**. The **Models & Runtimes** tab's **GPU and runtimes** card shows which acceleration options this PC supports and why not.
 
 - **What the installer contains:** the installers (NSIS per-user, recommended, and MSI) put `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll` (ONNX Runtime 1.28) and `DirectML.dll` next to `Sigil.exe`. **They do not contain NVIDIA's CUDA runtime**, so no installer runs CUDA out of the box: CUDA needs the NVIDIA GPU runtime pack below, and without it NVIDIA GPUs use DirectML. Nothing GPU-related is load-time linked: Sigil starts on every PC.
 - **CUDA requirements:** an NVIDIA GeForce 16/20 series (Turing) or newer GPU, driver **R580 or newer** (CUDA 13), and the NVIDIA GPU runtime pack. Older GPUs and drivers use DirectML automatically, with the reason shown.
@@ -612,9 +621,9 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 
 ## Text-to-speech behaviour
 
-- **Sentence by sentence:** every backend except Web Speech and Windows SAPI splits text into sentences (Latin, Japanese, Chinese, Hindi, Arabic and other punctuation, line breaks; abbreviations and decimals never split) and plays them through Sigil's TTS output, so a long text starts speaking after its first sentence and later sentences are synthesized while earlier ones play. Server backends (Kokoro, Melo, Chatterbox, Fish, HTTP server, OpenAI-compatible) stream: speech starts before the server finishes.
+- **Sentence by sentence:** every backend except Web Speech splits text into sentences (Latin, Japanese, Chinese, Hindi, Arabic and other punctuation, line breaks; abbreviations and decimals never split) and plays them through Sigil's TTS output, so a long text starts speaking after its first sentence and later sentences are synthesized while earlier ones play. Server backends (Kokoro, Melo, Chatterbox, Fish, HTTP server, OpenAI-compatible) stream: speech starts before the server finishes.
 - **Output:** the backend's **output device** (Windows device names; old saved names from the SAPI list are migrated automatically; empty uses **Settings → Audio → Default output device**, then the system default), its **volume**, and **Play speech on** (output device / voice changer / both, see [TTS through the voice changer](#tts-through-the-voice-changer)). Unplugging the output device fails the playing sentence once; the next one reopens the device.
-- **Skip** (the current sentence) and **Stop speaking** (everything queued) are on the status bar's TTS card while sentences are queued; the service keeps running. **Stop** ends the service: queued and in-flight speech is dropped, a start that is still connecting is cancelled, and late callbacks from a replaced backend are ignored. Web Speech and SAPI finish what they are already saying.
+- **Skip** (the current sentence) and **Stop speaking** (everything queued) are on the status bar's TTS card while sentences are queued; the service keeps running. **Stop** ends the service: queued and in-flight speech is dropped, a start that is still connecting is cancelled, and late callbacks from a replaced backend are ignored. Web Speech finishes what it is already saying.
 - A single failed sentence goes to the **System log** and a rate-limited toast and is skipped; the service keeps running.
 - **OpenAI-compatible (HTTP):** presets Kokoro-FastAPI (port 8880), Chatterbox (5555), Voxtral-4B-TTS / IndexTTS-2.5 / VoxCPM2 through `vllm serve <model> --omni` (8000), qwentts `tts-server` (8080). PCM is the lowest-latency format and its sample rate must match the server (24 kHz for Kokoro, Voxtral and qwentts; 48 kHz for VoxCPM2). A URL without a path gets `/v1`. **Extra fields** (JSON) are added to every request; **Timeout** 0 = automatic (local servers get longer). **Test voice** plays a sample; the voice list comes from the server when it offers one. Voice and speed changes apply from the next sentence. Kokoro-FastAPI and Chatterbox settings of the older backends run through this client too. Server voice lists show an error toast instead of an empty list when the server is down.
 - **Azure** streams raw 48 kHz PCM (no MP3 artifacts; about 96 KB/s).
@@ -661,6 +670,61 @@ The language pair of the new backends is the panel's **Source language** (automa
 - **Timeout per line** (15 s, 3–120 s): on failure or timeout the original text is sent on with a notice, so captions and TTS keep flowing; stop and timeout cancel the request itself. **Stop with stream** works, and "Sync timing" captions follow STT when AI is off.
 - **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block the app window (Ollama and LM Studio by default); **Direct from the app window** or **Through Sigil** force one route (change it only if a server cannot be reached). Keys are sent only in request headers and are hidden in error messages.
 
+## Streamer features and extended voices
+
+Everything in this section is off until you turn it on or pick the backend.
+
+### Cloud voices with a local fallback (Edge, Gemini)
+
+- **Edge voices (keyless):** hundreds of Microsoft Read Aloud voices in more than 70 languages, with rate and pitch. It is Microsoft's unofficial browser service, so it can change without notice.
+- **Gemini TTS:** your own free Google AI Studio key; models `gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts` (editable), 30 voices or any voice id ("Another voice…", including designed `voice_…` ids), a style instruction with presets, and an optional proxy URL (which receives the key). **Check** tests the key and model without playing audio.
+- **Local fallback** (on by default; needs the Kokoro voice, which the panel offers to download): when the service answers 429, 5xx, fails to connect or stays silent for **Wait for the service** (3 s), that sentence is spoken by Kokoro at once, and the following sentences stay on Kokoro until the service is worth trying again (15 s, doubling up to 5 minutes; Google's retry delay after a 429; 10 minutes for a refused key, voice or model). Changing the settings tries the service again at once. Words already spoken are never repeated. While the fallback is on, Kokoro stays loaded (about 0.5–0.8 GB of memory) so it can take over instantly. A Kokoro voice downloaded while Edge or Gemini runs is used from the next sentence on (no restart needed). A sentence the service cannot say (for example Gemini treating a short question as a chat prompt) is spoken by Kokoro, and the service is asked again for the next one.
+
+### Local cloning and GPU voices
+
+All of these take their reference voice from the shared **voice library** (record or import a clean 3–10 s clip with its transcript; see [Reference voices](#reference-voices-voice-library)).
+
+- **Pocket TTS (processor):** English, cloning on the CPU, about 98 MB plus the sherpa-onnx runtime. Without a library voice it uses its built-in voice. Options: temperature, steps, seed. While TTS runs the model stays loaded however long the pauses are; Stop frees it.
+- **Chatterbox Multilingual (in Sigil):** 23 languages, needs a library voice; about 1.8 GB plus an optional 144 MB GPU decoder. A graphics card is recommended (on the processor each sentence takes a while, and sentences play once fully generated). **Runs on** (automatic: CUDA on an NVIDIA card, else DirectML on your largest dedicated graphics card with 2 GB or more (integrated graphics are skipped: they are slower than the processor for this model), else the processor; the panel shows where it actually runs and why it fell back), **Quality** (6 or 10 decoder steps), expressiveness, voice guidance (set it to 0 when the clip's language differs from the text) and variation. While TTS runs the model stays loaded however long the pauses are; Stop frees it.
+- **Qwen3-TTS:** 9 built-in voices with style and emotion instructions (1.7B only), cloning a library voice (best with its transcript), or a voice designed from a description (1.7B only; a fixed seed keeps it steady). **Size** automatic picks 0.6B while the voice changer runs on a graphics card with less than 16 GB, else 1.7B. Runtime packs: Vulkan, CUDA 13 (needs **NVIDIA GPU runtime**) or processor (slower than real time); they are imported from zips built with `scripts/runtime-packs/qwentts/build.ps1` until they are published. Languages: zh, en, ja, ko, de, fr, ru, pt, es, it (others are spoken as automatic). The log target `sigil::tts::qwen3` shows the plan, the warm-up time to first audio and real-time factor, voice registrations and measured video memory; the `tts-qwen3` helper log has per-sentence `[Perf]` lines.
+- **Experimental GPU voices** (backend "Experimental GPU voices"): NVIDIA **Magpie TTS** (NeMo-Speech.cpp: en, es, de, fr, it, vi and more; Korean, Arabic and Brazilian Portuguese need the locally converted v2607 checkpoint; no Mandarin or Japanese in the official packs), **Breeze TTS 2** (voice description, direction and cloning), **OmniVoice** (CrispASR; cloning needs the consent switch, and a short AI notice is spoken before cloned speech unless you switch on that you disclose AI speech yourself; every clip carries an inaudible watermark) and **Fish S2 Pro** (s2.cpp; a low-video-memory switch; the **Fish Speech** backend is an alternative for S2 Pro). Each runs as a helper on this PC only. Some parts are local-only imports (the Magpie tokenizer and v2607 checkpoint, the s2 packs); their scripts are in `scripts/runtime-packs/`.
+- **Style-Bert-VITS2 / AivisSpeech voices (in Sigil):** Japanese text. Downloads: the Japanese BERT (653 MB) and the dictionary (29 MB). Import an `.aivmx` by dropping it on the panel or **Add voice…** (or an SBV2 ONNX export folder with `style_vectors.json`); `.aivm` and PyTorch files are refused with how to convert them. Speaker and style, style strength, tempo variation and speed; processor, DirectML or CUDA. Voices live in `%APPDATA%\com.sigil.app\tts\sbv2\<id>\`. The AivisSpeech VOICEVOX preset remains the server-based alternative.
+- **GPT-SoVITS (your server):** start `python api_v2.py -a 127.0.0.1 -p 9880`; GPT and SoVITS weight paths (on the server) are applied at start or with **Apply now**; the reference is a library voice (server on this PC) or a clip path on the server (**Browse…** for a server on this PC) with its transcript and language; text language **auto** uses the caption's language; streaming modes fragments / medium / fast (medium and fast need the v2ProPlus `api_v2`); extra JSON fields (`top_k`, `temperature`, `text_split_method`, `sample_steps`).
+- **Fish Audio hosted:** the Fish Speech panel's **Use Fish Audio hosted (S2.1 Pro free)** button fills `https://api.fish.audio` and `s2.1-pro-free`; add your key.
+- **Windows voices** now play through Sigil's TTS output: sentence by sentence, Skip / Stop speaking, **Play speech on** device / voice changer / both, volume up to 200 %. An output saved from the old SAPI list keeps working and is converted to the device name; empty uses the default output device.
+- **Kokoro, Japanese voices:** with the Japanese dictionary (`text/jpreprocess-naist-jdic`, shared with readings and Style-Bert-VITS2) installed, kanji and numbers are read with Japanese readings instead of Chinese ones.
+- **Wait until I finish speaking** (TTS panel, off by default; needs Smart Turn in **On this PC** speech-to-text): a sentence you leave unfinished waits and is spoken together with the rest, at most **Longest wait after a pause** (2.5 s) after your last words. Typed text is never held; translated text follows the translation's own turn setting.
+
+### Gemini Live speech-to-text
+
+- Your own Gemini key (or the Translation settings' Gemini key). Audio goes to Google; the free tier may be used for training.
+- **Transcribe** (default) or **Live Translate (preview)**: Live Translate publishes your captions and their translation in one session. While it runs, the Translation service skips those captions (they already have their translation).
+- Custom vocabulary (up to 1,000 terms), verbatim or smart style, editable model ids and API version (v1beta; the other version is tried automatically when the token endpoint moved).
+- Sessions are renewed every 9.5 minutes (editable) with an overlap, so no words are lost or repeated; a dropped connection reconnects and replays the last 30 s. Needs the desktop app (audio comes from Sigil's capture).
+
+### Other players' captions
+
+- **Other players** tab: by default Sigil captures only VRChat's sound (Windows 11, or Windows 10 build 20348 and later), so your own voice, TTS and music are not included. If VRChat is not running, or on older Windows, the default output is used instead while **Use the default output while the program isn't running** is on (that also includes your own TTS and music), or Sigil waits. You can also pick another program or an output device.
+- Language and hardware tier (**Processor** keeps the game smooth); models install from the panel. **Translate into my language** uses the Translation tab's engine in the other direction.
+- Show them with a text element, the caption window or the SteamVR overlay using the source **Other players: speech** or **Other players: translation**. They never reach the chatbox, TTS or the transcript history.
+
+### Caption window and SteamVR overlay (VRChat tab)
+
+- **Caption window:** an always-on-top, click-through window with your chosen captions (sources, interim text, font, colours, lines, clear time). Turn click-through off to move and resize it; **Reset position** brings a lost window back. It never takes focus from a game, closes with Sigil, and can be pinned in XSOverlay or OVR Toolkit by its title "Sigil captions".
+- **SteamVR overlay:** captions attached to your head, a hand or a place in the world (with **Recenter**), with size, distance, height, opacity and colours. It needs the OpenVR runtime (install it from Models & Runtimes or the inline prompt). Sigil never starts SteamVR: it waits until SteamVR runs and lets go when SteamVR quits. Japanese, Chinese, Korean and right-to-left text are supported.
+
+### VRChat chatbox, mute sync and tags
+
+- Every chatbox message is queued at least **Time between chatbox messages** apart (1.3–10 s, default 1.5 s) because VRChat drops faster ones; short messages still waiting are merged. **Split long text into pages** sends text over 144 characters as numbered " (n/N)" pages (sentence ends first, then clause punctuation, then spaces; only page 1 plays the notification sound). Without pages, text is cut at a word boundary with "…".
+- **Wait until I finish speaking** (chatbox): as for TTS above; translated text follows the translation's own turn setting.
+- **Mute captions when I mute in VRChat:** follows VRChat's microphone mute; the microphone feed to speech engines is cut the moment the mute arrives. A VRChat unmute lifts only a mute VRChat caused. By default Sigil uses OSCQuery (a free port VRChat finds by itself, so no clash on 9001); turning OSCQuery off listens on a fixed port (default 9001; a port in use is reported and retried). For VRChat on another PC, launch it with `--osc=9000:<this PC's IP>:<port>`. The panel shows the port, whether VRChat was found and whether messages arrive. The first OSCQuery start may show a Windows Firewall prompt.
+- **Emotion and sound tags** (SenseVoice): two Int avatar parameters (default `SigilEmotion` and `SigilEvent`; empty = not sent), reset to 0 after **Back to 0 after** (default 5 s; 0 keeps them). Emotion: neutral 0, happy 1, sad 2, angry 3, fearful 4, disgusted 5, surprised 6. Sound: laughter 1, applause 2, cry 3, cough 4, sneeze 5, breath 6, bgm 7. These numbers never change. An option shows the tags as emoji at the start of the chatbox text.
+
+### Readings and the music filter
+
+- **Readings** (bottom of the speech-to-text panel): hiragana and romaji for Japanese captions (needs the 29 MB Japanese dictionary) and pinyin for Chinese (marks, numbers or none; no download). Sources, interim text, and a preview of the last line. Lines without a language tag are read only when they contain kana. Readings are published on their own topic (`readings.stt`); caption displays do not show them yet.
+- **Music filter (experimental):** **On this PC** speech-to-text → **Ignore music and singing (experimental)**. Segments that are only music or singing are dropped (FireRedVAD, about 2.4 MB, from the card under the toggle); speech over background music is kept, speech over loud vocal songs may be dropped.
+
 ---
 
 ## Local web server and LAN pages
@@ -672,6 +736,14 @@ The embedded web server (default port **3030**) serves `/client`, the OBS pages,
 - **OBS** must load `http://localhost:<port>/client` or `/obs-captions.html`, not a local HTML file (a `file://` page is refused).
 - Binary WebSocket frames are refused (the old binary-audio-to-Whisper path is gone), messages are capped at 256 KiB, and the server no longer relays pubsub between peers: peer text goes to the host, which applies its inbound topic allow-list and re-broadcasts.
 - A failed bind (port taken) is reported with a toast and in **Settings → Local web server** instead of silently disabling the server.
+
+### LAN access (stage 2)
+
+- **Settings → LAN access → Other devices:** **Allowed with the LAN token** (default) or **This PC only** (Sigil listens on 127.0.0.1 only; the switch applies live, and a failed switch keeps the previous mode and shows the error).
+- Devices on **other PCs** (a phone, OBS on a second PC, Link apps) need the LAN token. **Copy LAN canvas link**, **Copy LAN captions link**, the OBS tab's **Copy LAN link (OBS on another PC)** and Link apps' **Copy my address** include it; paste a copied address into the other Sigil's address field, which also fills **Remote token**. Pages on this PC (OBS here, `mic.html`) never need it, and their links carry no token.
+- **New token** disconnects everything that used the old one; copy the links again. The token is shown masked (**Show**, **Copy token**).
+- **Allow devices without the token (legacy)** is a temporary escape hatch, off by default, shown with a caution.
+- Refused pages say why (missing or old token, or This PC only); the host shows a "Refused a device on your network" toast. The token travels unencrypted on your network: use it on a trusted network, make a new token if a link leaked, and never tunnel the port to the internet.
 
 ---
 

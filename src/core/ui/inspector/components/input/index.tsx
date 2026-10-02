@@ -10,7 +10,7 @@ import { FileState, FileType } from "@/client/services/files/schema";
 import Dropdown from "../../../dropdown/Dropdown";
 
 
-import { MappedGroupDictionary, ServiceNetworkState, TextEventSource } from "@/types";
+import { CaptionEventSource, MappedGroupDictionary, OthersEventSource, ServiceNetworkState, TextEventSource } from "@/types";
 
 import { useSnapshot } from "valtio";
 import styles from "./style.module.css";
@@ -288,15 +288,21 @@ export const InputEvent: FC<EventProps> = memo(({ label, value, onChange }) => {
     return <InputSelect options={events} label={label} defaultValue={value} onValueChange={e => onChange(e || "")} />
 });
 
-interface TextSourceProps extends InputBaseProps {
-    onChange: (value: TextEventSource) => void,
+type TextSourceProps = InputBaseProps & {
     value: string,
     /** Hide “Text field” for chat/webhook targets; use “Use keyboard input” for typed/canvas input instead. */
     hideTextfieldOption?: boolean,
-}
-export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChange, hideTextfieldOption }) => {
+} & (
+    | { includeOthers?: false, onChange: (value: TextEventSource) => void }
+    /**
+     * P6-S0: also offer other players' captions (`others.stt`, `others.translation`) for displays only (text element,
+     * caption window, VR overlay). Never for the chatbox, TTS, translation input or chat targets.
+     */
+    | { includeOthers: true, onChange: (value: CaptionEventSource) => void }
+);
+export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChange, hideTextfieldOption, includeOthers }) => {
     const { t } = useTranslation();
-    const options = [
+    const options: { label: string, value: CaptionEventSource }[] = [
         { label: t('stt.title'), value: TextEventSource.stt },
         ...(!hideTextfieldOption
             ? [{ label: t('common.text_source_textfield'), value: TextEventSource.textfield }]
@@ -304,8 +310,14 @@ export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChan
         { label: t('transl.title'), value: TextEventSource.translation },
         { label: t('transform.title') ?? "AI Transform", value: TextEventSource.transform },
         { label: t('common.text_source_any'), value: TextEventSource.any },
+        ...(includeOthers
+            ? [
+                { label: t('common.text_source_others_stt'), value: OthersEventSource.stt },
+                { label: t('common.text_source_others_translation'), value: OthersEventSource.translation },
+            ]
+            : []),
     ];
-    return <InputSelect label={label} value={value} options={options} onValueChange={onChange} />
+    return <InputSelect label={label} value={value} options={options} onValueChange={onChange as (value: string) => void} />
 });
 
 interface CodeProps extends InputBaseProps {

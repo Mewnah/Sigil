@@ -14,4 +14,6 @@ export enum Services {
   discord = "discord",
   obs = "obs",
   voice_changer = "voice_changer",
+  /** Other players: loopback transcription and reverse translation (P6-A; persisted slice `others`). */
+  others = "others",
 }

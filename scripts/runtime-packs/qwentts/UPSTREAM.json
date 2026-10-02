@@ -1,0 +1,36 @@
+{
+  "$comment": [
+    "Pinned sources of the runtime/qwentts-server-* packs (P6-E): qwentts.cpp (ServeurpersoCom, MIT; the GGML port of Qwen3-TTS 12 Hz) and its ggml fork submodule (the SNAKE and COL2IM_1D ops the codec needs).",
+    "build.ps1 downloads both archives once into %LOCALAPPDATA%/sigil-dev-cache/qwentts/archives/ (one request each, a few seconds apart), refuses them unless size and sha256 match, extracts them and overlays server/ (Sigil's sigil-tts-server target).",
+    "Upgrade: change both commits and archive pins together (the ggml commit is the submodule pointer of the qwentts.cpp commit: GET /repos/ServeurpersoCom/qwentts.cpp/contents/ggml?ref=<commit>), re-read src/tts-server.h and src/qwen.h (server/sigil-tts-server.cpp reuses the HTTP handlers and the qt_* ABI), bump shim_revision when server/ changes, and the catalog version in src-tauri/model-catalog/runtime-qwentts.json with it."
+  ],
+  "name": "qwentts.cpp",
+  "repo": "https://github.com/ServeurpersoCom/qwentts.cpp",
+  "license": "MIT",
+  "commit": "6fae92914045cd83364d2845ceaa0f7969727319",
+  "commit_date": "2026-09-28",
+  "shim_revision": 1,
+  "catalog_version": "6fae929-s1",
+  "archive": {
+    "url": "https://codeload.github.com/ServeurpersoCom/qwentts.cpp/tar.gz/6fae92914045cd83364d2845ceaa0f7969727319",
+    "file": "qwentts.cpp-6fae92914045.tar.gz",
+    "sha256": "986b2c527ebedb47e374bcece0d35f35f9bafca1b802a221ce109ad5fcf0119c",
+    "size": 1131699
+  },
+  "ggml": {
+    "repo": "https://github.com/ServeurpersoCom/ggml",
+    "license": "MIT",
+    "commit": "40e16e4a814f7fe851a0c486fb9e8c722e957830",
+    "archive": {
+      "url": "https://codeload.github.com/ServeurpersoCom/ggml/tar.gz/40e16e4a814f7fe851a0c486fb9e8c722e957830",
+      "file": "ggml-40e16e4a814f.tar.gz",
+      "sha256": "9ba712bf29246f8d0b5965bd3f46d79eae3ff028841340c60dfedf8dcae9dab7",
+      "size": 4108888
+    }
+  },
+  "cuda": {
+    "toolkit": "13.2",
+    "architectures": "75-real;80-virtual;86-real;89-real;120a-real",
+    "$comment": "The transcribe.cpp pin (native/engines/transcribe/UPSTREAM.json): Turing, Ampere, Ada and Blackwell as native code, compute_80 PTX for the driver to JIT anything in between or newer. CUDA 13 has no Maxwell, Pascal or Volta (the ORT CUDA 13 floor, ADR 0001)."
+  }
+}

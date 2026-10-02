@@ -1,9 +1,23 @@
 import OBSWebSocket from "obs-websocket-js";
 import { localPageUrl } from "@/utils/localPages";
+import { normalizeLanToken } from "@/shared/services/peer/lanAccess";
+
+/**
+ * Where an OBS link points (P6-D): OBS on this PC (default; `localhost`, never needs the LAN token)
+ * or OBS / a browser on another device (`lan`: this PC's LAN address plus the LAN token).
+ */
+export type ObsLinkTarget = { lan?: false } | { lan: true; /** One of this PC's addresses; default the primary one. */ ip?: string };
+
+/** The host's LAN token, or "" while none is set. */
+function hostLanToken(): string {
+  return normalizeLanToken(window.ApiServer?.state?.lanAccess?.token) ?? "";
+}
 
 export class ObsBrowserSourceService {
   /** Canvas mirror for OBS browser source (same as upstream Curses `/client` link). */
-  getObsBrowserSourceLink(): string {
+  getObsBrowserSourceLink(target: ObsLinkTarget = {}): string {
+    if (target.lan)
+      return window.ApiShared.peer.getLanClientLink("/client", target.ip);
     return window.ApiShared.peer.getClientLink();
   }
 
@@ -12,9 +26,12 @@ export class ObsBrowserSourceService {
     mode?: string;
     size?: string;
     lines?: string;
-  }): string {
+  }, target: ObsLinkTarget = {}): string {
+    const lanHost = target.lan ? target.ip || window.Config.serverNetwork.ip : undefined;
     // Empty values are left out, as before.
     return localPageUrl("obs-captions.html", {
+      host: lanHost,
+      token: lanHost ? hostLanToken() : undefined,
       params: {
         mode: options?.mode || undefined,
         size: options?.size || undefined,

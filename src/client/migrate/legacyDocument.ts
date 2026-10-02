@@ -1,8 +1,9 @@
 import { DocumentSchema, type DocumentState } from "@/client/schema";
 import { FileStateSchema } from "@/client/services/files/schema";
-import { TextEventSource } from "@/types";
+import { OthersEventSource, TextEventSource } from "@/types";
 
-const VALID_TEXT_SOURCES = new Set<string>(Object.values(TextEventSource));
+/** Caption sources a text element may show (own text and, since P6-S0, other players'). */
+const VALID_TEXT_SOURCES = new Set<string>([...Object.values(TextEventSource), ...Object.values(OthersEventSource)]);
 
 const DEFAULT_CANVAS = { x: 0, y: 0, w: 500, h: 400, r: 0 };
 const DEFAULT_TRANSITION = { type: "none" as const, duration: 300 };

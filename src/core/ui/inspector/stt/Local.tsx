@@ -24,6 +24,7 @@ import { ModelRequirement, useModelsLoaded } from "../components/ModelRequiremen
 import { InputCheckbox, InputRustAudioInput, InputSelect, InputText } from "../components/input";
 import { Advanced, useLanguageName } from "./common";
 import { VoiceDetection } from "./VoiceDetection";
+import { MusicGateRequirement } from "@/core/services/readings/ReadingsSection";
 
 /**
  * Panel of the `local` backend (P2-E): Sigil's in-process speech pipeline with automatic model routing. Language (auto
@@ -248,6 +249,10 @@ export const Local: FC = () => {
     <Advanced title={t("stt.whisper_accuracy_title")}>
       <InputCheckbox label="stt.whisper_hallucination_filter" value={pr.hallucinationFilter} onChange={e => up("hallucinationFilter", e)} />
       <Inspector.Description>{t("stt.whisper_hallucination_filter_desc")}</Inspector.Description>
+      {/* P6-L A/B (scaffolded by P6-S0): FireRedVAD music / singing gate, off by default. */}
+      <InputCheckbox label="stt.local_music_gate" value={pr.musicGate} onChange={e => up("musicGate", e)} />
+      <Inspector.Description>{t("stt.local_music_gate_desc")}</Inspector.Description>
+      <MusicGateRequirement />
     </Advanced>
     <VoiceDetection />
   </>;

@@ -218,6 +218,8 @@ export function buildLocalPipelineConfig(
     smartTurn: local?.smartTurn === true,
     hotwords: parseHotwords(local?.hotwords),
     hallucinationFilter: local?.hallucinationFilter !== false,
+    // P6-L A/B (P6-S0): FireRedVAD music / singing gate, off by default.
+    musicGate: local?.musicGate === true,
   };
 }
 
@@ -413,6 +415,8 @@ interface Candidate {
 
 interface FinalText extends Candidate {
   turnEnd: boolean | null;
+  /** The final's audio event tags (`speech:final` `tags`; P6-S0), published as `TextEvent.tags`. */
+  tags: string[] | null;
 }
 
 interface Segment {
@@ -508,7 +512,8 @@ export class SegmentPublisher {
   }
 
   final(
-    ev: Pick<RustSpeechFinal, "segmentId" | "revision" | "text" | "lang" | "pass" | "latencyMs" | "startMs" | "endMs" | "turnEnd">,
+    ev: Pick<RustSpeechFinal, "segmentId" | "revision" | "text" | "lang" | "pass" | "latencyMs" | "startMs" | "endMs" | "turnEnd">
+      & { tags?: readonly string[] | null },
   ): void {
     if (this.#disposed) return;
     const second = ev.pass === "second";
@@ -525,7 +530,14 @@ export class SegmentPublisher {
     if (seg.closedAt === null) seg.closedAt = now - Math.max(0, Number(ev.latencyMs) || 0);
     if (seg.audioMs === null && Number.isFinite(ev.endMs - ev.startMs)) seg.audioMs = Math.max(0, ev.endMs - ev.startMs);
     if (typeof ev.turnEnd === "boolean" && seg.turnEnd !== true) seg.turnEnd = ev.turnEnd;
-    const f: FinalText = { text, lang: ev.lang ?? null, revision: ev.revision, turnEnd: typeof ev.turnEnd === "boolean" ? ev.turnEnd : null };
+    const tags = Array.isArray(ev.tags) ? ev.tags.filter((t): t is string => typeof t === "string") : [];
+    const f: FinalText = {
+      text,
+      lang: ev.lang ?? null,
+      revision: ev.revision,
+      turnEnd: typeof ev.turnEnd === "boolean" ? ev.turnEnd : null,
+      tags: tags.length > 0 ? tags : null,
+    };
     if (second) seg.second = f;
     else {
       seg.first = f;
@@ -636,11 +648,12 @@ export class SegmentPublisher {
     return seg;
   }
 
-  #meta(seg: Segment, revision: number, lang: string | null, turnEnd?: boolean | null): SttTextMeta {
+  #meta(seg: Segment, revision: number, lang: string | null, turnEnd?: boolean | null, tags?: string[] | null): SttTextMeta {
     const meta: SttTextMeta = { segmentId: `${this.#stream}:${this.epoch}:${seg.id}`, revision };
     const l = normalizeLanguage(lang);
     if (l) meta.lang = l;
     if (typeof turnEnd === "boolean") meta.turnEnd = turnEnd;
+    if (tags && tags.length > 0) meta.tags = [...tags];
     return meta;
   }
 
@@ -653,7 +666,7 @@ export class SegmentPublisher {
   }
 
   #commit(seg: Segment, f: FinalText): void {
-    this.#sink.final(f.text, this.#meta(seg, f.revision, f.lang, seg.turnEnd ?? f.turnEnd));
+    this.#sink.final(f.text, this.#meta(seg, f.revision, f.lang, seg.turnEnd ?? f.turnEnd, f.tags));
     this.#finish(seg);
   }
 

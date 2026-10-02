@@ -174,6 +174,14 @@ describe("SegmentPublisher", () => {
     expect(p.out).toHaveLength(3);
   });
 
+  it("carries a final's audio event tags (P6-S0, SenseVoice emotion / event)", () => {
+    const p = publisher(false);
+    p.final(1, 0, "Haha, nice.", { tags: ["emotion:happy", "event:laughter"] });
+    expect(p.out[0].meta).toEqual({ segmentId: "mic:3:1", revision: 0, lang: "en", tags: ["emotion:happy", "event:laughter"] });
+    p.final(2, 0, "Plain.", { tags: [] });
+    expect(p.out[1].meta).not.toHaveProperty("tags");
+  });
+
   it("two-pass: the replacement is the only final; the first-pass text is shown as an interim meanwhile", () => {
     const p = publisher(true);
     p.partial(1, 0, "i scream");
@@ -351,7 +359,10 @@ describe("local backend settings → Rust", () => {
       hallucinationFilter: true,
       vad: { threshold: 0.6, min_silence_ms: 700 },
     });
-    expect(buildLocalPipelineConfig(undefined, undefined, {}, null)).toMatchObject({ source: "", language: "auto", smartTurn: false, hotwords: [] });
+    expect(buildLocalPipelineConfig(undefined, undefined, {}, null)).toMatchObject({ source: "", language: "auto", smartTurn: false, hotwords: [], musicGate: false });
+    // P6-S0: the music gate (P6-L A/B) is off unless asked for.
+    expect(local.musicGate).toBe(false);
+    expect(buildLocalPipelineConfig({ ...local, musicGate: true }, undefined, request, null).musicGate).toBe(true);
   });
 
   it("maps pipeline statuses to status lines", () => {
@@ -1111,6 +1122,9 @@ describe("Service_STT with segment metadata", () => {
     expect(textEventMeta(undefined)).toEqual({});
     expect(textEventMeta({ segmentId: "<x>", revision: -1, lang: "EN US", turnEnd: undefined })).toEqual({});
     expect(textEventMeta({ segmentId: "mic:1:2", revision: 3, lang: "yue", turnEnd: false })).toEqual({ segmentId: "mic:1:2", revision: 3, lang: "yue", turnEnd: false });
+    // P6-S0: tags are copied when valid; malformed ones are dropped, and none leaves no key.
+    expect(textEventMeta({ tags: ["emotion:happy", "<script>", "event:laughter"] })).toEqual({ tags: ["emotion:happy", "event:laughter"] });
+    expect(textEventMeta({ tags: ["nope"] })).toEqual({});
   });
 
   it("gives the local backend the long connecting window and tells engines about automatic starts", async () => {

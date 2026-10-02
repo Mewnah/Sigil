@@ -16,16 +16,18 @@
 //! `<this machine>` is `localhost`, `*.localhost`, a loopback or unspecified IP, one of this
 //! machine's interface addresses, or its host name (`NAME` / `NAME.local`). Everything else is
 //! refused with `403 Forbidden` before the upgrade: other origins, `Origin: null` (sandboxed frames,
-//! `file://` pages), malformed values, and origin-less clients on other machines. Non-browser LAN
-//! clients can still forge any header; stage 2 (P6) adds a token for them.
+//! `file://` pages), malformed values, and origin-less clients on other machines (unless they
+//! present the LAN token, stage 2). Non-browser LAN clients can forge any header, so the LAN token
+//! of stage 2 ([`super::auth`]) is what authenticates them.
 //!
 //! Kill switch: the persisted root setting `lanOriginCheck` (read from the settings file at startup,
 //! then pushed live by the host through `plugin:web|set_origin_check`), overridden by the
 //! [`ORIGIN_CHECK_ENV`] environment variable (`0`/`false`/`off` disables, `1`/`true`/`on` enables).
-//! Turning the check back on also closes connections that got in only because it was off
-//! ([`Admission::revoked`]).
+//! The switch is a watch channel ([`OriginGuard::subscribe`]): turning the check back on closes the
+//! connections that got in only because it was off ([`super::auth::Access::revoked`]). Reporting of
+//! refusals and that revocation live in [`super::auth::AccessGuard`], which combines this check
+//! with the LAN token.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
@@ -34,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::sync::watch;
-use warp::http::header::{HeaderMap, ORIGIN};
+use warp::http::header::{HeaderMap, HeaderName, ORIGIN};
 use warp::Filter;
 
 /// Environment variable that overrides the persisted `lanOriginCheck` setting.
@@ -52,14 +54,22 @@ const MAX_ORIGIN_LEN: usize = 512;
 /// How long an interface-address snapshot is reused before re-enumerating (DHCP, VPN changes).
 const LOCAL_IP_CACHE_TTL: Duration = Duration::from_secs(5);
 
-/// A rejected origin is logged and reported to the UI at most once per this interval.
-const REJECTION_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
-
-/// Bound on the rejection throttle map (an attacker can vary the Origin freely).
-const REJECTION_NOTICE_MAX_KEYS: usize = 256;
-
 /// Longest origin text copied into logs and events.
 const MAX_REPORTED_ORIGIN_CHARS: usize = 200;
+
+/// Request headers a reverse proxy or tunnel adds. A connection that carries one of them came
+/// through a proxy, so its loopback peer address says nothing about where the client is: such
+/// connections never get the same-PC exemption from the LAN token ([`ConnInfo::forwarded`]).
+const FORWARDING_HEADERS: [&str; 8] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "x-client-ip",
+    "cf-connecting-ip",
+    "true-client-ip",
+];
 
 /// Host part of a parsed origin.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,7 +167,7 @@ fn parse_port(s: &str) -> Option<u16> {
 }
 
 /// Maps IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) to IPv4 so loopback checks see through them.
-fn canonical_ip(ip: IpAddr) -> IpAddr {
+pub fn canonical_ip(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => v6
             .to_ipv4_mapped()
@@ -173,6 +183,13 @@ pub trait LocalMachine: Send + Sync {
     fn is_own_ip(&self, ip: IpAddr) -> bool;
     /// Whether `name` (lower-case, no trailing dot) is this machine's host name.
     fn is_own_hostname(&self, name: &str) -> bool;
+    /// Whether a TCP peer at `ip` is a process on this machine: loopback, or one of this machine's
+    /// own interface addresses (a page opened at `http://<LAN IP>:<port>` on this PC). Tests
+    /// override it to make loopback sockets count as LAN peers.
+    fn is_this_machine(&self, ip: IpAddr) -> bool {
+        let ip = canonical_ip(ip);
+        ip.is_loopback() || self.is_own_ip(ip)
+    }
 }
 
 /// [`LocalMachine`] backed by the OS: interface addresses (cached for a few seconds) and the host
@@ -308,7 +325,8 @@ impl OriginHeader {
         }
     }
 
-    fn for_report(&self) -> Option<String> {
+    /// The value as logged and reported (truncated; `None` when absent).
+    pub fn for_report(&self) -> Option<String> {
         match self {
             OriginHeader::Absent => None,
             OriginHeader::Invalid => Some("<invalid>".to_string()),
@@ -317,21 +335,48 @@ impl OriginHeader {
     }
 }
 
-/// Connection facts the WebSocket routes pass to [`OriginGuard::check`].
+/// Connection facts the WebSocket routes pass to the access check.
 #[derive(Clone, Debug)]
 pub struct ConnInfo {
     pub origin: OriginHeader,
     pub remote: Option<SocketAddr>,
+    /// The request carries a reverse-proxy header ([`FORWARDING_HEADERS`]): the peer address is the
+    /// proxy's, not the client's.
+    pub forwarded: bool,
+}
+
+impl ConnInfo {
+    /// Facts for a direct connection (no proxy headers).
+    #[cfg(test)]
+    pub fn direct(origin: OriginHeader, remote: Option<SocketAddr>) -> Self {
+        Self {
+            origin,
+            remote,
+            forwarded: false,
+        }
+    }
+
+    pub fn from_parts(headers: &HeaderMap, remote: Option<SocketAddr>) -> Self {
+        Self {
+            origin: OriginHeader::from_headers(headers),
+            remote,
+            forwarded: has_forwarding_headers(headers),
+        }
+    }
+}
+
+/// Whether `headers` contain a header a reverse proxy or tunnel adds.
+pub fn has_forwarding_headers(headers: &HeaderMap) -> bool {
+    FORWARDING_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(HeaderName::from_static(name)))
 }
 
 /// Warp filter extracting [`ConnInfo`] (never rejects).
 pub fn conn_info() -> impl Filter<Extract = (ConnInfo,), Error = std::convert::Infallible> + Clone {
     warp::header::headers_cloned()
         .and(warp::addr::remote())
-        .map(|headers: HeaderMap, remote: Option<SocketAddr>| ConnInfo {
-            origin: OriginHeader::from_headers(&headers),
-            remote,
-        })
+        .map(|headers: HeaderMap, remote: Option<SocketAddr>| ConnInfo::from_parts(&headers, remote))
 }
 
 fn host_is_this_machine(host: &OriginHost, machine: &dyn LocalMachine) -> bool {
@@ -345,10 +390,7 @@ fn host_is_this_machine(host: &OriginHost, machine: &dyn LocalMachine) -> bool {
 }
 
 fn peer_is_this_machine(remote: Option<IpAddr>, machine: &dyn LocalMachine) -> bool {
-    match remote.map(canonical_ip) {
-        Some(ip) => ip.is_loopback() || machine.is_own_ip(ip),
-        None => false,
-    }
+    remote.is_some_and(|ip| machine.is_this_machine(ip))
 }
 
 /// The allow-list decision for one handshake (kill switch not applied). Pure apart from the
@@ -413,61 +455,23 @@ pub fn origin_check_from_settings(bytes: &[u8]) -> Option<bool> {
     Some(!matches!(object.get("lanOriginCheck"), Some(serde_json::Value::Bool(false))))
 }
 
-/// Read `lanOriginCheck` from `<app_data>/user/settings`, falling back to `settings.bak` (atomic
-/// writer backup) when the main file is missing or corrupt. `None` if neither is usable.
-pub fn persisted_origin_check(app_data_dir: &Path) -> Option<bool> {
+/// Parse the host's persisted settings with `parse`, reading `<app_data>/user/settings` and falling
+/// back to `settings.bak` (atomic writer backup) when the main file is missing or `parse` refuses
+/// it (corrupt or half-written). `None` if neither is usable.
+pub fn read_persisted_settings<T>(app_data_dir: &Path, parse: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
     let dir = app_data_dir.join("user");
-    ["settings", "settings.bak"].iter().find_map(|name| {
-        std::fs::read(dir.join(name))
-            .ok()
-            .and_then(|bytes| origin_check_from_settings(&bytes))
-    })
+    ["settings", "settings.bak"]
+        .iter()
+        .find_map(|name| std::fs::read(dir.join(name)).ok().and_then(|bytes| parse(&bytes)))
 }
 
-/// A refused handshake, as logged and emitted to the UI (`web:origin_rejected`).
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct OriginRejection {
-    /// `pubsub` or `peer`.
-    pub route: String,
-    /// The `Origin` value (truncated), or `None` when absent.
-    pub origin: Option<String>,
-    /// Peer IP address, if known.
-    pub remote: Option<String>,
-    pub reason: Rejected,
+/// Read `lanOriginCheck` from the persisted settings ([`read_persisted_settings`]).
+pub fn persisted_origin_check(app_data_dir: &Path) -> Option<bool> {
+    read_persisted_settings(app_data_dir, origin_check_from_settings)
 }
 
-type RejectionNotifier = Box<dyn Fn(&OriginRejection) + Send + Sync>;
-
-/// A handshake [`OriginGuard::admit`] let through.
-#[derive(Debug)]
-pub struct Admission {
-    pub allowed: Allowed,
-    /// Set when the connection got in only because the check was off and the allow-list would
-    /// refuse it: the setting channel plus the refusal to report when the check comes back on.
-    revoke: Option<(watch::Receiver<bool>, OriginRejection)>,
-}
-
-impl Admission {
-    /// Whether turning the check back on closes this connection.
-    pub fn is_revocable(&self) -> bool {
-        self.revoke.is_some()
-    }
-
-    /// Completes, with the refusal to report, once the Origin check is enforced again for a
-    /// connection the allow-list refuses; never completes otherwise. Cancel-safe (use in a
-    /// `select!` loop): the current setting is checked on every call.
-    pub async fn revoked(&mut self) -> OriginRejection {
-        if let Some((setting, rejection)) = self.revoke.as_mut() {
-            if setting.wait_for(|enabled| *enabled).await.is_ok() {
-                return rejection.clone();
-            }
-        }
-        std::future::pending().await
-    }
-}
-
-/// Shared allow-list state for the WebSocket routes: rules, kill switch and rejection reporting.
+/// Allow-list state for the WebSocket routes: rules, machine facts and the kill switch. Refusals
+/// are reported, and connections revoked, by [`super::auth::AccessGuard`].
 pub struct OriginGuard {
     rules: OriginRules,
     /// The `lanOriginCheck` setting; a watch channel so connections admitted while it was off can
@@ -475,8 +479,6 @@ pub struct OriginGuard {
     setting: watch::Sender<bool>,
     env_override: Option<bool>,
     machine: Box<dyn LocalMachine>,
-    notifier: Mutex<Option<RejectionNotifier>>,
-    last_notice: Mutex<HashMap<String, Instant>>,
 }
 
 impl OriginGuard {
@@ -486,8 +488,6 @@ impl OriginGuard {
             setting: watch::Sender::new(enabled),
             env_override,
             machine,
-            notifier: Mutex::new(None),
-            last_notice: Mutex::new(HashMap::new()),
         }
     }
 
@@ -504,21 +504,22 @@ impl OriginGuard {
         )
     }
 
-    /// Called (throttled) for every refused handshake; used to emit `web:origin_rejected`.
-    pub fn set_notifier(&self, notifier: impl Fn(&OriginRejection) + Send + Sync + 'static) {
-        *self.notifier.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(notifier));
-    }
-
     /// The persisted / UI setting (before the environment override).
     pub fn setting(&self) -> bool {
         *self.setting.borrow()
     }
 
-    /// Update the persisted / UI setting. Returns whether the check is now in effect. Turning it
-    /// on closes the connections that were admitted only because it was off.
+    /// Update the persisted / UI setting. Returns whether the check is now in effect. Subscribers
+    /// ([`subscribe`](Self::subscribe)) are notified, so turning it on closes the connections that
+    /// were admitted only because it was off.
     pub fn set_setting(&self, enabled: bool) -> bool {
         self.setting.send_replace(enabled);
         self.is_enforced()
+    }
+
+    /// Notified on every [`set_setting`](Self::set_setting).
+    pub fn subscribe(&self) -> watch::Receiver<bool> {
+        self.setting.subscribe()
     }
 
     /// Environment override, if [`ORIGIN_CHECK_ENV`] is set to a recognised value.
@@ -531,113 +532,24 @@ impl OriginGuard {
         self.env_override.unwrap_or_else(|| self.setting())
     }
 
-    /// Decide one handshake on `route` like [`check`](Self::check). A connection admitted only
-    /// because the check is off (and that the allow-list refuses) gets a revocation: its handler
-    /// closes it when the check is turned back on ([`Admission::revoked`]).
-    pub fn admit(&self, info: &ConnInfo, route: &str) -> Result<Admission, Rejected> {
-        // Subscribe before reading the switch, so a flip right after this handshake is still seen.
-        let setting = self.setting.subscribe();
-        let allowed = self.check(info, route)?;
-        let mut revoke = None;
-        // With the environment forcing the check off, the setting cannot turn it back on.
-        if allowed == Allowed::CheckDisabled && self.env_override.is_none() {
-            let remote = info.remote.map(|a| a.ip());
-            if let Err(reason) = evaluate(&info.origin, remote, &self.rules, self.machine.as_ref()) {
-                let rejection = OriginRejection {
-                    route: route.to_string(),
-                    origin: info.origin.for_report(),
-                    remote: remote.map(|ip| ip.to_string()),
-                    reason,
-                };
-                revoke = Some((setting, rejection));
-            }
-        }
-        Ok(Admission { allowed, revoke })
+    /// Facts about this machine (interface addresses, host name, what counts as a local peer).
+    pub fn machine(&self) -> &dyn LocalMachine {
+        self.machine.as_ref()
     }
 
-    /// Report a connection closed because the check was turned back on (logged, throttled like a
-    /// refused handshake).
-    pub fn report_revoked(&self, rejection: OriginRejection) {
-        tracing::info!(
-            target: "sigil::web",
-            "closing /{} connection admitted while the Origin check was off ({}, Origin {:?})",
-            rejection.route,
-            rejection.reason,
-            rejection.origin,
-        );
-        self.report(rejection);
-    }
-
-    /// Decide one handshake on `route`. Refusals are logged and reported (throttled per origin).
-    pub fn check(&self, info: &ConnInfo, route: &str) -> Result<Allowed, Rejected> {
+    /// The allow-list decision for one handshake with the kill switch applied: `CheckDisabled`
+    /// while the check is off. Nothing is logged or reported here.
+    pub fn verdict(&self, info: &ConnInfo) -> Result<Allowed, Rejected> {
         if !self.is_enforced() {
             return Ok(Allowed::CheckDisabled);
         }
-        let remote = info.remote.map(|a| a.ip());
-        let verdict = evaluate(&info.origin, remote, &self.rules, self.machine.as_ref());
-        match verdict {
-            Ok(allowed) => {
-                tracing::debug!(target: "sigil::web", "/{route}: accepted {allowed:?} (Origin {:?}, peer {remote:?})", info.origin.for_report());
-            }
-            Err(reason) => self.report(OriginRejection {
-                route: route.to_string(),
-                origin: info.origin.for_report(),
-                remote: remote.map(|ip| ip.to_string()),
-                reason,
-            }),
-        }
-        verdict
-    }
-
-    fn report(&self, rejection: OriginRejection) {
-        let key = match &rejection.origin {
-            Some(origin) => format!("o:{origin}"),
-            None => format!("r:{}", rejection.remote.as_deref().unwrap_or("?")),
-        };
-        {
-            let mut seen = self
-                .last_notice
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            let now = Instant::now();
-            if seen
-                .get(&key)
-                .is_some_and(|at| now.duration_since(*at) < REJECTION_NOTICE_INTERVAL)
-            {
-                return;
-            }
-            if seen.len() >= REJECTION_NOTICE_MAX_KEYS {
-                seen.retain(|_, at| now.duration_since(*at) < REJECTION_NOTICE_INTERVAL);
-                if seen.len() >= REJECTION_NOTICE_MAX_KEYS {
-                    // Flooded with distinct origins: stay quiet until the window passes.
-                    return;
-                }
-            }
-            seen.insert(key, now);
-        }
-        tracing::warn!(
-            target: "sigil::web",
-            "refused WebSocket upgrade on /{}: {} (Origin {:?}, peer {}). Set lanOriginCheck=false or {ORIGIN_CHECK_ENV}=0 only if this is a trusted client.",
-            rejection.route,
-            rejection.reason,
-            rejection.origin,
-            rejection.remote.as_deref().unwrap_or("unknown"),
-        );
-        if let Some(notify) = self
-            .notifier
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
-            notify(&rejection);
-        }
+        evaluate(&info.origin, info.remote.map(|a| a.ip()), &self.rules, self.machine.as_ref())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     const PORT: u16 = 3030;
     const LAN_IP: [u8; 4] = [192, 168, 1, 50];
@@ -830,148 +742,71 @@ mod tests {
     }
 
     fn conn(origin: &str, remote: [u8; 4]) -> ConnInfo {
-        ConnInfo {
-            origin: OriginHeader::Present(origin.to_string()),
-            remote: Some(SocketAddr::from((remote, 50000))),
-        }
+        ConnInfo::direct(OriginHeader::Present(origin.to_string()), Some(SocketAddr::from((remote, 50000))))
     }
 
     #[test]
     fn kill_switch_and_env_override() {
         let g = guard(true, None);
         assert!(g.is_enforced());
-        assert_eq!(g.check(&conn("https://evil.example", LOOPBACK), "pubsub"), Err(Rejected::ForeignOrigin));
+        assert_eq!(g.verdict(&conn("https://evil.example", LOOPBACK)), Err(Rejected::ForeignOrigin));
         assert!(!g.set_setting(false));
-        assert_eq!(g.check(&conn("https://evil.example", LOOPBACK), "pubsub"), Ok(Allowed::CheckDisabled));
+        assert_eq!(g.verdict(&conn("https://evil.example", LOOPBACK)), Ok(Allowed::CheckDisabled));
         assert!(g.set_setting(true));
-        assert_eq!(g.check(&conn("https://evil.example", LOOPBACK), "pubsub"), Err(Rejected::ForeignOrigin));
+        assert_eq!(g.verdict(&conn("https://evil.example", LOOPBACK)), Err(Rejected::ForeignOrigin));
+        assert_eq!(g.verdict(&conn("http://localhost:3030", LOOPBACK)), Ok(Allowed::ServedPage));
 
         let forced_off = guard(true, Some(false));
         assert!(!forced_off.is_enforced());
         assert!(forced_off.setting());
-        assert_eq!(
-            forced_off.check(&conn("https://evil.example", LOOPBACK), "peer"),
-            Ok(Allowed::CheckDisabled)
-        );
+        assert_eq!(forced_off.verdict(&conn("https://evil.example", LOOPBACK)), Ok(Allowed::CheckDisabled));
 
         let forced_on = guard(false, Some(true));
         assert!(forced_on.is_enforced());
         assert!(forced_on.set_setting(false));
-        assert_eq!(
-            forced_on.check(&conn("https://evil.example", LOOPBACK), "peer"),
-            Err(Rejected::ForeignOrigin)
-        );
+        assert_eq!(forced_on.verdict(&conn("https://evil.example", LOOPBACK)), Err(Rejected::ForeignOrigin));
     }
 
     #[tokio::test]
-    async fn turning_the_check_back_on_revokes_connections_it_would_refuse() {
-        let quiet = Duration::from_millis(50);
+    async fn setting_changes_notify_subscribers() {
         let g = guard(false, None);
-        let mut foreign = g
-            .admit(&conn("https://evil.example", LOOPBACK), "pubsub")
-            .unwrap();
-        assert_eq!(foreign.allowed, Allowed::CheckDisabled);
-        assert!(foreign.is_revocable());
-        let mut served = g
-            .admit(&conn("http://localhost:3030", LOOPBACK), "pubsub")
-            .unwrap();
-        assert_eq!(served.allowed, Allowed::CheckDisabled);
-        assert!(!served.is_revocable(), "a Sigil page stays connected");
-        assert!(
-            tokio::time::timeout(quiet, foreign.revoked())
-                .await
-                .is_err(),
-            "not while the check is off"
-        );
-
+        let mut rx = g.subscribe();
+        assert!(!*rx.borrow_and_update());
         g.set_setting(true);
-        let rejection = tokio::time::timeout(Duration::from_secs(5), foreign.revoked())
+        tokio::time::timeout(Duration::from_secs(5), rx.changed())
             .await
-            .expect("revoked once the check is back on");
-        assert_eq!(rejection.reason, Rejected::ForeignOrigin);
-        assert_eq!(rejection.route, "pubsub");
-        assert_eq!(rejection.origin.as_deref(), Some("https://evil.example"));
-        assert!(tokio::time::timeout(quiet, served.revoked()).await.is_err());
-
-        // A flip that happens before the handler starts waiting is still seen.
-        let g = guard(false, None);
-        let mut early = g
-            .admit(&conn("https://evil.example", OTHER_PC), "peer")
+            .expect("notified")
             .unwrap();
-        g.set_setting(true);
-        g.set_setting(false);
-        g.set_setting(true);
-        tokio::time::timeout(quiet, early.revoked())
-            .await
-            .expect("already enforced");
-
-        // The environment forcing the check off cannot be undone by the setting.
-        let forced_off = guard(true, Some(false));
-        assert!(!forced_off
-            .admit(&conn("https://evil.example", LOOPBACK), "pubsub")
-            .unwrap()
-            .is_revocable());
-        // Enforced: foreign handshakes are refused up front, Sigil pages are never revocable.
-        let on = guard(true, None);
-        assert_eq!(
-            on.admit(&conn("https://evil.example", LOOPBACK), "peer")
-                .unwrap_err(),
-            Rejected::ForeignOrigin
-        );
-        let page = on
-            .admit(&conn("http://localhost:3030", LOOPBACK), "peer")
-            .unwrap();
-        assert_eq!(page.allowed, Allowed::ServedPage);
-        assert!(!page.is_revocable());
+        assert!(*rx.borrow_and_update());
     }
 
     #[test]
-    fn rejections_are_reported_once_per_window() {
-        let g = guard(true, None);
-        let seen = Arc::new(Mutex::new(Vec::<OriginRejection>::new()));
-        let sink = seen.clone();
-        g.set_notifier(move |r| sink.lock().unwrap().push(r.clone()));
-
-        for _ in 0..5 {
-            let _ = g.check(&conn("https://evil.example", LOOPBACK), "pubsub");
+    fn this_machine_means_loopback_or_an_own_address() {
+        for ip in ["127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1", "192.168.1.50", "fe80::50", "::ffff:192.168.1.50"] {
+            assert!(FakeMachine.is_this_machine(ip.parse().unwrap()), "{ip}");
         }
-        let _ = g.check(&conn("https://other.example", LOOPBACK), "peer");
-        let _ = g.check(&conn("http://localhost:3030", LOOPBACK), "peer");
-        let _ = g.check(
-            &ConnInfo {
-                origin: OriginHeader::Absent,
-                remote: Some(SocketAddr::from((OTHER_PC, 1))),
-            },
-            "pubsub",
-        );
-
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 3, "{seen:?}");
-        assert_eq!(
-            seen[0],
-            OriginRejection {
-                route: "pubsub".into(),
-                origin: Some("https://evil.example".into()),
-                remote: Some("127.0.0.1".into()),
-                reason: Rejected::ForeignOrigin,
-            }
-        );
-        assert_eq!(seen[1].origin.as_deref(), Some("https://other.example"));
-        assert_eq!(seen[2].reason, Rejected::MissingOriginRemote);
-        assert_eq!(seen[2].origin, None);
+        for ip in ["192.168.1.77", "10.0.0.1", "0.0.0.0", "203.0.113.9", "fe80::77"] {
+            assert!(!FakeMachine.is_this_machine(ip.parse().unwrap()), "{ip}");
+        }
     }
 
     #[test]
-    fn rejection_reports_are_bounded() {
-        let g = guard(true, None);
-        let count = Arc::new(Mutex::new(0usize));
-        let sink = count.clone();
-        g.set_notifier(move |_| *sink.lock().unwrap() += 1);
-        for i in 0..(REJECTION_NOTICE_MAX_KEYS + 50) {
-            let _ = g.check(&conn(&format!("https://evil{i}.example"), LOOPBACK), "pubsub");
+    fn proxy_headers_are_detected() {
+        let remote = Some(SocketAddr::from((LOOPBACK, 1)));
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, "http://localhost:3030".parse().unwrap());
+        assert!(!ConnInfo::from_parts(&headers, remote).forwarded);
+        for name in FORWARDING_HEADERS {
+            let mut proxied = headers.clone();
+            proxied.insert(HeaderName::from_static(name), "203.0.113.9".parse().unwrap());
+            let info = ConnInfo::from_parts(&proxied, remote);
+            assert!(info.forwarded, "{name}");
+            assert_eq!(info.origin, OriginHeader::Present("http://localhost:3030".into()));
         }
-        assert_eq!(*count.lock().unwrap(), REJECTION_NOTICE_MAX_KEYS);
-        assert!(g.last_notice.lock().unwrap().len() <= REJECTION_NOTICE_MAX_KEYS);
+        // Header names are case-insensitive on the wire.
+        let mut upper = HeaderMap::new();
+        upper.insert(HeaderName::from_bytes(b"X-Forwarded-For").unwrap(), "1.2.3.4".parse().unwrap());
+        assert!(has_forwarding_headers(&upper));
     }
 
     #[test]

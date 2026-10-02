@@ -1,0 +1,11 @@
+{
+  "identifier": "caption-window",
+  "description": "IPC for the caption-window plugin (always-on-top, click-through caption window, P6-B) in the main window. The caption window's own rights are captions.json.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "caption-window:default"
+  ]
+}

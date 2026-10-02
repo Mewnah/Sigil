@@ -62,6 +62,12 @@ export const TextEventSchema = z.object({
    * order). Captions animate only what follows the common prefix (P4-G).
    */
   stableLength: z.number().int().min(0).max(100_000).optional().catch(undefined),
+  /**
+   * Audio event tags of a final (P6-S0, from `speech:final` `tags`, e.g. SenseVoice): `<kind>:<value>` with kinds
+   * `emotion` (`emotion:happy`), `event` (`event:laughter`) and `lang`; consumers ignore unknown kinds. VRChat avatar
+   * parameters and caption tags read them (P6-C). Malformed lists from peers are dropped.
+   */
+  tags: z.array(z.string().regex(/^[a-z]{1,16}:[A-Za-z0-9_.-]{1,40}$/)).max(8).optional().catch(undefined),
 });
 
 export type TextEvent = z.infer<typeof TextEventSchema>;
@@ -77,6 +83,65 @@ export enum TextEventSource {
 }
 
 export const TextEventSourceSchema = z.nativeEnum(TextEventSource);
+
+/**
+ * Other players' speech (P6-S0; published by the Others service, P6-A): the loopback pipeline's captions and their
+ * reverse-direction translation. Deliberately outside the `text.*` hierarchy: pubsub-js bubbles `text.*` up to `text`,
+ * which would echo other players into the chatbox, TTS, history and every "any text" consumer. Payloads are
+ * {@link TextEvent}s. Never accepted from WebSocket peers (`inbound.ts`); sent to /client and OBS pages like `text.*`.
+ */
+export enum OthersEventSource {
+  /** Bubbling parent of both (subscribe to hear either). */
+  any = "others",
+  stt = "others.stt",
+  translation = "others.translation",
+}
+
+export const OthersEventSourceSchema = z.nativeEnum(OthersEventSource);
+
+/** A caption source a display (text element, caption window, VR overlay, OBS) can show: own text or other players'. */
+export type CaptionEventSource = TextEventSource | OthersEventSource;
+
+export const CaptionEventSourceSchema = z.union([TextEventSourceSchema, OthersEventSourceSchema]);
+
+/**
+ * Readings of caption text (P6-S0; published by the readings service, P6-L): Japanese hiragana / romaji and Chinese
+ * pinyin. Outside `text.*` for the same reason as {@link OthersEventSource}. Payload {@link ReadingsEvent}.
+ */
+export enum ReadingsEventSource {
+  any = "readings",
+  stt = "readings.stt",
+}
+
+export const ReadingsEventSourceSchema = z.nativeEnum(ReadingsEventSource);
+
+/** Ruby segment of a reading: a piece of the text and its reading (absent where it equals the text). */
+export const ReadingSegmentSchema = z.object({
+  text: z.string().max(2_000),
+  reading: z.string().max(2_000).optional(),
+});
+
+/**
+ * Payload of `readings.stt` (P6-S0): the readings of one caption line, keyed by the line's `utteranceId` (its
+ * `segmentId`, or its numeric `id` as a string for sources without segments) and the topic it annotates, so a
+ * display pairs it with the line it shows (latest `revision` wins). Only the requested forms are present.
+ */
+export const ReadingsEventSchema = z.object({
+  utteranceId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/),
+  revision: z.number().int().min(0).max(1_000_000).optional().catch(undefined),
+  /** Topic of the annotated line (`text.stt`, `others.stt`, ...). */
+  source: CaptionEventSourceSchema,
+  /** Language the text was read as (`ja` or `zh`). */
+  lang: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/),
+  /** The annotated text. */
+  value: z.string().max(2_000),
+  hiragana: z.string().max(4_000).optional(),
+  romaji: z.string().max(4_000).optional(),
+  pinyin: z.string().max(4_000).optional(),
+  segments: z.array(ReadingSegmentSchema).max(512).optional(),
+});
+
+export type ReadingsEvent = z.infer<typeof ReadingsEventSchema>;
 
 export const ObsCaptionEnvelopeSchema = z.object({
   v: z.literal(1),
@@ -624,6 +689,11 @@ export interface RustSpeechPipelineConfig {
   retainPcm?: boolean;
   /** Voice detection only: never start an engine (no router, no explicit engines). */
   captureOnly?: boolean;
+  /**
+   * P6-L A/B (default off): drop closed segments the FireRedVAD gate hears as music or singing (`speech:utterance`
+   * `dropped` with reason `music`). Off when the model is not installed (a warning status says so).
+   */
+  musicGate?: boolean;
 }
 
 /** Rust `speech::engine_api::EngineCaps`. */
@@ -747,6 +817,8 @@ export type RustSpeechDropReason =
   | "rate_limited"
   | "stream_skipped"
   | "queue_full"
+  /** The music / singing gate (P6-L A/B) heard music: filtered, not lost speech. */
+  | "music"
   | (string & {});
 
 /** Payload of `speech:utterance` (Rust `speech::events::SpeechUtterance`). */
@@ -1124,4 +1196,326 @@ export interface RustDeeplLanguage {
   code: string;
   name: string;
   supportsFormality: boolean;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * P6 streamer-feature contracts (P6-S0). Change only through an INTEGRATE step, together with the
+ * Rust side named in each comment. Wire names are camelCase; Rust structs may gain fields, so
+ * readers treat unknown fields as absent.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Row of `plugin:audio|list_loopback_processes` (Rust `audio::loopback_process::LoopbackProcess`, P6-A). */
+export interface RustLoopbackProcess {
+  pid: number;
+  /** Executable file name (`VRChat.exe`); the capture source id is `process:<exe>`. */
+  exe: string;
+  title: string | null;
+  /** Holds an audio session (programs playing sound are listed first; P6-A, additive). */
+  audio?: boolean;
+}
+
+/**
+ * Source plan of the Other players pipeline (Rust `speech::session::SourcePlan`, P6-A; additive result of
+ * `list_loopback_processes { source, fallback?, processes? }`). `fallback` is why `source` is not the requested program.
+ */
+export interface RustOthersSourcePlan {
+  requested: string;
+  source: string | null;
+  fallback: "unsupported" | "not_running" | null;
+  watch: string | null;
+  running: boolean;
+}
+
+/**
+ * Result of `plugin:audio|list_loopback_processes` (Rust `audio::loopback_process::LoopbackProcessList`). Optional
+ * arguments (P6-A, additive): `{ source?, fallback?, processes? }` (`processes: false` = plan only).
+ */
+export interface RustLoopbackProcessList {
+  /** Per-process capture works on this PC (Windows 10 build 20348+). */
+  supported: boolean;
+  processes: RustLoopbackProcess[];
+  /** Windows build number (null off Windows / unknown; P6-A). */
+  windowsBuild?: number | null;
+  /** The source plan, when `source` was passed (P6-A). */
+  plan?: RustOthersSourcePlan | null;
+}
+
+/** Prefix of per-process loopback capture sources (`process:VRChat.exe`; Rust `audio::loopback::PROCESS_PREFIX`). */
+export const PROCESS_SOURCE_PREFIX = "process:";
+
+/** Rust `caption_window::CaptionWindowOptions` (P6-B). */
+export interface RustCaptionWindowOptions {
+  alwaysOnTop: boolean;
+  clickThrough: boolean;
+}
+
+/**
+ * Result of every `plugin:caption-window|caption_window_*` command and payload of `caption_window:state`
+ * (Rust `caption_window::CaptionWindowStatus`, P6-B).
+ */
+export interface RustCaptionWindowStatus {
+  open: boolean;
+  options: RustCaptionWindowOptions;
+  error: string | null;
+  /** Set on the close event of a window closed by Alt+F4 or the OS (not by `caption_window_close`; P6-B). */
+  closedExternally?: boolean;
+}
+
+/** Event and names of the caption window (Rust `caption_window::{STATE_EVENT, CAPTIONS_WINDOW_LABEL, CAPTIONS_ROUTE}`). */
+export const CAPTION_WINDOW = {
+  stateEvent: "caption_window:state",
+  label: "captions",
+  route: "captions",
+} as const;
+
+/** Rust `vr_overlay::VrOverlayAttach` (P6-B). */
+export type RustVrOverlayAttach = "head" | "leftHand" | "rightHand" | "world";
+
+/** Argument `config` of `plugin:vr-overlay|vr_overlay_start` / `vr_overlay_set_config` (Rust `vr_overlay::VrOverlayConfig`). */
+export interface RustVrOverlayConfig {
+  attach: RustVrOverlayAttach;
+  widthM: number;
+  distanceM: number;
+  offsetYM: number;
+  fontSizePx: number;
+  opacity: number;
+  maxLines: number;
+  /** CSS colour (`rgba(...)` / `#rrggbb[aa]`). */
+  textColor: string;
+  backgroundColor: string;
+}
+
+/** One line of `plugin:vr-overlay|vr_overlay_set_text { caption }` (Rust `vr_overlay::VrOverlayLine`). */
+export interface RustVrOverlayLine {
+  text: string;
+  kind: "final" | "interim";
+  /** Pubsub topic of the line (`text.stt`, `others.translation`, ...). */
+  source: string;
+  lang: string | null;
+}
+
+/** Argument `caption` of `plugin:vr-overlay|vr_overlay_set_text` (Rust `vr_overlay::VrOverlayCaption`). */
+export interface RustVrOverlayCaption {
+  lines: RustVrOverlayLine[];
+}
+
+/** Rust `vr_overlay::VrOverlayState`: `waiting` = started, SteamVR not running (Sigil never launches it). */
+export type RustVrOverlayState = "off" | "waiting" | "running" | "unavailable" | "error";
+
+/** Why the overlay is waiting, unavailable or failed (Rust `vr_overlay::VrOverlayReason`, P6-B). */
+export type RustVrOverlayReason =
+  | "runtimeMissing"
+  | "steamvrNotRunning"
+  | "steamvrNotInstalled"
+  | "steamvrTooOld"
+  | "steamvrQuit"
+  | "connectFailed"
+  | "overlayError";
+
+/** Result of the `vr-overlay` commands and payload of `vr_overlay:state` (Rust `vr_overlay::VrOverlayStatus`). */
+export interface RustVrOverlayStatus {
+  state: RustVrOverlayState;
+  /** `runtime/openvr` is installed. */
+  runtimeInstalled: boolean;
+  error: string | null;
+  /** P6-B (additive). */
+  reason?: RustVrOverlayReason | null;
+}
+
+/** Tauri event of the `vr-overlay` plugin (Rust `vr_overlay::STATE_EVENT`). */
+export const VR_OVERLAY_STATE_EVENT = "vr_overlay:state";
+
+/** Rust `text_readings::PinyinStyle` (P6-L). `numbers` writes the neutral tone as 5 (`ma5`). */
+export type RustPinyinStyle = "marks" | "numbers" | "none";
+
+/** Argument `request` of `plugin:text-readings|text_readings_annotate` (Rust `text_readings::ReadingsRequest`, P6-L). */
+export interface RustReadingsRequest {
+  text: string;
+  /** `ja` or `zh` (also `yue` / `cmn` / `zh-*`, read as Mandarin). */
+  lang: string;
+  hiragana?: boolean;
+  romaji?: boolean;
+  pinyin?: boolean;
+  pinyinStyle?: RustPinyinStyle;
+}
+
+/** Result of `plugin:text-readings|text_readings_annotate` (Rust `text_readings::ReadingsResult`). */
+export interface RustReadingsResult {
+  lang: string;
+  hiragana: string | null;
+  romaji: string | null;
+  pinyin: string | null;
+  /**
+   * Ruby segments: hiragana for Japanese (romaji when only romaji is requested), pinyin for Chinese. They always spell
+   * the whole text, capped at 512 with the tail merged.
+   */
+  segments: { text: string; reading: string | null }[];
+}
+
+/** Result of `plugin:text-readings|text_readings_status` (Rust `text_readings::ReadingsStatus`). */
+export interface RustReadingsStatus {
+  japanese: boolean;
+  chinese: boolean;
+  /** Catalog id of the Japanese dictionary (for `<ModelRequirement>`). */
+  japaneseModel: string | null;
+  error: string | null;
+}
+
+/** Argument `request` of `plugin:edge-tts|edge_tts_speak` (Rust `edge_tts::EdgeTtsRequest`, P6-H). */
+export interface RustEdgeTtsRequest {
+  text: string;
+  /** Voice short name, e.g. `en-US-AvaMultilingualNeural`. */
+  voice: string;
+  /** 1 = normal (0.5-2). */
+  rate?: number;
+  pitchHz?: number;
+  /** Time to the first audio (ms); 0 = automatic. */
+  timeoutMs?: number;
+}
+
+/** Row of `plugin:edge-tts|edge_tts_list_voices` (Rust `edge_tts::EdgeTtsVoice`). */
+export interface RustEdgeTtsVoice {
+  shortName: string;
+  friendlyName: string;
+  locale: string;
+  gender: string;
+}
+
+/**
+ * Argument `request` of `plugin:gemini-tts|gemini_tts_speak` (Rust `gemini_tts::GeminiTtsRequest`, P6-H). `apiKey` goes
+ * only into the `x-goog-api-key` header: never log it.
+ */
+export interface RustGeminiTtsRequest {
+  apiKey: string;
+  /** "" = `https://generativelanguage.googleapis.com`. */
+  baseUrl?: string;
+  model: string;
+  text: string;
+  voice: string;
+  /** Natural-language style instruction ("" = none). */
+  style?: string;
+  language?: string | null;
+  timeoutMs?: number;
+}
+
+/** Argument `request` of `plugin:gpt-sovits|gpt_sovits_speak` (Rust `gpt_sovits::GptSovitsRequest`, P6-G). */
+export interface RustGptSovitsRequest {
+  /** "" = `http://127.0.0.1:9880`. */
+  baseUrl?: string;
+  text: string;
+  textLang?: string;
+  /** Voice-library voice used as the reference ("" = `refAudioPath`). */
+  referenceVoiceId?: string;
+  refAudioPath?: string;
+  promptText?: string;
+  promptLang?: string;
+  streaming?: boolean;
+  speed?: number;
+  /** Extra request members (`top_k`, `temperature`, ...). */
+  extra?: Record<string, unknown> | null;
+  timeoutMs?: number;
+  /** api_v2 `streaming_mode` (0 off, 1 fragments, 2 medium, 3 fast; 2 and 3 need v2ProPlus; P6-G). */
+  streamingMode?: number;
+}
+
+/**
+ * Argument `request` of `plugin:local-tts|pocket_tts_speak` and `chatterbox_local_speak` (Rust
+ * `local_tts::commands::CloningTtsRequest`, P6-I).
+ */
+export interface RustCloningTtsRequest {
+  /** Catalog id; "" = the engine's default model. */
+  model?: string;
+  /** Voice-library voice to clone; "" = the engine's built-in voice. */
+  referenceVoiceId: string;
+  text: string;
+  language?: string | null;
+  speed?: number;
+  threads?: number | null;
+  /** Engine options (`exaggeration`, `cfgWeight`, `temperature`, ...). */
+  options?: Record<string, unknown> | null;
+}
+
+/** Rust `tts_helpers::TtsHelperEngine` (P6-E/F/G): helper-process TTS engines. Persisted ids: never rename. */
+export type RustTtsHelperEngine = "qwen3" | "magpie" | "breeze" | "omnivoice" | "s2" | "sbv2";
+
+/**
+ * Result of `plugin:tts-helpers|tts_helper_start { engine, config }` (Rust `tts_helpers::TtsHelperEndpoint`): where the
+ * OpenAI-compatible client (`plugin:openai-speech|openai_speech_speak`) reaches the started server. `apiKey` is for
+ * loopback calls only: never log or display it.
+ */
+export interface RustTtsHelperEndpoint {
+  engine: RustTtsHelperEngine;
+  /** `http://127.0.0.1:{port}/v1` (always loopback). */
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** Sample rate of raw `pcm` responses; 0 = ask for WAV. */
+  pcmSampleRate: number;
+}
+
+/** Rust `tts_helpers::TtsHelperState`. */
+export type RustTtsHelperState = "stopped" | "starting" | "ready" | "failed" | "unavailable";
+
+/** Result of `plugin:tts-helpers|tts_helper_status { engine }` and payload of `tts_helpers:state`. */
+export interface RustTtsHelperStatus {
+  engine: RustTtsHelperEngine;
+  state: RustTtsHelperState;
+  model: string | null;
+  error: string | null;
+}
+
+/** Row of `plugin:tts-helpers|tts_helper_list` (Rust `tts_helpers::TtsHelperInfo`). */
+export interface RustTtsHelperInfo {
+  engine: RustTtsHelperEngine;
+  title: string;
+  experimental: boolean;
+  gpu: boolean;
+  cloning: boolean;
+  /** Catalog ids the engine needs (for `<ModelRequirement>`). */
+  requires: string[];
+  available: boolean;
+}
+
+/** Tauri event of the `tts-helpers` plugin (Rust `tts_helpers::STATE_EVENT`). */
+export const TTS_HELPERS_STATE_EVENT = "tts_helpers:state";
+
+/** Result of `plugin:tts-helpers|qwen_tts_prepare_clone { voiceId }` (Rust `tts_helpers::qwen::QwenCloneVoice`, P6-E). */
+export interface RustQwenCloneVoice {
+  voiceId: string;
+  /** Server-side voice name to send as the request's `voice`. */
+  voice: string;
+  cached: boolean;
+}
+
+/** Row of `plugin:tts-helpers|sbv2_list_models`, result of `sbv2_import_model { path }` (Rust `tts_helpers::sbv2::Sbv2Model`, P6-G). */
+export interface RustSbv2Model {
+  id: string;
+  name: string;
+  /** `aivmx` or `sbv2`. */
+  format: string;
+  speakers: string[];
+  styles: string[];
+  /** Detailed speakers with their styles (P6-G, additive). */
+  voices?: { name: string; id: number; styles: { name: string; id: number }[]; languages: string[] }[];
+  description?: string;
+  creators?: string[];
+  version?: string;
+  architecture?: string;
+  sampleRate?: number;
+  sizeBytes?: number;
+  sourceName?: string;
+}
+
+/** Argument `request` of `plugin:tts-helpers|sbv2_speak { request, utteranceId }` (Rust `tts_helpers::sbv2::Sbv2SpeakRequest`, P6-G). */
+export interface RustSbv2SpeakRequest {
+  /** Imported model id ("" = the started one). */
+  model: string;
+  text: string;
+  speaker: string;
+  style: string;
+  styleWeight: number;
+  sdpRatio: number;
+  noise: number;
+  noiseW: number;
+  speed: number;
 }

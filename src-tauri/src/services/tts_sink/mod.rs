@@ -21,7 +21,8 @@
 //! `TTS_SINK_EVENTS` in `src/types.ts`.
 //! - Rust API: [`begin`], [`writer`] → [`UtteranceWriter::push`] / [`UtteranceWriter::is_cancelled`],
 //!   [`end`], [`cancel`], [`flush`], [`status`]; errors [`SinkError`]; [`SpeakReport`] is what
-//!   engines that speak into the sink return over IPC.
+//!   engines that speak into the sink return over IPC. P6-J added [`apply_mic_policy`] /
+//!   [`mic_policy`] ([`MicPolicy`]).
 //! - IPC (`plugin-commands/tts-sink.txt`):
 //!   - `plugin:tts-sink|begin_utterance { spec: UtteranceSpec }` → `void`
 //!   - `plugin:tts-sink|push_pcm` with a raw body of little-endian f32 samples (interleaved) and
@@ -34,9 +35,18 @@
 //!   - `plugin:tts-sink|flush_sink` → `void` (cancel everything and drop queued audio; devices stay
 //!     open)
 //!   - `plugin:tts-sink|get_sink_status` → [`SinkStatus`]
+//!   - `plugin:tts-sink|set_mic_policy { policy: "none" | "duck" | "mute" }` → `void` (P6-J; an
+//!     unknown value is `none`): the microphone while TTS plays into the voice changer
+//!     ([`mic_gate`]). TS forwards the voice changer's aux mic gate setting.
 //! - Events: [`STATE_EVENT`] (`tts_sink:state`, [`SinkStatus`], at most ~4 Hz) and
 //!   [`UTTERANCE_EVENT`] (`tts_sink:utterance`, [`UtteranceEvent`] on every state change).
 //! - Real-time rules: the output callback never allocates, locks, logs or does IPC (rtrb rings).
+//!
+//! # Producers
+//! Every TTS backend that makes PCM plays here (P6-J moved Windows SAPI over: `windows_tts`
+//! renders each sentence into its utterance). Web Speech (`speechSynthesis`) is the one backend
+//! that cannot: the webview plays it on the default output and gives no audio back, so it is
+//! device-only and never reaches the voice changer.
 //!
 //! # Implementation
 //! - [`engine`]: the queue, back-pressure (head 30 s / total 120 s of unplayed audio; a push is
@@ -47,14 +57,22 @@
 //! - [`output`]: one persistent cpal stream per device (opened on first use, closed after 5 min
 //!   unused, re-opened when the Windows default changes while idle), a ring of slot-tagged samples
 //!   so stop / skip drop audio already in the ring at once, click-free joins; device names match
-//!   exactly, then ignoring case / Windows renumbering / old 31-character SAPI names.
+//!   exactly, then ignoring case / Windows renumbering / old 31-character SAPI names; a SAPI
+//!   audio-output token id (the Windows voice's saved device) resolves through its endpoint id.
 //! - [`convert`]: stateful band-limited resampling (rubato), channel adaptation and gain.
 //! - [`vc_route`]: the voice changer's tagged aux queue (`voice_changer::aux_feed`).
+//! - [`mic_gate`]: with the `mute` policy, the capture hub's `voice_changer` gate is closed while
+//!   TTS audio flows into the voice changer (plus a short hold, or up to 2 s while the reply's next
+//!   sentence is still synthesizing), so the microphone never enters it meanwhile; the voice
+//!   changer runs on silence plus the TTS. At a reply's onset the gate closes ~120 ms before the
+//!   first TTS block goes in, so the stream restart the gate's edge causes in the voice changer
+//!   lands on silence. `duck` is the voice changer's own.
 //! - Route `voiceChanger` plays on the device while the voice changer is not running; `both` then
 //!   plays on the device only.
 
 mod convert;
 mod engine;
+pub(crate) mod mic_gate;
 mod output;
 mod vc_route;
 
@@ -74,6 +92,7 @@ use tauri::{
 };
 
 use engine::{SinkConfig, SinkCore, SinkEvents};
+pub use mic_gate::MicPolicy;
 /// The sink's default bounds (clients that time their requests against them reference these).
 pub(crate) use engine::STALL_TIMEOUT;
 #[cfg(test)]
@@ -276,6 +295,18 @@ pub fn status() -> SinkStatus {
     global().map(|s| s.status()).unwrap_or_default()
 }
 
+/// Set the microphone policy while TTS plays into the voice changer ([`mic_gate`]).
+pub fn apply_mic_policy(policy: MicPolicy) -> Result<(), SinkError> {
+    global()?.set_mic_policy(policy);
+    Ok(())
+}
+
+/// The microphone policy in force ([`MicPolicy::None`] before the sink exists).
+#[allow(dead_code)] // public API for diagnostics and other engines
+pub fn mic_policy() -> MicPolicy {
+    global().map(|s| s.mic_policy()).unwrap_or_default()
+}
+
 /// Pushes PCM into one begun utterance.
 pub struct UtteranceWriter {
     id: String,
@@ -419,6 +450,12 @@ async fn get_sink_status() -> Result<SinkStatus, String> {
     Ok(status())
 }
 
+/// `policy`: `none` | `duck` | `mute` (anything else is `none`).
+#[command]
+async fn set_mic_policy(policy: String) -> Result<(), String> {
+    apply_mic_policy(MicPolicy::from_str_lossy(&policy)).map_err(String::from)
+}
+
 /// Sink events as Tauri events.
 struct TauriEvents<R: Runtime>(AppHandle<R>);
 
@@ -439,6 +476,7 @@ fn setup<R: Runtime>(app: &AppHandle<R>) {
         Box::new(output::CpalBackend),
         Box::new(vc_route::AppVc(app.clone())),
         Box::new(TauriEvents(app.clone())),
+        Box::new(mic_gate::HubVoiceChangerGate),
     );
     if SINK.set(core).is_err() {
         tracing::warn!(target: "sigil::tts_sink", "the TTS sink was already initialized");
@@ -458,6 +496,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             cancel_utterance,
             flush_sink,
             get_sink_status,
+            set_mic_policy,
         ])
         .build()
 }

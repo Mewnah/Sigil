@@ -6,7 +6,7 @@ authors = ["Sigil contributors", "Mewnah"]
 license = "AGPL-3.0-only"
 repository = "https://github.com/Mewnah/Sigil"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.89" # cosmic-text 0.19 (P6-B SteamVR overlay text) declares MSRV 1.89
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -47,6 +47,9 @@ windows = { version = "0.61", features = [
   # COM implementations (`#[windows::core::implement(IMMNotificationClient)]` for the P1 capture
   # hub's device watcher) need no extra feature in windows 0.61: the macro is always re-exported
   # and IMMNotificationClient_Impl only needs Win32_Media_Audio + Win32_Foundation (checked by P1-S0a).
+  # P6-S0: process snapshots (CreateToolhelp32Snapshot) to find VRChat.exe for per-process
+  # loopback capture (P6-A, audio/loopback_process.rs).
+  "Win32_System_Diagnostics_ToolHelp",
 ] }
 clap = { version = "4.4", features = ["derive"] }
 local-ip-address = "0.4.9"
@@ -111,6 +114,23 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # downloader) and no C/C++ builds (onig, esaxx `cpp`); `fancy-regex` is the pure-Rust regex backend
 # (the crate needs `onig` or `fancy-regex`).
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+# P6 streamer features (P6-S0, declared so implementers need no Cargo edits):
+# - wasapi: per-process loopback capture of VRChat.exe (P6-A, the Windows process-loopback API;
+#   0.19 is the last release on windows 0.61, the app's version, so no second windows crate).
+# - cosmic-text + tiny-skia: text shaping (CJK fallback, RTL) and rasterizing for the SteamVR
+#   caption overlay (P6-B); no fontconfig (Windows fonts come from fontdb's system scan), no PNG codec.
+# - mdns-sd: OSCQuery service discovery for VRChat's OSC (P6-C).
+# - jpreprocess (with wana_kana): Japanese readings, hiragana and romaji (P6-L). Its dictionary
+#   comes from the model store; the `naist-jdic` feature (a build-time download) stays off.
+# - jieba-rs + pinyin: Chinese word segmentation and pinyin readings (P6-L).
+wasapi = "0.19"
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+mdns-sd = "0.21"
+jpreprocess = "0.15"
+wana_kana = "5"
+jieba-rs = "0.11"
+pinyin = "0.11"
 
 [profile.release]
 lto = true
@@ -128,3 +148,8 @@ tauri-plugin-global-shortcut = "2"
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The sigil crate rebuilds on every edit: line-tables-only keeps file:line in backtraces and debuggers
+# while cutting its codegen and link time. Dependencies keep their own settings and caches.
+[profile.dev.package.sigil]
+debug = "line-tables-only"

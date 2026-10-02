@@ -5,11 +5,19 @@ import { proxy } from "valtio";
 import {
   PeerjsProvider as PeerProvider,
   PEER_CLIENT_MIRROR_EVENT,
+  PEER_INVALID_KEY,
+  peerErrorType,
   type PeerClientMirrorDetail,
 } from "./provider";
+import { lanClientUrl, normalizeLanToken } from "./lanAccess";
 import AppConfiguration from "@/config";
 import { getApiClient, getApiShared, getConfig } from "@/runtime/host";
 import { sanitizeClientPubSubFrame } from "@/shared/services/pubsub/inbound";
+
+/** Shown on a `/client` mirror the host refused because of the LAN token (P6-D). */
+function invalidKeyMessage() {
+  return i18n.t("client.peer_invalid_key");
+}
 
 class Service_Peer implements IServiceInterface {
   #provider?: PeerProvider;
@@ -29,7 +37,10 @@ class Service_Peer implements IServiceInterface {
     this.#provider?.broadcastPubSubParts(topic, dataJson);
   }
 
-  /** Full URL for browser / OBS (Curses-style: `http://localhost:PORT/client`, no query required). */
+  /**
+   * Full URL for a browser or OBS on this PC (Curses-style: `http://localhost:PORT/client`, no
+   * query required). Same-PC clients never need the LAN token, so it carries none.
+   */
   getClientLink(pathname = "/client"): string {
     const n = getConfig().serverNetwork;
     const p = String(n.port);
@@ -39,6 +50,16 @@ class Service_Peer implements IServiceInterface {
   copyClientLink(pathname = "/client") {
     navigator.clipboard.writeText(getApiShared().peer.getClientLink(pathname));
     toast.success(i18n.t("toasts.copied"));
+  }
+
+  /**
+   * URL for a browser or OBS on another device (P6-D): this PC's LAN address (`ip`, default the
+   * primary one) with the host's LAN token as `?token=`. Host only.
+   */
+  getLanClientLink(pathname = "/client", ip?: string): string {
+    const n = getConfig().serverNetwork;
+    const token = normalizeLanToken(window.ApiServer?.state?.lanAccess?.token) ?? "";
+    return lanClientUrl(ip || n.ip, n.port, token, pathname);
   }
 
   startServer() {
@@ -65,6 +86,7 @@ class Service_Peer implements IServiceInterface {
     const onMirror: EventListener = (e) => {
       if (!(e instanceof CustomEvent)) return;
       const d = e.detail as PeerClientMirrorDetail;
+      const detail = (message?: string) => (message === PEER_INVALID_KEY ? invalidKeyMessage() : message ?? "");
       if (d.phase === "synced") {
         this.clientMirrorState.phase = "synced";
         this.clientMirrorState.lastError = "";
@@ -72,9 +94,9 @@ class Service_Peer implements IServiceInterface {
         this.clientMirrorState.phase = "reconnecting";
       } else if (d.phase === "failed") {
         this.clientMirrorState.phase = "failed";
-        this.clientMirrorState.lastError = d.message ?? "";
+        this.clientMirrorState.lastError = detail(d.message);
       } else if (d.phase === "error") {
-        this.clientMirrorState.lastError = d.message ?? "";
+        this.clientMirrorState.lastError = detail(d.message);
         this.clientMirrorState.phase = "reconnecting";
       }
     };
@@ -94,16 +116,20 @@ class Service_Peer implements IServiceInterface {
         console.error(error)
       }
     });
+    const network = getConfig().clientNetwork;
     try {
       await this.#provider?.connectClient({
         id: "server",
-        host: getConfig().clientNetwork.host,
-        port: getConfig().clientNetwork.port,
+        host: network.host,
+        port: network.port,
+        token: network.token,
       });
     } catch (err) {
       this.clientMirrorState.phase = "failed";
-      this.clientMirrorState.lastError = err instanceof Error ? err.message : String(err);
-      throw err;
+      // PeerJS's own invalid-key message quotes the key (the token): replace it.
+      const refused = peerErrorType(err) === PEER_INVALID_KEY;
+      this.clientMirrorState.lastError = refused ? invalidKeyMessage() : err instanceof Error ? err.message : String(err);
+      throw refused ? new Error(invalidKeyMessage()) : err;
     }
     // wait for runtime config
     return new Promise<AppConfiguration["clientInitialState"]>((res) => this.onConfigReceived = res);

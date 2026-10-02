@@ -266,6 +266,12 @@
       const port = /^[0-9]{1,5}$/.test(portParam) ? portParam : location.port;
       const pageHost = location.hostname || "127.0.0.1";
       const host = pageHost.includes(":") && !pageHost.startsWith("[") ? `[${pageHost}]` : pageHost;
+      // LAN token (Sigil Settings → LAN access): needed only when this page runs on another device.
+      const token = (q.get("token") || "").trim();
+      const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : "";
+      // Close codes Sigil uses when it refuses this page: no or an old LAN token / this PC only.
+      const CLOSE_LAN_UNAUTHORIZED = 4401;
+      const CLOSE_LAN_DISABLED = 4403;
 
       let recognition = null;
       let isStreaming = false;
@@ -292,17 +298,34 @@
       }
 
       // Reconnects with backoff, so the page recovers when Sigil restarts.
+      let refusedLogged = false;
+      // Sigil refuses a page after the WebSocket upgrade (close 4401 / 4403 right away), so `onopen`
+      // fires for a refused socket too: a connection counts once it stayed open this long or
+      // delivered a message.
+      const CONFIRM_MS = 1500;
+      let confirmTimer = null;
+
+      function confirmConnected(socket) {
+        if (ws !== socket || wasConnected) return;
+        clearTimeout(confirmTimer);
+        confirmTimer = null;
+        reconnectDelay = 1000;
+        wasConnected = true;
+        refusedLogged = false;
+        addLog("Connected to Sigil");
+        // After a reconnect, tell the host that recognition is still running.
+        if (isStreaming) sendExternalState(true);
+      }
+
       function connect() {
-        const socket = new WebSocket(`ws://${host}:${port}/pubsub?id=mic-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+        const socket = new WebSocket(`ws://${host}:${port}/pubsub?id=mic-${Math.random().toString(36).slice(2)}-${Date.now()}${tokenQuery}`);
         ws = socket;
         socket.onopen = () => {
-          reconnectDelay = 1000;
-          wasConnected = true;
-          addLog("Connected to Sigil");
-          // After a reconnect, tell the host that recognition is still running.
-          if (isStreaming) sendExternalState(true);
+          clearTimeout(confirmTimer);
+          confirmTimer = setTimeout(() => confirmConnected(socket), CONFIRM_MS);
         };
         socket.onmessage = (msg) => {
+          confirmConnected(socket);
           try {
             const raw = JSON.parse(msg.data);
             if (raw.topic !== TOPIC_STT_CMD || !raw.data) return;
@@ -310,15 +333,26 @@
             else if (raw.data.cmd === "stop") stopStreaming();
           } catch (_) { /* ignore */ }
         };
-        socket.onclose = () => {
+        socket.onclose = (event) => {
           if (ws !== socket) return;
           ws = null;
-          if (wasConnected) {
+          clearTimeout(confirmTimer);
+          confirmTimer = null;
+          const refused = event && (event.code === CLOSE_LAN_UNAUTHORIZED || event.code === CLOSE_LAN_DISABLED);
+          if (refused) {
+            wasConnected = false;
+            if (!refusedLogged) {
+              refusedLogged = true;
+              addLog(event.code === CLOSE_LAN_DISABLED
+                ? "Sigil only accepts connections from its own PC (Settings → LAN access)."
+                : "Sigil refused this page: its LAN token is missing or out of date. Open the page again from Sigil.");
+            }
+          } else if (wasConnected) {
             wasConnected = false;
             addLog("Disconnected from Sigil, reconnecting…");
           }
           clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectTimer = setTimeout(connect, refused ? 30000 : reconnectDelay);
           reconnectDelay = Math.min(reconnectDelay * 2, 15000);
         };
       }

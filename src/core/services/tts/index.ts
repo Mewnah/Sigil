@@ -1,16 +1,19 @@
 import { Services } from "@/services-registry";
-import { IServiceInterface, ServiceNetworkState, TextEventType } from "@/types";
+import { IServiceInterface, ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
 import { WordReplacementsCache, buildWordReplacementsCache, serviceSubscibeToInput, serviceSubscibeToSource } from "@/utils";
+import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import i18n from "i18next";
 import { toast } from "react-toastify";
-import { proxy } from "valtio";
+import { getVersion, proxy, subscribe } from "valtio";
 import { subscribeKey } from "valtio/utils";
 import { i18nReady } from "../stt/statusMessages";
+import { TurnCommitGate } from "../vrc/turnCommit";
 import { pushSystemLog } from "../systemLog";
 import { planTtsDesktopDefault } from "./defaults";
 import { ErrorThrottle } from "./errorThrottle";
 import { TtsPipeline, ttsSinkTarget } from "./pipeline";
+import type { SentenceOptions } from "./sentence";
 import { TTS_Backends } from "./schema";
 import { TTS_AzureService } from "./services/azure";
 import { TTS_NativeService } from "./services/native";
@@ -25,6 +28,16 @@ import { TTS_NeuralOnnxService } from "./services/neuralOnnx";
 import { TTS_NeuralSidecarService } from "./services/neuralSidecar";
 import { TTS_LocalNeuralService } from "./services/localNeural";
 import { TTS_OpenAISpeechService } from "./services/openaiSpeech";
+// P6 backends (P6-S0 stubs): qwen3 P6-E, edge + gemini P6-H, sbv2 + gptSovits P6-G, pocket + chatterboxLocal P6-I,
+// ggmlTts P6-F.
+import { TTS_Qwen3Service } from "./services/qwen3";
+import { TTS_EdgeService } from "./services/edge";
+import { TTS_GeminiService } from "./services/gemini";
+import { TTS_Sbv2Service } from "./services/sbv2";
+import { TTS_GptSovitsService } from "./services/gptSovits";
+import { TTS_PocketService } from "./services/pocket";
+import { TTS_ChatterboxLocalService } from "./services/chatterboxLocal";
+import { TTS_GgmlTtsService } from "./services/ggmlTts";
 import {
   ITTSReceiver,
   ITTSService,
@@ -50,10 +63,61 @@ export const TTS_BACKENDS: TTSBackendMap = {
   [TTS_Backends.neuralSidecar]: TTS_NeuralSidecarService,
   [TTS_Backends.localNeural]: TTS_LocalNeuralService,
   [TTS_Backends.openaiSpeech]: TTS_OpenAISpeechService,
+  [TTS_Backends.qwen3]: TTS_Qwen3Service,
+  [TTS_Backends.edge]: TTS_EdgeService,
+  [TTS_Backends.gemini]: TTS_GeminiService,
+  [TTS_Backends.sbv2]: TTS_Sbv2Service,
+  [TTS_Backends.gptSovits]: TTS_GptSovitsService,
+  [TTS_Backends.pocket]: TTS_PocketService,
+  [TTS_Backends.chatterboxLocal]: TTS_ChatterboxLocalService,
+  [TTS_Backends.ggmlTts]: TTS_GgmlTtsService,
 };
 
 function isOptionsMissing(error: string): boolean {
   return error === TTS_OPTIONS_MISSING || error.includes(TTS_OPTIONS_MISSING);
+}
+
+/**
+ * The microphone while TTS plays into the voice changer: the Rust sink's policy (`plugin:tts-sink|set_mic_policy`,
+ * P6-J). Same values as the voice changer's "Microphone while TTS plays" (`auxMicGate`); with `mute` the sink also
+ * closes the capture hub's voice-changer gate while TTS flows into the voice changer.
+ */
+export type TtsMicPolicy = "none" | "duck" | "mute";
+
+/** The sink policy for a voice-changer `auxMicGate` value (anything unknown is `none`, like Rust). */
+export function ttsMicPolicy(gate: unknown): TtsMicPolicy {
+  return gate === "mute" || gate === "duck" ? gate : "none";
+}
+
+/**
+ * Mirrors the voice changer's `auxMicGate` into the Rust sink: sends each change once, in order (one at a time), and
+ * sends again after a failed send.
+ */
+export class MicPolicySync {
+  #sent: TtsMicPolicy | null = null;
+  #chain: Promise<void> = Promise.resolve();
+
+  constructor(private readonly sendPolicy: (policy: TtsMicPolicy) => Promise<unknown>) {}
+
+  /** The policy last handed to Rust (`null`: none yet, or the last send failed). */
+  get sent(): TtsMicPolicy | null {
+    return this.#sent;
+  }
+
+  update(gate: unknown): Promise<void> {
+    const policy = ttsMicPolicy(gate);
+    if (policy === this.#sent) return this.#chain;
+    this.#sent = policy;
+    this.#chain = this.#chain.then(async () => {
+      try {
+        await this.sendPolicy(policy);
+      } catch {
+        // Without Tauri (web build) or before the sink exists: retry on the next update.
+        if (this.#sent === policy) this.#sent = null;
+      }
+    });
+    return this.#chain;
+  }
 }
 
 /**
@@ -69,9 +133,22 @@ function isOptionsMissing(error: string): boolean {
  * Output (P2-G): backends that produce PCM (ITTSService v2) speak through the sentence pipeline
  * (`pipeline.ts`): finals are split into sentences, synthesized a few ahead and played in order
  * through the unified Rust TTS sink with the top-level route (device / voice changer / both).
- * Self-playing backends (Web Speech, SAPI) and backends not migrated yet get whole finals via
- * `play()`. `skip()` / `stopSpeaking()` cancel sentences without stopping the service.
+ * Windows SAPI renders into the sink too (P6-J). Web Speech is the one self-playing backend: it gets whole finals
+ * via `play()` and plays on the default output only. `skip()` / `stopSpeaking()` cancel sentences without stopping
+ * the service.
+ *
+ * Microphone while TTS plays into the voice changer (P6-J): the voice changer's `auxMicGate` setting is mirrored into
+ * the sink's policy ({@link MicPolicySync}); with `mute`, the sink closes the capture hub's voice-changer gate while
+ * any TTS plays through the voice changer, so the microphone never mixes into it meanwhile.
  */
+/**
+ * Per-backend sentence sizes (`DEFAULT_SENTENCE_OPTIONS` otherwise). Gemini's free tier is rate-limited
+ * per request and its 3.8 TTS models gain prosody from longer context, so long sentences are split less (P6-H).
+ */
+const BACKEND_SENTENCE_OPTIONS: Partial<Record<TTS_Backends, Partial<SentenceOptions>>> = {
+  [TTS_Backends.gemini]: { maxLength: 600, firstMaxLength: 200 },
+};
+
 class Service_TTS implements IServiceInterface, ITTSReceiver {
   #serviceInstance?: ITTSService;
   /** Sentence pipeline of the running instance (PCM backends only). */
@@ -81,6 +158,22 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
   #errorThrottle = new ErrorThrottle();
   /** The one-time Kokoro offer is due in this launch (`runStartupOffer`). */
   #pendingLocalOffer = false;
+  /** Mirrors the voice changer's microphone setting into the TTS sink. */
+  readonly micPolicy = new MicPolicySync((policy) => invoke("plugin:tts-sink|set_mic_policy", { policy }));
+  /**
+   * Smart Turn commit (`commitOnTurnEnd`, off by default): sentences Smart Turn marks unfinished wait and are spoken
+   * joined with the rest of the turn. Also drops STT's `[...]` cancel marker, so it is never spoken. A translation
+   * source that already commits on turn end is not held a second time.
+   */
+  readonly #turnGate = new TurnCommitGate({
+    enabled: () => this.data.commitOnTurnEnd && this.#turnGateApplies(),
+    holdMs: () => {
+      const ms = parseInt(String(this.data.turnHoldMs ?? ""), 10);
+      return Number.isFinite(ms) ? Math.min(10_000, Math.max(500, ms)) : 2_500;
+    },
+    maxChars: () => 280,
+    commit: (ev) => this.play(ev.value, ev.lang),
+  });
 
   serviceState = proxy({
     status: ServiceNetworkState.disconnected,
@@ -120,17 +213,21 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
     this.eventDisposers.push(subscribeKey(this.data, "replaceWordsIgnoreCase", () => this.updateReplacementsCache()));
     this.eventDisposers.push(serviceSubscibeToSource(this.data, "source", data => {
       if (data?.type === TextEventType.final)
-        this.play(data.value, data.lang);
+        this.#turnGate.final(data);
+      else if (data?.type === TextEventType.interim)
+        this.#turnGate.interim(data);
     }));
 
     // Typed text arrives on text.textfield. When the source already covers it ("text" or
     // "text.textfield"), a second subscription would speak every typed line twice.
     this.eventDisposers.push(serviceSubscibeToInput(this.data, "inputField", data => {
       if (data?.type === TextEventType.final)
-        this.play(data.value, data.lang);
+        this.#turnGate.passThrough(data);
     }, "source"));
+    this.eventDisposers.push(() => this.#turnGate.reset());
 
     this.#applyDesktopDefault();
+    this.#syncMicPolicy();
 
     if (this.data.autoStart)
       this.start();
@@ -169,6 +266,21 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
       s.data.desktopDefaultMigrated = true;
     });
     this.#pendingLocalOffer = plan.action === "offer";
+  }
+
+  /**
+   * Keep the sink's microphone policy equal to the voice changer's `auxMicGate` (desktop only): sent now, and again
+   * whenever the voice changer's state changes (it hydrates from Rust after this service starts).
+   */
+  #syncMicPolicy(): void {
+    if (window.Config?.isApp?.() !== true) return;
+    const vcState = window.ApiServer?.voiceChanger?.state;
+    if (!vcState) return;
+    const push = () => void this.micPolicy.update(vcState.voiceChanger?.auxMicGate);
+    push();
+    // Only a valtio proxy can be followed (a stand-in state without one keeps the value sent above).
+    if (getVersion(vcState) === undefined) return;
+    this.eventDisposers.push(subscribe(vcState, push));
   }
 
   /** Shows the one-time Kokoro offer when this launch planned it (called once after startup, after the STT offer). */
@@ -222,6 +334,7 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
    */
   stop(): void {
     const instance = this.#serviceInstance;
+    this.#turnGate.reset();
     this.#disposePipeline();
     this.#detach();
     if (instance) {
@@ -367,6 +480,7 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
     if (ttsOutputMode(instance) !== "selfPlaying") {
       try {
         this.#pipeline = new TtsPipeline(instance, {
+          sentences: BACKEND_SENTENCE_OPTIONS[backend],
           sink: window.ApiServer.sound.sink,
           target: () => ttsSinkTarget(this.data, window.ApiServer.state.audioOutputDevice ?? ""),
           onError: (error) => receiver.onError(error),
@@ -389,6 +503,13 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
     } catch (e) {
       receiver.onStop(errorMessage(e));
     }
+  }
+
+  /** The turn gate applies unless the source is a translation that already commits on turn end (like the chatbox). */
+  #turnGateApplies(): boolean {
+    if (this.data.source !== TextEventSource.translation) return true;
+    const translation = window.ApiServer.state.services.translation?.data;
+    return !(translation?.partials?.turnEndCommit ?? true);
   }
 
   /** Run `fn` against the service's receiver only while `instance` is still the active backend. */

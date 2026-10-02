@@ -15,6 +15,16 @@ import { TTS_Route_Schema, migrateTtsRoute } from "./route";
 import { TTS_Uberduck_Schema } from "./uberduck";
 import { TTS_Voicevox_Schema } from "./voicevox";
 import { TTS_Windows_Schema } from "./windows";
+// P6 backends (P6-S0): qwen3 (P6-E), edge + gemini (P6-H), sbv2 + gptSovits (P6-G), pocket + chatterboxLocal (P6-I),
+// ggmlTts (P6-F).
+import { TTS_ChatterboxLocal_Schema } from "./chatterboxLocal";
+import { TTS_Edge_Schema } from "./edge";
+import { TTS_Gemini_Schema } from "./gemini";
+import { TTS_GgmlTts_Schema } from "./ggmlTts";
+import { TTS_GptSovits_Schema } from "./gptSovits";
+import { TTS_Pocket_Schema } from "./pocket";
+import { TTS_Qwen3_Schema } from "./qwen3";
+import { TTS_Sbv2_Schema } from "./sbv2";
 
 export { TTS_Routes } from "./route";
 
@@ -41,6 +51,22 @@ export enum TTS_Backends {
   localNeural = "localNeural",
   /** Any OpenAI-compatible `/v1/audio/speech` server, streaming (Rust `openai-speech` plugin, P2). */
   openaiSpeech = "openaiSpeech",
+  /** Qwen3-TTS through the qwentts.cpp helper (P6-E). */
+  qwen3 = "qwen3",
+  /** Microsoft Edge Read-aloud voices, keyless (P6-H). */
+  edge = "edge",
+  /** Google Gemini TTS on the user's key (P6-H). */
+  gemini = "gemini",
+  /** Style-Bert-VITS2 / AIVMX voices through the sbv2 helper (P6-G). */
+  sbv2 = "sbv2",
+  /** A user-run GPT-SoVITS `api_v2` server (P6-G). */
+  gptSovits = "gptSovits",
+  /** Kyutai Pocket TTS, CPU voice cloning in process (P6-I). */
+  pocket = "pocket",
+  /** Chatterbox Multilingual V3 on Sigil's ONNX Runtime, in process (P6-I). */
+  chatterboxLocal = "chatterboxLocal",
+  /** Experimental ggml TTS helpers: Magpie, Breeze, OmniVoice, Fish S2 Pro (P6-F). */
+  ggmlTts = "ggmlTts",
 }
 
 const zodTTS_Backends = z.nativeEnum(TTS_Backends);
@@ -74,6 +100,14 @@ export const Service_TTS_Schema = z.preprocess(migrateTtsRoute, z.object({
   neuralSidecar: TTS_NeuralSidecar_Schema,
   localNeural: TTS_LocalNeural_Schema,
   openaiSpeech: TTS_OpenAiSpeech_Schema,
+  qwen3: TTS_Qwen3_Schema,
+  edge: TTS_Edge_Schema,
+  gemini: TTS_Gemini_Schema,
+  sbv2: TTS_Sbv2_Schema,
+  gptSovits: TTS_GptSovits_Schema,
+  pocket: TTS_Pocket_Schema,
+  chatterboxLocal: TTS_ChatterboxLocal_Schema,
+  ggmlTts: TTS_GgmlTts_Schema,
 })).default({});
 
 export type TTS_State = z.infer<typeof Service_TTS_Schema>

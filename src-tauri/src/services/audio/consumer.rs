@@ -158,8 +158,10 @@ impl CaptureConsumer {
         self.epoch
     }
 
+    /// Output loopback, including per-process capture (`process:<exe>`, P6-A): such sources get the
+    /// speech front end's loopback idle fill.
     pub fn is_loopback(&self) -> bool {
-        self.source.starts_with(super::loopback::LOOPBACK_PREFIX)
+        super::loopback::SourceSpec::parse(Some(&self.source)).is_loopback()
     }
 
     /// The stream failed and the hub is reconnecting it (nothing arrives meanwhile).

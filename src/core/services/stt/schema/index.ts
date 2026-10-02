@@ -2,6 +2,7 @@ import { zSafe } from "@/utils";
 import { z } from "zod";
 import { STT_Azure_Schema } from "./azure";
 import { STT_Deepgram_Schema } from "./deepgram";
+import { STT_GeminiLive_Schema } from "./geminiLive";
 import { STT_Local_Schema } from "./local";
 import { STT_Moonshine_Schema } from "./moonshine";
 import { STT_Native_Schema } from "./native";
@@ -29,6 +30,8 @@ export enum STT_Backends {
   openai_audio = "openai_audio",
   /** Sigil's in-process speech pipeline (Rust `speech` plugin) with automatic model routing (P2). */
   local = "local",
+  /** Gemini 3.5 Transcribe Live on the user's key, with an optional Live Translate mode (P6-K). */
+  geminiLive = "geminiLive",
 }
 
 export const zodSTT_Backends = z.nativeEnum(STT_Backends);
@@ -57,6 +60,7 @@ export const Service_STT_Schema = z.object({
   moonshine: STT_Moonshine_Schema,
   openai_audio: STT_OpenAiAudio_Schema,
   local: STT_Local_Schema,
+  geminiLive: STT_GeminiLive_Schema,
 }).default({});
 
 export type STT_State = z.infer<typeof Service_STT_Schema>;

@@ -24,12 +24,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::catalog::{self, CatalogModel, VoiceSet};
 use super::commands::{LocalTtsModelInfo, LocalTtsVoice};
-use super::engine::{LoadKey, Loader, OpenPlan, Resolved, Synth, VoiceChoice};
+use super::engine::{LoadKey, Loader, OpenPlan, Resolved, Synth, TextReader, VoiceChoice};
 use super::kitten::{self, hub};
 use super::{kokoro, kokoro_ort, piper, voices};
 use crate::services::model_store;
@@ -654,6 +654,36 @@ impl Loader for StoreLoader {
             #[cfg(test)]
             OpenPlan::Test(_) => Err("test plans are opened by the test loader".into()),
         }
+    }
+
+    /// Kokoro's Japanese voices: espeak-ng reads kanji with Mandarin readings, so words holding
+    /// kanji or digits are replaced by their OpenJTalk katakana reading first (P6-G's shared
+    /// Japanese reader). `None`, and the text spoken as written, while the
+    /// `text/jpreprocess-naist-jdic` dictionary is not installed.
+    fn text_reader(&self, resolved: &Resolved) -> Option<Arc<dyn TextReader>> {
+        let japanese = resolved.language.as_deref().map(voices::base).as_deref() == Some("ja");
+        if resolved.info.family != "kokoro" || !japanese {
+            return None;
+        }
+        let frontend = crate::services::tts_helpers::sbv2::japanese_reader()?;
+        Some(Arc::new(JapaneseReader(frontend)))
+    }
+}
+
+/// Kanji and digits to kana for Kokoro's Japanese voices (see [`StoreLoader::text_reader`]).
+struct JapaneseReader(Arc<crate::services::tts_helpers::sbv2::g2p::Frontend>);
+
+impl TextReader for JapaneseReader {
+    fn read(&self, text: &str) -> Result<String, String> {
+        let needs_reading = |c: char| {
+            matches!(c as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FFFF)
+                || matches!(c, '々' | '０'..='９')
+                || c.is_ascii_digit()
+        };
+        if !text.chars().any(needs_reading) {
+            return Ok(text.to_string());
+        }
+        self.0.kana_reading(text)
     }
 }
 

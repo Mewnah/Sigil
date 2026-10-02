@@ -1,0 +1,13 @@
+{
+  "identifier": "captions",
+  "description": "The caption window (label 'captions', P6-B): it only listens to events (captions from the main window) and can be dragged when click-through is off. No plugin commands, no file system, no window creation.",
+  "local": true,
+  "windows": [
+    "captions"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging"
+  ]
+}

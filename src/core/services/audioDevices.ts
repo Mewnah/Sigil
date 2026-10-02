@@ -199,6 +199,12 @@ function viewOf(ev: Pick<RustAudioDevicesChanged, "inputs" | "outputs" | "defaul
 /** Display name of a capture source key from `RustAudioStreamEvent.source`. */
 export function captureSourceLabel(source: string): string {
   if (source === "" || source === "default") return i18n.t("audio_devices.source_default_input");
+  // Per-process capture (P6-A): `process:<exe>`, or its hub stream key `loopback:process:<exe>`.
+  const program = /^(?:loopback:)?process:(.*)$/i.exec(source.trim());
+  if (program) {
+    const exe = program[1].trim();
+    return exe === "" ? i18n.t("audio_devices.loopback_default") : i18n.t("audio_devices.process_label", { exe });
+  }
   if (isLoopbackSourceId(source)) {
     const output = loopbackOutputName(source) ?? "";
     return output === ""

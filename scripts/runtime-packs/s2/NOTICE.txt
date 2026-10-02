@@ -1,0 +1,15 @@
+Sigil's build of the s2.cpp server (runtime/s2-server-*).
+
+s2.cpp - C++/ggml inference for Fish Audio S2 Pro
+https://github.com/rodrigomatta/s2.cpp
+Licensed under the Fish Audio Research License (see LICENSE in this pack). Research and
+non-commercial use are free under that agreement; commercial use needs a license from Fish Audio.
+
+ggml - https://github.com/ggml-org/ggml (MIT License, Copyright (c) 2023-2026 The ggml authors)
+
+Fish Audio S2 Pro model weights: Fish Audio Research License (downloaded separately by Sigil's model
+store from rodrigomt/s2-pro-gguf).
+
+Built from the unmodified upstream source pinned in scripts/runtime-packs/s2/UPSTREAM.json of
+Sigil (https://github.com/Mewnah/Sigil). Sigil starts it as a helper process bound to 127.0.0.1
+and speaks to it through its in-process adapter.

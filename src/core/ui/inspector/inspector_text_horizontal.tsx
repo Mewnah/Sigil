@@ -253,6 +253,7 @@ const Inspector_TextHorizontal: FC<{ id: string }> = memo(({ id }) => {
                                     label=""
                                     value={isSyncedWithAI ? TextEventSource.stt : data.sourceMain}
                                     onChange={(e) => up("sourceMain", e)}
+                                    includeOthers
                                 />
                                 <div className="flex flex-col gap-2 justify-center">
                                     {showSyncOption && (

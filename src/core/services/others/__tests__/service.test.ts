@@ -1,0 +1,62 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined), isTauri: () => false }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => false), confirm: vi.fn(async () => false), message: vi.fn(async () => "Cancel") }));
+vi.mock("react-toastify", () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn(), info: vi.fn(), warn: vi.fn(), warning: vi.fn(), success: vi.fn(), dismiss: vi.fn() }),
+}));
+vi.mock("@/core/services/systemLog", () => ({ pushSystemLog: vi.fn() }));
+vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
+
+import { toast } from "react-toastify";
+import { pushSystemLog } from "@/core/services/systemLog";
+import { initSttTestI18n } from "@/core/services/stt/__tests__/sttTestI18n";
+import { Service_Translation_Schema } from "@/core/services/translation/schema";
+import Service_Others from "../index";
+import { Service_Others_Schema } from "../schema";
+
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise<void>((r) => setTimeout(r, 0));
+};
+
+beforeAll(async () => {
+  await initSttTestI18n();
+});
+
+beforeEach(() => {
+  vi.mocked(pushSystemLog).mockClear();
+  vi.mocked(toast.error).mockClear();
+  vi.stubGlobal("window", {
+    Config: { isServer: () => true, isApp: () => false, isClient: () => false, serverNetwork: {} },
+    ApiShared: { pubsub: { publishText: vi.fn() }, peer: { broadcastPubSubParts: vi.fn() } },
+    ApiServer: {
+      state: {
+        services: {
+          others: { data: Service_Others_Schema.parse({}) },
+          translation: { data: Service_Translation_Schema.parse({}) },
+          stt: { data: { local: { language: "auto" } } },
+        },
+      },
+    },
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("Service_Others", () => {
+  it("reports a driver failure once in the system log, plus a toast", async () => {
+    // Off the desktop app the driver fails at once.
+    const service = new Service_Others(undefined, { available: () => false });
+    service.start();
+    await settle();
+    expect(service.serviceState.phase).toBe("idle");
+    const error = service.serviceState.error;
+    expect(error).not.toBe("");
+    expect(vi.mocked(pushSystemLog).mock.calls).toEqual([["Other players", error, "warning"]]);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+});

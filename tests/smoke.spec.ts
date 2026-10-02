@@ -105,3 +105,29 @@ test.describe("client host pinning", () => {
     for (const u of urls) expect(u).not.toContain("evil.example");
   });
 });
+
+/**
+ * P6-B early route: outside Tauri `/captions` renders nothing and never boots the host (no settings, no PeerJS), so the
+ * caption window's URL served over the LAN is inert.
+ */
+test("captions route renders nothing and boots no host", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto("/captions", { waitUntil: "load" });
+  await expect(page.locator("html")).toHaveAttribute("data-sigil-captions", "1");
+  await page.waitForTimeout(1500);
+  expect(await page.title()).toBe("Sigil captions");
+  expect(await page.locator("#root").innerHTML()).toBe("");
+  const booted = await page.evaluate(() => {
+    const w = window as unknown as Record<string, unknown>;
+    return {
+      server: typeof w.ApiServer,
+      shared: typeof w.ApiShared,
+      config: typeof w.Config,
+      theme: document.documentElement.getAttribute("data-theme"),
+      bg: getComputedStyle(document.body).backgroundColor,
+    };
+  });
+  expect(booted).toEqual({ server: "undefined", shared: "undefined", config: "undefined", theme: null, bg: "rgba(0, 0, 0, 0)" });
+  expect(errors).toEqual([]);
+});

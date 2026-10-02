@@ -1,0 +1,16 @@
+# Tauri IPC commands of the `tts-helpers` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Scaffold-owned dispatch (P6-S0); engine commands: qwen_* P6-E, sbv2_* P6-G.
+tts_helper_start
+tts_helper_stop
+tts_helper_status
+tts_helper_list
+# P6-E: Qwen3-TTS clone registry.
+qwen_tts_prepare_clone
+# P6-G: imported Style-Bert-VITS2 / AIVMX voices.
+sbv2_import_model
+sbv2_list_models
+sbv2_remove_model
+sbv2_speak
+sbv2_cancel

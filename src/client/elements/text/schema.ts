@@ -1,6 +1,6 @@
 import { zSafe, zStringNumber } from "@/utils";
 import z from "zod";
-import { TextEventSource, TextEventSourceSchema } from "../../../types";
+import { CaptionEventSourceSchema, TextEventSource } from "../../../types";
 
 export enum FontCase {
   lowercase = "lowercase",
@@ -82,7 +82,9 @@ export const Element_TextStateSchemaN = z.object({
   animateEvent: zSafe(z.boolean(), false),
 
   //sources
-  sourceMain: zSafe(TextEventSourceSchema, TextEventSource.stt),
+  // Own text (`text.*`) or, since P6-S0, other players' captions (`others.stt` / `others.translation`). Remote-safe:
+  // /client validates `others.*` frames like `text.*` (`sanitizeClientPubSubFrame`); older hosts never send them.
+  sourceMain: zSafe(CaptionEventSourceSchema, TextEventSource.stt),
   sourceInterim: zSafe(z.boolean(), true),
   sourceInputField: zSafe(z.boolean(), true),
 

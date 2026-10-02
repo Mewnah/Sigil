@@ -65,6 +65,12 @@ const Inspector_OBS: FC = () => {
     navigator.clipboard.writeText(window.ApiServer.obs.getObsBrowserSourceLink());
     toast.success(t("obs.toast_copied_obs_link"));
   };
+  // OBS on another PC needs the LAN link with the token (P6-D); same-PC links never carry it.
+  const lanAccess = useSnapshot(window.ApiServer.state.lanAccess);
+  const copyObsLanLink = () => {
+    navigator.clipboard.writeText(window.ApiServer.obs.getObsBrowserSourceLink({ lan: true }));
+    toast.success(t("obs.toast_copied_obs_link"));
+  };
 
   const handleStopWs = () => window.ApiServer.obs.wsDisconnect();
   const handleCancelWs = () => window.ApiServer.obs.wsCancel();
@@ -78,6 +84,11 @@ const Inspector_OBS: FC = () => {
       <button type="button" onClick={copyObsBrowserSourceLink} className="btn btn-sm btn-primary gap-2 w-full sm:w-auto">
         <RiFileCopyLine /> {t("obs.btn_copy_browser_source_link")}
       </button>
+      {lanAccess.mode === "lan" && (
+        <button type="button" onClick={copyObsLanLink} className="btn btn-sm btn-ghost gap-2 w-full sm:w-auto sm:ms-2">
+          <RiFileCopyLine /> {t("obs.btn_copy_lan_browser_source_link")}
+        </button>
+      )}
 
       <div className="mt-3 space-y-2">
         <InputCheckbox value={data.browserCaptionsEnable} onChange={e => up("browserCaptionsEnable", e)} label="obs.field_enable_browser_captions_feed" />

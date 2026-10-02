@@ -1,0 +1,757 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Experimental ggml TTS helpers (tts_helpers::{magpie,breeze,omnivoice,s2}, owned by P6-F): their runtime packs and models. The helpers run under process_host (127.0.0.1, random port, kill-on-close Job Object); see src-tauri/src/services/tts_helpers/ggml/mod.rs.",
+    "Third-party packs are the upstream projects' own Windows release zips, pinned by their GitHub release digests: NVIDIA NeMo-Speech.cpp v0.1.0 (nemo-speech.exe; Magpie), HoppouAI Breeze-TTS-2.cpp v0.1.0 (breeze-server.exe), CrispASR v0.8.40 (crispasr.exe; OmniVoice; the cuda13 zip without NVIDIA's DLLs uses runtime/nvidia-cuda13). Each zip is extracted whole: the helper finds its program in the pack folder or a folder below it (bin/ first).",
+    "runtime/s2-server-* are Sigil builds of s2.cpp (scripts/runtime-packs/s2/build.ps1, commit 2c33261 pinned in UPSTREAM.json): unpublished and unpinned, installed by Import or SIGIL_LOCAL_ASSETS (found by file name). Bump the version and zip names together with UPSTREAM.json.",
+    "Models are pinned to repo commits with the LFS sha256 (Magpie and NanoCodec as in NVIDIA's own NeMo-Speech.cpp model index). The Magpie v2602 tokenizer is the member set of NVIDIA's .nemo archive (unpublished: scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 downloads the 32 MiB archive prefix once and checks every member against these hashes). Magpie v2607 exists only as a .nemo and is converted locally (convert-magpie-v2607.ps1), so it stays unpublished and unpinned.",
+    "min_vram_mb values are provisional estimates (weights plus KV cache and compute buffers; s2.cpp's own q4_k_m breakdown is 7.2 GB): P7 replaces them with measurements."
+  ],
+  "entries": [
+    {
+      "id": "runtime/nemo-speech-cuda",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "NeMo-Speech.cpp server (NVIDIA CUDA)",
+      "description": "Runs Magpie voices on NVIDIA graphics cards through CUDA (the CUDA libraries are inside). Started by Sigil as a helper process that only listens on this PC.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "variant": "cuda",
+      "files": [
+        {
+          "path": "nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+          "size": 106044768,
+          "sha256": "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+              "revision": "v0.1.0"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/nemo-speech-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "NeMo-Speech.cpp server (Vulkan)",
+      "description": "Runs Magpie voices on the graphics card through Vulkan: NVIDIA, AMD and Intel. Started by Sigil as a helper process that only listens on this PC.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
+          "size": 21967184,
+          "sha256": "b5e7b04a637da4eb25a60253e2db65774998e8dfb48c08b4db763009b82ac7ac",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
+              "revision": "v0.1.0"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/nemo-speech-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "NeMo-Speech.cpp server (processor)",
+      "description": "Runs Magpie voices on the processor, for PCs without a suitable graphics card. Slower than real time on most processors.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "nemo-speech-0.1.0-windows-x86_64-cpu.zip",
+          "size": 4730421,
+          "sha256": "5e4ea81046012edcd77fd8848de8eefb5a4ba38cc26f52eb544ab184695a75d6",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cpu.zip",
+              "revision": "v0.1.0"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/breeze-server-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.1.0",
+      "title": "Breeze-TTS-2.cpp server (Vulkan)",
+      "description": "Runs Breeze TTS 2 voices on the graphics card through Vulkan (NVIDIA, AMD and Intel), or on the processor. Started by Sigil as a helper process that only listens on this PC.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "breeze-tts-2-v0.1.0-windows-x64-vulkan.zip",
+          "size": 73809893,
+          "sha256": "1c5178577a9fb90e84b43269880d17acafd466030abf615c6df4ccc163eac0d8",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/HoppouAI/Breeze-TTS-2.cpp/releases/download/v0.1.0/breeze-tts-2-v0.1.0-windows-x64-vulkan.zip",
+              "revision": "v0.1.0"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/crispasr-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.8.40",
+      "title": "CrispASR server (NVIDIA CUDA 13)",
+      "description": "Runs OmniVoice on NVIDIA graphics cards through CUDA 13. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU; installs the NVIDIA GPU runtime with it.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "cuda13",
+      "files": [
+        {
+          "path": "crispasr-windows-x86_64-cuda13-non-cuda.zip",
+          "size": 109698784,
+          "sha256": "81b11b29613c4f3a44f0f2121c152540296e4a3b798f183f903450fd4ef4ca61",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.40/crispasr-windows-x86_64-cuda13-non-cuda.zip",
+              "revision": "v0.8.40"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ],
+      "requires": [
+        "runtime/nvidia-cuda13"
+      ]
+    },
+    {
+      "id": "runtime/crispasr-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.8.40",
+      "title": "CrispASR server (Vulkan)",
+      "description": "Runs OmniVoice on the graphics card through Vulkan: NVIDIA, AMD and Intel. Started by Sigil as a helper process that only listens on this PC.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "crispasr-windows-x86_64-vulkan.zip",
+          "size": 37857390,
+          "sha256": "d78135b46d7881aec909aa398def315427ad784a268979accd18fa569a3b5ce9",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.40/crispasr-windows-x86_64-vulkan.zip",
+              "revision": "v0.8.40"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/crispasr-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "0.8.40",
+      "title": "CrispASR server (processor)",
+      "description": "Runs OmniVoice on the processor (AVX2), for PCs without a suitable graphics card. Slower than real time on most processors.",
+      "license": "MIT",
+      "status": "published",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "crispasr-windows-x86_64-cpu.zip",
+          "size": 8864328,
+          "sha256": "86b67ec6483aebf73cc79f4d3ee6dcf19ff1a3ce5d3097a1bce95b78fc24f8c2",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.40/crispasr-windows-x86_64-cpu.zip",
+              "revision": "v0.8.40"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/s2-server-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "2c33261-s1",
+      "title": "Fish S2 Pro server (NVIDIA CUDA 13)",
+      "description": "Runs Fish S2 Pro on NVIDIA graphics cards through CUDA 13 (driver R580 or newer, Turing or newer). Built by Sigil from s2.cpp; installs the NVIDIA GPU runtime with it.",
+      "license": "Fish Audio Research License",
+      "status": "unpublished",
+      "variant": "cuda13",
+      "files": [
+        {
+          "path": "sigil-s2-server-2c33261-s1-cuda13.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cuda13.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "s2.exe",
+              "*.dll",
+              "sigil-pack.json",
+              "NOTICE.txt",
+              "LICENSE*"
+            ]
+          }
+        }
+      ],
+      "requires": [
+        "runtime/nvidia-cuda13"
+      ]
+    },
+    {
+      "id": "runtime/s2-server-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "2c33261-s1",
+      "title": "Fish S2 Pro server (Vulkan)",
+      "description": "Runs Fish S2 Pro on the graphics card through Vulkan: NVIDIA, AMD and Intel. Built by Sigil from s2.cpp.",
+      "license": "Fish Audio Research License",
+      "status": "unpublished",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "sigil-s2-server-2c33261-s1-vulkan.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-vulkan.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "s2.exe",
+              "*.dll",
+              "sigil-pack.json",
+              "NOTICE.txt",
+              "LICENSE*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/s2-server-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "2c33261-s1",
+      "title": "Fish S2 Pro server (processor)",
+      "description": "Runs Fish S2 Pro on the processor. Far slower than real time: for testing only.",
+      "license": "Fish Audio Research License",
+      "status": "unpublished",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sigil-s2-server-2c33261-s1-cpu.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cpu.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": [
+              "s2.exe",
+              "*.dll",
+              "sigil-pack.json",
+              "NOTICE.txt",
+              "LICENSE*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/nemo-nano-codec-22khz",
+      "family": "tts",
+      "kind": "model",
+      "version": "fc00890",
+      "title": "NVIDIA NanoCodec 22 kHz decoder",
+      "description": "The audio decoder Magpie voices use: turns the model's output into 22 kHz speech. About 80 MB.",
+      "license": "NVIDIA Open Model License",
+      "status": "published",
+      "files": [
+        {
+          "path": "nemo_nano_codec_22khz_1.89kbps_21.5fps.decoder.f16.gguf",
+          "size": 78823104,
+          "sha256": "cc86d36d821a27cdc1d4ef600a3e2b0dabe76e88fcc2a8652d9543134c07ef2d",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps/resolve/fc00890b604aa2de298d2641ffc6c5f6caf8c4d7/nemo_nano_codec_22khz_1.89kbps_21.5fps.decoder.f16.gguf",
+              "revision": "fc00890b604aa2de298d2641ffc6c5f6caf8c4d7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/magpie-tts-357m-v2602-tokenizer",
+      "family": "tts",
+      "kind": "model",
+      "version": "34d7e40",
+      "title": "Magpie TTS v2602 text tokenizer",
+      "description": "Pronunciation dictionaries and settings of the Magpie v2602 voices, the members of NVIDIA's .nemo archive (fetch them with scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1, then Import the folder). About 10 MB.",
+      "license": "NVIDIA Open Model License",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "1d848e67f9454a73af772cc26f21d0db_heteronyms-052722",
+          "size": 1606,
+          "sha256": "b701909aedf753172eff223950f8859cd4b9b4c80199cf0a6e9ac4a307c8f8ec",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/1d848e67f9454a73af772cc26f21d0db_heteronyms-052722",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "938dc98b70524b23b19f72a19276ca22_de_nv230119.heteronym",
+          "size": 44566,
+          "sha256": "771cc585a574fd35bd14f4ce6108edf1e0e512a8dbc810db7de4c1165ba9d0ef",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/938dc98b70524b23b19f72a19276ca22_de_nv230119.heteronym",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "9a6b090bd4a14621b340b39ba65e23b0_es_ES_nv230301.dict",
+          "size": 2230910,
+          "sha256": "94c9a25bb359f733cd863c887d0112e7ae19a744b0333ef64b6a88e576428669",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/9a6b090bd4a14621b340b39ba65e23b0_es_ES_nv230301.dict",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "bafa5b4ca36942ad883c5c228474ca7e_de_nv230119.dict",
+          "size": 4313907,
+          "sha256": "5c7bbf3346ebd6dc57769b5cc805124215cb1bcc3b8174c4254e9e928c5d6094",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/bafa5b4ca36942ad883c5c228474ca7e_de_nv230119.dict",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "c799361ecf2540709dbb931cf0e08ece_ipa_dict_nv23.05.txt",
+          "size": 5419,
+          "sha256": "252e8eaf60dfd891520759913dc8534393eebfa8d57192365f76f9229f294e9e",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/c799361ecf2540709dbb931cf0e08ece_ipa_dict_nv23.05.txt",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "cdd41953cfe7479cbb74ba0f9fd42d2b_ipa_cmudict-0.7b_nv23.01.txt",
+          "size": 3093097,
+          "sha256": "dd0927fffc89e8539ea0a26ccbc164a908f4b3de9613d924c90afa5300e00f72",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/cdd41953cfe7479cbb74ba0f9fd42d2b_ipa_cmudict-0.7b_nv23.01.txt",
+              "revision": "assets-v1"
+            }
+          ]
+        },
+        {
+          "path": "model_config.yaml",
+          "size": 5372,
+          "sha256": "ccf353af2b3433282a6cf38b96f25f54a022266f99cbfc046f9122d509e12ea0",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/model_config.yaml",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/magpie-tts-357m-v2602",
+      "family": "tts",
+      "kind": "model",
+      "version": "452ef56",
+      "title": "NVIDIA Magpie TTS Multilingual 357M (v2602)",
+      "description": "Five clear voices (John, Sofia, Aria, Jason, Leo) that keep their identity across English, Spanish, German, French, Italian, Vietnamese and Hindi. Runs on the graphics card. About 450 MB download; uses about 1.5 GB of video memory.",
+      "license": "NVIDIA Open Model License",
+      "status": "published",
+      "min_vram_mb": 1500,
+      "requires": [
+        "tts/magpie-tts-357m-v2602-tokenizer",
+        "tts/nemo-nano-codec-22khz"
+      ],
+      "files": [
+        {
+          "path": "magpie_tts_multilingual_357m.v2602.f16.gguf",
+          "size": 448604832,
+          "sha256": "901d299a8b1df016cf81cae0089a7a7c15627b9633d033357e15a47d9a219a75",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m/resolve/452ef560f972c38d5fc16476259aac9456453547/magpie_tts_multilingual_357m.v2602.f16.gguf",
+              "revision": "452ef560f972c38d5fc16476259aac9456453547"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/magpie-tts-357m-v2607-tokenizer",
+      "family": "tts",
+      "kind": "model",
+      "version": "v2607-s1",
+      "title": "Magpie TTS v2607 text tokenizer",
+      "description": "Pronunciation data of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese), extracted from NVIDIA's .nemo archive by scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1. Import the zip it writes.",
+      "license": "NVIDIA Open Model License",
+      "status": "unpublished",
+      "files": [
+        {
+          "path": "magpie-tts-357m-v2607-tokenizer.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2607-tokenizer.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tts/magpie-tts-357m-v2607",
+      "family": "tts",
+      "kind": "model",
+      "version": "v2607-s1",
+      "title": "NVIDIA Magpie TTS Multilingual 357M (v2607)",
+      "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA publishes it only as a .nemo file: convert it with scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 and import the result.",
+      "license": "NVIDIA Open Model License",
+      "status": "unpublished",
+      "min_vram_mb": 1500,
+      "requires": [
+        "tts/magpie-tts-357m-v2607-tokenizer",
+        "tts/nemo-nano-codec-22khz"
+      ],
+      "files": [
+        {
+          "path": "magpie_tts_multilingual_357m.v2607.f16.gguf",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie_tts_multilingual_357m.v2607.f16.gguf",
+              "revision": "assets-v1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/breeze-tts-2-q8_0",
+      "family": "tts",
+      "kind": "model",
+      "version": "81b22ba",
+      "title": "Breeze TTS 2 (Q8_0)",
+      "description": "BreezeBlue's English and Mandarin speech model (the GGUF port's recommended Q8_0): voices designed or directed in words, cloning from your voice library, inline sounds such as (laugh). About 3.6 GB download; uses about 4 GB of video memory, so it suits 12 GB cards not also running a GPU voice changer.",
+      "license": "BreezeBlue Research and Non-Commercial License v1.1",
+      "status": "published",
+      "min_vram_mb": 4200,
+      "files": [
+        {
+          "path": "breeze-tts-2-q8_0.gguf",
+          "size": 3568844480,
+          "sha256": "a02bcc4b69b0601032727f8040c4942149b1b73aa0f69022fe5aaa6a8f0ef879",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp/resolve/81b22bad9f05b99970e30c5ee5e4bbc52fedf2f8/breeze-tts-2-q8_0.gguf",
+              "revision": "81b22bad9f05b99970e30c5ee5e4bbc52fedf2f8"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/breeze-tts-2-q4_k",
+      "family": "tts",
+      "kind": "model",
+      "version": "81b22ba",
+      "title": "Breeze TTS 2 (Q4_K)",
+      "description": "The smaller Breeze TTS 2 quantization (Q4_K) for cards short on video memory, at some cost in quality. About 2.5 GB download; uses about 3 GB of video memory.",
+      "license": "BreezeBlue Research and Non-Commercial License v1.1",
+      "status": "published",
+      "min_vram_mb": 3200,
+      "files": [
+        {
+          "path": "breeze-tts-2-q4_k.gguf",
+          "size": 2538909376,
+          "sha256": "483418fbbb438f5f1c08dbe2b017e42db0f1d126765cd3f772d8622a30a4915c",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp/resolve/81b22bad9f05b99970e30c5ee5e4bbc52fedf2f8/breeze-tts-2-q4_k.gguf",
+              "revision": "81b22bad9f05b99970e30c5ee5e4bbc52fedf2f8"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/omnivoice-tokenizer-f16",
+      "family": "tts",
+      "kind": "model",
+      "version": "9226673",
+      "title": "OmniVoice audio codec (HiggsAudio v2)",
+      "description": "The audio codec OmniVoice uses: turns the model's output into 24 kHz speech and reads reference clips for cloning. About 400 MB.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "omnivoice-tokenizer-f16.gguf",
+          "size": 403183616,
+          "sha256": "710ef610e1f2845c6b7333d5432376b24f2d20d2c54a8cec9bc118d183ecea63",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/cstr/omnivoice-GGUF/resolve/92266739c4496b04a497e164cf8c2801a792551e/omnivoice-tokenizer-f16.gguf",
+              "revision": "92266739c4496b04a497e164cf8c2801a792551e"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/omnivoice-q8_0",
+      "family": "tts",
+      "kind": "model",
+      "version": "9226673",
+      "title": "OmniVoice (Q8_0)",
+      "description": "k2-fsa OmniVoice: speech in more than 600 languages, cloned from your voice library or in an automatic voice. About 820 MB download; uses about 2.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 2200,
+      "requires": [
+        "tts/omnivoice-tokenizer-f16"
+      ],
+      "files": [
+        {
+          "path": "omnivoice-q8_0.gguf",
+          "size": 817748544,
+          "sha256": "9d8835c80d50cce6ba66bed60c31e94836a7f990c40d2e22496c0b6710c98bb5",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/cstr/omnivoice-GGUF/resolve/92266739c4496b04a497e164cf8c2801a792551e/omnivoice-q8_0.gguf",
+              "revision": "92266739c4496b04a497e164cf8c2801a792551e"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/omnivoice-f16",
+      "family": "tts",
+      "kind": "model",
+      "version": "9226673",
+      "title": "OmniVoice (F16)",
+      "description": "OmniVoice at full precision (F16), for the last bit of quality. About 1.2 GB download; uses about 2.6 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 2600,
+      "requires": [
+        "tts/omnivoice-tokenizer-f16"
+      ],
+      "files": [
+        {
+          "path": "omnivoice-f16.gguf",
+          "size": 1230625280,
+          "sha256": "670592a520713f036c1f10fdaa2839d3fb473144c06a772d7e715f7fb813d666",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/cstr/omnivoice-GGUF/resolve/92266739c4496b04a497e164cf8c2801a792551e/omnivoice-f16.gguf",
+              "revision": "92266739c4496b04a497e164cf8c2801a792551e"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/s2-pro-tokenizer",
+      "family": "tts",
+      "kind": "model",
+      "version": "a732069",
+      "title": "Fish S2 Pro text tokenizer",
+      "description": "The text tokenizer (Qwen3 BPE) every Fish S2 Pro model needs. About 12 MB.",
+      "license": "Fish Audio Research License",
+      "status": "published",
+      "files": [
+        {
+          "path": "tokenizer.json",
+          "size": 12217872,
+          "sha256": "f24e08099d45a8adf3f52f5f0b03276e433bb9d689bb15fcbcc48ce58744588b",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/a7320690b5585b03b20ed6484b55926f3015f48d/tokenizer.json",
+              "revision": "a7320690b5585b03b20ed6484b55926f3015f48d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/s2-pro-q4_k_m",
+      "family": "tts",
+      "kind": "model",
+      "version": "a732069",
+      "title": "Fish S2 Pro (Q4_K_M)",
+      "description": "Fish Audio S2 Pro (5B), the compact Q4_K_M build: expressive multilingual speech with inline tags such as [laugh], cloning from your voice library. About 3.6 GB download; uses about 7.2 GB of video memory (12 GB cards, or 8 GB with the low video memory switch).",
+      "license": "Fish Audio Research License",
+      "status": "published",
+      "min_vram_mb": 7400,
+      "requires": [
+        "tts/s2-pro-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "s2-pro-q4_k_m.gguf",
+          "size": 3566165088,
+          "sha256": "83963e1b7cec980b41eb2163d617e2b6241bfd1564dd880e5b43fc4834807bd9",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/a7320690b5585b03b20ed6484b55926f3015f48d/s2-pro-q4_k_m.gguf",
+              "revision": "a7320690b5585b03b20ed6484b55926f3015f48d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/s2-pro-q6_k",
+      "family": "tts",
+      "kind": "model",
+      "version": "a732069",
+      "title": "Fish S2 Pro (Q6_K)",
+      "description": "Fish Audio S2 Pro at Q6_K: better quality for cards with 10 GB or more. About 4.5 GB download.",
+      "license": "Fish Audio Research License",
+      "status": "published",
+      "min_vram_mb": 8400,
+      "requires": [
+        "tts/s2-pro-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "s2-pro-q6_k.gguf",
+          "size": 4525266528,
+          "sha256": "84ac904172a2cadb84e8f7f14ea3f1acef0584987635e85f7207fd254eafa235",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/a7320690b5585b03b20ed6484b55926f3015f48d/s2-pro-q6_k.gguf",
+              "revision": "a7320690b5585b03b20ed6484b55926f3015f48d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/s2-pro-q8_0",
+      "family": "tts",
+      "kind": "model",
+      "version": "a732069",
+      "title": "Fish S2 Pro (Q8_0)",
+      "description": "Fish Audio S2 Pro at Q8_0, near-lossless, for 16 GB cards or more. About 5.6 GB download.",
+      "license": "Fish Audio Research License",
+      "status": "published",
+      "min_vram_mb": 10200,
+      "requires": [
+        "tts/s2-pro-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "s2-pro-q8_0.gguf",
+          "size": 5630037088,
+          "sha256": "e2043182234786e7b975547d3bbcb23ff02e4ff684b82f7fa851287e4cb4f267",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/a7320690b5585b03b20ed6484b55926f3015f48d/s2-pro-q8_0.gguf",
+              "revision": "a7320690b5585b03b20ed6484b55926f3015f48d"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

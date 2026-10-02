@@ -1,0 +1,11 @@
+{
+  "identifier": "vr-overlay",
+  "description": "IPC for the vr-overlay plugin (SteamVR caption overlay through a lazily loaded openvr_api.dll, P6-B) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "vr-overlay:default"
+  ]
+}

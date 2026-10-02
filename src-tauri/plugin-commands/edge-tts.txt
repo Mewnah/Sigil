@@ -1,0 +1,7 @@
+# Tauri IPC commands of the `edge-tts` plugin, one per line (build.rs reads this file).
+# Every #[command] in the plugin's generate_handler! must be listed here, or IPC fails at runtime
+# with a 'not allowed' ACL error. Order is irrelevant; '#' starts a comment.
+# Owned by P6-H (Edge Read-aloud voices); scaffolded by P6-S0.
+edge_tts_speak
+edge_tts_cancel
+edge_tts_list_voices

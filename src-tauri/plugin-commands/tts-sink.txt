@@ -8,3 +8,5 @@ end_utterance
 cancel_utterance
 flush_sink
 get_sink_status
+# P6-J: the microphone while TTS plays into the voice changer (capture hub gate policy).
+set_mic_policy

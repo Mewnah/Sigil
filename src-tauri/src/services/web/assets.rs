@@ -5,6 +5,10 @@
 //! overlay tools can embed them; they only show what the host sends. Pages with controls that act
 //! on the host (`mic.html` starts speech input, `inputfield.html` sends text) may only be framed by
 //! their own origin, so another site cannot overlay them and trick clicks (P0-I).
+//!
+//! Assets are public (no LAN token): they hold no data, and the WebSocket routes authenticate.
+//! Page URLs on other machines carry the LAN token (`?token=`, P6-D), so every response sets
+//! `Referrer-Policy: same-origin`: requests to other sites (emote CDNs, fonts) never see the URL.
 
 use std::sync::Arc;
 
@@ -27,6 +31,9 @@ fn asset_path(path: &str) -> &str {
         p => p,
     }
 }
+
+/// `Referrer-Policy` of every served asset (page URLs may contain the LAN token).
+const REFERRER_POLICY_VALUE: &str = "same-origin";
 
 /// `(Content-Security-Policy, X-Frame-Options)` for a served asset path.
 fn frame_headers(asset: &str) -> (&'static str, Option<&'static str>) {
@@ -53,7 +60,8 @@ async fn file_response<R: Runtime>(path: FullPath, resolver: Arc<AssetResolver<R
         .header(ACCEPT_RANGES, HeaderValue::from_static("bytes"))
         .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
         .header(CONTENT_TYPE, asset.mime_type)
-        .header(CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp));
+        .header(CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp))
+        .header(REFERRER_POLICY, HeaderValue::from_static(REFERRER_POLICY_VALUE));
     if let Some(frame_options) = frame_options {
         response = response.header(X_FRAME_OPTIONS, HeaderValue::from_static(frame_options));
     }
@@ -72,6 +80,13 @@ mod tests {
         for page in ["/obs-captions.html", "/index.html", "/assets/index-abc.js"] {
             assert_eq!(frame_headers(page), ("frame-ancestors *", None), "{page}");
         }
+    }
+
+    #[test]
+    fn referrer_policy_never_leaks_page_urls_cross_site() {
+        // `same-origin`: a full Referer only to this server, nothing to other sites.
+        assert_eq!(REFERRER_POLICY_VALUE, "same-origin");
+        assert!(HeaderValue::from_static(REFERRER_POLICY_VALUE).to_str().is_ok());
     }
 
     #[test]

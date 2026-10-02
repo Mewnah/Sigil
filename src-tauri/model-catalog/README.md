@@ -96,6 +96,31 @@ P4 fragments (translation):
   `sigil-bergamot-<commit>-s1-cpu.zip` with `scripts/runtime-packs/bergamot/build.ps1` and import it
   (ADR 0008).
 
+P6 fragments (streamer features; created empty by P6-S0, each owned by one workstream):
+
+- `runtime-openvr.json` (P6-B): `runtime/openvr` (`openvr_api.dll` v2.15.6, pinned by git blob id,
+  loaded lazily by `vr_overlay`; `SIGIL_OPENVR_DIR` is a development override).
+- `tts-qwen3.json` and `runtime-qwentts.json` (P6-E): the Qwen3-TTS talkers
+  (`tts/qwen3-tts-{0.6b,1.7b}` with `-base` / `-voicedesign`) and tokenizer, and the Sigil-built
+  `runtime/qwentts-server-{vulkan,cuda13,cpu}` packs (unpublished; built by
+  `scripts/runtime-packs/qwentts/build.ps1` and imported).
+- `tts-ggml-experimental.json` (P6-F): 24 entries: 7 third-party runtime packs (NeMo-Speech.cpp,
+  Breeze-TTS-2.cpp, CrispASR official zips, pinned), 3 Sigil-built s2 packs (unpublished,
+  `scripts/runtime-packs/s2/build.ps1`) and 14 models (the Magpie v2602 tokenizer and the v2607
+  checkpoint are local-only imports; see `scripts/runtime-packs/nemo-speech/`).
+- `runtime-sbv2.json` (P6-G): not a runtime pack: the Style-Bert-VITS2 Japanese BERT
+  (`tts/sbv2-bert-ja`) and the NAIST-JDIC dictionary `text/jpreprocess-naist-jdic`, which is
+  shared by text readings (P6-L), Style-Bert-VITS2 and Kokoro's Japanese reader. Never add a second
+  entry for that dictionary (catalog ids are unique).
+- `tts-cloning.json` (P6-I): `tts/pocket-tts-en-int8` (default) and `tts/pocket-tts-en` (sherpa
+  release archives, sha256 from the GitHub release digests, require `runtime/sherpa-onnx`);
+  `tts/chatterbox-mtl-v3` (KitsuMate split-speed V3 export at commit 3f44461, 19 files, sha256 from
+  its `manifest.json`) and the optional `tts/chatterbox-mtl-v3-gpu-flow` (the fp16 flow step;
+  requires the main entry).
+- `readings.json` (P6-L): no entries of its own (the dictionary is the shared entry above).
+- `firered.json` (P6-L): `vad/firered-aed`, the FireRedVAD AED ONNX plus `cmvn.ark` as `direct`
+  GitHub raw sources pinned to commit c30ec49e (`speech::music_gate::MODEL_ID`).
+
 ## Fragment format
 
 ```json

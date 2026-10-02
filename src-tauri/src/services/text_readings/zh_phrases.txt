@@ -1,0 +1,585 @@
+# Pinyin of Mandarin words the per-character table reads wrongly (text_readings::chinese, P6-L).
+#
+# One word per line: the word (simplified characters), then one syllable per character with its
+# citation tone as a digit (1-4; 5 = neutral). 'ü' may also be written 'v'; 'r5' is an erhua 儿.
+# A trailing '!' keeps a syllable out of tone sandhi (一 as a number: 一月, 一号).
+# Tone sandhi (不 / 一 / third tone) is applied afterwards, so write citation tones here
+# (一定 is 'yi1 ding4', read yí dìng).
+#
+# Covered: common neutral-tone words (轻声), polyphonic characters in context (多音字), and
+# erhua words. Keep the list sorted by section; the tests reject duplicates, wrong syllable counts
+# and malformed syllables.
+
+# --- Neutral tone (轻声) ---
+东西 dong1 xi5
+朋友 peng2 you5
+时候 shi2 hou5
+知道 zhi1 dao5
+谢谢 xie4 xie5
+衣服 yi1 fu5
+衣裳 yi1 shang5
+意思 yi4 si5
+喜欢 xi3 huan5
+漂亮 piao4 liang5
+明白 ming2 bai5
+认识 ren4 shi5
+知识 zhi1 shi5
+先生 xian1 sheng5
+学生 xue2 sheng5
+关系 guan1 xi5
+地方 di4 fang5
+名字 ming2 zi5
+事情 shi4 qing5
+舒服 shu1 fu5
+告诉 gao4 su5
+麻烦 ma2 fan5
+清楚 qing1 chu5
+消息 xiao1 xi5
+休息 xiu1 xi5
+出息 chu1 xi5
+聪明 cong1 ming5
+便宜 pian2 yi5
+部分 bu4 fen5
+窗户 chuang1 hu5
+豆腐 dou4 fu5
+太阳 tai4 yang5
+月亮 yue4 liang5
+眼睛 yan3 jing5
+耳朵 er3 duo5
+嘴巴 zui3 ba5
+尾巴 wei3 ba5
+下巴 xia4 ba5
+哑巴 ya3 ba5
+结巴 jie1 ba5
+脑袋 nao3 dai5
+头发 tou2 fa5
+眉毛 mei2 mao5
+胳膊 ge1 bo5
+指甲 zhi3 jia5
+屁股 pi4 gu5
+爸爸 ba4 ba5
+妈妈 ma1 ma5
+哥哥 ge1 ge5
+姐姐 jie3 jie5
+弟弟 di4 di5
+妹妹 mei4 mei5
+奶奶 nai3 nai5
+爷爷 ye2 ye5
+叔叔 shu1 shu5
+舅舅 jiu4 jiu5
+姑姑 gu1 gu5
+婆婆 po2 po5
+公公 gong1 gong5
+姥姥 lao3 lao5
+宝宝 bao3 bao5
+星星 xing1 xing5
+娃娃 wa2 wa5
+丈夫 zhang4 fu5
+大夫 dai4 fu5
+师傅 shi1 fu5
+媳妇 xi2 fu5
+女婿 nü3 xu5
+亲戚 qin1 qi5
+伙计 huo3 ji5
+和尚 he2 shang5
+姑娘 gu1 niang5
+客气 ke4 qi5
+力气 li4 qi5
+脾气 pi2 qi5
+福气 fu2 qi5
+运气 yun4 qi5
+小气 xiao3 qi5
+热闹 re4 nao5
+暖和 nuan3 huo5
+凉快 liang2 kuai5
+打算 da3 suan5
+打扮 da3 ban5
+打听 da3 ting5
+晚上 wan3 shang5
+早上 zao3 shang5
+什么 shen2 me5
+怎么 zen3 me5
+这么 zhe4 me5
+那么 na4 me5
+多么 duo1 me5
+要么 yao4 me5
+为什么 wei4 shen2 me5
+怎么样 zen3 me5 yang4
+什么样 shen2 me5 yang4
+这个 zhe4 ge5
+那个 na4 ge5
+哪个 na3 ge5
+一个 yi1 ge5
+两个 liang3 ge5
+几个 ji3 ge5
+别人 bie2 ren5
+人家 ren2 jia5
+新鲜 xin1 xian5
+厉害 li4 hai5
+苗条 miao2 tiao5
+笑话 xiao4 hua5
+故事 gu4 shi5
+本事 ben3 shi5
+功夫 gong1 fu5
+工夫 gong1 fu5
+多少 duo1 shao5
+干净 gan1 jing5
+答应 da1 ying5
+应付 ying4 fu5
+吩咐 fen1 fu5
+照顾 zhao4 gu5
+招呼 zhao1 hu5
+欺负 qi1 fu5
+委屈 wei3 qu5
+收拾 shou1 shi5
+商量 shang1 liang5
+琢磨 zuo2 mo5
+折腾 zhe1 teng5
+溜达 liu1 da5
+唠叨 lao2 dao5
+啰嗦 luo1 suo5
+咳嗽 ke2 sou5
+钥匙 yao4 shi5
+点心 dian3 xin5
+馒头 man2 tou5
+石头 shi2 tou5
+木头 mu4 tou5
+骨头 gu3 tou5
+舌头 she2 tou5
+指头 zhi3 tou5
+枕头 zhen3 tou5
+拳头 quan2 tou5
+念头 nian4 tou5
+跟头 gen1 tou5
+里头 li3 tou5
+外头 wai4 tou5
+前头 qian2 tou5
+后头 hou4 tou5
+上头 shang4 tou5
+码头 ma3 tou5
+苦头 ku3 tou5
+甜头 tian2 tou5
+东边 dong1 bian5
+西边 xi1 bian5
+南边 nan2 bian5
+北边 bei3 bian5
+旁边 pang2 bian5
+外边 wai4 bian5
+里边 li3 bian5
+上边 shang4 bian5
+下边 xia4 bian5
+前边 qian2 bian5
+后边 hou4 bian5
+左边 zuo3 bian5
+右边 you4 bian5
+这边 zhe4 bian5
+那边 na4 bian5
+葡萄 pu2 tao5
+萝卜 luo2 bo5
+玻璃 bo1 li5
+蘑菇 mo2 gu5
+狐狸 hu2 li5
+骆驼 luo4 tuo5
+喇叭 la3 ba5
+糊涂 hu2 tu5
+马虎 ma3 hu5
+结实 jie1 shi5
+老实 lao3 shi5
+踏实 ta1 shi5
+扎实 zha1 shi5
+规矩 gui1 ju5
+道理 dao4 li5
+学问 xue2 wen5
+生意 sheng1 yi5
+买卖 mai3 mai5
+玫瑰 mei2 gui5
+薄荷 bo4 he5
+芝麻 zhi1 ma5
+核桃 he2 tao5
+樱桃 ying1 tao5
+棉花 mian2 hua5
+庄稼 zhuang1 jia5
+动静 dong4 jing5
+活泼 huo2 po5
+机灵 ji1 ling5
+风筝 feng1 zheng5
+灯笼 deng1 long5
+算盘 suan4 pan5
+合同 he2 tong5
+看看 kan4 kan5
+想想 xiang3 xiang5
+试试 shi4 shi5
+说说 shuo1 shuo5
+听听 ting1 ting5
+走走 zou3 zou5
+问问 wen4 wen5
+找找 zhao3 zhao5
+起来 qi3 lai5
+出来 chu1 lai5
+回来 hui2 lai5
+下来 xia4 lai5
+上来 shang4 lai5
+过来 guo4 lai5
+进来 jin4 lai5
+出去 chu1 qu5
+回去 hui2 qu5
+下去 xia4 qu5
+上去 shang4 qu5
+进去 jin4 qu5
+觉得 jue2 de5
+记得 ji4 de5
+晓得 xiao3 de5
+懂得 dong3 de5
+值得 zhi2 de5
+舍得 she3 de5
+认得 ren4 de5
+显得 xian3 de5
+使得 shi3 de5
+免得 mian3 de5
+长得 zhang3 de5
+似的 shi4 de5
+去过 qu4 guo5
+来过 lai2 guo5
+看过 kan4 guo5
+吃过 chi1 guo5
+见过 jian4 guo5
+听过 ting1 guo5
+做过 zuo4 guo5
+用过 yong4 guo5
+玩过 wan2 guo5
+说过 shuo1 guo5
+想过 xiang3 guo5
+试过 shi4 guo5
+学过 xue2 guo5
+到过 dao4 guo5
+住过 zhu4 guo5
+写过 xie3 guo5
+买过 mai3 guo5
+喝过 he1 guo5
+
+# --- Polyphonic characters in context (多音字) ---
+银行 yin2 hang2
+行业 hang2 ye4
+行列 hang2 lie4
+内行 nei4 hang2
+外行 wai4 hang2
+排行 pai2 hang2
+排行榜 pai2 hang2 bang3
+行长 hang2 zhang3
+长大 zhang3 da4
+成长 cheng2 zhang3
+生长 sheng1 zhang3
+增长 zeng1 zhang3
+校长 xiao4 zhang3
+部长 bu4 zhang3
+市长 shi4 zhang3
+县长 xian4 zhang3
+局长 ju2 zhang3
+院长 yuan4 zhang3
+家长 jia1 zhang3
+队长 dui4 zhang3
+班长 ban1 zhang3
+船长 chuan2 zhang3
+社长 she4 zhang3
+会长 hui4 zhang3
+组长 zu3 zhang3
+处长 chu4 zhang3
+科长 ke1 zhang3
+厂长 chang3 zhang3
+村长 cun1 zhang3
+州长 zhou1 zhang3
+省长 sheng3 zhang3
+首长 shou3 zhang3
+董事长 dong3 shi4 zhang3
+秘书长 mi4 shu1 zhang3
+学长 xue2 zhang3
+师长 shi1 zhang3
+兄长 xiong1 zhang3
+长辈 zhang3 bei4
+长老 zhang3 lao3
+长相 zhang3 xiang4
+年长 nian2 zhang3
+团长 tuan2 zhang3
+军长 jun1 zhang3
+连长 lian2 zhang3
+站长 zhan4 zhang3
+馆长 guan3 zhang3
+店长 dian4 zhang3
+列车长 lie4 che1 zhang3
+重新 chong2 xin1
+重复 chong2 fu4
+重庆 chong2 qing4
+重来 chong2 lai2
+重做 chong2 zuo4
+重叠 chong2 die2
+重逢 chong2 feng2
+重播 chong2 bo1
+重启 chong2 qi3
+重建 chong2 jian4
+重温 chong2 wen1
+重生 chong2 sheng1
+重置 chong2 zhi4
+重试 chong2 shi4
+重装 chong2 zhuang1
+重组 chong2 zu3
+重阳 chong2 yang2
+还钱 huan2 qian2
+还给 huan2 gei3
+还书 huan2 shu1
+还债 huan2 zhai4
+归还 gui1 huan2
+偿还 chang2 huan2
+退还 tui4 huan2
+还款 huan2 kuan3
+还清 huan2 qing1
+交还 jiao1 huan2
+首都 shou3 du1
+都市 du1 shi4
+成都 cheng2 du1
+京都 jing1 du1
+古都 gu3 du1
+都城 du1 cheng2
+作为 zuo4 wei2
+成为 cheng2 wei2
+认为 ren4 wei2
+以为 yi3 wei2
+为止 wei2 zhi3
+行为 xing2 wei2
+称为 cheng1 wei2
+视为 shi4 wei2
+极为 ji2 wei2
+较为 jiao4 wei2
+更为 geng4 wei2
+最为 zui4 wei2
+为主 wei2 zhu3
+为难 wei2 nan2
+为人 wei2 ren2
+大为 da4 wei2
+尤为 you2 wei2
+广为 guang3 wei2
+变为 bian4 wei2
+改为 gai3 wei2
+分为 fen1 wei2
+化为 hua4 wei2
+转为 zhuan3 wei2
+定为 ding4 wei2
+列为 lie4 wei2
+选为 xuan3 wei2
+评为 ping2 wei2
+名为 ming2 wei2
+为期 wei2 qi1
+了解 liao3 jie3
+了不起 liao3 bu5 qi3
+了不得 liao3 bu5 de2
+不得了 bu4 de2 liao3
+受不了 shou4 bu5 liao3
+少不了 shao3 bu5 liao3
+免不了 mian3 bu5 liao3
+忘不了 wang4 bu5 liao3
+吃不了 chi1 bu5 liao3
+走不了 zou3 bu5 liao3
+去不了 qu4 bu5 liao3
+来不了 lai2 bu5 liao3
+明了 ming2 liao3
+对不起 dui4 bu5 qi3
+来不及 lai2 bu5 ji2
+差不多 cha4 bu5 duo1
+看不见 kan4 bu5 jian4
+看不起 kan4 bu5 qi3
+买不起 mai3 bu5 qi3
+用不着 yong4 bu5 zhao2
+说不定 shuo1 bu5 ding4
+怪不得 guai4 bu5 de5
+舍不得 she3 bu5 de5
+恨不得 hen4 bu5 de5
+巴不得 ba1 bu5 de5
+睡觉 shui4 jiao4
+午觉 wu3 jiao4
+音乐 yin1 yue4
+乐器 yue4 qi4
+乐队 yue4 dui4
+乐曲 yue4 qu3
+乐团 yue4 tuan2
+乐谱 yue4 pu3
+理发 li3 fa4
+发型 fa4 xing2
+角色 jue2 se4
+主角 zhu3 jue2
+配角 pei4 jue2
+睡着 shui4 zhao2
+着急 zhao2 ji2
+着火 zhao2 huo3
+着凉 zhao2 liang2
+着迷 zhao2 mi2
+着陆 zhuo2 lu4
+着手 zhuo2 shou3
+着重 zhuo2 zhong4
+着想 zhuo2 xiang3
+沉着 chen2 zhuo2
+执着 zhi2 zhuo2
+要求 yao1 qiu2
+爱好 ai4 hao4
+好奇 hao4 qi2
+好客 hao4 ke4
+好学 hao4 xue2
+嗜好 shi4 hao4
+喜好 xi3 hao4
+中奖 zhong4 jiang3
+打中 da3 zhong4
+看中 kan4 zhong4
+猜中 cai1 zhong4
+击中 ji1 zhong4
+命中 ming4 zhong4
+中毒 zhong4 du2
+中暑 zhong4 shu3
+选中 xuan3 zhong4
+调整 tiao2 zheng3
+调节 tiao2 jie2
+调皮 tiao2 pi2
+调和 tiao2 he2
+空调 kong1 tiao2
+协调 xie2 tiao2
+调解 tiao2 jie3
+调控 tiao2 kong4
+调剂 tiao2 ji4
+调味 tiao2 wei4
+调戏 tiao2 xi4
+调试 tiao2 shi4
+微调 wei1 tiao2
+调理 tiao2 li3
+调料 tiao2 liao4
+处理 chu3 li3
+处于 chu3 yu2
+相处 xiang1 chu3
+处境 chu3 jing4
+处分 chu3 fen4
+处罚 chu3 fa2
+处置 chu3 zhi4
+干燥 gan1 zao4
+干杯 gan1 bei1
+饼干 bing3 gan1
+干脆 gan1 cui4
+干扰 gan1 rao3
+干涉 gan1 she4
+若干 ruo4 gan1
+干旱 gan1 han4
+干预 gan1 yu4
+相干 xiang1 gan1
+差别 cha1 bie2
+差异 cha1 yi4
+差距 cha1 ju4
+误差 wu4 cha1
+偏差 pian1 cha1
+差错 cha1 cuo4
+时差 shi2 cha1
+出差 chu1 chai1
+参差 cen1 ci1
+反应 fan3 ying4
+应用 ying4 yong4
+适应 shi4 ying4
+响应 xiang3 ying4
+供应 gong1 ying4
+对应 dui4 ying4
+效应 xiao4 ying4
+应对 ying4 dui4
+回应 hui2 ying4
+应聘 ying4 pin4
+应邀 ying4 yao1
+应急 ying4 ji2
+感应 gan3 ying4
+呼应 hu1 ying4
+相应 xiang1 ying4
+照相 zhao4 xiang4
+相机 xiang4 ji1
+照相机 zhao4 xiang4 ji1
+相片 xiang4 pian4
+真相 zhen1 xiang4
+首相 shou3 xiang4
+相貌 xiang4 mao4
+相声 xiang4 sheng5
+背包 bei1 bao1
+测量 ce4 liang2
+丈量 zhang4 liang2
+有空 you3 kong4
+空闲 kong4 xian2
+空白 kong4 bai2
+填空 tian2 kong4
+空隙 kong4 xi4
+空缺 kong4 que1
+供给 gong1 ji3
+给予 ji3 yu3
+几乎 ji1 hu1
+倒闭 dao3 bi4
+摔倒 shuai1 dao3
+倒霉 dao3 mei2
+打倒 da3 dao3
+跌倒 die1 dao3
+晕倒 yun1 dao3
+倒塌 dao3 ta1
+推倒 tui1 dao3
+投降 tou2 xiang2
+西藏 xi1 zang4
+宝藏 bao3 zang4
+少年 shao4 nian2
+少女 shao4 nü3
+少爷 shao4 ye5
+种地 zhong4 di4
+种田 zhong4 tian2
+种树 zhong4 shu4
+种花 zhong4 hua1
+种植 zhong4 zhi2
+种菜 zhong4 cai4
+耕种 geng1 zhong4
+数一数 shu3 yi5 shu3
+数数 shu3 shu4
+数钱 shu3 qian2
+教书 jiao1 shu1
+会计 kuai4 ji4
+模样 mu2 yang4
+率领 shuai4 ling3
+歌曲 ge1 qu3
+曲子 qu3 zi5
+作曲 zuo4 qu3
+舞曲 wu3 qu3
+戏曲 xi4 qu3
+曲目 qu3 mu4
+尽力 jin4 li4
+尽头 jin4 tou2
+尽情 jin4 qing2
+尽心 jin4 xin1
+无尽 wu2 jin4
+目的 mu4 di4
+的确 di2 que4
+的士 di1 shi4
+弹琴 tan2 qin2
+弹钢琴 tan2 gang1 qin2
+弹吉他 tan2 ji2 ta1
+弹性 tan2 xing4
+反弹 fan3 tan2
+弹簧 tan2 huang2
+传记 zhuan4 ji4
+自传 zi4 zhuan4
+转圈 zhuan4 quan1
+转动 zhuan4 dong4
+看守 kan1 shou3
+看护 kan1 hu4
+看管 kan1 guan3
+
+# --- Erhua (儿化) ---
+一会儿 yi1 hui4 r5
+一点儿 yi1 dian3 r5
+有点儿 you3 dian3 r5
+一下儿 yi1 xia4 r5
+一块儿 yi1 kuai4 r5
+这儿 zhe4 r5
+那儿 na4 r5
+哪儿 na3 r5
+玩儿 wan2 r5
+好玩儿 hao3 wan2 r5
+小孩儿 xiao3 hai2 r5
+空儿 kong4 r5
+
+# --- 一 as a number ---
+一月 yi1! yue4
+一号 yi1! hao4
+一一 yi1! yi1!

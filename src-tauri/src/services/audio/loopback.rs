@@ -14,7 +14,11 @@
 //!   idle periods themselves;
 //! - the format is the output mix format (often 48 kHz stereo, sometimes 5.1/7.1).
 //!
-//! Phase 2 (per-process loopback through the Windows 11 process-loopback API) is P6.
+//! Phase 2 (P6-A): `"process:<exe name>"` (e.g. `"process:VRChat.exe"`) captures what one process
+//! and its children play, through the Windows process-loopback API (Windows 10 build 20348+;
+//! [`super::loopback_process`], not cpal). It never follows defaults, counts as a loopback source
+//! (no packets while silent, the `others` mute group) and fails to resolve while the process is not
+//! running or on older Windows, so callers fall back to device loopback themselves.
 
 use cpal::traits::DeviceTrait;
 use cpal::{Device, Host, SupportedStreamConfig};
@@ -23,6 +27,8 @@ use super::device_resolve::{resolve_input_device, resolve_output_device};
 
 /// Prefix of loopback source ids (`"loopback:<output device name>"`).
 pub const LOOPBACK_PREFIX: &str = "loopback:";
+/// Prefix of per-process loopback source ids (`"process:<exe name>"`, P6-A).
+pub const PROCESS_PREFIX: &str = "process:";
 /// Key of the system default input source.
 pub const DEFAULT_INPUT_KEY: &str = "default";
 /// Key of the system default output's loopback source.
@@ -39,6 +45,8 @@ pub enum SourceSpec {
     DefaultLoopback,
     /// Loopback of an output device by cpal name.
     Loopback(String),
+    /// Loopback of one process tree by executable name, e.g. `VRChat.exe` (P6-A).
+    Process(String),
 }
 
 fn is_default_word(s: &str) -> bool {
@@ -62,6 +70,15 @@ impl SourceSpec {
     /// Parse a persisted / IPC device id (see the module docs). `None` is the default input.
     pub fn parse(device: Option<&str>) -> Self {
         let id = device.unwrap_or("").trim();
+        if let Some(rest) = strip_prefix_ascii_ci(id, PROCESS_PREFIX) {
+            let exe = rest.trim();
+            // `"process:"` without a name means "the default output" (the device fallback).
+            return if exe.is_empty() {
+                SourceSpec::DefaultLoopback
+            } else {
+                SourceSpec::Process(exe.to_string())
+            };
+        }
         if let Some(rest) = strip_prefix_ascii_ci(id, LOOPBACK_PREFIX) {
             let name = rest.trim();
             return if is_default_word(name) {
@@ -84,11 +101,12 @@ impl SourceSpec {
             SourceSpec::Input(name) => name.clone(),
             SourceSpec::DefaultLoopback => DEFAULT_LOOPBACK_KEY.to_string(),
             SourceSpec::Loopback(name) => format!("{LOOPBACK_PREFIX}{name}"),
+            SourceSpec::Process(exe) => format!("{PROCESS_PREFIX}{exe}"),
         }
     }
 
     pub fn is_loopback(&self) -> bool {
-        matches!(self, SourceSpec::DefaultLoopback | SourceSpec::Loopback(_))
+        matches!(self, SourceSpec::DefaultLoopback | SourceSpec::Loopback(_) | SourceSpec::Process(_))
     }
 
     /// Whether the source moves to a new device when the system default changes.
@@ -96,9 +114,14 @@ impl SourceSpec {
         matches!(self, SourceSpec::DefaultInput | SourceSpec::DefaultLoopback)
     }
 
-    /// The explicit spec of a resolved physical device (used to reopen it after a failure).
+    /// The explicit spec of a resolved physical device (used to reopen it after a failure). A
+    /// per-process source resolves to a device named `process:<exe>` (see
+    /// `loopback_process::resolve`).
     pub fn physical(name: &str, loopback: bool) -> Self {
         if loopback {
+            if let Some(exe) = strip_prefix_ascii_ci(name, PROCESS_PREFIX) {
+                return SourceSpec::Process(exe.to_string());
+            }
             SourceSpec::Loopback(name.to_string())
         } else {
             SourceSpec::Input(name.to_string())
@@ -125,6 +148,8 @@ pub fn resolve_cpal_device(host: &Host, spec: &SourceSpec) -> Result<(Device, bo
                 .map(|d| (d, true))
                 .map_err(|_| format!("Output device '{name}' not found (loopback)"))
         }
+        // Not a cpal device: the backend resolves it through `loopback_process`.
+        SourceSpec::Process(exe) => Err(format!("'{PROCESS_PREFIX}{exe}' is a process, not an audio device")),
     }
 }
 
@@ -173,6 +198,10 @@ mod tests {
             (Some("loopbackµ"), SourceSpec::Input("loopbackµ".into()), "loopbackµ"),
             (Some("loopback:Динамики (USB)"), SourceSpec::Loopback("Динамики (USB)".into()), "loopback:Динамики (USB)"),
             (Some("Loopback:ﺳﻤﺎﻋﺎﺕ"), SourceSpec::Loopback("ﺳﻤﺎﻋﺎﺕ".into()), "loopback:ﺳﻤﺎﻋﺎﺕ"),
+            // Per-process loopback (P6-A); an empty process name is the default output.
+            (Some("process:VRChat.exe"), SourceSpec::Process("VRChat.exe".into()), "process:VRChat.exe"),
+            (Some("PROCESS: VRChat.exe "), SourceSpec::Process("VRChat.exe".into()), "process:VRChat.exe"),
+            (Some("process:"), SourceSpec::DefaultLoopback, "loopback:default"),
         ] {
             let parsed = SourceSpec::parse(id);
             assert_eq!(parsed, spec, "{id:?}");
@@ -184,6 +213,9 @@ mod tests {
         assert!(!SourceSpec::Input("x".into()).follows_default());
         assert_eq!(SourceSpec::physical("Speakers", true), SourceSpec::Loopback("Speakers".into()));
         assert_eq!(SourceSpec::physical("Mic", false), SourceSpec::Input("Mic".into()));
+        let process = SourceSpec::Process("VRChat.exe".into());
+        assert!(process.is_loopback() && !process.follows_default());
+        assert_eq!(SourceSpec::physical("process:VRChat.exe", true), process);
     }
 
     #[test]

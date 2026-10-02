@@ -1,0 +1,18 @@
+sigil-tts-server.exe (Sigil runtime packs runtime/qwentts-server-cpu, -vulkan, -cuda13)
+
+Built by Sigil (https://github.com/Mewnah/Sigil, scripts/runtime-packs/qwentts) from:
+- qwentts.cpp (https://github.com/ServeurpersoCom/qwentts.cpp), MIT License,
+  Copyright (c) 2023-2026 The omnivoice.cpp authors: the GGML port of Qwen3-TTS 12 Hz.
+- ggml (https://github.com/ServeurpersoCom/ggml, a fork of https://github.com/ggml-org/ggml),
+  MIT License, linked statically.
+- cpp-httplib (MIT License, Copyright (c) 2017 yhirose) and yyjson (MIT License,
+  Copyright (c) 2020 YaoYuan), vendored by qwentts.cpp.
+
+tools/sigil-tts-server.cpp is Sigil's server program, derived from qwentts.cpp's
+tools/tts-server.cpp (MIT): it adds an API key, the loopback-only bind, the extracted voice
+latents in the registration answer and an info route. The full license texts are in
+THIRD-PARTY-LICENSES.txt.
+
+The models it runs (Qwen3-TTS 12 Hz talkers and the 12 Hz tokenizer, Alibaba / Qwen team,
+Apache 2.0, as GGUF from https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF) are separate
+downloads.

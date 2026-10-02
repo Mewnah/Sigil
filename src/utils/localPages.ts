@@ -12,6 +12,9 @@
  * - Every URL carries `?port=<port>` so the page reaches the pubsub WebSocket on the right port.
  * - The page's own origin (`http://<host>:<port>`) is what the server's Origin allow-list accepts
  *   (LAN security stage 1), so these URLs must keep pointing at this machine's web server.
+ * - LAN security stage 2 (P6-D): a page opened on another device needs the host's LAN token, passed
+ *   as `options.token` and appended as `?token=` (the page forwards it to `/pubsub`). Links for this
+ *   PC (the defaults: `127.0.0.1` / `localhost`) need none and should not carry it.
  *
  * The reverse direction lives here too: {@link clientServerAddress} decides which server a served
  * `/client` page may connect to (only the one that served it, or loopback).
@@ -29,6 +32,11 @@ export interface LocalPageUrlOptions {
   port?: number | string;
   /** Extra query parameters; `null` / `undefined` are skipped, `port` is always set from `port`. */
   params?: Record<string, LocalPageParamValue>;
+  /**
+   * The host's LAN token for a page opened on another device (P6-D), appended last as `?token=`;
+   * empty / null / undefined adds nothing. It always wins over a `token` key in `params`.
+   */
+  token?: string | null;
 }
 
 const LOOPBACK_PAGES: ReadonlySet<LocalPage> = new Set<LocalPage>(["mic.html"]);
@@ -46,9 +54,11 @@ export function localPageUrl(page: LocalPage, options: LocalPageUrlOptions = {})
   const host = urlHost(options.host ?? (LOOPBACK_PAGES.has(page) ? "127.0.0.1" : network?.host ?? "localhost"));
   const query = new URLSearchParams({ port });
   for (const [key, value] of Object.entries(options.params ?? {})) {
-    if (key === "port" || value === null || value === undefined) continue;
+    if (key === "port" || key === "token" || value === null || value === undefined) continue;
     query.set(key, String(value));
   }
+  const token = options.token?.trim();
+  if (token) query.set("token", token);
   return `http://${host}:${port}/${page}?${query.toString()}`;
 }
 

@@ -8,3 +8,10 @@ speak_local_tts
 synthesize_local_tts
 cancel_local_tts
 unload_local_tts
+# P6-I voice-cloning engines (scaffolded by P6-S0; local_tts/pocket.rs and local_tts/chatterbox_ort.rs).
+pocket_tts_speak
+pocket_tts_cancel
+pocket_tts_unload
+chatterbox_local_speak
+chatterbox_local_cancel
+chatterbox_local_unload

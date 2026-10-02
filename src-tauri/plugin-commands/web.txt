@@ -7,3 +7,6 @@ config
 # LAN security stage 1 (P0-I): server lifecycle + Origin-check kill switch.
 server_status
 set_origin_check
+# LAN security stage 2 (P6-D): bind mode, LAN token for other machines, legacy toggle.
+set_lan_access
+regenerate_lan_token

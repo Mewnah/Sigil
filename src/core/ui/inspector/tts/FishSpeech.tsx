@@ -39,6 +39,17 @@ export const FishSpeech: FC = () => {
       <InputText label="tts.fish_api_key" type="password" value={data.apiKey} onChange={e => handleUpdate("apiKey", e.target.value)} />
       <InputText label="tts.fish_model" placeholder="s2.1-pro-free" value={data.model} onChange={e => handleUpdate("model", e.target.value)} />
       <div className="text-xs text-base-content/60 mb-1">{t("tts.fish_hosted_hint")}</div>
+      {/* One-click preset for Fish Audio's hosted API (S2.1 Pro free tier; P6-H request). The key stays the user's. */}
+      <button
+        type="button"
+        className="btn btn-xs btn-ghost mb-1 self-start"
+        onClick={() => {
+          handleUpdate("endpoint", "https://api.fish.audio");
+          handleUpdate("model", "s2.1-pro-free");
+        }}
+      >
+        {t("tts.fish_hosted_preset")}
+      </button>
       <div className="flex flex-wrap gap-2 items-end mb-1">
         <div className="flex-1 min-w-[12rem]">
           <InputSelect

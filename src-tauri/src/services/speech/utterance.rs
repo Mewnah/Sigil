@@ -47,10 +47,12 @@ pub(crate) mod reasons {
     pub const STREAM_SKIPPED: &str = "stream_skipped";
     /// The two-pass queue refused the re-decode and there was no first-pass final.
     pub const QUEUE_FULL: &str = "queue_full";
+    /// The music / singing gate (P6-L A/B, `PipelineConfig::music_gate`) heard music, not speech.
+    pub const MUSIC: &str = "music";
 
     /// Whether the reason means speech was lost (counted in `PipelineStatus::dropped`).
     pub fn is_loss(reason: &str) -> bool {
-        !matches!(reason, NO_SPEECH | MERGED)
+        !matches!(reason, NO_SPEECH | MERGED | MUSIC)
     }
 }
 

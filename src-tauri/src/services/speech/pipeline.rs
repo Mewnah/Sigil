@@ -93,7 +93,7 @@ use super::worker::{
     self, BatchPolicy, ClosedSegment, Fallback, SecondPass, SecondPassSetup, StreamMsg, StreamWorkerSetup,
     UtteranceJob, UtteranceWorkerSetup,
 };
-use super::{engines, lang, router, smart_turn};
+use super::{engines, lang, music_gate, router, smart_turn};
 use crate::services::audio::hub::{self, CaptureConsumer, ConsumerOptions, MuteGroup, SourceSpec};
 use crate::services::speech_core::hallucination::clean_transcript;
 use crate::services::speech_core::utterance::{f32_to_le_bytes, BoundedQueue, UtteranceStore};
@@ -293,6 +293,18 @@ pub(crate) trait TurnDetector {
 impl TurnDetector for smart_turn::SmartTurn {
     fn predict(&mut self, audio_16k: &[f32]) -> Result<f32, String> {
         smart_turn::SmartTurn::predict(self, audio_16k)
+    }
+}
+
+/// Music / singing gate on closed segments (production: `music_gate::MusicGate`, P6-L A/B).
+pub(crate) trait MusicDetector {
+    /// What one closed segment (16 kHz mono) sounds like.
+    fn classify(&mut self, audio_16k: &[f32]) -> music_gate::MusicVerdict;
+}
+
+impl MusicDetector for music_gate::MusicGate {
+    fn classify(&mut self, audio_16k: &[f32]) -> music_gate::MusicVerdict {
+        music_gate::MusicGate::classify(self, audio_16k)
     }
 }
 
@@ -569,6 +581,8 @@ pub(crate) struct SessionSettings {
     pub max_backlog: usize,
     pub retain_pcm: bool,
     pub smart_turn: bool,
+    /// P6-L music / singing gate (A/B, default off; `PipelineConfig::music_gate`).
+    pub music_gate: bool,
     pub vad: VadConfig,
     pub source: String,
 }
@@ -1173,6 +1187,7 @@ fn resolve_settings(config: &PipelineConfig) -> SessionSettings {
         max_backlog: config.max_backlog.clamp(1, 10) as usize,
         retain_pcm: config.retain_pcm,
         smart_turn: config.smart_turn,
+        music_gate: config.music_gate,
         vad: config.vad.sanitized(),
         source: config.source.trim().to_string(),
     }
@@ -1500,6 +1515,7 @@ pub(crate) async fn start_session(
         let stop = Arc::clone(&session.stop);
         let vad = settings.vad.clone();
         let smart_turn = settings.smart_turn;
+        let music_gate_on = settings.music_gate;
         let speaking = Arc::clone(&speaking);
         thread::Builder::new()
             .name(format!("sigil-speech-{pipeline_id}"))
@@ -1532,13 +1548,35 @@ pub(crate) async fn start_session(
                 } else {
                     None
                 };
+                // P6-L A/B (default off): a missing model leaves the gate off with a warning.
+                let music = if music_gate_on {
+                    match music_gate::MusicGate::load() {
+                        Ok(gate) => Some(Box::new(gate) as Box<dyn MusicDetector>),
+                        Err(e) => {
+                            ctx.status(
+                                None,
+                                codes::NOT_INSTALLED,
+                                format!("The music filter is unavailable ({e}); music is transcribed as speech"),
+                                StatusLevel::Warning,
+                                StatusExtra {
+                                    model_id: Some(music_gate::MODEL_ID.to_string()),
+                                    ..StatusExtra::default()
+                                },
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 if ready_tx.send(Ok(())).is_err() {
                     return;
                 }
                 // The source arrives once the device is attached (the sender drops on failure).
                 let Ok(source) = source_rx.recv() else { return };
                 let start_qpc_ns = capture_clock.then(hub::now_qpc_ns);
-                let front = FrontEnd::new(Arc::clone(&ctx), segmenter, turn, dispatch, start_qpc_ns, speaking);
+                let front = FrontEnd::new(Arc::clone(&ctx), segmenter, turn, dispatch, start_qpc_ns, speaking)
+                    .with_music_gate(music);
                 let source = run_capture(front, source, &stop);
                 source.close();
             })
@@ -1975,6 +2013,8 @@ struct FrontEnd {
     /// A segment is open (the utterance worker may hold a short batch longer).
     speaking: Arc<AtomicBool>,
     turn_warned: bool,
+    /// P6-L music / singing gate (A/B; `None` = off).
+    music: Option<Box<dyn MusicDetector>>,
 }
 
 impl FrontEnd {
@@ -1998,7 +2038,21 @@ impl FrontEnd {
             open: None,
             speaking,
             turn_warned: false,
+            music: None,
         }
+    }
+
+    /// Install the music / singing gate (P6-L A/B).
+    fn with_music_gate(mut self, gate: Option<Box<dyn MusicDetector>>) -> Self {
+        self.music = gate;
+        self
+    }
+
+    /// The gate is on and hears music or singing in this closed segment.
+    fn is_music(&mut self, audio: &[f32]) -> bool {
+        self.music
+            .as_mut()
+            .is_some_and(|gate| !gate.classify(audio).is_speech())
     }
 
     /// Segment 16 kHz audio and route the events.
@@ -2124,9 +2178,20 @@ impl FrontEnd {
         }
         self.ctx
             .utterance_closed(segment_id, self.clock.ms(end), len, forced, closed_at);
+        let music = self.is_music(&audio);
         if !forced {
             self.speaking.store(false, Ordering::SeqCst);
-            self.smart_turn(segment_id, &audio);
+            if !music {
+                self.smart_turn(segment_id, &audio);
+            }
+        }
+        if music {
+            // P6-L A/B: music or singing never reaches an engine (its stream, if one was open, ends).
+            if let Dispatch::Stream(feed) = &mut self.dispatch {
+                feed.abort(segment_id);
+            }
+            self.ctx.dropped(segment_id, reasons::MUSIC, samples_to_ms(len as u64));
+            return;
         }
         match &mut self.dispatch {
             Dispatch::CaptureOnly => {}
@@ -4098,6 +4163,56 @@ mod tests {
         assert_eq!(c.len(), 1, "{c:?}");
         assert!(c[0].4, "a forced split");
         assert!(!speaking.load(Ordering::SeqCst), "nobody speaks after it");
+    }
+
+    /// A gate that hears every segment as music (P6-S0 hook for the P6-L music gate).
+    struct AlwaysMusic(Arc<AtomicU32>);
+
+    impl MusicDetector for AlwaysMusic {
+        fn classify(&mut self, _audio_16k: &[f32]) -> music_gate::MusicVerdict {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            music_gate::MusicVerdict::Music
+        }
+    }
+
+    #[test]
+    fn the_music_gate_drops_closed_music_segments() {
+        let registry = Registry::new();
+        let slot = registry.slot("mic").unwrap();
+        let rec = Arc::new(Recorder::default());
+        let vad = VadConfig::default().sanitized();
+        let settings = resolve_settings(&PipelineConfig {
+            music_gate: true,
+            ..PipelineConfig::default()
+        });
+        assert!(settings.music_gate);
+        let ctx = Arc::new(SessionCtx::new(&slot, 0, Arc::new(RecSink(Arc::clone(&rec))), settings));
+        let speaking = Arc::new(AtomicBool::new(false));
+        let segmenter = Box::new(SegmenterEngine::new(LevelClassifier, &vad)) as Box<dyn SpeechSegmenter>;
+        let calls = Arc::new(AtomicU32::new(0));
+        let gate = Box::new(AlwaysMusic(Arc::clone(&calls))) as Box<dyn MusicDetector>;
+        let mut front = FrontEnd::new(ctx, segmenter, None, Dispatch::CaptureOnly, None, Arc::clone(&speaking))
+            .with_music_gate(Some(gate));
+        for (p, ms) in [(0.0, 512), (0.9, 1_024), (0.0, 1_536)] {
+            for chunk in vec![p; ms * MS].chunks(20 * MS) {
+                front.process(chunk).unwrap();
+            }
+        }
+        let events = rec.all();
+        let c = closed(&events);
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(utterances(&events).contains(&(reasons::MUSIC.to_string(), c[0].0)));
+        assert!(!reasons::is_loss(reasons::MUSIC), "filtered music is not lost speech");
+        assert!(!speaking.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_music_gate_is_off_by_default() {
+        assert!(!PipelineConfig::default().music_gate);
+        assert!(!resolve_settings(&PipelineConfig::default()).music_gate);
+        let parsed: PipelineConfig = serde_json::from_str(r#"{"musicGate":true}"#).unwrap();
+        assert!(parsed.music_gate);
     }
 
     #[test]

@@ -1,0 +1,96 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Sigil's qwentts.cpp server packs for Qwen3-TTS (tts_helpers::qwen, owned by P6-E): sigil-tts-server.exe, built by scripts/runtime-packs/qwentts/build.ps1 from the pinned upstream (scripts/runtime-packs/qwentts/UPSTREAM.json: qwentts.cpp 6fae929 and its ggml fork 40e16e4, MIT) plus server/sigil-tts-server.cpp (API key, loopback-only bind, extracted voice latents, /sigil/info). ggml is linked statically; nothing but the GPU driver (vulkan-1.dll, nvcuda.dll) and, for cuda13, cuBLAS from runtime/nvidia-cuda13 (put on the helper's PATH) is loaded beside it.",
+    "Run as the process_host helper tts-qwen3 (127.0.0.1, random port and key, kill-on-close Job Object). Vulkan is the default GPU pack (NVIDIA, AMD, Intel); CUDA 13 is preferred on NVIDIA Turing or newer when installed; the CPU pack is for PCs without a usable GPU (slower than real time on most processors).",
+    "Asset hosting is local only: the packs stay 'unpublished' and unpinned (install them by Import in Models & Runtimes or SIGIL_LOCAL_ASSETS; the zips are found by file name). The vulkan variant needs the Vulkan SDK on the build PC. Pin size and sha256 from the build's .zip.sha256 when publishing.",
+    "Upgrade: bump UPSTREAM.json (commit, archives, shim_revision, catalog_version), then every id's version and zip name here together, and re-run the build's -SelfTest."
+  ],
+  "entries": [
+    {
+      "id": "runtime/qwentts-server-vulkan",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "6fae929-s1",
+      "title": "Qwen3-TTS server (Vulkan)",
+      "description": "Runs Qwen3-TTS voices on the graphics card through Vulkan: NVIDIA, AMD and Intel. Started by Sigil as a helper process that only listens on this PC.",
+      "license": "MIT",
+      "status": "unpublished",
+      "variant": "vulkan",
+      "files": [
+        {
+          "path": "sigil-qwentts-server-6fae929-s1-vulkan.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-qwentts-server-6fae929-s1-vulkan.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["sigil-tts-server.exe", "sigil-pack.json", "NOTICE.txt", "THIRD-PARTY-LICENSES.txt"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/qwentts-server-cuda13",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "6fae929-s1",
+      "title": "Qwen3-TTS server (CUDA 13)",
+      "description": "Runs Qwen3-TTS voices on NVIDIA graphics cards through CUDA 13. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU; installs the NVIDIA GPU runtime with it.",
+      "license": "MIT",
+      "status": "unpublished",
+      "variant": "cuda13",
+      "requires": ["runtime/nvidia-cuda13"],
+      "files": [
+        {
+          "path": "sigil-qwentts-server-6fae929-s1-cuda13.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-qwentts-server-6fae929-s1-cuda13.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["sigil-tts-server.exe", "sigil-pack.json", "NOTICE.txt", "THIRD-PARTY-LICENSES.txt"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime/qwentts-server-cpu",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "6fae929-s1",
+      "title": "Qwen3-TTS server (processor)",
+      "description": "Runs Qwen3-TTS voices on the processor, for PCs without a suitable graphics card. Slower than real time on most processors: Kokoro is the better voice there.",
+      "license": "MIT",
+      "status": "unpublished",
+      "variant": "cpu",
+      "files": [
+        {
+          "path": "sigil-qwentts-server-6fae929-s1-cpu.zip",
+          "size": 0,
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-qwentts-server-6fae929-s1-cpu.zip",
+              "revision": "assets-v1"
+            }
+          ],
+          "archive": {
+            "format": "zip",
+            "include": ["sigil-tts-server.exe", "sigil-pack.json", "NOTICE.txt", "THIRD-PARTY-LICENSES.txt"]
+          }
+        }
+      ]
+    }
+  ]
+}

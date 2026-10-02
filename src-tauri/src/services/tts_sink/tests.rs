@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::engine::{SinkConfig, SinkCore, SinkEvents};
+use super::mic_gate::tests::FakeGate;
 use super::output::{match_output_device, ring, OpenOutput, OutputBackend, Playout, PlayoutShared};
 use super::vc_route::{NoVc, VcRoute};
 use super::*;
@@ -187,6 +188,8 @@ struct Harness {
     core: Arc<SinkCore>,
     outputs: FakeOutputs,
     events: Arc<Recorded>,
+    /// The capture hub's `voice_changer` gate (microphone policy).
+    gate: FakeGate,
     now: Instant,
 }
 
@@ -196,11 +199,19 @@ impl Harness {
     fn new(config: SinkConfig, vc: Box<dyn VcRoute>) -> Self {
         let outputs = FakeOutputs::new(&[(DEV, 48_000, 2), ("Cable (Test)", 16_000, 1)]);
         let events = Arc::new(Recorded::default());
-        let core = SinkCore::new(config, Box::new(outputs.clone()), vc, Box::new(Rec(events.clone())));
+        let gate = FakeGate::default();
+        let core = SinkCore::new(
+            config,
+            Box::new(outputs.clone()),
+            vc,
+            Box::new(Rec(events.clone())),
+            Box::new(gate.clone()),
+        );
         Self {
             core,
             outputs,
             events,
+            gate,
             now: Instant::now(),
         }
     }
@@ -816,4 +827,253 @@ fn owned_pushes_are_sanitized() {
     let out = h.run(DEV, 30);
     assert!(out.iter().all(|s| s.is_finite()));
     assert_eq!(h.events.last("a").unwrap().state, UtteranceState::Done);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Microphone policy (P6-J)
+// ---------------------------------------------------------------------------------------------
+
+/// `mute`: the hub's voice-changer gate closes once TTS audio flows into the voice changer (before
+/// its first block goes in, by the onset lead), stays closed while it plays (and over the hold),
+/// and opens once, after the last audio was mixed.
+#[test]
+fn mute_policy_closes_the_hub_gate_while_tts_flows_into_the_voice_changer() {
+    let (hold, lead) = (SinkConfig::default().mic_hold, SinkConfig::default().mic_lead);
+    assert!(!lead.is_zero());
+    let vc = FakeVc::running(16_000, 1, 16_000 * 10);
+    let mut h = Harness::new(SinkConfig::default(), Box::new(vc.clone()));
+    h.core.set_mic_policy(MicPolicy::Mute);
+    assert_eq!(h.core.mic_policy(), MicPolicy::Mute);
+    h.begin("a", target(SinkRoute::VoiceChanger, ""));
+    h.core.step(h.now);
+    assert!(!h.gate.muted(), "begun, still synthesizing: the microphone stays open");
+    h.core.push("a", &vec![0.5; 8_000], 16_000, 1).unwrap(); // 500 ms
+    h.core.step(h.now);
+    assert!(h.gate.muted() && h.core.mic_engaged(), "closed with the first audio");
+    assert_eq!(vc.queued(), 0, "the first block waits for the onset lead");
+    h.now += lead - Duration::from_millis(10);
+    h.core.step(h.now);
+    assert_eq!(vc.queued(), 0, "still inside the lead");
+    h.now += Duration::from_millis(10);
+    h.core.step(h.now);
+    assert!(vc.queued() > 0, "the lead passed: the speech goes in");
+    for _ in 0..4 {
+        vc.consume(1_600);
+        h.now += Duration::from_millis(100);
+        h.core.step(h.now);
+        assert!(h.gate.muted(), "closed while the voice changer mixes it");
+    }
+    h.core.end("a").unwrap();
+    assert_eq!(vc.consume(100_000).len(), 8_000 - 4 * 1_600);
+    let wait = h.core.step(h.now);
+    assert_eq!(h.events.last("a").unwrap().state, UtteranceState::Done);
+    assert!(h.gate.muted(), "held after the last audio");
+    assert!(wait <= hold, "the scheduler wakes for the hold's end ({wait:?})");
+    h.now += hold / 2;
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.now += hold;
+    h.core.step(h.now);
+    assert!(!h.gate.muted() && !h.core.mic_engaged(), "open after the hold");
+    assert_eq!(h.gate.changes(), 2, "closed once, opened once");
+
+    // `both` counts too (it feeds the voice changer).
+    h.begin("b", target(SinkRoute::Both, ""));
+    h.core.push("b", &stereo(4_800, 0.5), 48_000, 2).unwrap();
+    h.core.end("b").unwrap();
+    h.run(DEV, 50);
+    assert!(h.gate.muted());
+}
+
+/// Between the sentences of one reply (the next one begun but still synthesizing) the gate stays
+/// closed for up to the bridge, so the microphone does not open mid-reply; a sentence that never
+/// delivers cannot keep it closed beyond that, and a partial block waiting for a stalled producer
+/// does not count as audio playing.
+#[test]
+fn the_mic_bridge_spans_the_sentences_of_one_reply() {
+    let cfg = SinkConfig::default();
+    let (hold, bridge, lead) = (cfg.mic_hold, cfg.mic_bridge, cfg.mic_lead);
+    assert!(bridge > hold * 2);
+    let vc = FakeVc::running(16_000, 1, 16_000 * 10);
+    let mut h = Harness::new(cfg, Box::new(vc.clone()));
+    h.core.set_mic_policy(MicPolicy::Mute);
+    // Sentence 1 plays; sentence 2 is begun (synthesizing) before sentence 1 ends.
+    h.begin("s1", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("s1", &vec![0.5; 3_200], 16_000, 1).unwrap(); // 200 ms
+    h.core.end("s1").unwrap();
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.now += lead; // the onset lead
+    h.core.step(h.now);
+    assert_eq!(vc.queued(), 3_200);
+    h.begin("s2", target(SinkRoute::VoiceChanger, ""));
+    vc.consume(100_000);
+    h.core.step(h.now);
+    assert_eq!(h.events.last("s1").unwrap().state, UtteranceState::Done);
+    // Well past the short hold, sentence 2 still synthesizing: closed, next decision at the bridge's end.
+    h.now += hold * 2;
+    let wait = h.core.step(h.now);
+    assert!(h.gate.muted(), "bridged while the next sentence is coming");
+    assert!(wait <= bridge - hold * 2, "{wait:?}");
+    // Its audio arrives: it plays with the gate still closed (no flicker) and goes in at once (the
+    // gate is held, so no onset lead), then the hold opens it.
+    h.core.push("s2", &vec![0.5; 3_200], 16_000, 1).unwrap();
+    h.core.end("s2").unwrap();
+    h.core.step(h.now);
+    assert_eq!(vc.queued(), 3_200, "no lead mid-reply");
+    vc.consume(100_000);
+    h.core.step(h.now);
+    assert_eq!(h.events.last("s2").unwrap().state, UtteranceState::Done);
+    assert_eq!(h.gate.changes(), 1, "closed once for the whole reply");
+    h.now += hold;
+    h.core.step(h.now);
+    assert!(!h.gate.muted(), "nothing more queued: the short hold");
+    assert_eq!(h.gate.changes(), 2);
+
+    // A sentence that started, then its producer stalls with a partial block left: once the voice
+    // changer mixed what it had, only the bridge holds the gate.
+    h.begin("s3", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("s3", &vec![0.5; 4_000], 16_000, 1).unwrap(); // 250 ms: two 100 ms blocks + 50 ms
+    h.now += Duration::from_millis(1_600); // the prebuffer wait passes
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.now += lead;
+    h.core.step(h.now);
+    assert_eq!(vc.queued(), 3_200, "two whole blocks went in, the partial one waits");
+    vc.consume(100_000);
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.now += bridge;
+    h.core.step(h.now);
+    assert!(!h.gate.muted(), "a stalled producer cannot hold the microphone");
+    assert_eq!(h.events.last("s3").unwrap().state, UtteranceState::Playing, "the sentence itself is still alive");
+    h.core.cancel(None);
+}
+
+/// A new reply begun soon after the gate opened (its first sentence still synthesizing) leaves the
+/// microphone open until its audio arrives (the bridge never closes an open gate); then the gate
+/// closes once, ahead of the reply's first voice-changer block (the onset lead).
+#[test]
+fn a_new_reply_keeps_the_open_gate_open_until_its_audio_arrives() {
+    let cfg = SinkConfig::default();
+    let (hold, lead) = (cfg.mic_hold, cfg.mic_lead);
+    let vc = FakeVc::running(16_000, 1, 16_000 * 10);
+    let mut h = Harness::new(cfg, Box::new(vc.clone()));
+    h.core.set_mic_policy(MicPolicy::Mute);
+    // Reply 1 plays and ends; the hold opens the gate.
+    h.begin("r1", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("r1", &vec![0.5; 3_200], 16_000, 1).unwrap();
+    h.core.end("r1").unwrap();
+    h.core.step(h.now);
+    h.now += lead;
+    h.core.step(h.now);
+    vc.consume(100_000);
+    h.core.step(h.now);
+    assert_eq!(h.events.last("r1").unwrap().state, UtteranceState::Done);
+    h.now += hold;
+    h.core.step(h.now);
+    assert!(!h.gate.muted());
+    assert_eq!(h.gate.changes(), 2);
+    // Reply 2 is begun at once and synthesizes for 1.5 s: the microphone stays open meanwhile.
+    h.begin("r2", target(SinkRoute::Both, ""));
+    for _ in 0..15 {
+        h.now += Duration::from_millis(100);
+        h.core.step(h.now);
+        assert!(!h.gate.muted(), "no TTS audio yet: the microphone stays open");
+    }
+    assert_eq!(h.gate.changes(), 2, "no edges without TTS audio");
+    // Its audio arrives: the gate closes once; the voice changer gets it after the lead (the
+    // device copy of `both` is not held back).
+    h.core.push("r2", &stereo(9_600, 0.5), 48_000, 2).unwrap(); // 200 ms
+    h.core.end("r2").unwrap();
+    let out = h.run(DEV, 50);
+    assert!(count_level(&out, 0.5, 1e-3) > 0, "the device copy plays");
+    assert!(h.gate.muted());
+    assert_eq!(vc.queued(), 0, "inside the onset lead");
+    h.run(DEV, lead.as_millis() as u64);
+    assert!(vc.queued() > 0, "after the onset lead");
+    assert_eq!(h.gate.changes(), 3);
+}
+
+/// The gate stays open for device-only speech, while the voice changer is not running (the
+/// voice-changer route plays on the device then), and with the `duck` / `none` policies.
+#[test]
+fn the_mic_policy_ignores_device_audio_and_other_policies() {
+    let vc = FakeVc::running(16_000, 1, 16_000 * 10);
+    let mut h = Harness::new(SinkConfig::default(), Box::new(vc.clone()));
+    h.core.set_mic_policy(MicPolicy::Mute);
+    h.begin("dev", target(SinkRoute::Device, ""));
+    h.core.push("dev", &stereo(9_600, 0.5), 48_000, 2).unwrap();
+    h.core.end("dev").unwrap();
+    h.run(DEV, 300);
+    assert_eq!(h.events.last("dev").unwrap().state, UtteranceState::Done);
+    assert_eq!(h.gate.changes(), 0, "device speech never touches the microphone");
+
+    vc.0.lock().unwrap().format = None; // the voice changer stopped
+    h.begin("fallback", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("fallback", &stereo(4_800, 0.5), 48_000, 2).unwrap();
+    h.core.end("fallback").unwrap();
+    h.run(DEV, 200);
+    assert_eq!(h.events.last("fallback").unwrap().state, UtteranceState::Done);
+    assert_eq!(h.gate.changes(), 0);
+
+    vc.0.lock().unwrap().format = Some((16_000, 1));
+    for policy in [MicPolicy::Duck, MicPolicy::None] {
+        h.core.set_mic_policy(policy);
+        let id = format!("{policy:?}");
+        h.begin(&id, target(SinkRoute::VoiceChanger, ""));
+        h.core.push(&id, &vec![0.5; 1_600], 16_000, 1).unwrap();
+        h.core.end(&id).unwrap();
+        h.core.step(h.now);
+        vc.consume(100_000);
+        h.core.step(h.now);
+        assert_eq!(h.events.last(&id).unwrap().state, UtteranceState::Done);
+        assert_eq!(h.gate.changes(), 0, "{policy:?} leaves the hub gate alone");
+    }
+}
+
+/// Switching away from `mute` while TTS plays opens the gate at once; a stop opens it after the
+/// hold; a gate someone else closed is never opened by the sink.
+#[test]
+fn mic_policy_changes_stops_and_foreign_mutes() {
+    let hold = SinkConfig::default().mic_hold;
+    let vc = FakeVc::running(16_000, 1, 16_000 * 10);
+    let mut h = Harness::new(SinkConfig::default(), Box::new(vc.clone()));
+    h.core.set_mic_policy(MicPolicy::Mute);
+    h.begin("a", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("a", &vec![0.5; 16_000], 16_000, 1).unwrap();
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.core.set_mic_policy(MicPolicy::Duck);
+    h.core.step(h.now);
+    assert!(!h.gate.muted(), "duck is the voice changer's own: the hub gate opens at once");
+    let queued = vc.queued();
+    assert!(queued > 0, "duck: no onset lead");
+    h.core.set_mic_policy(MicPolicy::Mute);
+    h.core.step(h.now);
+    assert!(h.gate.muted(), "closed again while the audio still flows");
+    assert!(vc.queued() > queued, "mid-sentence: the speech keeps going in (no onset lead)");
+
+    // Stop: the voice changer drops the queued audio; the gate opens after the hold.
+    h.core.cancel(None);
+    h.core.step(h.now);
+    assert!(h.gate.muted());
+    h.now += hold;
+    h.core.step(h.now);
+    assert!(!h.gate.muted());
+
+    // Someone else muted the voice changer's microphone: the sink leaves it muted.
+    use super::mic_gate::MicGatePort;
+    h.gate.set_muted(true);
+    let before = h.gate.changes();
+    h.begin("b", target(SinkRoute::VoiceChanger, ""));
+    h.core.push("b", &vec![0.5; 1_600], 16_000, 1).unwrap();
+    h.core.end("b").unwrap();
+    h.core.step(h.now);
+    vc.consume(100_000);
+    h.core.step(h.now);
+    h.now += hold * 2;
+    h.core.step(h.now);
+    assert!(h.gate.muted() && !h.core.mic_engaged());
+    assert_eq!(h.gate.changes(), before);
 }

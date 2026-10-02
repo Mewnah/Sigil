@@ -1,5 +1,5 @@
 import i18n from "i18next";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -37,6 +37,21 @@ const calls = (cmd: string) => invokeMock.mock.calls.filter(([c]) => c === cmd).
 
 beforeAll(async () => {
   await i18n.init({ lng: "en", resources: { en: { translation: {} } } });
+});
+
+// The engine counts its users process-wide (the last one to stop unloads the model), so every instance a test starts is
+// stopped after it: a leftover user would keep the model "in use" for the next test.
+// (`restoreMocks` restores spies before every test, so the spy is installed per test.)
+const started: Translation_NllbService[] = [];
+const realStart = Translation_NllbService.prototype.start;
+beforeEach(() => {
+  vi.spyOn(Translation_NllbService.prototype, "start").mockImplementation(function (this: Translation_NllbService, ...args) {
+    started.push(this);
+    return realStart.apply(this, args);
+  });
+});
+afterEach(() => {
+  for (const engine of started.splice(0)) engine.stop();
 });
 
 beforeEach(() => {
@@ -208,6 +223,20 @@ describe("Translation_NllbService", () => {
     old.stop();
     expect(calls("plugin:mt-local|nllb_unload")).toHaveLength(0);
     next.stop();
+    expect(calls("plugin:mt-local|nllb_unload")).toHaveLength(1);
+  });
+
+  it("keeps the model while another pipeline still uses it (main + Other players, P6-A)", async () => {
+    route({ "plugin:mt-local|nllb_load": () => ({}), "plugin:mt-local|nllb_unload": () => undefined });
+    const main = new Translation_NllbService();
+    await main.start(state(), live());
+    const others = new Translation_NllbService();
+    await others.start(state(), live());
+    others.stop();
+    expect(calls("plugin:mt-local|nllb_unload")).toHaveLength(0);
+    others.stop();
+    expect(calls("plugin:mt-local|nllb_unload")).toHaveLength(0);
+    main.stop();
     expect(calls("plugin:mt-local|nllb_unload")).toHaveLength(1);
   });
 

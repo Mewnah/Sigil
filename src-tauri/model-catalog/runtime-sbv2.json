@@ -1,0 +1,75 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Style-Bert-VITS2 / AivisSpeech voices (tts_helpers::sbv2, P6-G). The engine runs in Sigil's process on its own ONNX Runtime (no sbv2 server pack: P6-G ported sbv2_core instead, see tts_helpers/sbv2.rs), so the only downloads are these two published assets; the voices themselves are the user's .aivmx files (imported, never downloaded by Sigil).",
+    "tts/sbv2-bert-ja (BERT_MODEL_ID): ku-nlp/deberta-v2-large-japanese-char-wwm as the half-precision ONNX export AivisSpeech uses (tsukumijima/deberta-v2-large-japanese-char-wwm-onnx: input_ids, attention_mask, token_type_ids -> the third-to-last hidden state) and its character tokenizer. A full-precision model.onnx placed in the same folder by hand also works.",
+    "text/jpreprocess-naist-jdic (DICTIONARY_ID): OpenJTalk's NAIST-JDIC built for jpreprocess 0.15 (a dictionary must come from the same jpreprocess release as the crate: update it together with Cargo.toml's jpreprocess). The Japanese readings of the text-readings plugin (P6-L) can use the same entry.",
+    "Update: pin with node scripts/models/pin-catalog.mjs --fragment src-tauri/model-catalog/runtime-sbv2.json --write, and keep BERT_MODEL_ID / DICTIONARY_ID in tts_helpers/sbv2.rs in step."
+  ],
+  "entries": [
+    {
+      "id": "tts/sbv2-bert-ja",
+      "family": "tts",
+      "kind": "model",
+      "version": "1.0",
+      "title": "Japanese BERT for Style-Bert-VITS2 voices",
+      "description": "The language model Style-Bert-VITS2 and AivisSpeech voices read Japanese text with (DeBERTa-v2 large, half precision, as AivisSpeech uses it). About 650 MB download.",
+      "license": "CC-BY-SA-4.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "model_fp16.onnx",
+          "size": 653075699,
+          "sha256": "23f633ae7c5900ff82b35a428b67a54e7e7911d5d6a6dcfc77967be8f1c94dc6",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tsukumijima/deberta-v2-large-japanese-char-wwm-onnx/resolve/5e5cc2b628d083d0a815c4d4a4c3fe84a414f8ed/model_fp16.onnx",
+              "revision": "5e5cc2b628d083d0a815c4d4a4c3fe84a414f8ed"
+            }
+          ]
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 432079,
+          "git_oid": "f93d3e1cb25031b1359e74be37b5e906321768fa",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/tsukumijima/deberta-v2-large-japanese-char-wwm-onnx/resolve/5e5cc2b628d083d0a815c4d4a4c3fe84a414f8ed/tokenizer.json",
+              "revision": "5e5cc2b628d083d0a815c4d4a4c3fe84a414f8ed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "text/jpreprocess-naist-jdic",
+      "family": "text",
+      "kind": "model",
+      "version": "0.15.0",
+      "title": "Japanese dictionary (NAIST-JDIC for jpreprocess)",
+      "description": "OpenJTalk's Japanese dictionary: how kanji, accents and numbers are read for Japanese voices. About 29 MB download.",
+      "license": "BSD-3-Clause",
+      "status": "published",
+      "files": [
+        {
+          "path": "naist-jdic-jpreprocess.tar.gz",
+          "size": 28668638,
+          "sha256": "8a930bbc57bf4adcf521d53544c7dc9ab8ab3aa997a591b1b1608dc5539017b8",
+          "sources": [
+            {
+              "kind": "github-release",
+              "url": "https://github.com/jpreprocess/jpreprocess/releases/download/v0.15.0/naist-jdic-jpreprocess.tar.gz",
+              "revision": "v0.15.0"
+            }
+          ],
+          "archive": {
+            "format": "tar.gz",
+            "strip": 1
+          }
+        }
+      ]
+    }
+  ]
+}

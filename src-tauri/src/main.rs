@@ -59,8 +59,10 @@ fn main() {
     let args = InitArguments::parse();
 
     // crash if port is not available. Checks the same address the web plugin's server binds
-    // (0.0.0.0:<port>, all IPv4 interfaces), so the check matches what warp will do.
-    let port_availability = std::net::TcpListener::bind(format!("0.0.0.0:{}", args.port));
+    // (persisted `lanAccess.mode`: 0.0.0.0 for LAN, the default, or 127.0.0.1 for "This PC
+    // only"), so the check matches what warp will do and never prompts the firewall needlessly.
+    let port_availability =
+        std::net::TcpListener::bind((services::web::startup_bind_ip(), args.port));
     match port_availability {
         Ok(l) => l.set_nonblocking(true).expect("Failed to set nonblocking"),
         Err(_err) => {
@@ -97,7 +99,13 @@ fn main() {
             app_close,
             services::oauth_loopback::oauth_loopback_start
         ])
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The caption window (P6-B) restores its own position and size without show()/set_focus(),
+        // so it never steals the foreground from a game; saving still goes through this plugin.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .skip_initial_state(services::caption_window::CAPTIONS_WINDOW_LABEL)
+                .build(),
+        )
         .manage(AppConfiguration { port: args.port })
         .plugin(services::osc::init())
         .plugin(services::web::init())
@@ -138,6 +146,23 @@ fn main() {
         // P5 voice-changer families (P5-S0): the shared reference-voice library (zero-shot voices
         // and TTS cloning).
         .plugin(services::voice_library::init())
+        // P6 streamer features (P6-S0): caption window and SteamVR overlay (P6-B), readings
+        // (P6-L), Edge / Gemini TTS (P6-H), helper-process TTS engines (P6-E/F/G) and the
+        // GPT-SoVITS client (P6-G).
+        .plugin(services::caption_window::init())
+        .plugin(services::vr_overlay::init())
+        .plugin(services::text_readings::init())
+        .plugin(services::edge_tts::init())
+        .plugin(services::gemini_tts::init())
+        .plugin(services::tts_helpers::init())
+        .plugin(services::gpt_sovits::init())
+        // Secondary windows (the caption window, P6-B) close with the main window, so Sigil never
+        // keeps running with only them open (Tauri exits when the last window is gone).
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                close_secondary_windows(window.app_handle());
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
@@ -145,6 +170,17 @@ fn main() {
                 // Helper processes (llama-server, TTS servers, sidecars) die with Sigil. The Job
                 // Object also kills them if the process is terminated without this event.
                 services::process_host::shutdown_all();
+                // Release OpenVR before the process exits (P6-B; a no-op when it never started).
+                services::vr_overlay::shutdown();
             }
         });
+}
+
+/// Close every webview window except the main one (P6-S0).
+fn close_secondary_windows<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    for (label, window) in app.webview_windows() {
+        if label != "main" {
+            let _ = window.close();
+        }
+    }
 }

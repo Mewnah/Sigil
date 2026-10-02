@@ -1,6 +1,6 @@
 import { IServiceInterface, ObsCaptionEnvelope } from "@/types";
 import { proxy } from "valtio";
-import { ObsBrowserSourceService } from "./browserSource";
+import { ObsBrowserSourceService, type ObsLinkTarget } from "./browserSource";
 import { ObsCaptionFeedService } from "./captionFeed";
 import { ObsControlService } from "./control";
 import { OBS_State } from "./schema";
@@ -53,8 +53,9 @@ class Service_OBS implements IServiceInterface {
     this.feed.init();
   }
 
-  getObsBrowserSourceLink() {
-    return this.browserSource.getObsBrowserSourceLink();
+  /** The `/client` link for an OBS browser source; `{ lan: true }` for OBS on another PC (carries the LAN token). */
+  getObsBrowserSourceLink(target?: ObsLinkTarget) {
+    return this.browserSource.getObsBrowserSourceLink(target);
   }
 
   async wsConnect() {

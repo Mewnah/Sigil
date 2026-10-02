@@ -17,6 +17,8 @@
 //! | `engines::{sherpa_online, sherpa_offline}` | P2-B | sherpa-onnx engines (Nemotron, Parakeet, Qwen3-ASR-0.6B, SenseVoice, Moonshine v2) |
 //! | [`router`], [`two_pass`], [`smart_turn`], [`lang`] | P2-C | language router + `preview_route`, two-pass queue, Smart Turn, language codes |
 //! | `engines::transcribe`, [`worker_proc`] | P2-D | transcribe.cpp GPU tier, optional worker-process isolation (`--headless stt-worker`) |
+//! | [`session`] | P6-A | other players' (`loopback`) session helpers: per-process source with device fallback |
+//! | [`music_gate`] | P6-L | FireRedVAD music / singing gate on closed segments (A/B, `PipelineConfig::music_gate`, default off; hook in `pipeline::FrontEnd::closed`, scaffolded by P6-S0) |
 //!
 //! # Frozen contract (P2-S0; change only through an INTEGRATE step)
 //! - Engine API: [`engine_api`] (`AsrEngine`, `EngineSpec`, `EngineKind`, `RouteRequest`,
@@ -48,9 +50,11 @@ pub mod engine_api;
 pub mod engines;
 pub mod events;
 pub mod lang;
+pub mod music_gate;
 pub mod mute;
 pub mod pipeline;
 pub mod router;
+pub mod session;
 pub mod smart_turn;
 pub mod two_pass;
 pub mod utterance;

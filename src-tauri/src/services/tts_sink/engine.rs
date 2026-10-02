@@ -32,6 +32,15 @@
 //! - Events are emitted before blocked producers are woken, so a producer whose push fails with
 //!   `Cancelled` because the sink dropped its utterance sees that utterance's terminal event first
 //!   whenever the transport keeps order.
+//! - Microphone policy (P6-J, [`super::mic_gate`]): every scheduler pass tells the policy whether
+//!   TTS audio is flowing into the voice changer (blocks converted for it, or still queued in its
+//!   aux queue) or more speech for it is queued; with `mute` the policy holds the capture hub's
+//!   `voice_changer` gate closed meanwhile, plus a hold ([`SinkConfig::mic_hold`], or
+//!   [`SinkConfig::mic_bridge`] while the reply's next sentence is still coming and the gate is
+//!   still held), and the scheduler wakes when that hold runs out. At a reply's onset (the gate not
+//!   held yet) the head's first voice-changer block waits until the gate has been closed for
+//!   [`SinkConfig::mic_lead`], so the capture gap the gate's edge makes in the voice changer lands
+//!   on silence before the speech.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +48,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::convert::StreamConverter;
+use super::mic_gate::{MicFlow, MicGate, MicGatePort, MicHolds, MicPolicy, DEFAULT_BRIDGE, DEFAULT_HOLD, DEFAULT_LEAD};
 use super::output::{is_default_device, OpenOutput, OutputBackend, PlayoutShared, Tagged, SLOTS};
 use super::vc_route::VcRoute;
 use super::{SinkError, SinkRoute, SinkStatus, SinkTarget, UtteranceEvent, UtteranceSpec, UtteranceState};
@@ -77,11 +87,21 @@ pub(crate) struct SinkConfig {
     /// Source audio converted per scheduler step.
     pub convert_slice: Duration,
     pub max_utterances: usize,
+    /// The microphone policy's hold after the last TTS audio went into the voice changer.
+    pub mic_hold: Duration,
+    /// The microphone policy's longest hold while more speech for the voice changer is queued.
+    pub mic_bridge: Duration,
+    /// With the `mute` policy, how long the hub gate is closed before a reply's first block goes
+    /// into the voice changer (zero: no lead).
+    pub mic_lead: Duration,
 }
 
 impl Default for SinkConfig {
     fn default() -> Self {
         Self {
+            mic_hold: DEFAULT_HOLD,
+            mic_bridge: DEFAULT_BRIDGE,
+            mic_lead: DEFAULT_LEAD,
             prebuffer: Duration::from_millis(200),
             prebuffer_max_wait: Duration::from_millis(1_500),
             ahead: Duration::from_millis(200),
@@ -327,6 +347,8 @@ struct State {
     dirty: bool,
     last_status: Option<SinkStatus>,
     last_status_at: Option<Instant>,
+    /// The microphone policy while TTS plays into the voice changer.
+    mic: MicGate,
 }
 
 impl State {
@@ -378,12 +400,30 @@ pub(crate) struct SinkCore {
     backend: Box<dyn OutputBackend>,
     vc: Box<dyn VcRoute>,
     events: Box<dyn SinkEvents>,
+    /// The capture hub gate of the microphone policy.
+    mic_port: Box<dyn MicGatePort>,
     config: SinkConfig,
     thread_started: AtomicBool,
 }
 
+/// Opens the microphone gate if the scheduler thread unwinds while holding it closed.
+struct MicRelease<'a>(&'a SinkCore);
+
+impl Drop for MicRelease<'_> {
+    fn drop(&mut self) {
+        let core = self.0;
+        core.lock().mic.release(&*core.mic_port);
+    }
+}
+
 impl SinkCore {
-    pub(crate) fn new(config: SinkConfig, backend: Box<dyn OutputBackend>, vc: Box<dyn VcRoute>, events: Box<dyn SinkEvents>) -> Arc<Self> {
+    pub(crate) fn new(
+        config: SinkConfig,
+        backend: Box<dyn OutputBackend>,
+        vc: Box<dyn VcRoute>,
+        events: Box<dyn SinkEvents>,
+        mic_port: Box<dyn MicGatePort>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(State::default()),
             wake: Condvar::new(),
@@ -391,9 +431,36 @@ impl SinkCore {
             backend,
             vc,
             events,
+            mic_port,
             config,
             thread_started: AtomicBool::new(false),
         })
+    }
+
+    /// Set the microphone policy (the voice changer's aux mic gate, forwarded by TS). Takes
+    /// effect on the next scheduler pass: switching away from `mute` opens a gate the sink holds.
+    pub(crate) fn set_mic_policy(&self, policy: MicPolicy) {
+        let mut st = self.lock();
+        if st.mic.policy() == policy {
+            return;
+        }
+        st.mic.set_policy(policy);
+        if !self.thread_started.load(Ordering::Acquire) {
+            // No scheduler yet, so nothing was ever closed; decide now anyway.
+            st.mic.release(&*self.mic_port);
+        }
+        self.touch(&mut st);
+    }
+
+    /// The microphone policy in force.
+    pub(crate) fn mic_policy(&self) -> MicPolicy {
+        self.lock().mic.policy()
+    }
+
+    /// Whether the sink holds the hub's microphone gate closed now.
+    #[cfg(test)]
+    pub(crate) fn mic_engaged(&self) -> bool {
+        self.lock().mic.engaged()
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -422,6 +489,7 @@ impl SinkCore {
     }
 
     fn run(&self) {
+        let _release = MicRelease(self);
         let mut wait = Duration::ZERO;
         loop {
             {
@@ -880,7 +948,45 @@ impl SinkCore {
         if !idle.is_empty() {
             st.outputs.retain(|o| !idle.contains(&o.id));
         }
+        // The microphone policy: decide with what flows into the voice changer after this pass.
+        let flow = if st.mic.policy() == MicPolicy::Mute {
+            self.mic_flow(st)
+        } else {
+            MicFlow::Idle
+        };
+        let holds = MicHolds {
+            hold: cfg.mic_hold,
+            bridge: cfg.mic_bridge,
+        };
+        if let Some(next) = st.mic.update(flow, now, holds, &*self.mic_port) {
+            wait = wait.min(next);
+        }
         Step::Wait(wait)
+    }
+
+    /// What goes into the voice changer now ([`MicFlow`]): `Playing` while the head has blocks
+    /// converted for it or audio still queued in its aux queue, or an utterance playing out still
+    /// has audio there; else `MoreQueued` while a begun utterance routed to it waits (its sentence
+    /// is synthesizing, or its audio is still arriving) and the voice changer runs.
+    fn mic_flow(&self, st: &State) -> MicFlow {
+        let head = st.queue.front().and_then(|u| {
+            let v = u.play.as_ref()?.vc.as_ref().filter(|v| v.open)?;
+            Some(!v.blocks.is_empty() || (v.pushed > 0 && self.vc.pending(u.tag) > 0))
+        });
+        let playing = head.unwrap_or(false) || st.draining.iter().any(|d| d.vc.is_some() && self.vc.pending(d.tag) > 0);
+        if playing {
+            return MicFlow::Playing;
+        }
+        // A partial block (`building`) waiting for the producer counts as more to come, not as
+        // audio playing: a producer that stalls mid-sentence cannot hold the microphone closed.
+        let more = st.queue.iter().any(|u| {
+            u.target.route != SinkRoute::Device && u.play.as_ref().is_none_or(|p| p.vc.as_ref().is_some_and(|v| v.open))
+        });
+        if more && self.vc.format().is_some() {
+            MicFlow::MoreQueued
+        } else {
+            MicFlow::Idle
+        }
     }
 
     fn try_start(&self, st: &mut State, now: Instant) -> Start {
@@ -1041,6 +1147,7 @@ impl SinkCore {
             queue,
             outputs,
             pending_total_us,
+            mic,
             ..
         } = st;
         let utt = queue.front_mut().expect("front");
@@ -1098,8 +1205,14 @@ impl SinkCore {
                 break;
             }
         }
-        if vc_open {
-            let v = utt.play.as_mut().and_then(|p| p.vc.as_mut()).expect("vc");
+        let v = utt.play.as_mut().and_then(|p| p.vc.as_mut()).filter(|v| v.open);
+        // A reply's onset under the `mute` policy: the hub gate closes first (at the end of this
+        // pass) and the first block follows `mic_lead` later (see `mic_gate`); converted blocks wait
+        // meanwhile. Once audio went in, nothing waits (also not after a policy change mid-sentence).
+        let onset_held = v
+            .as_ref()
+            .is_some_and(|v| v.pushed == 0 && mic.onset_wait(now, cfg.mic_lead, &*self.mic_port).is_some());
+        if let Some(v) = v.filter(|_| !onset_held) {
             while let Some(b) = v.blocks.pop_front() {
                 let len = b.len() as u64;
                 match self.vc.try_push(tag, b, v.format) {

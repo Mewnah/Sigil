@@ -277,6 +277,60 @@ describe("Service_TTS keyboard input dedupe", () => {
   });
 });
 
+describe("Service_TTS Smart Turn commit (P6-C gate, wired by P6-I0)", () => {
+  const sttSub = () => subscriptions.find((s) => s.source === TextEventSource.stt)!;
+  type TurnEvent = { type: TextEventType; value: string; turnEnd?: boolean; lang?: string };
+  const say = (e: TurnEvent) => (sttSub().fn as unknown as (e: TurnEvent) => void)(e);
+
+  async function running(overrides: Partial<TTS_State>) {
+    const made = makeService({ source: TextEventSource.stt, inputField: false, ...overrides });
+    await made.service.init();
+    made.service.start();
+    last().receiver.onStart();
+    return made;
+  }
+
+  it("off (default): every final is spoken at once, and STT's cancel marker never", async () => {
+    const { service } = await running({});
+    say({ type: TextEventType.final, value: "I think", turnEnd: false, lang: "en" });
+    say({ type: TextEventType.final, value: "[...]" });
+    expect(last().played).toEqual(["I think"]);
+    service.dispose();
+  });
+
+  it("on: an unfinished turn waits and is spoken joined with the rest", async () => {
+    const { service } = await running({ commitOnTurnEnd: true });
+    say({ type: TextEventType.final, value: "I think", turnEnd: false, lang: "en" });
+    say({ type: TextEventType.interim, value: "we should" });
+    expect(last().played).toEqual([]);
+    say({ type: TextEventType.final, value: "we should go.", turnEnd: true, lang: "en" });
+    expect(last().played).toEqual(["I think we should go."]);
+    service.dispose();
+  });
+
+  it("on: held text is spoken after the hold time without speech, and dropped by stop", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, data } = await running({ commitOnTurnEnd: true, turnHoldMs: "800" });
+      say({ type: TextEventType.final, value: "so", turnEnd: false, lang: "en" });
+      vi.advanceTimersByTime(700);
+      expect(last().played).toEqual([]);
+      vi.advanceTimersByTime(200);
+      expect(last().played).toEqual(["so"]);
+
+      say({ type: TextEventType.final, value: "never mind", turnEnd: false, lang: "en" });
+      const backend = last();
+      service.stop();
+      vi.advanceTimersByTime(5_000);
+      expect(backend.played).toEqual(["so"]);
+      expect(data.commitOnTurnEnd).toBe(true);
+      service.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("Service_TTS desktop default (P2)", () => {
   function makeDesktop(overrides: Partial<TTS_State> = {}, root: { onboardingComplete: boolean; isApp?: boolean } = { onboardingComplete: true }) {
     const { service, data } = makeService(overrides);

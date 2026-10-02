@@ -1,0 +1,174 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "Qwen3-TTS 12 Hz models for the qwentts.cpp helper (tts_helpers::qwen, owned by P6-E). The server loads one talker plus the shared tokenizer: CustomVoice talkers for the 9 preset voices (tts/qwen3-tts-1.7b and tts/qwen3-tts-0.6b, the size ids of resources::policy::ids), Base talkers for cloning library voices (-base), and the 1.7B VoiceDesign talker for voices described in words (there is no 0.6B VoiceDesign). Every talker requires tts/qwen3-tts-tokenizer.",
+    "Q8_0 GGUFs converted by the qwentts.cpp author (Serveurperso/Qwen3-TTS-GGUF), the quantization upstream validates (per-stage cosine against PyTorch >= 0.9994; RVQ codebooks and the speaker encoder stay F32 in every quant), pinned to a repo commit with the LFS sha256 (scripts/models/pin-catalog.mjs).",
+    "min_vram_mb equals the resource governor's per-size estimate (resources::policy: 3200 / 1500 MiB; a test keeps them equal). qwentts.cpp also allocates a 4096-token f32 KV cache (896 MB on both sizes) plus about 0.4 GB of CUDA context, so the 0.6B footprint is likely nearer 2.3 GB: the helper claims this number while it loads and resizes the claim to the buffers the server logs. Replace both with the P7 measurements together."
+  ],
+  "entries": [
+    {
+      "id": "tts/qwen3-tts-tokenizer",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 12 Hz tokenizer",
+      "description": "The audio codec every Qwen3-TTS voice model uses: turns the model's output into 24 kHz speech and reads reference clips for voice cloning. About 290 MB.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "qwen-tokenizer-12hz-Q8_0.gguf",
+          "size": 291150624,
+          "sha256": "1883beeed99348fc35e23dd225e9082f93f6f8c109330a33d935baa8acdbfd94",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-tokenizer-12hz-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/qwen3-tts-1.7b",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 1.7B voices",
+      "description": "Alibaba's expressive speech model with 9 built-in voices that follow style and emotion instructions, in Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish and Italian. Runs on the graphics card. About 2 GB download; uses about 3.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3200,
+      "requires": [
+        "tts/qwen3-tts-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "qwen-talker-1.7b-customvoice-Q8_0.gguf",
+          "size": 2042834304,
+          "sha256": "cab2cff67a0a557310febe558dc83076b28ed790e491867eb2751759f4cd89fa",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-customvoice-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/qwen3-tts-1.7b-base",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 1.7B voice cloning",
+      "description": "Speaks in a voice from your voice library after hearing a clean 3 to 10 second clip of it (best with the clip's transcript). Runs on the graphics card. About 2.1 GB download; uses about 3.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3200,
+      "requires": [
+        "tts/qwen3-tts-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "qwen-talker-1.7b-base-Q8_0.gguf",
+          "size": 2079448256,
+          "sha256": "4b9a33a236908dd9435a42f7a396e38038329d053b704342a6413c08544c4fda",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-base-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/qwen3-tts-1.7b-voicedesign",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 1.7B voice design",
+      "description": "Creates a voice from a description in words (age, gender, pitch, mood, style). Runs on the graphics card. About 2 GB download; uses about 3.2 GB of video memory.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 3200,
+      "requires": [
+        "tts/qwen3-tts-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "qwen-talker-1.7b-voicedesign-Q8_0.gguf",
+          "size": 2042833824,
+          "sha256": "575610ab1ddcca4dca6bd9a64bcd859d93bbad8764f9cab24e1dbc0c51f62276",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-voicedesign-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/qwen3-tts-0.6b",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 0.6B voices",
+      "description": "The smaller model with the same 9 built-in voices (no style instructions), for graphics cards that also run the voice changer. About 970 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 1500,
+      "requires": [
+        "tts/qwen3-tts-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "qwen-talker-0.6b-customvoice-Q8_0.gguf",
+          "size": 968588544,
+          "sha256": "4eb38675c736ed6ac72012846ac8d6ef80e5af8bc05726870f0b3a6569588519",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-0.6b-customvoice-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tts/qwen3-tts-0.6b-base",
+      "family": "tts",
+      "kind": "model",
+      "version": "b7ee2e8",
+      "title": "Qwen3-TTS 0.6B voice cloning",
+      "description": "The smaller voice-cloning model, for graphics cards that also run the voice changer. About 990 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "min_vram_mb": 1500,
+      "requires": [
+        "tts/qwen3-tts-tokenizer"
+      ],
+      "files": [
+        {
+          "path": "qwen-talker-0.6b-base-Q8_0.gguf",
+          "size": 992615488,
+          "sha256": "d54dbaf10591421fa764ed630d764efa717ae40cd959bd48c66d4eb1af226426",
+          "sources": [
+            {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-0.6b-base-Q8_0.gguf",
+              "revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

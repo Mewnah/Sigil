@@ -262,6 +262,49 @@ describe("sanitizeClientPubSubFrame (/client PeerJS bridge)", () => {
     expect(sanitizeClientPubSubFrame({ topic: "text.stt", data: "hi" })).toBeNull();
     expect(sanitizeClientPubSubFrame({ topic: "text.textfield", data: { type: 9, value: "x" } })).toBeNull();
   });
+
+  // P6-S0: other players' captions and readings reach /client canvases too, validated like text.
+  it("sanitizes other players' captions like text", () => {
+    const frame = { topic: "others.stt", data: { type: 1, value: "<b>hi</b>", emotes: { x: "javascript:alert(1)" }, tags: ["emotion:happy"] } };
+    expect(sanitizeClientPubSubFrame(frame)).toEqual({
+      topic: "others.stt",
+      data: { type: 1, value: "<​b>hi<​/b>", emotes: {}, tags: ["emotion:happy"] },
+    });
+    expect(sanitizeClientPubSubFrame({ topic: "others.translation", data: { type: 0 } })).toEqual({
+      topic: "others.translation",
+      data: { type: 0, value: "", emotes: {} },
+    });
+    expect(sanitizeClientPubSubFrame({ topic: "others.stt", data: "hi" })).toBeNull();
+  });
+
+  it("validates readings and neutralizes every string", () => {
+    const data = {
+      utteranceId: "mic-abc:1:7",
+      source: "others.stt",
+      lang: "ja",
+      value: "<i>漢字</i>",
+      hiragana: "<s>かんじ",
+      segments: [{ text: "漢字", reading: "<u>かんじ" }],
+    };
+    const out = sanitizeClientPubSubFrame({ topic: "readings.stt", data });
+    expect(out?.topic).toBe("readings.stt");
+    expect(out?.data).toMatchObject({
+      utteranceId: "mic-abc:1:7",
+      source: "others.stt",
+      value: "<​i>漢字<​/i>",
+      hiragana: "<​s>かんじ",
+      segments: [{ text: "漢字", reading: "<​u>かんじ" }],
+    });
+    expect(sanitizeClientPubSubFrame({ topic: "readings.stt", data: { ...data, utteranceId: "bad id" } })).toBeNull();
+    expect(sanitizeClientPubSubFrame({ topic: "readings.stt", data: { ...data, source: "text" + ".nope" } })).toBeNull();
+  });
+
+  it("never accepts other players' captions or readings from WebSocket peers", () => {
+    for (const topic of ["others.stt", "others.translation", "others", "readings.stt"]) {
+      expect(kind(routeInboundMessage(msg(topic, final("x")), "local", SELF)), topic).toBe("ignore:topic_not_allowed");
+      expect(kind(routeInboundMessage(msg(topic, final("x"), [OTHER]), "link", SELF)), topic).toBe("ignore:topic_not_allowed");
+    }
+  });
 });
 
 describe("message ids (duplicate suppression)", () => {

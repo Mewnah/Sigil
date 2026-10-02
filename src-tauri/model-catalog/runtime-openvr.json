@@ -1,0 +1,34 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "runtime/openvr: Valve's openvr_api.dll for the SteamVR caption overlay (P6-B), loaded lazily by services/vr_overlay through hand-written FFI (never load-time linked; SteamVR itself is never started by Sigil).",
+    "OpenVR SDK v2.15.6 (2026-03-27), commit 0924064316de3effbcd1acf1e309182a2deb1c05, bin/win64/openvr_api.dll. Size and git blob id from the GitHub contents API at that commit (a plain git file, not LFS).",
+    "The FFI's function-table indexes (vr_overlay/openvr.rs) come from headers/openvr_capi.h at the same commit (IVRSystem_026, IVROverlay_028). Upgrade: bump version, path pin and revision together, re-derive the indexes from that header, and re-run `cargo test vr_overlay` plus the manual SteamVR check."
+  ],
+  "entries": [
+    {
+      "id": "runtime/openvr",
+      "family": "runtime",
+      "kind": "runtime",
+      "version": "2.15.6",
+      "title": "OpenVR runtime (SteamVR caption overlay)",
+      "description": "Lets Sigil show captions inside SteamVR. About 0.8 MB. SteamVR itself is not included and Sigil never starts it.",
+      "license": "BSD-3-Clause",
+      "status": "published",
+      "files": [
+        {
+          "path": "openvr_api.dll",
+          "size": 837272,
+          "git_oid": "83b201974728158157be0bf6fc3b43caed34ab11",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://raw.githubusercontent.com/ValveSoftware/openvr/0924064316de3effbcd1acf1e309182a2deb1c05/bin/win64/openvr_api.dll",
+              "revision": "0924064316de3effbcd1acf1e309182a2deb1c05"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -16,11 +16,34 @@ function peerSignalingHost(host: string): string {
 /** Dispatched on the browser `/client` PeerJS path for connection diagnostics (OBS, etc.). */
 export const PEER_CLIENT_MIRROR_EVENT = "peer_client_mirror";
 
+/**
+ * PeerJS error type when the server refuses the API key, which carries the LAN token (P6-D): the
+ * mirror runs on another machine and its link has no token, an old one, or the host accepts only
+ * its own PC.
+ */
+export const PEER_INVALID_KEY = "invalid-key";
+
+/** PeerJS server message type: a peer's signaling socket is gone (its connections must close). */
+export const PEER_SERVER_LEAVE = "LEAVE";
+
+/** Error type of a PeerJS error (`peer.on("error")`), or "". */
+export function peerErrorType(err: unknown): string {
+  return err && typeof err === "object" && "type" in err ? String((err as { type?: unknown }).type ?? "") : "";
+}
+
 export type PeerClientMirrorDetail =
   | { phase: "synced" }
   | { phase: "reconnecting" }
   | { phase: "error"; message?: string }
   | { phase: "failed"; message?: string };
+
+/** Where a `/client` mirror connects (`token`: the host's LAN token from the page URL, P6-D). */
+export interface ClientLinkParams {
+  id: string;
+  host: string;
+  port: string;
+  token?: string;
+}
 
 export class PeerjsProvider extends EventTarget {
   constructor(
@@ -29,7 +52,7 @@ export class PeerjsProvider extends EventTarget {
 
   #peer?: Peer;
   private peers: { [id: string]: DataConnection } = {};
-  #clientLinkParams?: { id: string; host: string; port: string };
+  #clientLinkParams?: ClientLinkParams;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #reconnectAttempts = 0;
   private static readonly maxClientReconnects = 20;
@@ -45,6 +68,7 @@ export class PeerjsProvider extends EventTarget {
     port: string
   }) {
     this.document.on("update", this.#onDocumentUpdate);
+    // The host signals over loopback, which never needs the LAN token.
     this.#peer = new Peer(params.id, {
       host: peerSignalingHost(params.host),
       port:   parseInt(params.port),
@@ -53,16 +77,50 @@ export class PeerjsProvider extends EventTarget {
       secure: false,
       debug: 0});
     this.#peer.on("open", () => {});
+    // The signaling server sends `LEAVE` (src = the mirror's id) when a mirror's signaling socket
+    // is gone, in particular when a LAN rules change revoked it (src-tauri/src/services/web/peer.rs).
+    // PeerJS closes its connections with that peer itself; drop them here too, so a revoked mirror
+    // never keeps the data channel that carries the document and every pubsub broadcast, even if
+    // PeerJS's handling changes. The same socket delivered that peer's OFFER first.
+    this.#peer.socket?.on?.("message", (message: unknown) => {
+      const m = message as { type?: unknown; src?: unknown } | null;
+      if (m && m.type === PEER_SERVER_LEAVE && typeof m.src === "string") this.dropPeer(m.src);
+    });
     this.#peer.on("connection", clientConn => {
       devLog("connected client", clientConn);
       this.peers[clientConn.connectionId] = clientConn;
       clientConn.on("open", () => {
+        // Dropped (its peer left signaling) before the channel opened: never send it the document.
+        if (this.peers[clientConn.connectionId] !== clientConn) {
+          clientConn.close();
+          return;
+        }
         this.dispatchEvent(new CustomEvent("on_client_connected", {detail: clientConn.connectionId}))
         clientConn.send(this.serializeUpdate(encodeStateAsUpdate(this.document)));
       });
       clientConn.on("close", () => delete this.peers[clientConn.connectionId]);
     });
     this.#peer.on("disconnected", () => {});
+  }
+
+  /**
+   * Host: close and forget every data connection with `peerId` (the PeerJS id the mirror signaled
+   * with). Returns how many were dropped.
+   */
+  dropPeer(peerId: string): number {
+    let dropped = 0;
+    for (const [key, conn] of Object.entries(this.peers)) {
+      if (conn.peer !== peerId) continue;
+      delete this.peers[key];
+      dropped++;
+      try {
+        conn.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    if (dropped) devLog("dropped data connections of a peer that left signaling", dropped);
+    return dropped;
   }
 
   #clearClientReconnectTimer() {
@@ -110,11 +168,7 @@ export class PeerjsProvider extends EventTarget {
     }, delay);
   }
 
-  async connectClient(params: {
-    id: string,
-    host: string,
-    port: string
-  }) {
+  async connectClient(params: ClientLinkParams) {
     this.#clientLinkParams = params;
     this.#clearClientReconnectTimer();
     this.#reconnectAttempts = 0;
@@ -145,7 +199,8 @@ export class PeerjsProvider extends EventTarget {
         peer = new Peer(nanoid(64), {
           host: peerSignalingHost(params.host),
           port: parseInt(params.port, 10),
-          key: "",
+          // The LAN token (P6-D) rides in the PeerJS API key; "" on the host's own PC.
+          key: params.token ?? "",
           path: "peer",
           secure: false,
           debug: 0,
@@ -159,13 +214,11 @@ export class PeerjsProvider extends EventTarget {
       this.#peer = peer;
 
       peer.on("error", (err: unknown) => {
-        console.error("[PeerJS]", err);
-        const message =
-          err && typeof err === "object" && "type" in err
-            ? String((err as { type?: string }).type)
-            : err instanceof Error
-              ? err.message
-              : String(err ?? "");
+        const type = peerErrorType(err);
+        // PeerJS's invalid-key message quotes the key, i.e. the LAN token: log the type only.
+        if (type === PEER_INVALID_KEY) console.error("[PeerJS] the host refused this mirror's LAN token (invalid-key)");
+        else console.error("[PeerJS]", err);
+        const message = type || (err instanceof Error ? err.message : String(err ?? ""));
         this.dispatchEvent(
           new CustomEvent<PeerClientMirrorDetail>(PEER_CLIENT_MIRROR_EVENT, {
             detail: { phase: "error", message },

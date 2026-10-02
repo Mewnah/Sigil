@@ -25,6 +25,12 @@ export function waitForVoices(synth: SpeechSynthesis, timeoutMs = VOICES_TIMEOUT
 /**
  * Web Speech API (`speechSynthesis`) on the webview's default output. Self-playing (ITTSService v2): the browser
  * speaks whole finals itself, so there is no sentence pipeline, device choice or voice-changer routing.
+ *
+ * Device-only by design (P6-J): `speechSynthesis` plays straight to the system's default output and never hands its
+ * audio to the page (no stream, no Web Audio node), so it cannot reach the TTS sink, another device or the voice
+ * changer, and the voice changer's "microphone while TTS plays" setting does not apply to it. For a Windows voice
+ * with full routing, use the `windows` backend (installed SAPI voices, spoken through the sink). The Routing panel
+ * tells the user that this backend plays by itself (`tts.route_self_playing`).
  */
 export class TTS_NativeService implements ITTSService {
   get selfPlaying(): boolean {

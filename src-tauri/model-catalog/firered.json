@@ -1,0 +1,46 @@
+{
+  "$schema": "./_schema.json",
+  "$comment": [
+    "FireRedVAD audio event detection (speech / singing / music) for the speech pipeline's music gate (speech::music_gate::MODEL_ID, an A/B that is off by default; owned by P6-L).",
+    "FireRedTeam/FireRedVAD (Apache-2.0): the official ONNX export of the AED model (input 'feat' f32 [1, T, 80] Kaldi fbank after global CMVN, output 'probs' f32 [1, T, 3]) and its Kaldi CMVN stats, from the GitHub repository's pretrained_models/onnx_models at a pinned commit (the Hugging Face repo holds only the PyTorch checkpoints). Both files are plain git blobs: git_oid 4df9973272e38084a87475023f1c234fba0ddfbf and 5b21592ae056b8b11ae23074542a175cdf8160a4, verified against the downloads.",
+    "Update: re-pin the commit in both URLs, re-hash the two files, and keep MODEL_ID / MODEL_FILE / CMVN_FILE in speech/music_gate.rs in step."
+  ],
+  "entries": [
+    {
+      "id": "vad/firered-aed",
+      "family": "vad",
+      "kind": "model",
+      "version": "1.0",
+      "title": "FireRedVAD music and singing detector",
+      "description": "Recognizes music and singing, so the experimental music filter can skip them instead of turning them into captions. About 2.4 MB download.",
+      "license": "Apache-2.0",
+      "status": "published",
+      "files": [
+        {
+          "path": "fireredvad_aed.onnx",
+          "size": 2390544,
+          "sha256": "4ec27ccd86b16c38aec043215d5d2e528c07eb3b7bad8f14d636633166cff137",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://raw.githubusercontent.com/FireRedTeam/FireRedVAD/c30ec49e8cc69642b0ee65362eba11b9d11c6e54/pretrained_models/onnx_models/fireredvad_aed.onnx",
+              "revision": "c30ec49e8cc69642b0ee65362eba11b9d11c6e54"
+            }
+          ]
+        },
+        {
+          "path": "cmvn.ark",
+          "size": 1311,
+          "sha256": "c87f6f13edf0f0ec7535ddfc9cc3387d9268cb234b70182d566c5e2edf3ca473",
+          "sources": [
+            {
+              "kind": "direct",
+              "url": "https://raw.githubusercontent.com/FireRedTeam/FireRedVAD/c30ec49e8cc69642b0ee65362eba11b9d11c6e54/pretrained_models/onnx_models/cmvn.ark",
+              "revision": "c30ec49e8cc69642b0ee65362eba11b9d11c6e54"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,13 @@ declare global {
 }
 window.global ||= window;
 
+/**
+ * Caption window (P6-B; Rust `caption_window::CAPTIONS_ROUTE`, `src/overlay/frame.ts` `CAPTION_WINDOW_PATH`): an early
+ * route that only renders the captions the main window sends. It returns before AppConfiguration, ApiShared, ApiClient
+ * or ApiServer are created, so the window never boots the host (no settings file, no PeerJS server, no services).
+ */
+const isCaptionWindow = window.location.pathname === "/captions" || window.location.pathname.startsWith("/captions/");
+
 /** Canvas mirror (/client) is often opened in OBS’s embedded browser (older CEF than Chrome). Mark early so CSS fallbacks apply before paint. */
 if (window.location.pathname.startsWith("/client")) {
   pinClientToServingHost();
@@ -62,6 +69,16 @@ function renderView(view: ReactNode) {
 import SigilRoot from "./core/ui/sigil/SigilRoot";
 
 (async function () {
+  if (isCaptionWindow) {
+    try {
+      const { mountCaptionWindow } = await import("./overlay");
+      mountCaptionWindow(window.reactRoot);
+    } catch (error) {
+      // Nothing to show: the window stays transparent; the reason is in this window's console.
+      console.error("[captions] the caption window failed to start", error);
+    }
+    return;
+  }
   try {
     const { runOAuthCallbackIfNeeded } = await import("./oauth/bootstrap");
     if (await runOAuthCallbackIfNeeded())

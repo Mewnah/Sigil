@@ -15,6 +15,7 @@ import { STT_MoonshineService } from "./services/moonshine";
 import { STT_OpenAI_AudioService } from "./services/openaiAudio";
 import { STT_ExternalMicService } from "./services/externalMic";
 import { STT_LocalService } from "./services/local";
+import { STT_GeminiLiveService } from "./services/geminiLive";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { invoke } from "@tauri-apps/api/core";
 import { migrateLegacyNativeInputDevice } from "@/utils/rustAudioInput";
@@ -51,6 +52,8 @@ const backends: SttBackendMap = {
   [STT_Backends.moonshine]: STT_MoonshineService,
   [STT_Backends.openai_audio]: STT_OpenAI_AudioService,
   [STT_Backends.local]: STT_LocalService,
+  /** P6-K (P6-S0 stub). */
+  [STT_Backends.geminiLive]: STT_GeminiLiveService,
 };
 
 /** How long Chrome / Edge may take to open the microphone page (`EXTERNAL_MIC_WAITING_LINE_MS` in externalMic.ts is the same). */
@@ -83,19 +86,26 @@ export function connectingFallbackMs(backend: STT_Backends): number {
   return HEAVY_BACKENDS.has(backend) ? STT_CONNECTING_FALLBACK_HEAVY_MS : STT_CONNECTING_FALLBACK_MS;
 }
 
+/** A valid `TextEvent.tags` entry (`<kind>:<value>`, same rule as `TextEventSchema`). */
+const TEXT_TAG = /^[a-z]{1,16}:[A-Za-z0-9_.-]{1,40}$/;
+
 /**
- * `SttTextMeta` -> the optional `TextEvent` fields (`segmentId`, `revision`, `lang`, `turnEnd`). Only valid values are
- * copied (the schema would drop malformed ones on peers anyway), and absent ones leave no key, so events of engines
- * without segments are unchanged.
+ * `SttTextMeta` -> the optional `TextEvent` fields (`segmentId`, `revision`, `lang`, `turnEnd`, `tags`). Only valid
+ * values are copied (the schema would drop malformed ones on peers anyway), and absent ones leave no key, so events of
+ * engines without segments are unchanged.
  */
-export function textEventMeta(meta: SttTextMeta | undefined): Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd"> {
-  const out: Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd"> = {};
+export function textEventMeta(meta: SttTextMeta | undefined): Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd" | "tags"> {
+  const out: Pick<TextEvent, "segmentId" | "revision" | "lang" | "turnEnd" | "tags"> = {};
   if (!meta) return out;
   if (typeof meta.segmentId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(meta.segmentId)) out.segmentId = meta.segmentId;
   if (typeof meta.revision === "number" && Number.isInteger(meta.revision) && meta.revision >= 0 && meta.revision <= 1_000_000)
     out.revision = meta.revision;
   if (typeof meta.lang === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(meta.lang)) out.lang = meta.lang;
   if (typeof meta.turnEnd === "boolean") out.turnEnd = meta.turnEnd;
+  if (Array.isArray(meta.tags)) {
+    const tags = meta.tags.filter((t) => typeof t === "string" && TEXT_TAG.test(t)).slice(0, 8);
+    if (tags.length > 0) out.tags = tags;
+  }
   return out;
 }
 

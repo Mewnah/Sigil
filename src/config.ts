@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { clientServerAddress } from "@/utils/localPages";
+import { lanTokenFromQuery } from "@/shared/services/peer/lanAccess";
 
 enum AppMode {
   server,
@@ -25,11 +26,24 @@ type ClientNetwork = {
   serverId: string;
   host: string;
   port: string;
+  /**
+   * The host's LAN token from `?token=` (P6-D; normalized, "" when absent or malformed). Sent as the
+   * PeerJS key; only needed when this mirror runs on another machine than the host.
+   */
+  token: string;
+}
+/** An IPv4 address of the host PC that other devices may reach it on (`plugin:web|config`). */
+export type LanAddress = {
+  ip: string;
+  /** Network adapter name. */
+  interface: string;
 }
 type ServerNetwork = {
   ip: string,
   host: string,
-  port: string
+  port: string,
+  /** Candidate addresses for LAN links, the primary (`ip`) first (P6-D). */
+  lanAddresses: LanAddress[],
 }
 
 class AppConfiguration {
@@ -70,6 +84,7 @@ class AppConfiguration {
         serverId: q.get("id") ?? "",
         host,
         port,
+        token: lanTokenFromQuery(q),
       };
     }
     // server is always app
@@ -81,6 +96,7 @@ class AppConfiguration {
         // Same as upstream Curses: advertise localhost so OBS/browser sources match `localhost:PORT/client`.
         host: "localhost",
         port: appConfig.port,
+        lanAddresses: parseLanAddresses(appConfig.lan_addresses, appConfig.local_ip),
       };
     }
   }
@@ -94,6 +110,16 @@ class AppConfiguration {
   }
   //endregion
 
+}
+
+/** `lan_addresses` from `plugin:web|config`, validated; falls back to the primary address alone. */
+function parseLanAddresses(raw: unknown, primary: unknown): LanAddress[] {
+  const list = Array.isArray(raw)
+    ? raw.filter((a): a is LanAddress => !!a && typeof a.ip === "string" && typeof a.interface === "string")
+    : [];
+  if (list.length === 0 && typeof primary === "string" && primary)
+    return [{ ip: primary, interface: "" }];
+  return list;
 }
 
 export default AppConfiguration;

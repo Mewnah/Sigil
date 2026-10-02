@@ -2,8 +2,20 @@ import { useGetState } from "@/client";
 import { ServiceNetworkState } from "@/types";
 import { isTauri } from "@tauri-apps/api/core";
 import { getVersion } from '@tauri-apps/api/app';
+import { confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
 import { FC, memo, useEffect, useMemo, useState } from "react";
 import { RiFileCopyLine, RiSettings2Fill } from "react-icons/ri";
+import { toast } from "react-toastify";
+import { ObsBrowserSourceService } from "@/core/services/obs/browserSource";
+import {
+  formatLinkAddress,
+  groupLanToken,
+  isValidLanToken,
+  maskLanToken,
+  normalizeLanToken,
+  splitLinkAddress,
+  type LanAccessMode,
+} from "@/shared/services/peer/lanAccess";
 import { SiDiscord, SiGithub, SiPatreon, SiTwitch, SiTwitter } from "react-icons/si";
 import { useSnapshot } from "valtio";
 import Dropdown from "../dropdown/Dropdown";
@@ -64,14 +76,150 @@ const UI_SCALE_MAX = 1.5;
 
 const languageOptions = i18nLanguages.map(({ code, name }) => ({ label: name, value: code }));
 
-const AddrInput = () => {
-  const [v, setV] = useState(window.ApiServer.state.linkAddress);
-  const upd = (v: string) => {
-    setV(v);
-    window.ApiServer.state.linkAddress = v;
-  }
-  return <InputText value={v} onChange={e => upd(e.target.value)} label="settings.field_ip_address" placeholder="192.168..smth" />
-}
+/**
+ * Link apps target: the other Sigil's address and its LAN token (P6-D). Both live in `linkAddress`
+ * as `<ip>:<port>?token=<token>`; pasting a whole "Copy my address" value into the address field
+ * fills both.
+ */
+const LinkAddressInputs: FC = () => {
+  const { t } = useTranslation();
+  const [initial] = useState(() => splitLinkAddress(window.ApiServer.state.linkAddress));
+  const [address, setAddress] = useState(initial.address);
+  const [token, setToken] = useState(initial.token);
+  const save = (nextAddress: string, nextToken: string) => {
+    window.ApiServer.state.linkAddress = formatLinkAddress(nextAddress, nextToken);
+  };
+  const onAddress = (value: string) => {
+    if (/[?#]/.test(value)) {
+      const split = splitLinkAddress(value);
+      const nextToken = split.token || token;
+      setAddress(split.address);
+      setToken(nextToken);
+      save(split.address, nextToken);
+      return;
+    }
+    setAddress(value);
+    save(value, token);
+  };
+  const onToken = (value: string) => {
+    setToken(value);
+    save(address, value);
+  };
+  const tokenInvalid = token.trim() !== "" && !isValidLanToken(token);
+  return <>
+    <InputText value={address} onChange={e => onAddress(e.target.value)} label="settings.field_ip_address" placeholder="192.168.1.50:3030" />
+    <InputText value={token} onChange={e => onToken(e.target.value)} label="settings.field_link_remote_token" placeholder="abcde-fghij-…" autoComplete="off" spellCheck={false} dir="ltr" />
+    {tokenInvalid && <span className="text-xs text-error">{t("settings.link_remote_token_invalid")}</span>}
+    <Inspector.Description>
+      <span className="text-base-content/60 text-xs">{t("settings.link_remote_token_hint")}</span>
+    </Inspector.Description>
+  </>;
+};
+
+const obsLinks = new ObsBrowserSourceService();
+
+/**
+ * LAN access (LAN security stage 2, P6-D; desktop host only): who may connect from other devices,
+ * the persistent LAN token (show, copy, regenerate), links for other devices, and the legacy
+ * no-token switch with its caution.
+ */
+const LanAccessSection: FC = () => {
+  const { t } = useTranslation();
+  const { lanAccess } = useSnapshot(window.ApiServer.state);
+  const { status } = useSnapshot(window.ApiShared.pubsub.webServer);
+  const [revealed, setRevealed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const network = window.Config.serverNetwork;
+  const addresses = network.lanAddresses ?? [];
+  const [ip, setIp] = useState(network.ip);
+  const token = normalizeLanToken(lanAccess.token) ?? "";
+  const lan = status?.lan;
+  const modeOptions = [
+    { label: t("settings.lan_mode_lan"), value: "lan" },
+    { label: t("settings.lan_mode_localhost"), value: "localhost" },
+  ];
+  const addressOptions = addresses.map((a) => ({ label: a.interface ? `${a.ip} (${a.interface})` : a.ip, value: a.ip }));
+
+  const copy = (text: string) => {
+    void navigator.clipboard.writeText(text);
+    toast.success(t("toasts.copied"));
+  };
+
+  const regenerate = async () => {
+    const message = t("settings.lan_token_regenerate_confirm");
+    const ok = isTauri()
+      ? await dialogConfirm(message, { title: t("settings.section_lan_access"), kind: "warning" })
+      : window.confirm(message);
+    if (!ok)
+      return;
+    setBusy(true);
+    try {
+      if (await window.ApiShared.pubsub.regenerateLanToken())
+        toast.success(t("toasts.lan_token_regenerated"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchFailed = !!lan && status?.state === "listening" && lan.boundMode !== null && lan.boundMode !== lan.mode;
+
+  return <>
+    <Inspector.SubHeader>{t("settings.section_lan_access")}</Inspector.SubHeader>
+    <InputSelect
+      label="settings.field_lan_mode"
+      options={modeOptions}
+      value={lanAccess.mode}
+      onValueChange={(v) => {
+        if (v === "lan" || v === "localhost")
+          window.ApiServer.state.lanAccess.mode = v as LanAccessMode;
+      }}
+    />
+    <Inspector.Description>
+      <span className="text-base-content/60 text-xs">{t(lanAccess.mode === "localhost" ? "settings.lan_mode_localhost_hint" : "settings.lan_mode_lan_hint")}</span>
+    </Inspector.Description>
+    {lan?.boundAddress && !switchFailed && <span className="text-xs text-base-content/70" dir="ltr">{t("settings.lan_bound_address", { address: lan.boundAddress })}</span>}
+    {switchFailed && <span className="text-xs text-warning">{t("settings.lan_mode_switch_failed", { address: lan?.boundAddress ?? "", error: status?.error ?? "" })}</span>}
+
+    {lanAccess.mode === "lan" && <>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-2 min-h-8">
+          <span className="font-medium text-base-content/80 text-xs">{t("settings.field_lan_token")}</span>
+          <code className="font-mono text-xs break-all text-end select-all" dir="ltr">
+            {token ? (revealed ? groupLanToken(token) : maskLanToken(token)) : t("settings.lan_token_missing")}
+          </code>
+        </div>
+        <div className="flex flex-wrap justify-end gap-1">
+          <button className="btn btn-xs btn-ghost" disabled={!token} onClick={() => setRevealed((v) => !v)}>
+            {t(revealed ? "settings.btn_lan_token_hide" : "settings.btn_lan_token_show")}
+          </button>
+          <button className="btn btn-xs btn-ghost" disabled={!token} onClick={() => copy(token)}>{t("settings.btn_lan_token_copy")}</button>
+          <button className="btn btn-xs btn-ghost text-warning" disabled={busy} onClick={() => void regenerate()}>{t("settings.btn_lan_token_regenerate")}</button>
+        </div>
+      </div>
+      <Inspector.Description>
+        <span className="text-base-content/60 text-xs">{t("settings.lan_token_hint")}</span>
+      </Inspector.Description>
+
+      {addressOptions.length > 1 && <InputSelect label="settings.field_lan_link_address" options={addressOptions} value={ip} onValueChange={setIp} />}
+      <div className="flex flex-wrap gap-1">
+        <button className="btn btn-sm btn-ghost gap-2" disabled={!token} onClick={() => copy(window.ApiShared.peer.getLanClientLink("/client", ip))}>
+          <RiFileCopyLine /> {t("settings.btn_copy_lan_client_link")}
+        </button>
+        <button className="btn btn-sm btn-ghost gap-2" disabled={!token} onClick={() => copy(obsLinks.getCaptionsLink(undefined, { lan: true, ip }))}>
+          <RiFileCopyLine /> {t("settings.btn_copy_lan_captions_link")}
+        </button>
+      </div>
+      <Inspector.Description>
+        <span className="text-base-content/60 text-xs">{t("settings.lan_links_hint")}</span>
+      </Inspector.Description>
+
+      <InputCheckbox label="settings.field_lan_legacy_no_token" value={lanAccess.legacyNoToken} onChange={(v) => window.ApiServer.state.lanAccess.legacyNoToken = v} />
+      <Inspector.Description>
+        <span className={lanAccess.legacyNoToken ? "text-warning text-xs" : "text-base-content/60 text-xs"}>{t("settings.lan_legacy_no_token_caution")}</span>
+      </Inspector.Description>
+    </>}
+  </>;
+};
 
 const ExportMenu: FC = () => {
   const { t } = useTranslation();
@@ -239,12 +387,13 @@ const Inspector_Settings: FC = memo(() => {
       <Inspector.SubHeader>{t('settings.section_link_apps')}</Inspector.SubHeader>
       <Inspector.Description>{t('settings.section_link_apps_desc')}</Inspector.Description>
       <Inspector.Deactivatable active={linkStatus === ServiceNetworkState.disconnected}>
-        <AddrInput />
+        <LinkAddressInputs />
         <InputNetworkStatus value={linkStatus} label="common.field_connection_status" />
       </Inspector.Deactivatable>
       <ServiceButton startLabel="common.btn_connect" stopLabel="common.btn_disconnect" status={linkStatus} onStart={() => window.ApiShared.pubsub.linkConnect()} onStop={() => window.ApiShared.pubsub.linkDisconnect()} />
       <button className="btn btn-sm btn-ghost" onClick={() => window.ApiShared.pubsub.copyLinkAddress()}>{t('settings.btn_copy_address')}</button>
 
+      {isTauri() && <LanAccessSection />}
       {isTauri() && <WebServerSection />}
 
     </Inspector.Content>
