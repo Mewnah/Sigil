@@ -1,0 +1,421 @@
+{
+ "schema": "sigil-speech-corpus/1",
+ "name": "fixture",
+ "description": "Test fixture of scripts/speech-bench (no audio files).",
+ "created_unix_ms": 1790985600000,
+ "sample_rate": 16000,
+ "channels": 1,
+ "format": "wav_pcm16",
+ "recipe": {
+  "schema": "sigil-speech-corpus-recipe/1",
+  "name": "fixture",
+  "seed": 1,
+  "sample_rate": 16000,
+  "languages": [
+   {
+    "lang": "en",
+    "fleurs": "en_us"
+   },
+   {
+    "lang": "ja",
+    "fleurs": "ja_jp"
+   }
+  ],
+  "selection": {
+   "per_language": 2,
+   "min_seconds": 3,
+   "max_seconds": 20
+  },
+  "speech_level": {
+   "active_dbfs": -26.0,
+   "jitter_db": 4.0
+  },
+  "banks": {
+   "music": {
+    "tracks": 1,
+    "segments_per_track": 1,
+    "segment_seconds": 30
+   },
+   "sfx": {
+    "categories": [
+     "clapping"
+    ],
+    "clips_per_category": 1
+   }
+  },
+  "conditions": [
+   {
+    "id": "clean",
+    "kind": "clean",
+    "description": "fixture"
+   },
+   {
+    "id": "music_snr10",
+    "kind": "music",
+    "snr_db": 10,
+    "description": "fixture"
+   }
+  ],
+  "subsets": {
+   "quick": [
+    "clean",
+    "music_snr10"
+   ],
+   "real": [
+    "real"
+   ]
+  }
+ },
+ "recipe_sha256": "3f2bcfec0b3580b6cd38a015241316fe9c65866020022c8ce83b2662554cb3ad",
+ "content_sha256": "248779555a2115cf7aa25e3b910f49196f07aa9fdbbd5594818062fd17014b5b",
+ "builder": {
+  "script": "fixture",
+  "version": "1",
+  "python": "3.12.10",
+  "packages": {}
+ },
+ "sources": {
+  "fleurs": {
+   "dataset": "google/fleurs",
+   "revision": "fixture",
+   "license": "CC-BY-4.0"
+  }
+ },
+ "conditions": [
+  {
+   "id": "clean",
+   "kind": "clean",
+   "description": "fixture",
+   "snr_db": null,
+   "params": {}
+  },
+  {
+   "id": "music_snr10",
+   "kind": "music",
+   "description": "fixture",
+   "snr_db": 10,
+   "params": {}
+  },
+  {
+   "id": "real",
+   "kind": "real",
+   "description": "fixture",
+   "snr_db": null,
+   "params": {}
+  }
+ ],
+ "subsets": {
+  "quick": [
+   "clean",
+   "music_snr10"
+  ],
+  "real": [
+   "real"
+  ]
+ },
+ "languages": {
+  "en": {
+   "items": 4
+  },
+  "ja": {
+   "items": 5
+  }
+ },
+ "items": [
+  {
+   "id": "en/1001/clean",
+   "utterance": "en/1001",
+   "kind": "synthetic",
+   "language": "en",
+   "condition": "clean",
+   "audio": "audio/en/clean/1001.wav",
+   "seconds": 4.0,
+   "sha256": "454bba21eeca93da37bf6b6dc86c5c24255bd20e7f0ef9da2218cc8f6e5b40e3",
+   "reference": "Hey everyone, thanks for joining the stream tonight!",
+   "rank": 0,
+   "speaker": {
+    "id": null,
+    "gender": "female"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "en",
+    "split": "test",
+    "file": "1001.wav",
+    "sentence_id": 1001,
+    "transcription_normalized": "hey everyone, thanks for joining the stream tonight!"
+   },
+   "mix": null
+  },
+  {
+   "id": "en/1001/music_snr10",
+   "utterance": "en/1001",
+   "kind": "synthetic",
+   "language": "en",
+   "condition": "music_snr10",
+   "audio": "audio/en/music_snr10/1001.wav",
+   "seconds": 4.0,
+   "sha256": "bc630e93f12abedc5e7568970d75eb462acbfaac92e97d15d03707b17d744489",
+   "reference": "Hey everyone, thanks for joining the stream tonight!",
+   "rank": 0,
+   "speaker": {
+    "id": null,
+    "gender": "female"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "en",
+    "split": "test",
+    "file": "1001.wav",
+    "sentence_id": 1001,
+    "transcription_normalized": "hey everyone, thanks for joining the stream tonight!"
+   },
+   "mix": {
+    "seed": 1,
+    "snr_db": 10,
+    "post_gain_db": 0.0,
+    "components": [
+     {
+      "kind": "music",
+      "ref": "_bank/music/fma-x-0.wav",
+      "offset_s": 1.5
+     }
+    ],
+    "chain": []
+   }
+  },
+  {
+   "id": "en/1002/clean",
+   "utterance": "en/1002",
+   "kind": "synthetic",
+   "language": "en",
+   "condition": "clean",
+   "audio": "audio/en/clean/1002.wav",
+   "seconds": 5.0,
+   "sha256": "9e9ba2ea6d96d2aa7c07376c70019bdfe5f16f6ec090407bd3571135046f76c1",
+   "reference": "Twenty five people came to the party.",
+   "rank": 1,
+   "speaker": {
+    "id": null,
+    "gender": "male"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "en",
+    "split": "test",
+    "file": "1002.wav",
+    "sentence_id": 1002,
+    "transcription_normalized": "twenty five people came to the party."
+   },
+   "mix": null
+  },
+  {
+   "id": "en/1002/music_snr10",
+   "utterance": "en/1002",
+   "kind": "synthetic",
+   "language": "en",
+   "condition": "music_snr10",
+   "audio": "audio/en/music_snr10/1002.wav",
+   "seconds": 5.0,
+   "sha256": "36d1033e3bbf17b471d7b3d1432c141fe995bc2dcdf24c9b52cf359b74aaa551",
+   "reference": "Twenty five people came to the party.",
+   "rank": 1,
+   "speaker": {
+    "id": null,
+    "gender": "male"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "en",
+    "split": "test",
+    "file": "1002.wav",
+    "sentence_id": 1002,
+    "transcription_normalized": "twenty five people came to the party."
+   },
+   "mix": {
+    "seed": 1,
+    "snr_db": 10,
+    "post_gain_db": 0.0,
+    "components": [
+     {
+      "kind": "music",
+      "ref": "_bank/music/fma-x-0.wav",
+      "offset_s": 1.5
+     }
+    ],
+    "chain": []
+   }
+  },
+  {
+   "id": "ja/2001/clean",
+   "utterance": "ja/2001",
+   "kind": "synthetic",
+   "language": "ja",
+   "condition": "clean",
+   "audio": "audio/ja/clean/2001.wav",
+   "seconds": 4.0,
+   "sha256": "c0ed4b99f252f9d5081994572d05b79b71f5220faa1b08603a4f9d71ef0a9512",
+   "reference": "今日はいい天気ですね。",
+   "rank": 0,
+   "speaker": {
+    "id": null,
+    "gender": "female"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "ja",
+    "split": "test",
+    "file": "2001.wav",
+    "sentence_id": 2001,
+    "transcription_normalized": "今日はいい天気ですね。"
+   },
+   "mix": null
+  },
+  {
+   "id": "ja/2001/music_snr10",
+   "utterance": "ja/2001",
+   "kind": "synthetic",
+   "language": "ja",
+   "condition": "music_snr10",
+   "audio": "audio/ja/music_snr10/2001.wav",
+   "seconds": 4.0,
+   "sha256": "d62f318ed4b5a23eeb37d7d01a643485a29fb76ec1baab69ae25873caafe06ee",
+   "reference": "今日はいい天気ですね。",
+   "rank": 0,
+   "speaker": {
+    "id": null,
+    "gender": "female"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "ja",
+    "split": "test",
+    "file": "2001.wav",
+    "sentence_id": 2001,
+    "transcription_normalized": "今日はいい天気ですね。"
+   },
+   "mix": {
+    "seed": 1,
+    "snr_db": 10,
+    "post_gain_db": 0.0,
+    "components": [
+     {
+      "kind": "music",
+      "ref": "_bank/music/fma-x-0.wav",
+      "offset_s": 1.5
+     }
+    ],
+    "chain": []
+   }
+  },
+  {
+   "id": "ja/2002/clean",
+   "utterance": "ja/2002",
+   "kind": "synthetic",
+   "language": "ja",
+   "condition": "clean",
+   "audio": "audio/ja/clean/2002.wav",
+   "seconds": 5.0,
+   "sha256": "3bfa4bf7d98cdfb8a3e953d23e400f142d1a0724af3bf59acfb687bcfb1bf1ff",
+   "reference": "また明日会いましょう。",
+   "rank": 1,
+   "speaker": {
+    "id": null,
+    "gender": "male"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "ja",
+    "split": "test",
+    "file": "2002.wav",
+    "sentence_id": 2002,
+    "transcription_normalized": "また明日会いましょう。"
+   },
+   "mix": null
+  },
+  {
+   "id": "ja/2002/music_snr10",
+   "utterance": "ja/2002",
+   "kind": "synthetic",
+   "language": "ja",
+   "condition": "music_snr10",
+   "audio": "audio/ja/music_snr10/2002.wav",
+   "seconds": 5.0,
+   "sha256": "f7aafbb6b1876b7ec562118ed1358bc80d838def07377338729efec475aeb9cb",
+   "reference": "また明日会いましょう。",
+   "rank": 1,
+   "speaker": {
+    "id": null,
+    "gender": "male"
+   },
+   "source": {
+    "kind": "fleurs",
+    "dataset": "google/fleurs",
+    "revision": "fixture",
+    "config": "ja",
+    "split": "test",
+    "file": "2002.wav",
+    "sentence_id": 2002,
+    "transcription_normalized": "また明日会いましょう。"
+   },
+   "mix": {
+    "seed": 1,
+    "snr_db": 10,
+    "post_gain_db": 0.0,
+    "components": [
+     {
+      "kind": "music",
+      "ref": "_bank/music/fma-x-0.wav",
+      "offset_s": 1.5
+     }
+    ],
+    "chain": []
+   }
+  },
+  {
+   "id": "real/2026-10-05-alice/clip01",
+   "utterance": "real/2026-10-05-alice/clip01",
+   "kind": "real",
+   "language": "ja",
+   "condition": "real",
+   "audio": "audio/real/2026-10-05-alice/clip01.wav",
+   "seconds": 3.2,
+   "sha256": "aa33996d60e89311b4d1a920dae03c6d7fa3ae1956c52662e273aad4683e577f",
+   "reference": "ちょっと待ってね",
+   "rank": 0,
+   "speaker": {
+    "id": "alice",
+    "gender": null
+   },
+   "source": {
+    "kind": "real",
+    "session": "2026-10-05-alice",
+    "file": "clip01.wav",
+    "original_rate": 48000,
+    "original_channels": 1
+   },
+   "mix": null,
+   "consent": {
+    "given": true,
+    "date": "2026-10-05",
+    "scope": "local benchmarking only"
+   },
+   "tags": [],
+   "notes": ""
+  }
+ ]
+}

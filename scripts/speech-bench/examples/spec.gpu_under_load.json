@@ -1,0 +1,84 @@
+{
+  "$comment": [
+    "The GPU pick matrix under load (plan section 8): every GPU candidate with the H1 load profile (conv hammer at 70 % in a separate process, 3 CPU threads at 50 %) and, optionally, the voice changer running beside it.",
+    "Run under the GPU timing lock: pwsh scripts/bench/gpu-lock.ps1 -Run P7-A -Wait 60 -Command \"<Sigil.exe> --headless speech-bench scripts/speech-bench/examples/spec.gpu_under_load.json --out bench-results/speech/gpu\".",
+    "stt-h1-with-vc needs vc-colo.bench.json next to this file: a sigil-bench-spec/1 of a real voice (fill in scripts/bench/specs/p3b/a/sve-gpu.template.json).",
+    "crispasr (Confucius4-R2T2) is a prerequisite backend: see README, 'Remaining prerequisites'. Remove its engine until it exists; a failed engine is reported and the others still run."
+  ],
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "gpu-under-load",
+  "seed": 20261002,
+  "corpus": {
+    "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+    "select": { "subset": "quick", "kinds": ["synthetic"], "limit_per_language": 20 }
+  },
+  "engines": [
+    { "id": "qwen3-asr-1.7b-q8", "task": "stt", "backend": "transcribe", "model": "stt/qwen3-asr-1.7b-q8_0", "execution_provider": "cuda" },
+    { "id": "qwen3-asr-1.7b-bf16", "task": "stt", "backend": "transcribe", "model": "stt/qwen3-asr-1.7b-bf16", "execution_provider": "cuda" },
+    { "id": "cohere-q4k", "task": "stt", "backend": "transcribe", "model": "stt/cohere-transcribe-q4_k", "execution_provider": "cuda", "languages": ["en", "de", "es", "fr", "pt"] },
+    { "id": "voxtral-rt", "task": "stt", "backend": "transcribe", "model": "stt/voxtral-mini-4b-realtime-q4_k_m", "execution_provider": "cuda", "options": { "streaming": "append" } },
+    { "id": "r2t2-crispasr", "task": "stt", "backend": "crispasr", "model": "${SIGIL_P7_ROOT}/stt/confucius4-r2t2-q8_0-crispasr/confucius4-r2t2-q8_0.gguf", "execution_provider": "cuda", "languages": ["en", "zh"], "options": { "crispasrBackend": "qwen3" } },
+    { "id": "hy-mt2-7b", "task": "mt", "backend": "llama-server", "model": "mt/hy-mt2-7b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "hy-mt2", "maxTokens": 256, "temperature": 0.2 } },
+    { "id": "milmmt-4b", "task": "mt", "backend": "llama-server", "model": "mt/milmmt-46-4b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "generic", "maxTokens": 256, "temperature": 0.2 } },
+    { "id": "qwen3-tts-0.6b", "task": "tts", "backend": "tts-helper", "model": "tts/qwen3-tts-0.6b", "execution_provider": "cuda", "languages": ["en", "ja", "zh", "ko"], "options": { "helper": "qwen3", "config": { "model": "0.6b", "variant": "cuda13", "mode": "preset", "language": "auto" } } },
+    { "id": "qwen3-tts-1.7b", "task": "tts", "backend": "tts-helper", "model": "tts/qwen3-tts-1.7b", "execution_provider": "cuda", "languages": ["en", "ja", "zh", "ko"], "options": { "helper": "qwen3", "config": { "model": "1.7b", "variant": "cuda13", "mode": "preset", "language": "auto" } } },
+    { "id": "breeze-q8", "task": "tts", "backend": "tts-helper", "model": "tts/breeze-tts-2-q8_0", "execution_provider": "vulkan", "languages": ["en", "zh"], "options": { "helper": "breeze", "config": { "model": "tts/breeze-tts-2-q8_0", "variant": "vulkan" } } }
+  ],
+  "runs": [
+    {
+      "name": "stt-h1",
+      "mode": "gpu_under_load",
+      "engines": ["qwen3-asr-1.7b-q8", "qwen3-asr-1.7b-bf16", "cohere-q4k", "r2t2-crispasr"],
+      "feed": { "kind": "utterance" },
+      "warmup": 2,
+      "repeat": 3,
+      "load_profile": "h1_vrchat_obs",
+      "load": { "gpu": { "duty": 0.7, "period_ms": 16.7, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true } },
+      "gpu_load_kind": "conv",
+      "gpu_lock": { "require": true, "tag": "P7-A" },
+      "thresholds": { "rtf_p95": { "max": 0.3 } }
+    },
+    {
+      "name": "stt-h1-streaming",
+      "mode": "gpu_under_load",
+      "engines": ["voxtral-rt", "r2t2-crispasr"],
+      "select": { "subset": "quick", "kinds": ["synthetic"], "languages": ["en", "zh", "ja"], "limit_per_language": 10 },
+      "feed": { "kind": "stream", "chunk_ms": 80, "pace": "realtime", "tail_silence_ms": 1000 },
+      "load_profile": "h1_vrchat_obs",
+      "load": { "gpu": { "duty": 0.7, "period_ms": 16.7, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true } },
+      "gpu_lock": { "require": true, "tag": "P7-A" }
+    },
+    {
+      "name": "stt-h1-with-vc",
+      "mode": "gpu_under_load",
+      "engines": ["qwen3-asr-1.7b-q8"],
+      "feed": { "kind": "utterance" },
+      "load_profile": "h1_vrchat_obs",
+      "load": { "gpu": { "duty": 0.7, "period_ms": 16.7, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true } },
+      "co_load": { "voice_changer_spec": "vc-colo.bench.json" },
+      "gpu_lock": { "require": true, "tag": "P7-A" }
+    },
+    {
+      "name": "mt-h1",
+      "mode": "gpu_under_load",
+      "engines": ["hy-mt2-7b", "milmmt-4b"],
+      "mt": { "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl", "limit": 24 },
+      "warmup": 2,
+      "load_profile": "h1_vrchat_obs",
+      "load": { "gpu": { "duty": 0.7, "period_ms": 16.7, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true } },
+      "gpu_lock": { "require": true, "tag": "P7-A" },
+      "thresholds": { "latency_ms_p95": { "max": 1000 } }
+    },
+    {
+      "name": "tts-h1",
+      "mode": "gpu_under_load",
+      "engines": ["qwen3-tts-0.6b", "qwen3-tts-1.7b", "breeze-q8"],
+      "tts": { "prompts": "${SIGIL_P7_CORPUS}/tts/prompts.jsonl", "limit_per_language": 6, "write_audio": false },
+      "load_profile": "h1_vrchat_obs",
+      "load": { "gpu": { "duty": 0.7, "period_ms": 16.7, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true } },
+      "gpu_lock": { "require": true, "tag": "P7-A" },
+      "thresholds": { "ttfa_ms_p95": { "max": 800 } }
+    }
+  ],
+  "output": { "write_hypotheses": true, "export": { "include_text": false, "include_items": true } }
+}

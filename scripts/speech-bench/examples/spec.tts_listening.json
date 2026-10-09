@@ -1,0 +1,32 @@
+{
+  "$comment": [
+    "Renders the TTS prompts with each candidate for the blind listening test (plan section 8: Qwen3-TTS vs Kokoro vs Magpie). Pre-screens: back-transcription by Qwen3-ASR-0.6B (intelligibility) and DNSMOS P.835. Then: python tools/listening-test/make_tts_test.py --report <out>/report.json --prompts ${SIGIL_P7_CORPUS}/tts/prompts.jsonl --engines kokoro,qwen3-tts-0.6b,qwen3-tts-1.7b,magpie --out tts-1.",
+    "Magpie v2602 speaks en, es, de, fr, it, vi, hi; Kokoro v1.0 en, ja, zh, es, fr, hi, it, pt-BR; Qwen3-TTS en, ja, ko, zh, es, pt, ru, de, fr, it. The page compares the engines each prompt was rendered by (two or more)."
+  ],
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "tts-listening",
+  "seed": 20261002,
+  "engines": [
+    { "id": "kokoro", "task": "tts", "backend": "local-tts", "model": "tts/kokoro-v1.0", "execution_provider": "cpu", "threads": 4, "languages": ["en", "ja", "zh", "es", "fr", "pt"], "options": { "voices": { "en": "af_heart", "ja": "jf_alpha", "zh": "zf_xiaobei", "es": "ef_dora", "fr": "ff_siwis", "pt": "pf_dora" } } },
+    { "id": "qwen3-tts-0.6b", "task": "tts", "backend": "tts-helper", "model": "tts/qwen3-tts-0.6b", "execution_provider": "cuda", "languages": ["en", "ja", "zh", "ko", "es", "pt", "ru", "de", "fr"], "options": { "helper": "qwen3", "config": { "model": "0.6b", "variant": "cuda13", "mode": "preset", "language": "auto" } } },
+    { "id": "qwen3-tts-1.7b", "task": "tts", "backend": "tts-helper", "model": "tts/qwen3-tts-1.7b", "execution_provider": "cuda", "languages": ["en", "ja", "zh", "ko", "es", "pt", "ru", "de", "fr"], "options": { "helper": "qwen3", "config": { "model": "1.7b", "variant": "cuda13", "mode": "preset", "language": "auto" } } },
+    { "id": "magpie", "task": "tts", "backend": "tts-helper", "model": "tts/magpie-tts-357m-v2602", "execution_provider": "cuda", "languages": ["en", "es", "de", "fr"], "options": { "helper": "magpie", "config": { "model": "tts/magpie-tts-357m-v2602", "variant": "cuda", "voice": "Sofia" } } },
+    { "id": "qwen3-asr-0.6b", "task": "stt", "backend": "sherpa-offline", "model": "stt/qwen3-asr-0.6b-int8", "execution_provider": "cpu", "threads": 2 }
+  ],
+  "runs": [
+    {
+      "name": "render",
+      "mode": "tts_listening",
+      "engines": ["kokoro", "qwen3-tts-0.6b", "qwen3-tts-1.7b", "magpie"],
+      "tts": {
+        "prompts": "${SIGIL_P7_CORPUS}/tts/prompts.jsonl",
+        "write_audio": true,
+        "intelligibility": { "engine": "qwen3-asr-0.6b" },
+        "dnsmos": true
+      },
+      "warmup": 1,
+      "timeout_s": 60
+    }
+  ],
+  "output": { "write_hypotheses": true, "export": { "include_text": false, "include_items": true } }
+}

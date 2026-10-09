@@ -1,0 +1,35 @@
+{
+  "$comment": "Casual stream / VRChat lines for the TTS listening test in languages the P4 smoke corpus (scripts/mt-bench/corpus.sample.jsonl) does not cover. They translate that corpus's English lines en-*:1 to en-*:8 (same order); written for Sigil by P7-S0. en, ja, de, es, zh and ko come from the smoke corpus itself.",
+  "lines": {
+    "fr": [
+      "Salut tout le monde, merci d'être venus au stream ce soir !",
+      "Vous m'entendez bien, ou mon micro est trop faible ?",
+      "Je reviens tout de suite, je vais chercher de l'eau.",
+      "Ce combat de boss était bien plus dur que prévu.",
+      "On se retrouve sur la place principale dans cinq minutes.",
+      "Quelqu'un sait comment aller à la zone suivante ?",
+      "Je crois que ma connexion lag un peu.",
+      "Merci beaucoup pour le follow, bienvenue !"
+    ],
+    "ru": [
+      "Всем привет, спасибо, что пришли на стрим сегодня вечером!",
+      "Меня хорошо слышно, или микрофон слишком тихий?",
+      "Сейчас вернусь, схожу за водой.",
+      "Этот бой с боссом оказался намного сложнее, чем я ожидал.",
+      "Встречаемся на главной площади через пять минут.",
+      "Кто-нибудь знает, как попасть в следующую зону?",
+      "Кажется, у меня немного лагает интернет.",
+      "Большое спасибо за подписку, добро пожаловать!"
+    ],
+    "pt": [
+      "Oi, pessoal, obrigado por virem à live hoje à noite!",
+      "Vocês estão me ouvindo bem, ou meu microfone está baixo demais?",
+      "Já volto, vou pegar um pouco de água.",
+      "Essa luta contra o chefe foi muito mais difícil do que eu esperava.",
+      "Vamos nos encontrar na praça principal em cinco minutos.",
+      "Alguém sabe como chegar à próxima área?",
+      "Acho que minha internet está travando um pouco.",
+      "Muito obrigado pelo follow, seja bem-vindo!"
+    ]
+  }
+}

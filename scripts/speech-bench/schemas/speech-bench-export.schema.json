@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-bench-export-1.json",
+  "title": "sigil-speech-bench-export/1",
+  "description": "<out>/export.json of `Sigil.exe --headless speech-bench`: the subset of report.json a friend sends back (P7 friend exports). Never holds audio, file paths, host or user names, or API keys. Item text (hypotheses, translations) is kept only for synthetic corpus items and only when the spec's output.export.include_text is true; real drop-in clips never carry text in an export. `spec` is replaced by `spec_summary` (engine and run names, backends, models, providers, modes, load profiles; no paths). Merge several exports with scripts/speech-bench/score/merge_exports.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "report_schema", "name", "spec_sha256", "spec_summary", "started_unix_ms", "duration_ms", "passed", "environment", "engines", "runs", "export"],
+  "properties": {
+    "schema": { "const": "sigil-speech-bench-export/1" },
+    "report_schema": { "const": "sigil-speech-bench-report/1" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "spec_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "spec_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engines", "runs"],
+      "properties": {
+        "engines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "task", "backend", "model", "execution_provider"],
+            "properties": {
+              "id": { "type": "string" },
+              "task": { "enum": ["stt", "mt", "tts"] },
+              "backend": { "type": "string" },
+              "model": { "type": "string", "description": "Catalog id, or \"byo\" for a path." },
+              "execution_provider": { "type": "string" },
+              "variant": { "type": ["string", "null"] },
+              "threads": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "mode"],
+            "properties": {
+              "name": { "type": "string" },
+              "mode": { "type": "string" },
+              "load_profile": { "type": "string" },
+              "external_load": { "type": "string" },
+              "feed": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "started_unix_ms": { "type": "integer", "minimum": 0 },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "passed": { "type": "boolean" },
+    "failures": { "type": "array", "items": { "type": "string" } },
+    "environment": { "$ref": "sigil-speech-bench-report-1.json#/$defs/environment" },
+    "corpus": { "$ref": "sigil-speech-bench-report-1.json#/$defs/corpus_stamp" },
+    "engines": { "type": "array", "items": { "$ref": "sigil-speech-bench-report-1.json#/$defs/engine_info" } },
+    "runs": { "type": "array", "items": { "$ref": "sigil-speech-bench-report-1.json#/$defs/run" } },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_unix_ms", "include_text", "include_items"],
+      "properties": {
+        "created_unix_ms": { "type": "integer", "minimum": 0 },
+        "include_text": { "type": "boolean" },
+        "include_items": { "type": "boolean" },
+        "note": { "type": "string", "description": "Free text the friend may add (rig, what was running)." }
+      }
+    }
+  }
+}

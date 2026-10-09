@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "STT accuracy on the P7 corpus (Sigil.exe --headless speech-bench <this file> --out <dir>). The runner writes hypotheses; score/score_stt.py turns them into WER / CER per language and condition.",
+    "Models come from the model store of SIGIL_APP_DATA_DIR (the P7 store is %LOCALAPPDATA%/sigil-dev-cache/appdata-p7); the runner never downloads.",
+    "${SIGIL_P7_CORPUS} defaults to %LOCALAPPDATA%/sigil-dev-cache/p7/corpus."
+  ],
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "stt-accuracy",
+  "description": "Every STT candidate of the router on the core conditions (clean, music 10 dB, babble 10 dB, VRChat mix), then the shipped pipeline (Silero VAD, router, two-pass) on the quick subset.",
+  "seed": 20261002,
+  "corpus": {
+    "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+    "select": { "subset": "core", "kinds": ["synthetic"] }
+  },
+  "engines": [
+    { "id": "nemotron-560", "task": "stt", "backend": "sherpa-online", "model": "stt/nemotron-3.5-streaming-560ms-int8", "execution_provider": "cpu", "threads": 1, "languages": ["en", "de", "es", "fr", "ru", "pt", "ja", "ko"] },
+    { "id": "parakeet-ultra", "task": "stt", "backend": "sherpa-offline", "model": "stt/parakeet-ultra-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en", "de", "es", "fr", "ru", "pt"] },
+    { "id": "parakeet-v3", "task": "stt", "backend": "sherpa-offline", "model": "stt/parakeet-tdt-0.6b-v3-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en", "de", "es", "fr", "ru", "pt"] },
+    { "id": "qwen3-asr-0.6b", "task": "stt", "backend": "sherpa-offline", "model": "stt/qwen3-asr-0.6b-int8", "execution_provider": "cpu", "threads": 2 },
+    { "id": "sensevoice", "task": "stt", "backend": "sherpa-offline", "model": "stt/sense-voice-small-int8", "execution_provider": "cpu", "threads": 2, "languages": ["zh", "ja", "ko", "en"] },
+    { "id": "moonshine-base-en", "task": "stt", "backend": "sherpa-offline", "model": "stt/moonshine-base-en-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en"] },
+    { "id": "qwen3-asr-1.7b-q8", "task": "stt", "backend": "transcribe", "model": "stt/qwen3-asr-1.7b-q8_0", "execution_provider": "cuda" },
+    { "id": "cohere-q4k", "task": "stt", "backend": "transcribe", "model": "stt/cohere-transcribe-q4_k", "execution_provider": "cuda", "languages": ["en", "de", "es", "fr", "pt"] },
+    { "id": "granite-turboctc", "task": "stt", "backend": "transcribe", "model": "stt/granite-speech-5.0-turboctc-q8_0", "execution_provider": "cuda", "languages": ["en"] },
+    { "id": "whisper-small-q5", "task": "stt", "backend": "whisper", "model": "whisper/small-q5_1", "execution_provider": "cpu", "threads": 4 },
+    { "id": "local-pipeline-gpu", "task": "stt", "backend": "pipeline", "execution_provider": "auto", "language_mode": "given", "options": { "route": { "language": "", "tier": "gpu", "twoPass": true } } },
+    { "id": "local-pipeline-cpu", "task": "stt", "backend": "pipeline", "execution_provider": "cpu", "language_mode": "given", "options": { "route": { "language": "", "tier": "cpu", "twoPass": true } } }
+  ],
+  "runs": [
+    {
+      "name": "core",
+      "mode": "accuracy",
+      "engines": ["nemotron-560", "parakeet-ultra", "parakeet-v3", "qwen3-asr-0.6b", "sensevoice", "moonshine-base-en", "qwen3-asr-1.7b-q8", "cohere-q4k", "granite-turboctc", "whisper-small-q5"],
+      "feed": { "kind": "utterance" },
+      "warmup": 1,
+      "timeout_s": 120
+    },
+    {
+      "name": "pipeline-quick",
+      "mode": "accuracy",
+      "engines": ["local-pipeline-gpu", "local-pipeline-cpu"],
+      "select": { "subset": "quick", "kinds": ["synthetic"], "limit_per_language": 40 },
+      "feed": { "kind": "pipeline", "pace": "asap", "lead_silence_ms": 500, "tail_silence_ms": 1200 }
+    },
+    {
+      "name": "real-clips",
+      "mode": "accuracy",
+      "engines": ["qwen3-asr-0.6b", "qwen3-asr-1.7b-q8", "local-pipeline-gpu"],
+      "select": { "kinds": ["real"] },
+      "feed": { "kind": "utterance" }
+    }
+  ],
+  "output": { "write_hypotheses": true, "export": { "include_text": false, "include_items": true } }
+}

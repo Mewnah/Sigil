@@ -1,0 +1,23 @@
+{
+  "$comment": [
+    "MT quality on the P7 text sets (build_text_sets.py): WMT24++ en->X (post-edited references), FLORES-200 X->en, BSD ja<->en dialogue. score/score_mt.py computes chrF2 with bootstrap intervals (MetricX-24 when available) and exports the pairs for the blind A/B page (tools/listening-test/make_mt_test.py).",
+    "The llama-server engines are started by Sigil from the model store (one at a time: the bundled server serves one model). Bergamot needs the runtime/bergamot pack (see README, prerequisites)."
+  ],
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "mt-quality",
+  "seed": 20261002,
+  "engines": [
+    { "id": "hy-mt2-1.8b", "task": "mt", "backend": "llama-server", "model": "mt/hy-mt2-1.8b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "hy-mt2", "maxTokens": 384, "temperature": 0.2 } },
+    { "id": "hy-mt2-7b", "task": "mt", "backend": "llama-server", "model": "mt/hy-mt2-7b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "hy-mt2", "maxTokens": 384, "temperature": 0.2 } },
+    { "id": "milmmt-4b", "task": "mt", "backend": "llama-server", "model": "mt/milmmt-46-4b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "generic", "maxTokens": 384, "temperature": 0.2 } },
+    { "id": "translategemma-4b", "task": "mt", "backend": "llama-server", "model": "mt/translategemma-4b-q4_k_m", "execution_provider": "cuda", "options": { "prompt": "generic", "maxTokens": 384, "temperature": 0.2 } },
+    { "id": "nllb-600m", "task": "mt", "backend": "nllb", "model": "mt/nllb-200-distilled-600m-int8", "execution_provider": "cpu", "threads": 2, "options": { "beam": 1 } },
+    { "id": "bergamot", "task": "mt", "backend": "bergamot", "execution_provider": "cpu", "threads": 1, "directions": ["en-ja", "ja-en", "en-zh", "zh-en", "en-ko", "ko-en"] }
+  ],
+  "runs": [
+    { "name": "wmt24pp", "mode": "mt_quality", "mt": { "set": "${SIGIL_P7_CORPUS}/mt/wmt24pp.jsonl", "directions": ["en-ja", "en-zh", "en-ko", "en-de", "en-fr", "en-es", "en-ru", "en-pt"], "limit": 200 }, "warmup": 1 },
+    { "name": "flores-to-en", "mode": "mt_quality", "mt": { "set": "${SIGIL_P7_CORPUS}/mt/flores200.jsonl", "directions": ["ja-en", "zh-en", "ko-en"], "limit": 200 }, "warmup": 1 },
+    { "name": "bsd-dialogue", "mode": "mt_quality", "mt": { "set": "${SIGIL_P7_CORPUS}/mt/bsd.jsonl", "limit": 200, "context": "previous" }, "warmup": 1 }
+  ],
+  "output": { "write_hypotheses": true, "export": { "include_text": true, "include_items": true } }
+}

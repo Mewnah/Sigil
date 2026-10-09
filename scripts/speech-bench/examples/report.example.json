@@ -1,0 +1,837 @@
+{
+ "schema": "sigil-speech-bench-report/1",
+ "name": "stt-accuracy",
+ "description": "Format example of sigil-speech-bench-report/1 written by P7-S0: every number and hypothesis is made up (not a measurement).",
+ "spec_sha256": "48d7c1b84f28e0110a93c26cadbfcf965a26b4452c50be387b6b1128310a88e2",
+ "spec": {
+  "$comment": [
+   "STT accuracy on the P7 corpus (Sigil.exe --headless speech-bench <this file> --out <dir>). The runner writes hypotheses; score/score_stt.py turns them into WER / CER per language and condition.",
+   "Models come from the model store of SIGIL_APP_DATA_DIR (the P7 store is %LOCALAPPDATA%/sigil-dev-cache/appdata-p7); the runner never downloads.",
+   "${SIGIL_P7_CORPUS} defaults to %LOCALAPPDATA%/sigil-dev-cache/p7/corpus."
+  ],
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "stt-accuracy",
+  "description": "Every STT candidate of the router on the core conditions (clean, music 10 dB, babble 10 dB, VRChat mix), then the shipped pipeline (Silero VAD, router, two-pass) on the quick subset.",
+  "seed": 20261002,
+  "corpus": {
+   "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+   "select": {
+    "subset": "core",
+    "kinds": [
+     "synthetic"
+    ]
+   }
+  },
+  "engines": [
+   {
+    "id": "nemotron-560",
+    "task": "stt",
+    "backend": "sherpa-online",
+    "model": "stt/nemotron-3.5-streaming-560ms-int8",
+    "execution_provider": "cpu",
+    "threads": 1,
+    "languages": [
+     "en",
+     "de",
+     "es",
+     "fr",
+     "ru",
+     "pt",
+     "ja",
+     "ko"
+    ]
+   },
+   {
+    "id": "parakeet-ultra",
+    "task": "stt",
+    "backend": "sherpa-offline",
+    "model": "stt/parakeet-ultra-int8",
+    "execution_provider": "cpu",
+    "threads": 2,
+    "languages": [
+     "en",
+     "de",
+     "es",
+     "fr",
+     "ru",
+     "pt"
+    ]
+   },
+   {
+    "id": "parakeet-v3",
+    "task": "stt",
+    "backend": "sherpa-offline",
+    "model": "stt/parakeet-tdt-0.6b-v3-int8",
+    "execution_provider": "cpu",
+    "threads": 2,
+    "languages": [
+     "en",
+     "de",
+     "es",
+     "fr",
+     "ru",
+     "pt"
+    ]
+   },
+   {
+    "id": "qwen3-asr-0.6b",
+    "task": "stt",
+    "backend": "sherpa-offline",
+    "model": "stt/qwen3-asr-0.6b-int8",
+    "execution_provider": "cpu",
+    "threads": 2
+   },
+   {
+    "id": "sensevoice",
+    "task": "stt",
+    "backend": "sherpa-offline",
+    "model": "stt/sense-voice-small-int8",
+    "execution_provider": "cpu",
+    "threads": 2,
+    "languages": [
+     "zh",
+     "ja",
+     "ko",
+     "en"
+    ]
+   },
+   {
+    "id": "moonshine-base-en",
+    "task": "stt",
+    "backend": "sherpa-offline",
+    "model": "stt/moonshine-base-en-int8",
+    "execution_provider": "cpu",
+    "threads": 2,
+    "languages": [
+     "en"
+    ]
+   },
+   {
+    "id": "qwen3-asr-1.7b-q8",
+    "task": "stt",
+    "backend": "transcribe",
+    "model": "stt/qwen3-asr-1.7b-q8_0",
+    "execution_provider": "cuda"
+   },
+   {
+    "id": "cohere-q4k",
+    "task": "stt",
+    "backend": "transcribe",
+    "model": "stt/cohere-transcribe-q4_k",
+    "execution_provider": "cuda",
+    "languages": [
+     "en",
+     "de",
+     "es",
+     "fr",
+     "pt"
+    ]
+   },
+   {
+    "id": "granite-turboctc",
+    "task": "stt",
+    "backend": "transcribe",
+    "model": "stt/granite-speech-5.0-turboctc-q8_0",
+    "execution_provider": "cuda",
+    "languages": [
+     "en"
+    ]
+   },
+   {
+    "id": "whisper-small-q5",
+    "task": "stt",
+    "backend": "whisper",
+    "model": "whisper/small-q5_1",
+    "execution_provider": "cpu",
+    "threads": 4
+   },
+   {
+    "id": "local-pipeline-gpu",
+    "task": "stt",
+    "backend": "pipeline",
+    "execution_provider": "auto",
+    "language_mode": "given",
+    "options": {
+     "route": {
+      "language": "",
+      "tier": "gpu",
+      "twoPass": true
+     }
+    }
+   },
+   {
+    "id": "local-pipeline-cpu",
+    "task": "stt",
+    "backend": "pipeline",
+    "execution_provider": "cpu",
+    "language_mode": "given",
+    "options": {
+     "route": {
+      "language": "",
+      "tier": "cpu",
+      "twoPass": true
+     }
+    }
+   }
+  ],
+  "runs": [
+   {
+    "name": "core",
+    "mode": "accuracy",
+    "engines": [
+     "nemotron-560",
+     "parakeet-ultra",
+     "parakeet-v3",
+     "qwen3-asr-0.6b",
+     "sensevoice",
+     "moonshine-base-en",
+     "qwen3-asr-1.7b-q8",
+     "cohere-q4k",
+     "granite-turboctc",
+     "whisper-small-q5"
+    ],
+    "feed": {
+     "kind": "utterance"
+    },
+    "warmup": 1,
+    "timeout_s": 120
+   },
+   {
+    "name": "pipeline-quick",
+    "mode": "accuracy",
+    "engines": [
+     "local-pipeline-gpu",
+     "local-pipeline-cpu"
+    ],
+    "select": {
+     "subset": "quick",
+     "kinds": [
+      "synthetic"
+     ],
+     "limit_per_language": 40
+    },
+    "feed": {
+     "kind": "pipeline",
+     "pace": "asap",
+     "lead_silence_ms": 500,
+     "tail_silence_ms": 1200
+    }
+   },
+   {
+    "name": "real-clips",
+    "mode": "accuracy",
+    "engines": [
+     "qwen3-asr-0.6b",
+     "qwen3-asr-1.7b-q8",
+     "local-pipeline-gpu"
+    ],
+    "select": {
+     "kinds": [
+      "real"
+     ]
+    },
+    "feed": {
+     "kind": "utterance"
+    }
+   }
+  ],
+  "output": {
+   "write_hypotheses": true,
+   "export": {
+    "include_text": false,
+    "include_items": true
+   }
+  }
+ },
+ "started_unix_ms": 1790985600000,
+ "duration_ms": 61234.5,
+ "passed": false,
+ "failures": [
+  "core / qwen3-asr-0.6b: 1 item failed (timeout after 120 s)"
+ ],
+ "environment": {
+  "sigil_version": "0.7.0-dev",
+  "build": "release",
+  "os": "Windows 11 Pro 10.0.26200",
+  "arch": "x86_64",
+  "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+  "logical_cores": 16,
+  "physical_cores": 8,
+  "ram_mb": 65536,
+  "onnx_runtime": "1.28.0",
+  "gpus": [
+   {
+    "name": "NVIDIA GeForce RTX 4090",
+    "vendor": "nvidia",
+    "vram_mb": 24564,
+    "driver": "616.56"
+   }
+  ],
+  "power_plan": "Balanced",
+  "power_mode": "balanced",
+  "voice_changer_running": false,
+  "runtime_packs": [
+   {
+    "id": "runtime/sherpa-onnx",
+    "version": "1.13.8",
+    "variant": "cpu"
+   }
+  ],
+  "sigil_rig": "H2"
+ },
+ "corpus": {
+  "name": "fixture",
+  "content_sha256": "248779555a2115cf7aa25e3b910f49196f07aa9fdbbd5594818062fd17014b5b",
+  "recipe_sha256": "3f2bcfec0b3580b6cd38a015241316fe9c65866020022c8ce83b2662554cb3ad",
+  "manifest_sha256": "05b3abf2579a5eb66403cd78be557fd860633a1fe2103c7642030defe32c657f",
+  "items_selected": 8
+ },
+ "engines": [
+  {
+   "id": "qwen3-asr-0.6b",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "model_version": "2026-03-25",
+   "execution_provider_requested": "cpu",
+   "execution_provider_used": "cpu",
+   "ep_reason": null,
+   "variant_used": "cpu",
+   "threads": 2,
+   "load_ms": 1840.0,
+   "vram_load_mb": 0,
+   "error": null
+  },
+  {
+   "id": "parakeet-ultra",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "model_version": "3282a6e3",
+   "execution_provider_requested": "cpu",
+   "execution_provider_used": "cpu",
+   "ep_reason": null,
+   "variant_used": "cpu",
+   "threads": 2,
+   "load_ms": 1210.0,
+   "vram_load_mb": 0,
+   "error": null
+  },
+  {
+   "id": "hy-mt2-1.8b",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "model_version": "a0c709d",
+   "execution_provider_requested": "cuda",
+   "execution_provider_used": "cuda",
+   "ep_reason": null,
+   "variant_used": "cuda13",
+   "threads": null,
+   "load_ms": 2950.0,
+   "vram_load_mb": 1610,
+   "error": null
+  },
+  {
+   "id": "kokoro",
+   "task": "tts",
+   "backend": "local-tts",
+   "model": "tts/kokoro-v1.0",
+   "model_version": "2026-09-08",
+   "execution_provider_requested": "cpu",
+   "execution_provider_used": "cpu",
+   "ep_reason": null,
+   "variant_used": null,
+   "threads": 4,
+   "load_ms": 900.0,
+   "vram_load_mb": 0,
+   "error": null
+  }
+ ],
+ "runs": [
+  {
+   "name": "core",
+   "mode": "accuracy",
+   "status": "failed",
+   "error": null,
+   "duration_ms": 30120.0,
+   "feed": {
+    "kind": "utterance"
+   },
+   "load": {
+    "profile": "none",
+    "spec": {},
+    "external": "",
+    "achieved": {}
+   },
+   "gpu_lock": null,
+   "state": {
+    "warnings": []
+   },
+   "warnings": [],
+   "results": [
+    {
+     "engine": "qwen3-asr-0.6b",
+     "status": "failed",
+     "error": null,
+     "execution_provider_used": "cpu",
+     "aggregate": {
+      "items": 8,
+      "errors": 1,
+      "audio_s": 36.0,
+      "wall_ms": 2077.0,
+      "rtf_mean": 0.066,
+      "rtf_p50": 0.0582,
+      "rtf_p95": 0.0912,
+      "compute_ms_p50": 291.0,
+      "compute_ms_p95": 402.0,
+      "compute_ms_p99": 402.0,
+      "cpu_cores_mean": 1.9
+     },
+     "groups": [
+      {
+       "language": "en",
+       "condition": "clean",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "audio_s": 9.0,
+        "wall_ms": 474.0,
+        "rtf_mean": 0.0479,
+        "rtf_p50": 0.045,
+        "rtf_p95": 0.0508,
+        "compute_ms_p50": 180.0,
+        "compute_ms_p95": 254.0,
+        "compute_ms_p99": 254.0,
+        "cpu_cores_mean": 1.9
+       }
+      },
+      {
+       "language": "en",
+       "condition": "music_snr10",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "audio_s": 9.0,
+        "wall_ms": 548.0,
+        "rtf_mean": 0.0562,
+        "rtf_p50": 0.0542,
+        "rtf_p95": 0.0582,
+        "compute_ms_p50": 217.0,
+        "compute_ms_p95": 291.0,
+        "compute_ms_p99": 291.0,
+        "cpu_cores_mean": 1.9
+       }
+      },
+      {
+       "language": "ja",
+       "condition": "clean",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "audio_s": 9.0,
+        "wall_ms": 770.0,
+        "rtf_mean": 0.0812,
+        "rtf_p50": 0.0804,
+        "rtf_p95": 0.082,
+        "compute_ms_p50": 328.0,
+        "compute_ms_p95": 402.0,
+        "compute_ms_p99": 402.0,
+        "cpu_cores_mean": 1.9
+       }
+      },
+      {
+       "language": "ja",
+       "condition": "music_snr10",
+       "aggregate": {
+        "items": 2,
+        "errors": 1,
+        "audio_s": 9.0,
+        "wall_ms": 405.0,
+        "rtf_mean": 0.0912,
+        "rtf_p50": 0.0912,
+        "rtf_p95": 0.0912,
+        "compute_ms_p50": 365.0,
+        "compute_ms_p95": 365.0,
+        "compute_ms_p99": 365.0,
+        "cpu_cores_mean": 1.9
+       }
+      }
+     ],
+     "thresholds": [],
+     "items": [
+      {
+       "item": "en/1001/clean",
+       "language": "en",
+       "condition": "clean",
+       "audio_s": 4.0,
+       "text": "Hey everyone, thanks for joining the stream tonight!",
+       "language_detected": "en",
+       "compute_ms": 180.0,
+       "rtf": 0.045,
+       "cpu_ms": 342.0,
+       "error": null
+      },
+      {
+       "item": "en/1001/music_snr10",
+       "language": "en",
+       "condition": "music_snr10",
+       "audio_s": 4.0,
+       "text": "Hey everyone, thanks for joining the stream to night.",
+       "language_detected": "en",
+       "compute_ms": 217.0,
+       "rtf": 0.0542,
+       "cpu_ms": 412.3,
+       "error": null
+      },
+      {
+       "item": "en/1002/clean",
+       "language": "en",
+       "condition": "clean",
+       "audio_s": 5.0,
+       "text": "25 people came to the party.",
+       "language_detected": "en",
+       "compute_ms": 254.0,
+       "rtf": 0.0508,
+       "cpu_ms": 482.6,
+       "error": null
+      },
+      {
+       "item": "en/1002/music_snr10",
+       "language": "en",
+       "condition": "music_snr10",
+       "audio_s": 5.0,
+       "text": "25 people came to party.",
+       "language_detected": "en",
+       "compute_ms": 291.0,
+       "rtf": 0.0582,
+       "cpu_ms": 552.9,
+       "error": null
+      },
+      {
+       "item": "ja/2001/clean",
+       "language": "ja",
+       "condition": "clean",
+       "audio_s": 4.0,
+       "text": "今日はいい天気ですね。",
+       "language_detected": "ja",
+       "compute_ms": 328.0,
+       "rtf": 0.082,
+       "cpu_ms": 623.2,
+       "error": null
+      },
+      {
+       "item": "ja/2001/music_snr10",
+       "language": "ja",
+       "condition": "music_snr10",
+       "audio_s": 4.0,
+       "text": "今日は良い天気ですね",
+       "language_detected": "ja",
+       "compute_ms": 365.0,
+       "rtf": 0.0912,
+       "cpu_ms": 693.5,
+       "error": null
+      },
+      {
+       "item": "ja/2002/clean",
+       "language": "ja",
+       "condition": "clean",
+       "audio_s": 5.0,
+       "text": "また明日会いましょう。",
+       "language_detected": "ja",
+       "compute_ms": 402.0,
+       "rtf": 0.0804,
+       "cpu_ms": 763.8,
+       "error": null
+      },
+      {
+       "item": "ja/2002/music_snr10",
+       "language": "ja",
+       "condition": "music_snr10",
+       "audio_s": 5.0,
+       "text": null,
+       "language_detected": null,
+       "compute_ms": null,
+       "rtf": null,
+       "cpu_ms": null,
+       "error": "timeout after 120 s"
+      }
+     ]
+    },
+    {
+     "engine": "parakeet-ultra",
+     "status": "passed",
+     "error": null,
+     "execution_provider_used": "cpu",
+     "aggregate": {
+      "items": 4,
+      "errors": 0,
+      "audio_s": 18.0,
+      "wall_ms": 982.0,
+      "rtf_mean": 0.052,
+      "rtf_p50": 0.0508,
+      "rtf_p95": 0.0582,
+      "compute_ms_p50": 217.0,
+      "compute_ms_p95": 291.0,
+      "compute_ms_p99": 291.0,
+      "cpu_cores_mean": 1.9
+     },
+     "groups": [
+      {
+       "language": "en",
+       "condition": "clean",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "audio_s": 9.0,
+        "wall_ms": 474.0,
+        "rtf_mean": 0.0479,
+        "rtf_p50": 0.045,
+        "rtf_p95": 0.0508,
+        "compute_ms_p50": 180.0,
+        "compute_ms_p95": 254.0,
+        "compute_ms_p99": 254.0,
+        "cpu_cores_mean": 1.9
+       }
+      },
+      {
+       "language": "en",
+       "condition": "music_snr10",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "audio_s": 9.0,
+        "wall_ms": 548.0,
+        "rtf_mean": 0.0562,
+        "rtf_p50": 0.0542,
+        "rtf_p95": 0.0582,
+        "compute_ms_p50": 217.0,
+        "compute_ms_p95": 291.0,
+        "compute_ms_p99": 291.0,
+        "cpu_cores_mean": 1.9
+       }
+      }
+     ],
+     "thresholds": [],
+     "items": [
+      {
+       "item": "en/1001/clean",
+       "language": "en",
+       "condition": "clean",
+       "audio_s": 4.0,
+       "text": "Hey everyone, thanks for joining the stream tonight.",
+       "language_detected": "en",
+       "compute_ms": 180.0,
+       "rtf": 0.045,
+       "cpu_ms": 342.0,
+       "error": null
+      },
+      {
+       "item": "en/1001/music_snr10",
+       "language": "en",
+       "condition": "music_snr10",
+       "audio_s": 4.0,
+       "text": "Hey everyone thanks for joining this stream tonight",
+       "language_detected": "en",
+       "compute_ms": 217.0,
+       "rtf": 0.0542,
+       "cpu_ms": 412.3,
+       "error": null
+      },
+      {
+       "item": "en/1002/clean",
+       "language": "en",
+       "condition": "clean",
+       "audio_s": 5.0,
+       "text": "Twenty-five people came to the party.",
+       "language_detected": "en",
+       "compute_ms": 254.0,
+       "rtf": 0.0508,
+       "cpu_ms": 482.6,
+       "error": null
+      },
+      {
+       "item": "en/1002/music_snr10",
+       "language": "en",
+       "condition": "music_snr10",
+       "audio_s": 5.0,
+       "text": "Twenty five people came to a party.",
+       "language_detected": "en",
+       "compute_ms": 291.0,
+       "rtf": 0.0582,
+       "cpu_ms": 552.9,
+       "error": null
+      }
+     ]
+    }
+   ],
+   "files": [
+    "hyps/core.qwen3-asr-0.6b.jsonl",
+    "hyps/core.parakeet-ultra.jsonl"
+   ]
+  },
+  {
+   "name": "mt",
+   "mode": "mt_quality",
+   "status": "passed",
+   "error": null,
+   "duration_ms": 1200.0,
+   "load": null,
+   "gpu_lock": null,
+   "state": null,
+   "warnings": [],
+   "results": [
+    {
+     "engine": "hy-mt2-1.8b",
+     "status": "passed",
+     "error": null,
+     "execution_provider_used": "cuda",
+     "aggregate": {
+      "items": 2,
+      "errors": 0,
+      "latency_ms_mean": 400.25,
+      "latency_ms_p50": 388.5,
+      "latency_ms_p95": 412.0,
+      "latency_ms_p99": 412.0,
+      "chars_per_s": 91.2,
+      "chrf": 41.2,
+      "vram_peak_mb": 1702
+     },
+     "groups": [
+      {
+       "direction": "en-ja",
+       "aggregate": {
+        "items": 2,
+        "errors": 0,
+        "latency_ms_p50": 388.5,
+        "latency_ms_p95": 412.0,
+        "chrf": 41.2
+       }
+      }
+     ],
+     "thresholds": [],
+     "items": [
+      {
+       "item": "wmt24pp:en-ja:1",
+       "direction": "en-ja",
+       "text": "みんな、今夜の配信に来てくれてありがとう！",
+       "latency_ms": 412.0,
+       "src_chars": 52,
+       "out_tokens": 19,
+       "error": null
+      },
+      {
+       "item": "wmt24pp:en-ja:2",
+       "direction": "en-ja",
+       "text": "マイクの音は聞こえますか？",
+       "latency_ms": 388.5,
+       "src_chars": 21,
+       "out_tokens": 12,
+       "error": null
+      }
+     ]
+    }
+   ],
+   "files": [
+    "hyps/mt.hy-mt2-1.8b.jsonl"
+   ]
+  },
+  {
+   "name": "tts",
+   "mode": "tts_listening",
+   "status": "passed",
+   "error": null,
+   "duration_ms": 2400.0,
+   "load": null,
+   "gpu_lock": null,
+   "state": null,
+   "warnings": [],
+   "results": [
+    {
+     "engine": "kokoro",
+     "status": "passed",
+     "error": null,
+     "execution_provider_used": "cpu",
+     "aggregate": {
+      "items": 2,
+      "errors": 1,
+      "audio_s": 3.1,
+      "ttfa_ms_p50": 310.0,
+      "ttfa_ms_p95": 310.0,
+      "rtf_mean": 0.287,
+      "rtf_p50": 0.287,
+      "rtf_p95": 0.287
+     },
+     "groups": [
+      {
+       "language": "en",
+       "aggregate": {
+        "items": 1,
+        "errors": 0,
+        "ttfa_ms_p50": 310.0
+       }
+      },
+      {
+       "language": "ja",
+       "aggregate": {
+        "items": 1,
+        "errors": 1
+       }
+      }
+     ],
+     "thresholds": [
+      {
+       "metric": "ttfa_ms_p95",
+       "max": 800,
+       "value": 310.0,
+       "passed": true
+      }
+     ],
+     "items": [
+      {
+       "item": "en-casual-1",
+       "language": "en",
+       "voice": "af_heart",
+       "audio": "audio/kokoro/en-casual-1.wav",
+       "audio_s": 3.1,
+       "sample_rate": 24000,
+       "ttfa_ms": 310.0,
+       "total_ms": 890.0,
+       "rtf": 0.287,
+       "asr_text": "Hey everyone, thanks for joining the stream tonight!",
+       "dnsmos_sig": 3.41,
+       "dnsmos_bak": 4.02,
+       "dnsmos_ovrl": 3.12,
+       "speaker_cosine": null,
+       "error": null
+      },
+      {
+       "item": "ja-casual-1",
+       "language": "ja",
+       "voice": "jf_alpha",
+       "audio": null,
+       "audio_s": null,
+       "sample_rate": null,
+       "ttfa_ms": null,
+       "total_ms": null,
+       "rtf": null,
+       "asr_text": null,
+       "dnsmos_sig": null,
+       "dnsmos_bak": null,
+       "dnsmos_ovrl": null,
+       "speaker_cosine": null,
+       "error": "example error: the voice failed to load"
+      }
+     ]
+    }
+   ],
+   "files": [
+    "audio/kokoro/en-casual-1.wav"
+   ]
+  }
+ ],
+ "files": [
+  "report.md",
+  "export.json"
+ ]
+}

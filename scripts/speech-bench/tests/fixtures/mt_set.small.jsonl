@@ -1,0 +1,2 @@
+{"id": "wmt24pp:en-ja:1", "source": "en", "target": "ja", "src": "Hey everyone, thanks for joining the stream tonight!", "ref": "みなさん、今夜は配信に来てくれてありがとう！", "set": "wmt24pp", "domain": "social", "doc": "doc1#1", "license": "fixture"}
+{"id": "wmt24pp:en-ja:2", "source": "en", "target": "ja", "src": "Can you hear me okay?", "ref": "声はちゃんと聞こえますか？", "set": "wmt24pp", "domain": "social", "doc": "doc1#2", "license": "fixture"}

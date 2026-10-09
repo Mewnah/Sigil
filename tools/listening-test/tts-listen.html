@@ -1,0 +1,309 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Sigil blind TTS listening test (P7). Works offline from file:// with no build step and no
+     network: it reads window.SIGIL_LISTENING_MANIFEST from manifest.js next to it (make_tts_test.py
+     writes it, with the blinded audio in audio/), or a manifest.json the listener opens from this
+     folder. mode "mushra": rate every sample of a trial 0-100 (MUSHRA-lite: no hidden reference or
+     anchor; a sample can be rated once it was played); mode "pairwise": A / B / no preference.
+     Answers stay in this browser (localStorage) until "Export my answers" downloads them as
+     sigil-listening-results/1 JSON. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice listening test</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f7f9; --fg: #1b1b1f; --muted: #60606b; --card: #ffffff; --line: #d9d9e0; --accent: #4b5bdc; --accent-fg: #ffffff; --chosen: #e7eaff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15151a; --fg: #ebebf0; --muted: #a0a0ad; --card: #1f1f27; --line: #34343f; --accent: #8f9bff; --accent-fg: #11111a; --chosen: #2a2f55; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 96px; }
+  h1 { font-size: 1.35rem; margin: 0 0 6px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
+  .badge { display: inline-block; font-size: 0.8rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .prompt { font-size: 1.08rem; margin: 8px 0 0; white-space: pre-wrap; }
+  .stim { display: grid; grid-template-columns: 7.5em 1fr 3em; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+  .stim:first-of-type { border-top: 0; }
+  .stim .name { font-weight: 600; }
+  .scale { display: grid; grid-template-columns: 7.5em 1fr 3em; gap: 12px; font-size: 0.78rem; color: var(--muted); }
+  .scale .labels { display: flex; justify-content: space-between; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=range]:disabled { opacity: 0.35; }
+  .value { text-align: end; font-variant-numeric: tabular-nums; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .side { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--card); text-align: center; }
+  .side.chosen { background: var(--chosen); border-color: var(--accent); }
+  .choices { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 8px 14px; cursor: pointer; }
+  button.primary, button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button.playing { outline: 2px solid var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  kbd { font-size: 0.75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-inline-start: 6px; color: var(--muted); }
+  textarea, input[type=text] { font: inherit; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
+  textarea { min-height: 2.6em; margin-top: 10px; }
+  .bar { position: fixed; inset-inline: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
+  .bar .inner { max-width: 860px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .loader { border: 2px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; }
+  .error { color: #c0392b; }
+  details summary { cursor: pointer; }
+  @media (max-width: 600px) { .pair { grid-template-columns: 1fr; } .stim, .scale { grid-template-columns: 6em 1fr 2.6em; } }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Voice listening test</h1>
+  <div id="loader" class="loader" hidden>
+    <p>Open the <b>manifest.json</b> in this test folder (or drop it here). Keep the page in the same folder as <b>audio/</b>.</p>
+    <input type="file" id="file" accept=".json,application/json" data-testid="manifest-file">
+    <p id="load-error" class="error"></p>
+  </div>
+  <div id="app" hidden>
+    <details class="card" id="help" open>
+      <summary><b>How to answer</b></summary>
+      <p id="instructions"></p>
+      <p class="muted" id="how"></p>
+    </details>
+    <div class="row"><label for="rater">Your name or initials (optional):</label><input type="text" id="rater" autocomplete="off" maxlength="80" style="max-width: 260px" data-testid="rater"></div>
+    <section class="card" data-testid="trial">
+      <div class="row"><span class="badge" id="lang"></span><span class="muted" id="position"></span></div>
+      <p class="prompt" id="prompt"></p>
+    </section>
+    <section class="card" id="mushra" hidden>
+      <div class="scale"><span></span><span class="labels" id="scale-labels"></span><span></span></div>
+      <div id="stimuli"></div>
+    </section>
+    <section id="pairwise" hidden>
+      <div class="pair">
+        <div class="side" id="side-A"><p><b>A</b></p><button data-play="A" data-testid="play-A">&#9654; Play A</button></div>
+        <div class="side" id="side-B"><p><b>B</b></p><button data-play="B" data-testid="play-B">&#9654; Play B</button></div>
+      </div>
+      <div class="choices" id="choices">
+        <button data-choice="A" data-testid="choose-A">A sounds better<kbd>1</kbd></button>
+        <button data-choice="B" data-testid="choose-B">B sounds better<kbd>2</kbd></button>
+        <button data-choice="tie" data-testid="choose-tie">No preference<kbd>3</kbd></button>
+      </div>
+    </section>
+    <textarea id="comment" placeholder="Comment (optional): mispronounced words, glitches, robotic or unnatural parts"></textarea>
+  </div>
+</main>
+<div class="bar" id="bar" hidden>
+  <div class="inner">
+    <button id="prev" data-testid="prev">&larr; Previous</button>
+    <button id="next" data-testid="next">Next &rarr;</button>
+    <button id="first-open" data-testid="first-open">First unanswered</button>
+    <span class="grow muted" id="progress" data-testid="progress"></span>
+    <button class="primary" id="export" data-testid="export">Export my answers</button>
+  </div>
+</div>
+<!-- manifest.js (written by make_tts_test.py) sets window.SIGIL_LISTENING_MANIFEST; when it is missing the page asks for manifest.json. -->
+<script src="manifest.js"></script>
+<script>
+"use strict";
+(function () {
+  const PAGE_VERSION = "sigil-tts-listen/1";
+  const $ = (id) => document.getElementById(id);
+  const player = new Audio();
+  let M = null, state = null, idx = 0, shownAt = 0, playingKey = null;
+
+  function langName(code) {
+    try { return new Intl.DisplayNames(["en"], { type: "language" }).of(code) || code; } catch (e) { return code; }
+  }
+  function storeKey() { return "sigil-listen-" + M.test_id; }
+  function save() { try { localStorage.setItem(storeKey(), JSON.stringify(state)); } catch (e) { /* private mode: answers live until export */ } }
+  function load() { try { return JSON.parse(localStorage.getItem(storeKey()) || "null"); } catch (e) { return null; } }
+  function shuffled(n) {
+    const a = Array.from({ length: n }, (_, i) => i);
+    const r = new Uint32Array(n);
+    window.crypto.getRandomValues(r);
+    for (let i = n - 1; i > 0; i--) { const j = r[i] % (i + 1); const t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
+  }
+  function validate(m) {
+    if (!m || m.schema !== "sigil-listening-tts/1") return "This is not a TTS listening manifest (schema sigil-listening-tts/1).";
+    if (!/^[0-9a-f]{16}$/.test(m.test_id || "")) return "The manifest has no valid test_id.";
+    if (m.mode !== "mushra" && m.mode !== "pairwise") return "Unknown mode " + m.mode + ".";
+    if (!Array.isArray(m.trials) || !m.trials.length) return "The manifest has no trials.";
+    for (const t of m.trials) {
+      if (!t || typeof t.id !== "string") return "A trial is malformed.";
+      if (m.mode === "mushra" && !(Array.isArray(t.stimuli) && t.stimuli.length >= 2)) return "A mushra trial needs two or more stimuli.";
+      if (m.mode === "pairwise" && !(typeof t.a === "string" && typeof t.b === "string")) return "A pairwise trial needs a and b.";
+    }
+    return null;
+  }
+  const scaleMin = () => (M.scale && typeof M.scale.min === "number") ? M.scale.min : 0;
+  const scaleMax = () => (M.scale && typeof M.scale.max === "number") ? M.scale.max : 100;
+  const requirePlay = () => M.require_play !== false;
+  function trialAt(i) { return M.trials[state.order[i]]; }
+  function answer(t) { return state.answers[t.id] || (state.answers[t.id] = {}); }
+  function played(t) { return answer(t).played || (answer(t).played = []); }
+  function complete(t) {
+    const a = state.answers[t.id];
+    if (!a) return false;
+    if (M.mode === "pairwise") return !!a.choice;
+    return t.stimuli.every((s) => a.ratings && typeof a.ratings[s.id] === "number");
+  }
+  function track() {
+    const t = trialAt(idx);
+    if (t && shownAt) { const a = answer(t); a.ms = (a.ms || 0) + Math.max(0, Date.now() - shownAt); }
+    shownAt = Date.now();
+  }
+  function stop() { player.pause(); playingKey = null; document.querySelectorAll("button.playing").forEach((b) => { b.classList.remove("playing"); }); }
+  function play(key, src, button) {
+    if (playingKey === key) { stop(); return; }
+    stop();
+    playingKey = key;
+    button.classList.add("playing");
+    player.src = src;
+    player.currentTime = 0;
+    player.play().catch(() => { button.classList.remove("playing"); playingKey = null; });
+  }
+  player.addEventListener("timeupdate", () => {
+    if (!playingKey || !isFinite(player.duration) || player.duration <= 0) return;
+    if (player.currentTime >= Math.min(player.duration * 0.8, player.duration - 0.2)) markPlayed(playingKey);
+  });
+  player.addEventListener("ended", () => { if (playingKey) markPlayed(playingKey); stop(); });
+  function markPlayed(key) {
+    const t = trialAt(idx), p = played(t);
+    if (p.indexOf(key) < 0) { p.push(key); save(); render(); if (playingKey) { const b = document.querySelector('[data-key="' + playingKey + '"]'); if (b) b.classList.add("playing"); } }
+  }
+  function renderMushra(t) {
+    const a = answer(t), box = $("stimuli");
+    box.textContent = "";
+    t.stimuli.forEach((s, k) => {
+      const row = document.createElement("div");
+      row.className = "stim";
+      const btn = document.createElement("button");
+      btn.dataset.key = s.id;
+      btn.dataset.testid = "play-" + s.id;
+      btn.setAttribute("data-testid", "play-" + s.id);
+      btn.innerHTML = "&#9654; ";
+      btn.appendChild(document.createTextNode("Sample " + (k + 1)));
+      btn.addEventListener("click", () => play(s.id, s.audio, btn));
+      const slider = document.createElement("input");
+      slider.type = "range"; slider.min = String(scaleMin()); slider.max = String(scaleMax()); slider.step = "1";
+      slider.setAttribute("data-testid", "rate-" + s.id);
+      slider.setAttribute("aria-label", "Rating of sample " + (k + 1));
+      const rated = a.ratings && typeof a.ratings[s.id] === "number";
+      slider.value = String(rated ? a.ratings[s.id] : Math.round((scaleMin() + scaleMax()) / 2));
+      slider.disabled = requirePlay() && played(t).indexOf(s.id) < 0;
+      const val = document.createElement("span");
+      val.className = "value";
+      val.textContent = rated ? String(a.ratings[s.id]) : "-";
+      const set = () => { a.ratings = a.ratings || {}; a.ratings[s.id] = Number(slider.value); val.textContent = slider.value; save(); progress(); };
+      slider.addEventListener("input", set);
+      slider.addEventListener("change", set);
+      row.appendChild(btn); row.appendChild(slider); row.appendChild(val);
+      box.appendChild(row);
+    });
+  }
+  function renderPairwise(t) {
+    const a = answer(t);
+    document.querySelectorAll("#choices button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.choice === a.choice);
+      b.disabled = requirePlay() && !(played(t).indexOf("A") >= 0 && played(t).indexOf("B") >= 0);
+    });
+    $("side-A").classList.toggle("chosen", a.choice === "A");
+    $("side-B").classList.toggle("chosen", a.choice === "B");
+  }
+  function progress() {
+    const n = M.trials.filter(complete).length;
+    $("progress").textContent = n + " of " + M.trials.length + " done";
+  }
+  function render() {
+    const t = trialAt(idx);
+    $("lang").textContent = langName(t.lang);
+    $("position").textContent = "Sentence " + (idx + 1) + " of " + M.trials.length;
+    $("prompt").textContent = t.text;
+    if (M.mode === "mushra") renderMushra(t); else renderPairwise(t);
+    $("comment").value = answer(t).comment || "";
+    $("prev").disabled = idx === 0;
+    $("next").disabled = idx === M.trials.length - 1;
+    progress();
+  }
+  function go(i) { if (i < 0 || i >= M.trials.length) return; stop(); track(); idx = i; state.position = i; save(); render(); }
+  function choose(c) {
+    const t = trialAt(idx);
+    if (M.mode !== "pairwise") return;
+    if (requirePlay() && !(played(t).indexOf("A") >= 0 && played(t).indexOf("B") >= 0)) return;
+    answer(t).choice = c; save(); render();
+  }
+  function exportAnswers() {
+    track(); save();
+    const out = {
+      schema: "sigil-listening-results/1", test_id: M.test_id, kind: "tts", mode: M.mode,
+      rater: (state.rater || "").slice(0, 80), page_version: PAGE_VERSION,
+      started_unix_ms: state.started || null, exported_unix_ms: Date.now(),
+      order: state.order.map((i) => M.trials[i].id), answers: state.answers,
+    };
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "answers-" + M.test_id + "-" + ((state.rater || "anonymous").replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 40) || "anonymous") + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  function start(m) {
+    const err = validate(m);
+    if (err) { $("loader").hidden = false; $("load-error").textContent = err; return; }
+    M = m;
+    document.title = M.title || "Voice listening test";
+    $("title").textContent = M.title || "Voice listening test";
+    $("instructions").textContent = (M.instructions || "") + (M.question ? " " + M.question : "");
+    $("how").textContent = M.mode === "mushra"
+      ? "Each sentence is spoken by several voices in a random order; nothing tells which system made which. Play every sample (headphones help), then rate how natural and correct it sounds from " + scaleMin() + " to " + scaleMax() + ". A slider unlocks once its sample was played."
+      : "Each sentence is spoken twice in a random order. Play both, then pick the better one. Keys: 1 A, 2 B, 3 no preference; arrows move between sentences.";
+    const labels = (M.scale && Array.isArray(M.scale.labels) && M.scale.labels.length) ? M.scale.labels : ["Bad", "Poor", "Fair", "Good", "Excellent"];
+    $("scale-labels").textContent = "";
+    labels.forEach((l) => { const s = document.createElement("span"); s.textContent = l; $("scale-labels").appendChild(s); });
+    $("mushra").hidden = M.mode !== "mushra";
+    $("pairwise").hidden = M.mode !== "pairwise";
+    state = load();
+    if (!state || !Array.isArray(state.order) || state.order.length !== M.trials.length) {
+      state = { order: shuffled(M.trials.length), answers: {}, rater: "", started: Date.now(), position: 0 };
+      save();
+    }
+    idx = Math.min(state.position || 0, M.trials.length - 1);
+    $("rater").value = state.rater || "";
+    $("loader").hidden = true; $("app").hidden = false; $("bar").hidden = false;
+    shownAt = Date.now();
+    render();
+  }
+  document.querySelectorAll("[data-play]").forEach((b) => b.addEventListener("click", () => {
+    const t = trialAt(idx);
+    play(b.dataset.play, b.dataset.play === "A" ? t.a : t.b, b);
+  }));
+  document.querySelectorAll("[data-play]").forEach((b) => { b.dataset.key = b.dataset.play; });
+  $("rater").addEventListener("input", () => { state.rater = $("rater").value; save(); });
+  $("comment").addEventListener("input", () => { answer(trialAt(idx)).comment = $("comment").value.slice(0, 2000); save(); });
+  document.querySelectorAll("#choices button").forEach((b) => b.addEventListener("click", () => choose(b.dataset.choice)));
+  $("prev").addEventListener("click", () => go(idx - 1));
+  $("next").addEventListener("click", () => go(idx + 1));
+  $("first-open").addEventListener("click", () => {
+    const i = state.order.findIndex((k) => !complete(M.trials[k]));
+    if (i >= 0) go(i);
+  });
+  $("export").addEventListener("click", exportAnswers);
+  document.addEventListener("keydown", (e) => {
+    if (!M || e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+    const map = { "1": "A", "2": "B", "3": "tie" };
+    if (M.mode === "pairwise" && map[e.key]) { e.preventDefault(); choose(map[e.key]); }
+    else if (e.key === "ArrowRight") go(idx + 1);
+    else if (e.key === "ArrowLeft") go(idx - 1);
+  });
+  function readFile(f) {
+    const r = new FileReader();
+    r.onload = () => { try { start(JSON.parse(r.result)); } catch (e) { $("load-error").textContent = "Not a JSON file: " + e.message; } };
+    r.readAsText(f);
+  }
+  $("file").addEventListener("change", (e) => { if (e.target.files[0]) readFile(e.target.files[0]); });
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+  window.addEventListener("beforeunload", () => { if (M) { track(); save(); } });
+  if (window.SIGIL_LISTENING_MANIFEST) start(window.SIGIL_LISTENING_MANIFEST); else $("loader").hidden = false;
+})();
+</script>
+</body>
+</html>

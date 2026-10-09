@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-corpus-1.json",
+  "title": "sigil-speech-corpus/1",
+  "description": "corpus.json written by scripts/speech-bench/corpus/build_corpus.py: the STT audio corpus of the P7 campaign (synthetic FLEURS + bleed items, and real drop-in clips). Lives outside the repo (%LOCALAPPDATA%/sigil-dev-cache/p7/corpus/). Audio paths are relative to the manifest's folder; every file is 16 kHz mono PCM 16-bit WAV. The same `utterance` appears under every condition, so engines and conditions compare paired. Frozen by P7-S0: fields may be added, never renamed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "created_unix_ms",
+    "sample_rate",
+    "channels",
+    "format",
+    "recipe",
+    "recipe_sha256",
+    "content_sha256",
+    "builder",
+    "sources",
+    "conditions",
+    "subsets",
+    "items"
+  ],
+  "properties": {
+    "schema": {
+      "const": "sigil-speech-corpus/1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "created_unix_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sample_rate": {
+      "const": 16000
+    },
+    "channels": {
+      "const": 1
+    },
+    "format": {
+      "const": "wav_pcm16"
+    },
+    "recipe": {
+      "type": "object",
+      "description": "The sigil-speech-corpus-recipe/1 the corpus was built from (corpus/recipe.json), as used."
+    },
+    "recipe_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The corpus identity by content: sha256 of the canonical JSON (sorted keys, no whitespace) of the sorted list of [item id, file sha256]. Two builds with the same content_sha256 are the same corpus, whatever their build time."
+    },
+    "builder": {
+      "type": "object",
+      "required": [
+        "script",
+        "version",
+        "python",
+        "packages"
+      ],
+      "properties": {
+        "script": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "python": {
+          "type": "string"
+        },
+        "packages": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "libsndfile": {
+          "type": "string"
+        }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "description": "Every input dataset: key -> {dataset, revision, license, files: [{path (as found on the build machine), sha256?}]}.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "dataset",
+          "license"
+        ],
+        "properties": {
+          "dataset": {
+            "type": "string"
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "license": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "kind": {
+            "enum": [
+              "clean",
+              "music",
+              "sfx",
+              "babble",
+              "room",
+              "mic",
+              "composite",
+              "real"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "snr_db": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "subsets": {
+      "type": "object",
+      "description": "Named condition lists (core, snr_sweep, mic, quick, real, all).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "languages": {
+      "type": "object",
+      "description": "Per language: FLEURS config, items, total seconds, words / characters of the references.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "utterance",
+        "kind",
+        "language",
+        "condition",
+        "audio",
+        "seconds",
+        "sha256",
+        "reference",
+        "rank"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "<lang>/<utterance key>/<condition> (synthetic) or real/<session>/<clip> (real)."
+        },
+        "utterance": {
+          "type": "string",
+          "description": "Pairing key: the same spoken utterance under every condition."
+        },
+        "kind": {
+          "enum": [
+            "synthetic",
+            "real"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "audio": {
+          "type": "string",
+          "description": "Relative to the manifest's folder, forward slashes."
+        },
+        "seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Verbatim reference transcript (FLEURS raw_transcription; the .txt of a real clip). Normalization happens in the scorer."
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Selection order within the language (seeded); limit_per_language takes ranks < k."
+        },
+        "speaker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "gender": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "description": "Provenance of the speech: FLEURS {dataset, config, split, file, sentence_id, transcription_normalized} or real {session, file, original_rate, original_channels}.",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "fleurs",
+                "real"
+              ]
+            }
+          }
+        },
+        "mix": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "How the condition was made: {seed, snr_db, speech_active_dbfs, interferer_active_dbfs, post_gain_db, components: [{kind, ref (bank file / ESC-50 file / FLEURS file), offset_s, gain_db, ...}], chain: [{op, params}]}.",
+          "properties": {
+            "seed": {
+              "type": "integer"
+            },
+            "snr_db": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "post_gain_db": {
+              "type": "number"
+            },
+            "components": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "chain": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "consent": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Real clips only: {given: true, date, scope}. Items without given consent are never added.",
+          "properties": {
+            "given": {
+              "const": true
+            },
+            "date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

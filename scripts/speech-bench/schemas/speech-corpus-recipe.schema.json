@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-corpus-recipe-1.json",
+  "title": "sigil-speech-corpus-recipe/1",
+  "description": "scripts/speech-bench/corpus/recipe.json: what build_corpus.py builds (languages, selection, banks, conditions, subsets). Its canonical sha256 is the corpus identity (recipe_sha256) in the manifest, every report and every score.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "seed",
+    "sample_rate",
+    "languages",
+    "selection",
+    "banks",
+    "conditions",
+    "subsets",
+    "speech_level"
+  ],
+  "properties": {
+    "$comment": {
+      "type": "string"
+    },
+    "schema": {
+      "const": "sigil-speech-corpus-recipe/1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sample_rate": {
+      "const": 16000
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lang",
+          "fleurs"
+        ],
+        "properties": {
+          "lang": {
+            "type": "string"
+          },
+          "fleurs": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "per_language",
+        "min_seconds",
+        "max_seconds"
+      ],
+      "properties": {
+        "per_language": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "one_recording_per_sentence": {
+          "type": "boolean",
+          "default": true
+        },
+        "balance_gender": {
+          "type": "boolean",
+          "default": true
+        },
+        "babble_pool": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 24
+        }
+      }
+    },
+    "banks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "music",
+        "sfx"
+      ],
+      "properties": {
+        "music": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tracks",
+            "segments_per_track",
+            "segment_seconds"
+          ],
+          "properties": {
+            "tracks": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "segments_per_track": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "segment_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_active_dbfs": {
+              "type": "number"
+            },
+            "max_silent_fraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "sfx": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "categories",
+            "clips_per_category"
+          ],
+          "properties": {
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "clips_per_category": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_event_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "kind": {
+            "enum": [
+              "clean",
+              "music",
+              "sfx",
+              "babble",
+              "room",
+              "mic",
+              "composite"
+            ]
+          },
+          "snr_db": {
+            "type": "number"
+          },
+          "description": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "subsets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "speech_level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_dbfs"
+      ],
+      "description": "Synthetic speech is brought to this active level (dBFS) plus a seeded per-utterance offset within +-jitter_db, before mixing; real clips keep their level.",
+      "properties": {
+        "active_dbfs": {
+          "type": "number",
+          "maximum": -6
+        },
+        "jitter_db": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    }
+  }
+}

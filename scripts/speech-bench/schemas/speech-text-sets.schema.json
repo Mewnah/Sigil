@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-text-sets-1.json",
+  "title": "sigil-speech-text-sets/1",
+  "description": "One JSON line of the text sets written by scripts/speech-bench/corpus/build_text_sets.py: MT sets (corpus/mt/<set>.jsonl, the mt-bench corpus format plus provenance; mt-bench ignores the extra fields) and TTS prompts (corpus/tts/prompts.jsonl). Validate a line against #/$defs/mt_line or #/$defs/tts_prompt.",
+  "$defs": {
+    "mt_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "target", "src", "ref", "set"],
+      "properties": {
+        "id": { "type": "string", "description": "<set>:<direction>:<n> (unique across every set)." },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "src": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 },
+        "refs": { "type": "array", "items": { "type": "string" } },
+        "set": { "enum": ["wmt24pp", "flores200", "bsd", "sigil-casual", "real-captions"] },
+        "domain": { "type": ["string", "null"], "description": "WMT24++ domain (social, speech, news, literary), BSD scene, FLORES topic." },
+        "doc": { "type": ["string", "null"], "description": "Document / dialogue id (the previous line of the same doc is the context)." },
+        "license": { "type": "string" }
+      }
+    },
+    "tts_prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "lang", "text", "kind"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z]{2,3}-[a-z0-9-]+$", "description": "<lang>-<kind>-<n>: also the rendering's file name." },
+        "lang": { "type": "string" },
+        "text": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["casual", "read", "long", "numbers"], "description": "casual: stream / VRChat-style lines; read: FLEURS read sentences; long: multi-sentence (TTFA and stability); numbers: digits, dates, units." },
+        "voice": { "type": ["string", "null"], "description": "Preset voice override for every engine (normally per engine in the spec)." },
+        "reference_voice": { "type": ["string", "null"], "description": "Voice-library id of a reference clip for cloning engines." },
+        "source": { "type": "string", "description": "Provenance (fleurs:<config>:<file> or sigil-casual)." },
+        "license": { "type": "string" }
+      }
+    }
+  }
+}

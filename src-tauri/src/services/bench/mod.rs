@@ -97,6 +97,8 @@ pub(crate) mod rvc_build;
 pub mod scorers;
 pub mod signals;
 pub mod spec;
+/// The P7 speech benchmark runner, `--headless speech-bench` (P7-A1).
+pub mod speech;
 mod vc_rt;
 
 use std::collections::BTreeMap;

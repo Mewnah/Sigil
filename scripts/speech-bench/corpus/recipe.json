@@ -1,0 +1,287 @@
+{
+  "$comment": "The frozen recipe of the P7 synthetic STT corpus (build_corpus.py). Changing anything here changes recipe_sha256 and so the corpus identity in every report and score: bump `name` when you do. Speech is brought to an active level of -26 dBFS +- 4 dB (seeded per utterance, the same under every condition). SNRs are active-level ratios (see corpus/dsp.py: mean power of the 20 ms frames within 30 dB of the 95th-percentile frame). FLEURS (CC-BY-4.0) gives the speech; FMA commercial-use tracks (one 16 kHz shard) the music; ESC-50 (CC BY-NC 3.0) the effects.",
+  "schema": "sigil-speech-corpus-recipe/1",
+  "name": "p7-synthetic-v1",
+  "description": "FLEURS test speech in 9 languages under VRChat-like conditions: clean; world / game music bleed, effects bleed and same-language babble at 20 / 10 / 5 dB; foreign babble at 10 dB; a light room; a band-limited codec-like mic; and a composite desk-speaker streamer mix.",
+  "seed": 20261002,
+  "sample_rate": 16000,
+  "languages": [
+    {
+      "lang": "en",
+      "fleurs": "en_us"
+    },
+    {
+      "lang": "ja",
+      "fleurs": "ja_jp"
+    },
+    {
+      "lang": "zh",
+      "fleurs": "cmn_hans_cn"
+    },
+    {
+      "lang": "ko",
+      "fleurs": "ko_kr"
+    },
+    {
+      "lang": "es",
+      "fleurs": "es_419"
+    },
+    {
+      "lang": "de",
+      "fleurs": "de_de"
+    },
+    {
+      "lang": "fr",
+      "fleurs": "fr_fr"
+    },
+    {
+      "lang": "ru",
+      "fleurs": "ru_ru"
+    },
+    {
+      "lang": "pt",
+      "fleurs": "pt_br"
+    }
+  ],
+  "selection": {
+    "per_language": 100,
+    "min_seconds": 3.0,
+    "max_seconds": 20.0,
+    "one_recording_per_sentence": true,
+    "balance_gender": true,
+    "babble_pool": 24
+  },
+  "speech_level": {
+    "active_dbfs": -26.0,
+    "jitter_db": 4.0
+  },
+  "banks": {
+    "music": {
+      "tracks": 96,
+      "segments_per_track": 2,
+      "segment_seconds": 30.0,
+      "min_active_dbfs": -38.0,
+      "max_silent_fraction": 0.1
+    },
+    "sfx": {
+      "categories": [
+        "keyboard_typing",
+        "mouse_click",
+        "footsteps",
+        "clapping",
+        "laughing",
+        "coughing",
+        "sneezing",
+        "door_wood_knock",
+        "door_wood_creaks",
+        "glass_breaking",
+        "can_opening",
+        "drinking_sipping",
+        "fireworks",
+        "clock_alarm",
+        "church_bells",
+        "breathing"
+      ],
+      "clips_per_category": 20,
+      "max_event_seconds": 3.0
+    }
+  },
+  "conditions": [
+    {
+      "id": "clean",
+      "kind": "clean",
+      "description": "FLEURS test speech as recorded (16 kHz read speech)."
+    },
+    {
+      "id": "music_snr20",
+      "kind": "music",
+      "snr_db": 20,
+      "description": "Music bleed (world music / game soundtrack through desk speakers) at 20 dB."
+    },
+    {
+      "id": "music_snr10",
+      "kind": "music",
+      "snr_db": 10,
+      "description": "Music bleed at 10 dB."
+    },
+    {
+      "id": "music_snr5",
+      "kind": "music",
+      "snr_db": 5,
+      "description": "Music bleed at 5 dB (loud world)."
+    },
+    {
+      "id": "sfx_snr20",
+      "kind": "sfx",
+      "snr_db": 20,
+      "params": {
+        "events_per_10s": 4,
+        "event_gain_jitter_db": 4
+      },
+      "description": "Room and game effects (keyboard, clicks, footsteps, claps, laughs, knocks, glass, fireworks...) at 20 dB."
+    },
+    {
+      "id": "sfx_snr10",
+      "kind": "sfx",
+      "snr_db": 10,
+      "params": {
+        "events_per_10s": 4,
+        "event_gain_jitter_db": 4
+      },
+      "description": "Effects at 10 dB."
+    },
+    {
+      "id": "sfx_snr5",
+      "kind": "sfx",
+      "snr_db": 5,
+      "params": {
+        "events_per_10s": 4,
+        "event_gain_jitter_db": 4
+      },
+      "description": "Effects at 5 dB."
+    },
+    {
+      "id": "babble_snr20",
+      "kind": "babble",
+      "snr_db": 20,
+      "params": {
+        "talkers": 3,
+        "language": "same"
+      },
+      "description": "Three other players talking in the same language (other FLEURS sentences) at 20 dB."
+    },
+    {
+      "id": "babble_snr10",
+      "kind": "babble",
+      "snr_db": 10,
+      "params": {
+        "talkers": 3,
+        "language": "same"
+      },
+      "description": "Same-language babble at 10 dB."
+    },
+    {
+      "id": "babble_snr5",
+      "kind": "babble",
+      "snr_db": 5,
+      "params": {
+        "talkers": 3,
+        "language": "same"
+      },
+      "description": "Same-language babble at 5 dB."
+    },
+    {
+      "id": "babble_xlang_snr10",
+      "kind": "babble",
+      "snr_db": 10,
+      "params": {
+        "talkers": 3,
+        "language": "other"
+      },
+      "description": "Three players talking in other languages (each a different corpus language) at 10 dB."
+    },
+    {
+      "id": "room_light",
+      "kind": "room",
+      "params": {
+        "rt60_s": 0.35,
+        "drr_db": 6.0
+      },
+      "description": "A light room: synthetic exponential reverb tail, RT60 0.35 s, direct-to-reverberant 6 dB (desk mic at arm's length)."
+    },
+    {
+      "id": "mic_codec",
+      "kind": "mic",
+      "params": {
+        "highpass_hz": 200,
+        "lowpass_hz": 3800,
+        "mu_law_bits": 8,
+        "hiss_dbfs": -60.0
+      },
+      "description": "A band-limited, codec-like mic: 200-3800 Hz (8th-order Butterworth), 8-bit mu-law (G.711-like) quantization, hiss at -60 dBFS."
+    },
+    {
+      "id": "vrchat_mix",
+      "kind": "composite",
+      "snr_db": 12,
+      "description": "A desk-speaker streamer: speech in a light room; world music through the room at 15 dB, effects at 18 dB, two same-language talkers at 20 dB (about 12 dB combined); mic high-pass 100 Hz and low-pass 7 kHz.",
+      "params": {
+        "speech_room": {
+          "rt60_s": 0.3,
+          "drr_db": 8.0
+        },
+        "music": {
+          "snr_db": 15,
+          "room": {
+            "rt60_s": 0.5,
+            "drr_db": 0.0
+          }
+        },
+        "sfx": {
+          "snr_db": 18,
+          "events_per_10s": 3,
+          "event_gain_jitter_db": 4
+        },
+        "babble": {
+          "snr_db": 20,
+          "talkers": 2,
+          "language": "same"
+        },
+        "mic": {
+          "highpass_hz": 100,
+          "lowpass_hz": 7000
+        }
+      }
+    }
+  ],
+  "subsets": {
+    "quick": [
+      "clean",
+      "vrchat_mix"
+    ],
+    "core": [
+      "clean",
+      "music_snr10",
+      "babble_snr10",
+      "vrchat_mix"
+    ],
+    "snr_sweep": [
+      "clean",
+      "music_snr20",
+      "music_snr10",
+      "music_snr5",
+      "sfx_snr20",
+      "sfx_snr10",
+      "sfx_snr5",
+      "babble_snr20",
+      "babble_snr10",
+      "babble_snr5",
+      "babble_xlang_snr10"
+    ],
+    "mic": [
+      "clean",
+      "room_light",
+      "mic_codec",
+      "vrchat_mix"
+    ],
+    "all": [
+      "clean",
+      "music_snr20",
+      "music_snr10",
+      "music_snr5",
+      "sfx_snr20",
+      "sfx_snr10",
+      "sfx_snr5",
+      "babble_snr20",
+      "babble_snr10",
+      "babble_snr5",
+      "babble_xlang_snr10",
+      "room_light",
+      "mic_codec",
+      "vrchat_mix"
+    ],
+    "real": [
+      "real"
+    ]
+  }
+}

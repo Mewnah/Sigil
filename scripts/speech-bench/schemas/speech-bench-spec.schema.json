@@ -1,0 +1,700 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-bench-spec-1.json",
+  "title": "sigil-speech-bench-spec/1",
+  "description": "Input of `Sigil.exe --headless speech-bench <spec.json> [--out <dir>]` (P7-A implements it in src-tauri/src/services/bench/speech.rs). Frozen by P7-S0: fields may be added (optional, with defaults that keep every earlier spec meaning the same), never renamed or removed. Unknown fields are errors (serde deny_unknown_fields), except `$comment` anywhere. Relative paths resolve against the spec file's folder. Secrets never appear in a spec: an API key is named by an environment variable (`options.apiKeyEnv`). Path fields (corpus.manifest, mt.set, tts.prompts, co_load.voice_changer_spec, hypotheses / rendered paths in options, and a bring-your-own engine model) expand `${NAME}` from the environment first, with two defaults when unset: SIGIL_P7_ROOT = %LOCALAPPDATA%/sigil-dev-cache/p7 and SIGIL_P7_CORPUS = ${SIGIL_P7_ROOT}/corpus; an unknown variable is an error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "engines",
+    "runs"
+  ],
+  "properties": {
+    "$comment": {
+      "$ref": "#/$defs/comment"
+    },
+    "schema": {
+      "const": "sigil-speech-bench-spec/1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Short id; names the default output folder (bench-results/speech/<name>-<timestamp>/)."
+    },
+    "description": {
+      "type": "string",
+      "default": ""
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 20261002,
+      "description": "Seed of every pseudo-random choice the runner makes (item order shuffles for paced feeds, load jitter)."
+    },
+    "corpus": {
+      "$ref": "#/$defs/corpus"
+    },
+    "engines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/engine"
+      },
+      "description": "Every engine the runs may use; ids are unique."
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/run"
+      },
+      "description": "Executed in order; run names are unique."
+    },
+    "output": {
+      "$ref": "#/$defs/output"
+    }
+  },
+  "$defs": {
+    "comment": {
+      "description": "Free-form notes, ignored by the runner.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "lang": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+      "description": "Lower-case BCP-47 base subtag as speech::lang::normalize writes it (en, ja, zh, ko, yue, es, de, fr, ru, pt); MT directions may carry a script / region (zh-Hant, pt-PT)."
+    },
+    "direction": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Z][a-z]{3})?(-[A-Z]{2})?-[a-z]{2,3}(-[A-Z][a-z]{3})?(-[A-Z]{2})?$",
+      "description": "MT direction <source>-<target> exactly as mt-bench writes it (en-ja, ja-en, en-zh-Hant)."
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest"
+      ],
+      "description": "The audio corpus (sigil-speech-corpus/1 manifest built by scripts/speech-bench/corpus/build_corpus.py) and the default item selection of the STT runs.",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of corpus.json; `${LOCALAPPDATA}` / `${SIGIL_P7_CORPUS}` are expanded."
+        },
+        "select": {
+          "$ref": "#/$defs/select"
+        }
+      }
+    },
+    "select": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which corpus items a run feeds. All filters combine (AND). Within a language, items keep the manifest's `rank` order, so `limit_per_language: k` takes the same k utterances under every condition (paired comparisons).",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "subset": {
+          "type": "string",
+          "description": "A named subset of the manifest (`subsets`: core, snr_sweep, mic, real, quick, ...): its condition list."
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lang"
+          },
+          "uniqueItems": true
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "synthetic",
+              "real"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "synthetic = built from FLEURS + bleed; real = drop-in clips (corpus/real)."
+        },
+        "limit_per_language": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Utterances per language (by rank), applied before conditions."
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Explicit item ids (overrides the other filters when non-empty)."
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task",
+        "backend"
+      ],
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "Unique; names hypothesis / audio files and report rows."
+        },
+        "task": {
+          "enum": [
+            "stt",
+            "mt",
+            "tts"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "description": "stt: the speech plugin's EngineKind wire names `whisper`, `http`, `sherpa-online`, `sherpa-offline`, `transcribe`, plus `pipeline` (the real speech pipeline: Silero VAD, router, two-pass; `options.route` is a RouteRequest), `crispasr` (R2T2 through the CrispASR runtime, prerequisite) and `hypotheses` (`options.path`: JSON lines {item, text} made elsewhere). mt: mt-bench's `nllb`, `openai`, `hypotheses`, plus `bergamot` (mt_local::bergamot) and `llama-server` (Sigil starts the bundled helper with catalog `model` and `variant`). tts: `local-tts` (in-process local_tts: Kokoro, Kitten, Piper, Pocket, Chatterbox-ort, sbv2), `tts-helper` (tts_helpers engine `options.helper`: qwen3, magpie, breeze, omnivoice, s2), `openai-speech` (any OpenAI-compatible /v1/audio/speech server) and `rendered` (`options.dir` of <prompt id>.wav made elsewhere)."
+        },
+        "model": {
+          "type": "string",
+          "default": "",
+          "description": "Model-store catalog id (stt/..., mt/..., tts/...; located with model_store::installed_path, never downloaded by the runner) or an absolute path for a bring-your-own model. Empty for backends without a model."
+        },
+        "execution_provider": {
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda",
+            "dml",
+            "vulkan"
+          ],
+          "default": "auto",
+          "description": "Requested device. Maps to the runtime variant (transcribe / llama-server / helpers: cpu -> best CPU variant, cuda -> cuda13, vulkan -> vulkan) or the ORT EP ladder (cuda, dml). The report records what was requested and what ran, with the reason of any fallback; a fallback is never hidden."
+        },
+        "variant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Force a runtime pack variant (cpu, cpu-avx2, cpu-avx512, vulkan, cuda13); null = from execution_provider."
+        },
+        "threads": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 64,
+          "default": null,
+          "description": "Inference threads; null = the engine's default (speech::engine_api::EngineSpec.threads)."
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lang"
+          },
+          "uniqueItems": true,
+          "description": "stt: the corpus languages this engine is fed (default: every selected language); tts: the prompt languages it renders."
+        },
+        "language_mode": {
+          "enum": [
+            "given",
+            "auto"
+          ],
+          "default": "given",
+          "description": "stt: pass the item's language to the engine (given) or let it detect (auto)."
+        },
+        "directions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/direction"
+          },
+          "uniqueItems": true,
+          "description": "mt: directions this engine translates (default: every direction of the set)."
+        },
+        "options": {
+          "type": "object",
+          "description": "Backend-specific settings, passed through. stt: speech::engine_api::EngineSpec.options (pipeline: `route` = a RouteRequest {language, tier, twoPass}; hypotheses: `path`; crispasr: `crispasrBackend`). mt: mt-bench engine fields in camelCase (prompt, maxTokens, temperature, timeoutMs, baseUrl, beam, apiKeyEnv; hypotheses: path). tts: `voice` (every language) or `voices` {lang: voice}, `speed`, `helper` + `config` (tts-helper: the helper's camelCase start config), `baseUrl` / `apiKeyEnv` (openai-speech), `dir` (rendered). Never secrets: a key comes from the environment variable named by apiKeyEnv."
+        }
+      }
+    },
+    "load_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exactly bench::spec::LoadSpec (sigil-bench-spec/1 `load`): the GPU hammer and CPU burner threads at a duty cycle.",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "gpu": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "duty"
+          ],
+          "properties": {
+            "duty": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "period_ms": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 20
+            },
+            "execution_provider": {
+              "enum": [
+                "cuda",
+                "dml",
+                "cpu"
+              ],
+              "default": "cuda"
+            },
+            "device_index": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1024
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 4
+            },
+            "out_of_process": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "cpu": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "threads"
+          ],
+          "properties": {
+            "threads": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "duty": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "default": 1
+            },
+            "period_ms": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 10
+            }
+          }
+        }
+      }
+    },
+    "feed": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How audio reaches an STT engine.",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "kind": {
+          "enum": [
+            "utterance",
+            "stream",
+            "pipeline"
+          ],
+          "default": "utterance",
+          "description": "utterance: the whole clip through AsrEngine::transcribe (model accuracy alone); stream: begin_stream / push_stream(chunk_ms) / end_stream (streaming engines: partials and the stream final); pipeline: the real speech pipeline from the clip (Silero VAD segmentation, router, two-pass finals; what users get), the item hypothesis is its finals joined (space, or nothing for ja / zh / yue)."
+        },
+        "chunk_ms": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 2000,
+          "default": 100
+        },
+        "pace": {
+          "enum": [
+            "asap",
+            "realtime"
+          ],
+          "default": "asap",
+          "description": "asap: as fast as the engine takes it (accuracy, compute); realtime: chunks at wall-clock pace (latency to final, first partial)."
+        },
+        "lead_silence_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Silence fed before the clip (pipeline: VAD pre-roll)."
+        },
+        "tail_silence_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 800,
+          "description": "Silence fed after the clip so a VAD can close the utterance."
+        }
+      }
+    },
+    "gpu_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The dev rig's GPU timing lock (scripts/bench/gpu-lock.ps1). The runner never takes it: the campaign script acquires it (gpu-lock.ps1 -Run P7-A -Command ...), and the runner verifies that the lock file exists and its tag equals `tag` before a timing run, recording the owner in the report.",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "require": {
+          "type": "boolean",
+          "description": "Refuse the run (status error) when the lock is not held by `tag`. Default: true for gpu_under_load and cpu_speed runs, false otherwise."
+        },
+        "tag": {
+          "type": "string",
+          "default": "P7-A"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Lock file; null = $env:SIGIL_GPU_LOCK, else the gpu-lock.ps1 default."
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "description": "Gates applied to every engine aggregate of the run: metric name (an aggregate key of the report, e.g. rtf_p95, final_latency_ms_p95, vram_peak_mb, cpu_cores_mean, ttfa_ms_p95, latency_ms_p95) -> {min, max}. A metric the run did not produce fails as not measured.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          }
+        },
+        "minProperties": 1
+      }
+    },
+    "tts_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "tts_listening and TTS speed runs.",
+      "required": [
+        "prompts"
+      ],
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "prompts": {
+          "type": "string",
+          "description": "JSON lines {id, lang, text, kind?, voice?, reference_voice?} (corpus/tts/prompts.jsonl from build_text_sets.py)."
+        },
+        "limit_per_language": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "write_audio": {
+          "type": "boolean",
+          "default": true,
+          "description": "<out>/audio/<engine>/<prompt id>.wav (PCM 16-bit at the engine's rate); always on for tts_listening."
+        },
+        "intelligibility": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "Back-transcribe every rendering with an STT engine of this spec (its hypothesis lands in the item's `asr_text`; the scorer computes WER / CER against the prompt).",
+          "properties": {
+            "engine": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "engine"
+          ]
+        },
+        "dnsmos": {
+          "type": "boolean",
+          "default": false,
+          "description": "DNSMOS P.835 (bench/dnsmos-p835) per rendering: item fields dnsmos_sig / dnsmos_bak / dnsmos_ovrl."
+        },
+        "speaker_similarity": {
+          "type": "boolean",
+          "default": false,
+          "description": "CAM++ cosine (bench/campplus) between a cloning engine's rendering and the prompt's reference_voice clip: item field speaker_cosine."
+        }
+      }
+    },
+    "mt_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "set"
+      ],
+      "description": "mt_quality and MT speed runs.",
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "set": {
+          "type": "string",
+          "description": "An mt-bench corpus (JSON lines {id, source, target, src, ref | refs, ...}); corpus/mt/*.jsonl from build_text_sets.py."
+        },
+        "directions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/direction"
+          },
+          "uniqueItems": true
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Lines per direction (file order)."
+        },
+        "context": {
+          "enum": [
+            "none",
+            "previous"
+          ],
+          "default": "none",
+          "description": "previous: the engine's prompt gets the previous source line of the same document as context (LLM backends)."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "mode"
+      ],
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "mode": {
+          "enum": [
+            "accuracy",
+            "cpu_speed",
+            "gpu_under_load",
+            "mt_quality",
+            "tts_listening"
+          ],
+          "description": "accuracy (stt): hypotheses of every selected item, scored later by score/score_stt.py. cpu_speed (stt, mt, tts): compute, RTF, latency and process CPU with the engines on the CPU, optionally under the load simulator (a game on the same CPU). gpu_under_load (stt, mt, tts): the same with GPU engines under the GPU / CPU load simulator and the GPU timing lock, plus process VRAM. mt_quality (mt): hypotheses and latency over an MT set, scored by score/score_mt.py (chrF, MetricX). tts_listening (tts): renders every prompt to WAV with TTFA / RTF and optional automatic pre-screens, for tools/listening-test/make_tts_test.py."
+        },
+        "engines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Engine ids; default: every engine whose task the mode takes."
+        },
+        "select": {
+          "$ref": "#/$defs/select"
+        },
+        "feed": {
+          "$ref": "#/$defs/feed"
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1,
+          "description": "Untimed items per engine first (not in the report's items)."
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Timed passes over the selection (speed modes); per-item timings are the median of the passes, hypotheses from the first."
+        },
+        "load_profile": {
+          "enum": [
+            "none",
+            "h1_vrchat_obs",
+            "h2_load70",
+            "h2_load70_dml",
+            "h2_load70_oop",
+            "h3_cpu_game",
+            "custom"
+          ],
+          "default": "none",
+          "description": "The bench contention profiles (bench::contention::PROFILES, without the stall): h1_vrchat_obs = conv hammer 70 % at 60 fps + 3 CPU threads at 50 %; h3_cpu_game = 4 CPU threads at 60 %; custom = `load` only. `load` overrides the profile's parts."
+        },
+        "load": {
+          "$ref": "#/$defs/load_spec"
+        },
+        "gpu_load_kind": {
+          "enum": [
+            "matmul",
+            "conv"
+          ],
+          "default": "conv"
+        },
+        "external_load": {
+          "type": "string",
+          "default": "",
+          "description": "Free text recorded in the report when the load is real (\"VRChat busy world + OBS NVENC 1080p60\"): friends' live runs."
+        },
+        "co_load": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "Optional: run the voice changer through the real harness (paced) in this process during the run, from a sigil-bench-spec/1 file of the user's voice (for example a filled-in copy of scripts/bench/specs/p3b/a/sve-gpu.template.json); its own paced numbers land in the run's co_load block.",
+          "properties": {
+            "voice_changer_spec": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "voice_changer_spec"
+          ]
+        },
+        "gpu_lock": {
+          "$ref": "#/$defs/gpu_lock"
+        },
+        "timeout_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 120,
+          "description": "Per item; an item over it is cancelled and reported as an error."
+        },
+        "tts": {
+          "$ref": "#/$defs/tts_options"
+        },
+        "mt": {
+          "$ref": "#/$defs/mt_options"
+        },
+        "state_period_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1000,
+          "description": "Period of the GPU / host state series (bench::gpu_state::RunStateProbe); 0 = start and end only."
+        },
+        "thresholds": {
+          "$ref": "#/$defs/thresholds"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "mt_quality"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "mt"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "tts_listening"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tts"
+            ]
+          }
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "$comment": {
+          "$ref": "#/$defs/comment"
+        },
+        "write_hypotheses": {
+          "type": "boolean",
+          "default": true,
+          "description": "<out>/hyps/<run>.<engine>.jsonl (one line per item: the item object of the report)."
+        },
+        "write_markdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "<out>/report.md."
+        },
+        "export": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "<out>/export.json (sigil-speech-bench-export/1), always written: the friend-shareable subset (no audio, no paths, no host or user names).",
+          "properties": {
+            "include_text": {
+              "type": "boolean",
+              "default": false,
+              "description": "Keep hypotheses / rendered text of synthetic items (never of real clips) in the export."
+            },
+            "include_items": {
+              "type": "boolean",
+              "default": true,
+              "description": "Keep per-item timings (false: aggregates only)."
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-listening-key-1.json",
+  "title": "sigil-listening-key/1",
+  "description": "key.json of an MT or TTS listening test: which system each blinded side / stimulus is, the build seed and the selection. The organizer keeps it; aggregate.py joins it with the listeners' results.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "test_id", "kind", "seed", "systems", "trials"],
+  "properties": {
+    "schema": { "const": "sigil-listening-key/1" },
+    "test_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "kind": { "enum": ["mt", "tts"] },
+    "mode": { "enum": ["pairwise", "mushra"] },
+    "title": { "type": "string" },
+    "created_unix_ms": { "type": "integer" },
+    "seed": { "type": "integer" },
+    "systems": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+    "sources": { "type": "array", "items": { "type": "string" }, "description": "Input files (pairs, reports, prompts) the test was built from." },
+    "selection": { "type": "object", "description": "How trials were drawn (per direction / language counts, identical pairs skipped, failed renditions)." },
+    "audio": { "type": "object", "description": "TTS: the common format and the loudness rule applied to every rendition." },
+    "trials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "item"],
+        "properties": {
+          "id": { "type": "string" },
+          "item": { "type": "string", "description": "MT line id or TTS prompt id." },
+          "direction": { "type": "string" },
+          "lang": { "type": "string" },
+          "A": { "type": "string" },
+          "B": { "type": "string" },
+          "stimuli": { "type": "object", "additionalProperties": { "type": "string" }, "description": "mushra: stimulus id -> system." },
+          "files": { "type": "object", "additionalProperties": { "type": "string" }, "description": "TTS: blinded file -> source rendering." }
+        }
+      }
+    }
+  }
+}

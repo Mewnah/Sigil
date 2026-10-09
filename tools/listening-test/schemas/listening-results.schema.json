@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-listening-results-1.json",
+  "title": "sigil-listening-results/1",
+  "description": "What a listener sends back: the JSON file mt-ab.html / tts-listen.html download (\"Export my answers\"). Holds only the test id, an optional name or initials, the answers and the order the trials were shown in; no device, browser or network data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "test_id", "kind", "answers"],
+  "properties": {
+    "schema": { "const": "sigil-listening-results/1" },
+    "test_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "kind": { "enum": ["mt", "tts"] },
+    "mode": { "enum": ["pairwise", "mushra"] },
+    "rater": { "type": "string", "maxLength": 80 },
+    "page_version": { "type": "string" },
+    "started_unix_ms": { "type": ["integer", "null"] },
+    "exported_unix_ms": { "type": "integer" },
+    "order": { "type": "array", "items": { "type": "string" }, "description": "Trial ids in the order this listener saw them (shuffled per listener)." },
+    "answers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "choice": { "enum": ["A", "B", "tie", "both_bad"] },
+          "ratings": { "type": "object", "additionalProperties": { "type": "number" } },
+          "played": { "type": "array", "items": { "type": "string" } },
+          "comment": { "type": "string", "maxLength": 2000 },
+          "ms": { "type": "integer", "minimum": 0, "description": "Time spent on the trial." }
+        }
+      }
+    }
+  }
+}

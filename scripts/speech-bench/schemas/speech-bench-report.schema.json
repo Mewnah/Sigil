@@ -1,0 +1,910 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigil.local/schemas/sigil-speech-bench-report-1.json",
+  "title": "sigil-speech-bench-report/1",
+  "description": "<out>/report.json of `Sigil.exe --headless speech-bench`. Frozen by P7-S0 (P7-A writes it; scripts/speech-bench/score/* and docs read it). The report is the measurement: hypotheses, renderings, timings, resources and the machine's state. Accuracy and quality scores (WER / CER, chrF, MetricX, listening results) are computed afterwards by the Python scorers from the report plus the corpus manifest, so one normalizer implementation exists. Percentiles are nearest-rank (sorted[ceil(p / 100 * n) - 1]); times are milliseconds; RTF = compute time / audio time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "spec_sha256",
+    "spec",
+    "started_unix_ms",
+    "duration_ms",
+    "passed",
+    "failures",
+    "environment",
+    "engines",
+    "runs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "sigil-speech-bench-report/1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "spec_sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "sha256 of the canonical spec JSON (sorted keys, no whitespace): same spec, same hash."
+    },
+    "spec": {
+      "type": "object",
+      "description": "The spec as run (sigil-speech-bench-spec/1), paths as written."
+    },
+    "started_unix_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Every run completed and met its thresholds."
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "corpus": {
+      "$ref": "#/$defs/corpus_stamp"
+    },
+    "engines": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/engine_info"
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/run"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Files written next to report.json (relative)."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "num": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "description": "Where and on what the benchmark ran: bench::report::Environment plus the speech fields. Host and user names never appear (the export copies this block as is).",
+      "required": [
+        "sigil_version",
+        "build",
+        "os",
+        "arch",
+        "cpu",
+        "logical_cores",
+        "gpus"
+      ],
+      "properties": {
+        "sigil_version": {
+          "type": "string"
+        },
+        "build": {
+          "enum": [
+            "debug",
+            "release"
+          ]
+        },
+        "os": {
+          "type": "string",
+          "description": "e.g. Windows 11 Pro 10.0.26200"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "cpu": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logical_cores": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "physical_cores": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ram_mb": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "onnx_runtime": {
+          "type": "string"
+        },
+        "gpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "name, vendor, vram_mb, driver (resources::sysinfo / bench::report::Environment.gpus)."
+          }
+        },
+        "power_plan": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "power_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "voice_changer_running": {
+          "type": "boolean"
+        },
+        "runtime_packs": {
+          "type": "array",
+          "description": "Native runtimes the engines loaded: {id (catalog), version, variant}.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "variant": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "sigil_rig": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional rig label from $env:SIGIL_BENCH_RIG (H1, H2, H3, friend-<n>): never derived from the host name."
+        }
+      }
+    },
+    "corpus_stamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "content_sha256",
+        "items_selected"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "content_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "The manifest's content_sha256 (corpus identity by content)."
+        },
+        "recipe_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256 of the corpus.json file read."
+        },
+        "items_selected": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "engine_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task",
+        "backend",
+        "model",
+        "execution_provider_requested",
+        "execution_provider_used"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "task": {
+          "enum": [
+            "stt",
+            "mt",
+            "tts"
+          ]
+        },
+        "backend": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "model_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Installed catalog version / revision (installed.json), so a model update is visible."
+        },
+        "execution_provider_requested": {
+          "type": "string"
+        },
+        "execution_provider_used": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "cpu, cuda, dml, vulkan; null when the engine never loaded."
+        },
+        "ep_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why it runs on a lesser device than requested (EpOutcome / the router's note)."
+        },
+        "variant_used": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threads": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "load_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "vram_load_mb": {
+          "$ref": "#/$defs/num",
+          "description": "Process VRAM after the load minus before it."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The engine could not be created (not installed, runtime missing); its runs report the same error."
+        },
+        "extra": {
+          "type": "object"
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "description": "Summary of a set of items. Frozen keys (a key is absent or null when the mode / task does not measure it); more numeric keys may be added. Timing keys: rtf_mean / rtf_p50 / rtf_p95, compute_ms_p50 / _p95 / _p99, final_latency_ms_p50 / _p95 / _p99 (end of audio, or VAD end in pipeline feeds, to the final), first_partial_ms_p50 / _p95 (streaming), latency_ms_mean / _p50 / _p95 / _p99 (mt per line), chars_per_s (mt source characters per second), ttfa_ms_p50 / _p95 (tts time to first audio). Resources: cpu_cores_mean (process CPU time / wall time over the timed passes, the load simulator's own CPU subtracted), cpu_ms_per_audio_s, vram_peak_mb, vram_delta_mb (peak minus before the engine loaded), ram_peak_mb. Counts: items, errors, audio_s (stt input / tts output seconds), wall_ms. Quick look only: chrf (mt, sacrebleu-equal chrF2 as mt-bench computes it). WER / CER are never here: score/score_stt.py computes them.",
+      "required": [
+        "items",
+        "errors"
+      ],
+      "properties": {
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audio_s": {
+          "$ref": "#/$defs/num"
+        },
+        "wall_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "rtf_mean": {
+          "$ref": "#/$defs/num"
+        },
+        "rtf_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "rtf_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "compute_ms_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "compute_ms_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "compute_ms_p99": {
+          "$ref": "#/$defs/num"
+        },
+        "final_latency_ms_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "final_latency_ms_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "final_latency_ms_p99": {
+          "$ref": "#/$defs/num"
+        },
+        "first_partial_ms_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "first_partial_ms_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "latency_ms_mean": {
+          "$ref": "#/$defs/num"
+        },
+        "latency_ms_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "latency_ms_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "latency_ms_p99": {
+          "$ref": "#/$defs/num"
+        },
+        "chars_per_s": {
+          "$ref": "#/$defs/num"
+        },
+        "ttfa_ms_p50": {
+          "$ref": "#/$defs/num"
+        },
+        "ttfa_ms_p95": {
+          "$ref": "#/$defs/num"
+        },
+        "cpu_cores_mean": {
+          "$ref": "#/$defs/num"
+        },
+        "cpu_ms_per_audio_s": {
+          "$ref": "#/$defs/num"
+        },
+        "vram_peak_mb": {
+          "$ref": "#/$defs/num"
+        },
+        "vram_delta_mb": {
+          "$ref": "#/$defs/num"
+        },
+        "ram_peak_mb": {
+          "$ref": "#/$defs/num"
+        },
+        "chrf": {
+          "$ref": "#/$defs/num"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/num"
+      }
+    },
+    "stt_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "language",
+        "condition",
+        "audio_s",
+        "text",
+        "error"
+      ],
+      "properties": {
+        "item": {
+          "type": "string",
+          "description": "Corpus item id."
+        },
+        "language": {
+          "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "audio_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The hypothesis (finals joined); null on error."
+        },
+        "language_detected": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segments": {
+          "type": "array",
+          "description": "pipeline / stream feeds: every final with its audio span.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start_ms",
+              "end_ms",
+              "text"
+            ],
+            "properties": {
+              "start_ms": {
+                "type": "number"
+              },
+              "end_ms": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              },
+              "lang": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "engine": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Which engine of a two-pass route produced it."
+              },
+              "latency_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "VAD end (or end of audio) to this final."
+              }
+            }
+          }
+        },
+        "partials": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "first_partial_ms": {
+          "$ref": "#/$defs/num",
+          "description": "From the start of speech in the clip (feed start in asap mode) to the first non-empty partial."
+        },
+        "final_latency_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "compute_ms": {
+          "$ref": "#/$defs/num",
+          "description": "Engine time (median over repeats)."
+        },
+        "rtf": {
+          "$ref": "#/$defs/num"
+        },
+        "cpu_ms": {
+          "$ref": "#/$defs/num",
+          "description": "Process CPU time spent on the item (load simulator subtracted)."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extra": {
+          "type": "object"
+        }
+      }
+    },
+    "mt_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "direction",
+        "text",
+        "error"
+      ],
+      "properties": {
+        "item": {
+          "type": "string",
+          "description": "MT set line id."
+        },
+        "direction": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The translation; null on error."
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "src_chars": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "out_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extra": {
+          "type": "object"
+        }
+      }
+    },
+    "tts_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "language",
+        "audio",
+        "error"
+      ],
+      "properties": {
+        "item": {
+          "type": "string",
+          "description": "Prompt id."
+        },
+        "language": {
+          "type": "string"
+        },
+        "voice": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "audio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Relative path of the rendering (audio/<engine>/<prompt id>.wav); null on error."
+        },
+        "audio_s": {
+          "$ref": "#/$defs/num"
+        },
+        "sample_rate": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ttfa_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "total_ms": {
+          "$ref": "#/$defs/num"
+        },
+        "rtf": {
+          "$ref": "#/$defs/num"
+        },
+        "asr_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Intelligibility pre-screen: the STT hypothesis of the rendering."
+        },
+        "dnsmos_sig": {
+          "$ref": "#/$defs/num"
+        },
+        "dnsmos_bak": {
+          "$ref": "#/$defs/num"
+        },
+        "dnsmos_ovrl": {
+          "$ref": "#/$defs/num"
+        },
+        "speaker_cosine": {
+          "$ref": "#/$defs/num"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extra": {
+          "type": "object"
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aggregate"
+      ],
+      "description": "One slice of an engine's items: by language and condition (stt), direction (mt) or language (tts).",
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "aggregate": {
+          "$ref": "#/$defs/aggregate"
+        }
+      }
+    },
+    "threshold_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric",
+        "value",
+        "passed"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "value": {
+          "$ref": "#/$defs/num"
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "status",
+        "aggregate",
+        "groups",
+        "items"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "error",
+            "cancelled",
+            "skipped"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution_provider_used": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "aggregate": {
+          "$ref": "#/$defs/aggregate"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/threshold_result"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/stt_item"
+              },
+              {
+                "$ref": "#/$defs/mt_item"
+              },
+              {
+                "$ref": "#/$defs/tts_item"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "mode",
+        "status",
+        "duration_ms",
+        "results"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "accuracy",
+            "cpu_speed",
+            "gpu_under_load",
+            "mt_quality",
+            "tts_listening"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "error",
+            "cancelled"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "feed": {
+          "type": "object"
+        },
+        "load": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "profile, the LoadSpec applied, external_load text, and what the load achieved (bench::load_sim::LoadReport: GPU duty / frame times, CPU burner time).",
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "spec": {
+              "type": "object"
+            },
+            "external": {
+              "type": "string"
+            },
+            "achieved": {
+              "type": "object"
+            }
+          }
+        },
+        "co_load": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The voice changer co-load's own paced metrics (bench run report) when the spec asked for one."
+        },
+        "gpu_lock": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "held_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "verified": {
+              "type": "boolean"
+            }
+          }
+        },
+        "state": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "bench::gpu_state::RunState of the run (start, end, series summary, CPU perf, warnings)."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/result"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

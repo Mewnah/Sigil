@@ -23,6 +23,8 @@
 //!     by P2-S0): one speech engine in an isolated worker process.
 //!   - `mt-bench <spec.json> [--out <dir>]` → `mt_local::bench::headless_mt_bench` (P4-D; arm
 //!     added by P4-S0): machine-translation chrF / latency table over a local corpus.
+//!   - `speech-bench <spec.json> [--out <dir>]` → `bench::speech::headless_speech_bench` (P7-A;
+//!     arm requested by P7-S0): STT / MT / TTS accuracy, speed and rendering runs of the P7 campaign.
 //!
 //!   Every handler returns `Result<String, String>`: `Ok(text)` is printed to stdout (exit 0),
 //!   `Err(msg)` to stderr (exit 1). The P1 arms were added by P1-S0b (`sysinfo` by P1-I0).
@@ -139,6 +141,15 @@ enum HeadlessCommand {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Run a speech benchmark spec (STT accuracy, CPU / GPU speed under load, MT quality, TTS
+    /// renderings for listening tests) and write report.json / report.md / export.json.
+    SpeechBench {
+        /// Speech benchmark spec (sigil-speech-bench-spec/1).
+        spec: PathBuf,
+        /// Output directory for the reports.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Run the benchmark's GPU load in this separate process (a game's own process and queue;
     /// started by a benchmark with `load.gpu.out_of_process`). P3B.
     GpuLoad {
@@ -223,6 +234,11 @@ pub fn run(args: Vec<OsString>) -> i32 {
         HeadlessCommand::MtBench { spec, out } => report(
             "mt-bench",
             crate::services::mt_local::bench::headless_mt_bench(&spec, out.as_deref()),
+            None,
+        ),
+        HeadlessCommand::SpeechBench { spec, out } => report(
+            "speech-bench",
+            crate::services::bench::speech::headless_speech_bench(&spec, out.as_deref()),
             None,
         ),
         HeadlessCommand::GpuLoad { spec } => report("gpu-load", crate::services::bench::gpu_load_child::run(&spec), None),
@@ -367,6 +383,19 @@ mod tests {
         let cli = HeadlessCli::try_parse_from(["gpu-load", "load.json"]).unwrap();
         assert!(matches!(cli.command, HeadlessCommand::GpuLoad { ref spec } if spec.ends_with("load.json")));
         assert_eq!(HeadlessCli::try_parse_from(["gpu-load"]).unwrap_err().exit_code(), 2);
+    }
+
+    /// P7-A: `speech-bench <spec> [--out <dir>]` parses like `bench` and `mt-bench`.
+    #[test]
+    fn speech_bench_parses() {
+        let cli = HeadlessCli::try_parse_from(["speech-bench", "spec.json", "--out", "bench-results/speech/x"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            HeadlessCommand::SpeechBench { ref spec, out: Some(ref o) } if spec.ends_with("spec.json") && o.ends_with("x")
+        ));
+        let cli = HeadlessCli::try_parse_from(["speech-bench", "spec.json"]).unwrap();
+        assert!(matches!(cli.command, HeadlessCommand::SpeechBench { out: None, .. }));
+        assert_eq!(HeadlessCli::try_parse_from(["speech-bench"]).unwrap_err().exit_code(), 2);
     }
 
     #[test]
