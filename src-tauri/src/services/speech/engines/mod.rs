@@ -14,6 +14,7 @@
 //! honours: the HTTP engine's Groq billing minimum).
 
 pub mod http;
+pub(crate) mod long_utterance;
 pub mod sherpa_offline;
 pub mod sherpa_online;
 pub mod transcribe;

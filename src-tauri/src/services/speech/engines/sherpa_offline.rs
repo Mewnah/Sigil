@@ -23,7 +23,7 @@
 //! | Parakeet (NeMo TDT) | ignored (the model detects among its 25 languages); reported back when it is one of them | modified beam search with a context graph (a `bpe.vocab` is derived from `tokens.txt`); catalog Parakeet models decode with beam search from the start, so the first custom terms need no reload | text |
 //! | Qwen3-ASR | forced through the per-stream option as the English name (`Japanese`); without one the model transcribes in the language it hears | per-stream prompt context (terms, then the prompt) | text; `lang` only when forced (sherpa-onnx 1.13.8 does not return the detected language, so auto mode runs the language-ID engine first) |
 //! | SenseVoice | the per-call option is ignored (sherpa ignores it too); `options.language` at creation pins the model config's language, else auto | none | text, detected `lang` + `lang:` tag, `emotion:` / `event:` tags |
-//! | Moonshine | English only | none | text, `lang` = `en` |
+//! | Moonshine | English only | none | text, `lang` = `en`; v2 utterances over `MOONSHINE_MAX_SEGMENT_MS` are decoded in pieces cut at quiet points (see there) |
 //! | Language ID | — | — | empty text, `lang` + `lang:<code>` tag |
 //!
 //! # Engine options ([`EngineSpec::options`], camelCase, all optional; never logged)
@@ -31,8 +31,9 @@
 //! a call brings none), `hotwordsScore`, `prompt` (Qwen3-ASR default context), `decoding`
 //! (`"greedy"` | `"beam"`; transducers: see `starts_on_beam_search`), `maxActivePaths`,
 //! `maxNewTokens` (Qwen3-ASR; `max_total_len` grows with it), `useItn` (SenseVoice),
-//! `tailPaddingMs` (streaming), and for bring-your-own folders the detection hints `kind`, `mode`,
-//! `fp32`.
+//! `moonshineMaxSegmentMs` (Moonshine: longest piece decoded in one call, `2000..=9000`, which can
+//! only lower the default; `0` never splits), `tailPaddingMs` (streaming), and for bring-your-own
+//! folders the detection hints `kind`, `mode`, `fp32`.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -48,6 +49,7 @@ use super::super::engine_api::{
 };
 use super::super::events::codes;
 use super::super::lang;
+use super::long_utterance::{self, Splitter};
 use crate::services::speech_rt::sherpa::catalog::{self, qwen3_max_total_len, CatalogModel, Family, HotwordSupport, Task, QWEN3_MAX_NEW_TOKENS};
 use crate::services::speech_rt::sherpa::detect::{detect, DetectHints, SherpaModel};
 use crate::services::speech_rt::sherpa::hotwords::{self, default_cache_dir, ensure_bpe_vocab};
@@ -167,6 +169,10 @@ pub(super) struct Options {
     pub max_active_paths: Option<u32>,
     pub max_new_tokens: Option<i32>,
     pub use_itn: Option<bool>,
+    /// `moonshineMaxSegmentMs`: `Some(0)` never splits, else clamped to
+    /// `2000..=`[`MOONSHINE_MAX_SEGMENT_MS`] (a longer piece brings back the empty results the
+    /// split exists to avoid).
+    pub max_segment_ms: Option<u32>,
     pub tail_padding_ms: Option<u32>,
     pub kind: Option<String>,
     pub mode: Option<String>,
@@ -202,6 +208,13 @@ impl Options {
             max_active_paths: n("maxActivePaths").map(|x| x.clamp(1.0, 64.0) as u32),
             max_new_tokens: n("maxNewTokens").map(|x| x.clamp(16.0, 1024.0) as i32),
             use_itn: v.get("useItn").and_then(Value::as_bool),
+            max_segment_ms: n("moonshineMaxSegmentMs").map(|x| {
+                if x < 1.0 {
+                    0
+                } else {
+                    x.clamp(2_000.0, f64::from(MOONSHINE_MAX_SEGMENT_MS)) as u32
+                }
+            }),
             tail_padding_ms: n("tailPaddingMs").map(|x| x.clamp(0.0, 3000.0) as u32),
             kind: s("kind"),
             mode: s("mode"),
@@ -493,6 +506,180 @@ fn offline_family(catalog: Option<&CatalogModel>, config: &OfflineRecognizerConf
     }
 }
 
+/// Longest stretch of audio (ms) a Moonshine v2 model decodes in one call; a longer utterance is
+/// cut at quiet points into pieces of at most this length ([`long_utterance::Splitter`]), each
+/// decoded on its own, and the texts are joined. `moonshineMaxSegmentMs` can only lower it.
+///
+/// Why: sherpa-onnx 1.13.8 returns an EMPTY result for Moonshine v2 (encoder + merged decoder) audio
+/// of 148 351 samples or more at 16 kHz (9.272 s): ONNX Runtime throws "Attempting to broadcast an
+/// axis by a dimension other than 1" inside `offline-recognizer-moonshine-v2-impl` `DecodeStream`
+/// and sherpa swallows it. Measured with `stt/moonshine-base-en-int8` (the only Moonshine catalog
+/// model; CPU): 148 350 samples decode, 148 351 do not, to the sample, for different utterances,
+/// gain, speaking rate (0.85x / 1.25x) and zero or noise padding before or after the speech, and
+/// every longer length fails (checked up to 52 s), so only the length matters. The speech
+/// pipeline closes utterances at up to 18 s by default (60 s at most), which is how long unbroken
+/// speech lost its captions.
+///
+/// The limit is exact, so the margin below it is small: 9 s leaves 4 350 samples (0.27 s). A wider
+/// margin (the first version cut at 8 s) cuts every utterance between the two lengths for nothing,
+/// and a cut costs accuracy (words at the seam come out doubled, split or wrong): on the benchmark
+/// corpus the 8-9 s English utterances scored a word error rate of 11 % decoded whole and 19 % cut
+/// at 8 s. A shifted limit is caught by the ignored real-model test
+/// `real_moonshine_sherpa_length_limit_is_still_where_the_split_assumes`, and a piece that still
+/// comes back empty is decoded again in two halves ([`decode_in_chunks`]).
+pub(super) const MOONSHINE_MAX_SEGMENT_MS: u32 = 9_000;
+
+/// How `audio_len` samples are decoded by a model `model`: `Some` splitter when the audio must be
+/// cut into pieces, `None` for the single-call path every short utterance (and every other family)
+/// takes.
+///
+/// The limit is measured for the v2 layout (encoder + merged decoder, `merged_decoder` set) only;
+/// the failure sits in sherpa-onnx's v2 implementation. A bring-your-own v1 folder (preprocessor +
+/// uncached/cached decoders) takes the single call unless `moonshineMaxSegmentMs` asks for a limit.
+fn split_for(model: &OfflineModel, opts: &Options, audio_len: usize) -> Option<Splitter> {
+    let OfflineModel::Moonshine { merged_decoder, .. } = model else {
+        return None;
+    };
+    let limit_ms = match opts.max_segment_ms {
+        Some(ms) => ms,
+        None if merged_decoder.is_some() => MOONSHINE_MAX_SEGMENT_MS,
+        None => return None,
+    };
+    Splitter::new(SAMPLE_RATE, limit_ms).filter(|s| s.needs_split(audio_len))
+}
+
+/// Whether `text` has nothing to caption.
+fn is_blank(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
+/// Whether an empty result for clearly voiced audio is worth a warning for `family`. Only for
+/// Moonshine, whose empty results are the known trace of a failure sherpa-onnx swallows; other
+/// families answer non-speech (music, applause, noise) with no text on purpose (SenseVoice with an
+/// event tag, Parakeet), so a warning would be a false alarm for a streamer with loud game audio.
+fn warns_on_empty_voiced(family: Option<Family>) -> bool {
+    family == Some(Family::Moonshine)
+}
+
+/// Writes the warning "clearly voiced audio decoded to no text" at most once per
+/// [`EmptyDecodeLog::INTERVAL`], counting what it skipped meanwhile.
+///
+/// sherpa-onnx swallows the errors of a model run and answers with an empty result (which is how
+/// the Moonshine length limit went unnoticed), so an empty result for audio like this is the only
+/// trace of such a failure. A permanent once-per-engine flag would hide every failure after the
+/// first. Only lengths and shares are logged, never audio or text.
+#[derive(Debug, Default)]
+struct EmptyDecodeLog {
+    /// When the last warning was written.
+    last: Option<Instant>,
+    /// Empty results seen since then that were not written.
+    skipped: u32,
+}
+
+impl EmptyDecodeLog {
+    const INTERVAL: Duration = Duration::from_secs(60);
+
+    /// Whether a warning has been written.
+    #[cfg(test)]
+    fn has_warned(&self) -> bool {
+        self.last.is_some()
+    }
+
+    /// `piece` of audio decoded to no text at `now`. Writes the warning when the piece is long and
+    /// clearly voiced and the last warning is older than the interval; `true` when it did.
+    fn note(&mut self, now: Instant, label: &str, piece: &[f32]) -> bool {
+        if !long_utterance::is_long_and_voiced(piece, SAMPLE_RATE) {
+            return false;
+        }
+        if self.last.is_some_and(|last| now.saturating_duration_since(last) < Self::INTERVAL) {
+            self.skipped = self.skipped.saturating_add(1);
+            return false;
+        }
+        let skipped = std::mem::take(&mut self.skipped);
+        self.last = Some(now);
+        let more = if skipped > 0 {
+            format!(" ({skipped} more since the last warning)")
+        } else {
+            String::new()
+        };
+        tracing::warn!(
+            target: "sigil::sherpa",
+            "{label}: {} ms of audio with {:.0}% voiced frames decoded to no text; the model may have failed inside sherpa-onnx{more}",
+            piece.len() as u64 * 1000 / u64::from(SAMPLE_RATE),
+            long_utterance::voiced_fraction(piece, SAMPLE_RATE) * 100.0
+        );
+        true
+    }
+}
+
+/// Add `part` to `merged`: its text after the text so far, and its language when none is set yet.
+fn append_part(merged: &mut OfflineResult, part: OfflineResult) {
+    if merged.lang.is_none() {
+        merged.lang = part.lang;
+    }
+    long_utterance::append_text(&mut merged.text, &part.text);
+}
+
+/// A second attempt at `piece`, which decoded to no text: its two halves (cut at the quietest point
+/// of the middle third) decoded one after the other. `None` when the piece is too short or too
+/// quiet to be worth it, or when the halves have no text either.
+///
+/// Why: pieces of a cut utterance come back empty several times as often as whole utterances do
+/// (measured 2.8 % of the pieces against 0.4 % of whole 3-8 s utterances, the short ones most
+/// often), each losing a few seconds of words, and decoding the two halves recovered most of them.
+fn retry_in_halves(
+    piece: &[f32],
+    splitter: &Splitter,
+    cancel: &AtomicBool,
+    decode: &mut impl FnMut(&[f32]) -> Result<OfflineResult, AsrError>,
+) -> Result<Option<OfflineResult>, AsrError> {
+    if !long_utterance::worth_retrying(piece, SAMPLE_RATE) {
+        return Ok(None);
+    }
+    let Some(cut) = splitter.halve(piece) else {
+        return Ok(None);
+    };
+    let mut joined = OfflineResult::default();
+    for half in [&piece[..cut], &piece[cut..]] {
+        let part = decode(half)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AsrError::cancelled());
+        }
+        append_part(&mut joined, part);
+    }
+    Ok((!is_blank(&joined.text)).then_some(joined))
+}
+
+/// Decode `audio` one piece at a time (`decode` runs once per piece, in order) and join the texts.
+/// A piece with no text is decoded again in two halves ([`retry_in_halves`]); `on_empty` gets each
+/// piece that still has none. The cancel flag is checked after every decode. The result carries the
+/// text and the first language any piece reported; tokens and timestamps are per piece and are not
+/// merged.
+fn decode_in_chunks(
+    audio: &[f32],
+    splitter: &Splitter,
+    cancel: &AtomicBool,
+    mut decode: impl FnMut(&[f32]) -> Result<OfflineResult, AsrError>,
+    mut on_empty: impl FnMut(&[f32]),
+) -> Result<OfflineResult, AsrError> {
+    let mut merged = OfflineResult::default();
+    for range in splitter.chunks(audio) {
+        let piece = &audio[range];
+        let mut part = decode(piece)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AsrError::cancelled());
+        }
+        if is_blank(&part.text) {
+            match retry_in_halves(piece, splitter, cancel, &mut decode)? {
+                Some(again) => part = again,
+                None => on_empty(piece),
+            }
+        }
+        append_part(&mut merged, part);
+    }
+    Ok(merged)
+}
+
 /// The sherpa-onnx `OfflineRecognizer` engine.
 pub struct SherpaOfflineEngine {
     info: EngineInfo,
@@ -508,6 +695,8 @@ pub struct SherpaOfflineEngine {
     hotwords_failed: bool,
     /// A Qwen3-ASR result hit `max_new_tokens` (logged once).
     truncation_logged: bool,
+    /// Rate limit of the warning for long, clearly voiced audio that decoded to no text.
+    empty_voiced: EmptyDecodeLog,
     cancel: Arc<AtomicBool>,
     ctx: EngineContext,
 }
@@ -588,6 +777,7 @@ impl SherpaOfflineEngine {
             opts,
             hotwords_failed: false,
             truncation_logged: false,
+            empty_voiced: EmptyDecodeLog::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             ctx: ctx.clone(),
         };
@@ -827,9 +1017,30 @@ impl AsrEngine for SherpaOfflineEngine {
             .recognizer
             .as_ref()
             .ok_or_else(|| AsrError::runtime(format!("{} is not loaded", self.label)))?;
-        let r = rec
-            .transcribe(SAMPLE_RATE, audio, &call)
-            .map_err(|e| AsrError::runtime(format!("{}: {e}", self.label)))?;
+        // One native call per piece (a single piece unless the audio is split, see `split_for`).
+        let label = self.label.as_str();
+        let warns = warns_on_empty_voiced(self.family);
+        let notes = &mut self.empty_voiced;
+        let decode = |piece: &[f32]| -> Result<OfflineResult, AsrError> {
+            rec.transcribe(SAMPLE_RATE, piece, &call)
+                .map_err(|e| AsrError::runtime(format!("{label}: {e}")))
+        };
+        let on_empty = |piece: &[f32]| {
+            if warns {
+                notes.note(Instant::now(), label, piece);
+            }
+        };
+        let r = match split_for(&self.config.model, &self.opts, audio.len()) {
+            Some(splitter) => decode_in_chunks(audio, &splitter, &self.cancel, decode, on_empty)?,
+            None => {
+                let mut on_empty = on_empty;
+                let r = decode(audio)?;
+                if is_blank(&r.text) {
+                    on_empty(audio);
+                }
+                r
+            }
+        };
         if self.cancel.load(Ordering::SeqCst) {
             return Err(AsrError::cancelled());
         }
@@ -943,6 +1154,401 @@ mod tests {
         assert_eq!(Options::parse(&Value::Null), Options::default());
         let o = Options::parse(&json!({ "decoding": "greedy" }));
         assert!(o.greedy && !o.beam_search);
+    }
+
+    #[test]
+    fn the_moonshine_segment_option_is_clamped_and_zero_means_never_split() {
+        let ms = |v: Value| Options::parse(&json!({ "moonshineMaxSegmentMs": v })).max_segment_ms;
+        assert_eq!(ms(json!(6000)), Some(6_000));
+        assert_eq!(ms(json!(500)), Some(2_000));
+        assert_eq!(ms(json!(MOONSHINE_MAX_SEGMENT_MS)), Some(MOONSHINE_MAX_SEGMENT_MS));
+        // The option can only lower the limit: a longer piece brings the empty results back.
+        assert_eq!(ms(json!(MOONSHINE_MAX_SEGMENT_MS + 1)), Some(MOONSHINE_MAX_SEGMENT_MS));
+        assert_eq!(ms(json!(12_000)), Some(MOONSHINE_MAX_SEGMENT_MS));
+        assert_eq!(ms(json!(10_000_000)), Some(MOONSHINE_MAX_SEGMENT_MS));
+        assert_eq!(ms(json!(0)), Some(0));
+        assert_eq!(ms(json!(-5)), Some(0));
+        assert_eq!(ms(json!("x")), None);
+        assert_eq!(Options::parse(&Value::Null).max_segment_ms, None);
+    }
+
+    /// The default limit sits just below the first length sherpa-onnx 1.13.8 fails on (148 351
+    /// samples at 16 kHz, see `MOONSHINE_MAX_SEGMENT_MS`): far enough for a quarter of a second of
+    /// margin, not much further (every 100 ms of margin cuts the utterances of that length for
+    /// nothing, and a cut costs accuracy).
+    #[test]
+    fn the_default_moonshine_limit_sits_just_below_the_measured_failure() {
+        let rate = SAMPLE_RATE as usize;
+        let limit = MOONSHINE_MAX_SEGMENT_MS as usize * rate / 1000;
+        assert!(limit + rate / 4 <= 148_350, "{limit} samples leave less than 0.25 s of margin");
+        assert!(limit + rate / 2 >= 148_350, "{limit} samples leave more than 0.5 s of margin");
+        assert_eq!(Splitter::new(SAMPLE_RATE, MOONSHINE_MAX_SEGMENT_MS).unwrap().limit(), limit);
+    }
+
+    /// A Moonshine config as sherpa-onnx loads it: v2 (encoder + merged decoder) or v1
+    /// (preprocessor + uncached and cached decoders).
+    fn moonshine(v2: bool) -> OfflineModel {
+        let path = |n: &str| Some(std::path::PathBuf::from(n));
+        OfflineModel::Moonshine {
+            preprocessor: if v2 { None } else { path("preprocess.onnx") },
+            encoder: std::path::PathBuf::from("encode.onnx"),
+            uncached_decoder: if v2 { None } else { path("uncached_decode.onnx") },
+            cached_decoder: if v2 { None } else { path("cached_decode.onnx") },
+            merged_decoder: if v2 { path("decoder_model_merged.ort") } else { None },
+        }
+    }
+
+    /// Short utterances (up to the limit, inclusive) and every other model keep the single native
+    /// call: no splitter at all.
+    #[test]
+    fn only_long_moonshine_v2_audio_is_split() {
+        let rate = SAMPLE_RATE as usize;
+        let default = Options::default();
+        let v2 = moonshine(true);
+        let limit = MOONSHINE_MAX_SEGMENT_MS as usize * rate / 1000;
+        // Up to the limit, one call; this includes the 8 to 9 s utterances, which decode whole
+        // (cutting them scored worse).
+        for len in [0, 1, rate, 5 * rate, 8 * rate, 8 * rate + rate / 2, limit - 1, limit] {
+            assert_eq!(split_for(&v2, &default, len), None, "{len} samples");
+        }
+        for len in [limit + 1, 10 * rate, 18 * rate, 60 * rate] {
+            let s = split_for(&v2, &default, len).expect("split");
+            assert_eq!(s.limit(), limit);
+        }
+        let other_models = [
+            OfflineModel::Dolphin { model: "m.onnx".into() },
+            OfflineModel::Omnilingual { model: "m.onnx".into() },
+            OfflineModel::FireRedAsrCtc { model: "m.onnx".into() },
+        ];
+        for model in &other_models {
+            assert_eq!(split_for(model, &default, 60 * rate), None, "{}", model.family());
+        }
+        // The option moves the limit; 0 turns splitting off.
+        let four = Options::parse(&json!({ "moonshineMaxSegmentMs": 4000 }));
+        assert_eq!(split_for(&v2, &four, 5 * rate).unwrap().limit(), 4 * rate);
+        assert_eq!(split_for(&v2, &four, 4 * rate), None);
+        let off = Options::parse(&json!({ "moonshineMaxSegmentMs": 0 }));
+        assert_eq!(split_for(&v2, &off, 60 * rate), None);
+        // ... but never beyond the measured limit: 12 s from the option is 9 s.
+        let twelve = Options::parse(&json!({ "moonshineMaxSegmentMs": 12_000 }));
+        assert_eq!(split_for(&v2, &twelve, 10 * rate).unwrap().limit(), limit);
+        assert_eq!(split_for(&v2, &twelve, 9 * rate), None);
+    }
+
+    /// The limit was measured for the v2 layout (merged decoder): a bring-your-own v1 folder is
+    /// not cut unless the option asks for it.
+    #[test]
+    fn a_moonshine_v1_folder_is_split_only_when_asked() {
+        let rate = SAMPLE_RATE as usize;
+        let v1 = moonshine(false);
+        assert_eq!(split_for(&v1, &Options::default(), 60 * rate), None);
+        let five = Options::parse(&json!({ "moonshineMaxSegmentMs": 5000 }));
+        assert_eq!(split_for(&v1, &five, 12 * rate).unwrap().limit(), 5 * rate);
+        assert_eq!(split_for(&v1, &five, 5 * rate), None);
+        let off = Options::parse(&json!({ "moonshineMaxSegmentMs": 0 }));
+        assert_eq!(split_for(&v1, &off, 60 * rate), None);
+    }
+
+    /// Fake recognizer: the text of a piece names its length in milliseconds.
+    fn fake_piece(piece: &[f32]) -> OfflineResult {
+        OfflineResult {
+            text: format!("piece {}", piece.len() * 1000 / SAMPLE_RATE as usize),
+            ..OfflineResult::default()
+        }
+    }
+
+    /// `ms` of loud, clearly voiced audio.
+    fn tone(ms: usize) -> Vec<f32> {
+        (0..ms * SAMPLE_RATE as usize / 1000)
+            .map(|i| if i % 2 == 0 { 0.3 } else { -0.3 })
+            .collect()
+    }
+
+    /// `ms` of digital silence.
+    fn pause(ms: usize) -> Vec<f32> {
+        vec![0.0f32; ms * SAMPLE_RATE as usize / 1000]
+    }
+
+    fn millis(samples: usize) -> usize {
+        samples * 1000 / SAMPLE_RATE as usize
+    }
+
+    #[test]
+    fn long_audio_is_decoded_piece_by_piece_and_the_texts_are_joined() {
+        let rate = SAMPLE_RATE as usize;
+        // 18 s with a pause at 6.0..6.4 s and one at 12.0..12.4 s.
+        let audio = [tone(6_000), pause(400), tone(5_600), pause(400), tone(5_600)].concat();
+        let splitter = Splitter::new(SAMPLE_RATE, MOONSHINE_MAX_SEGMENT_MS).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let r = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                seen.push(piece.len());
+                let mut r = fake_piece(piece);
+                if seen.len() == 2 {
+                    r.lang = Some("en".into());
+                }
+                Ok(r)
+            },
+            |_| panic!("no piece is empty"),
+        )
+        .unwrap();
+        // Cut in the middle of each pause, every piece within the limit, nothing lost or repeated.
+        assert_eq!(seen, vec![6_200 * rate / 1000, 6_000 * rate / 1000, 5_800 * rate / 1000]);
+        assert_eq!(seen.iter().sum::<usize>(), audio.len());
+        assert_eq!(r.text, "piece 6200 piece 6000 piece 5800");
+        assert_eq!(r.lang.as_deref(), Some("en"), "the first language a piece reports");
+    }
+
+    /// Pieces of 6.2 s, 6.0 s (silence, 5.6 s of speech, silence) and 5.8 s.
+    fn three_pieces() -> (Vec<f32>, Splitter) {
+        let audio = [tone(6_000), pause(400), tone(5_600), pause(400), tone(5_600)].concat();
+        (audio, Splitter::new(SAMPLE_RATE, MOONSHINE_MAX_SEGMENT_MS).unwrap())
+    }
+
+    #[test]
+    fn a_piece_without_text_is_decoded_again_as_two_halves() {
+        let (audio, splitter) = three_pieces();
+        let cancel = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let mut empties = Vec::new();
+        let r = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                seen.push(millis(piece.len()));
+                // The second piece comes back empty as a whole; its halves decode.
+                Ok(if millis(piece.len()) == 6_000 { OfflineResult::default() } else { fake_piece(piece) })
+            },
+            |piece| empties.push(millis(piece.len())),
+        )
+        .unwrap();
+        assert_eq!(seen, vec![6_200, 6_000, 3_000, 3_000, 5_800], "whole, whole (empty), two halves, whole");
+        assert!(empties.is_empty(), "the halves had text: {empties:?}");
+        assert_eq!(r.text, "piece 6200 piece 3000 piece 3000 piece 5800");
+    }
+
+    #[test]
+    fn a_piece_whose_halves_have_no_text_either_is_reported_once() {
+        let (audio, splitter) = three_pieces();
+        let cancel = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let mut empties = Vec::new();
+        let r = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                seen.push(millis(piece.len()));
+                // Everything inside the second piece is empty (whole and halves).
+                Ok(if millis(piece.len()) <= 6_000 && seen.len() >= 2 && seen.len() <= 4 { OfflineResult::default() } else { fake_piece(piece) })
+            },
+            |piece| empties.push(millis(piece.len())),
+        )
+        .unwrap();
+        assert_eq!(seen, vec![6_200, 6_000, 3_000, 3_000, 5_800]);
+        assert_eq!(empties, vec![6_000], "the piece, not its halves, is reported");
+        assert_eq!(r.text, "piece 6200 piece 5800", "the other pieces keep their text");
+    }
+
+    #[test]
+    fn silent_or_short_pieces_are_not_decoded_again() {
+        let cancel = AtomicBool::new(false);
+        // Silence: every piece is empty and none is retried (one decode each).
+        let silent = pause(20_000);
+        let splitter = Splitter::new(SAMPLE_RATE, MOONSHINE_MAX_SEGMENT_MS).unwrap();
+        let pieces = splitter.chunks(&silent).count();
+        assert!(pieces >= 3);
+        let (mut decodes, mut empties) = (0, 0);
+        let r = decode_in_chunks(
+            &silent,
+            &splitter,
+            &cancel,
+            |_| {
+                decodes += 1;
+                Ok(OfflineResult::default())
+            },
+            |_| empties += 1,
+        )
+        .unwrap();
+        assert_eq!((decodes, empties, r.text.as_str()), (pieces, pieces, ""));
+        // Voiced pieces under 1.5 s (a 2 s limit cuts 2.3 s into two) are not retried either.
+        let short = tone(2_300);
+        let small = Splitter::new(SAMPLE_RATE, 2_000).unwrap();
+        let pieces = small.chunks(&short).count();
+        assert_eq!(pieces, 2);
+        let (mut decodes, mut empties) = (0, 0);
+        decode_in_chunks(
+            &short,
+            &small,
+            &cancel,
+            |piece| {
+                assert!(piece.len() < 3 * SAMPLE_RATE as usize / 2);
+                decodes += 1;
+                Ok(OfflineResult::default())
+            },
+            |_| empties += 1,
+        )
+        .unwrap();
+        assert_eq!((decodes, empties), (pieces, pieces));
+    }
+
+    /// What `tracing` events of `f` print (warn and up, no timestamps).
+    fn captured_log(f: impl FnOnce()) -> String {
+        #[derive(Clone, Default)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let out = sink.0.lock().unwrap().clone();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn an_empty_decode_of_long_voiced_audio_is_logged_without_content_and_rate_limited() {
+        let voiced = tone(12_000);
+        let t0 = Instant::now();
+        let mut notes = EmptyDecodeLog::default();
+        assert!(!notes.has_warned());
+        let secs = Duration::from_secs;
+        let log = captured_log(|| {
+            assert!(notes.note(t0, "stt/moonshine-base-en-int8", &voiced));
+            // Inside the interval: counted, not written.
+            assert!(!notes.note(t0 + secs(1), "stt/moonshine-base-en-int8", &voiced));
+            assert!(!notes.note(t0 + secs(59), "stt/moonshine-base-en-int8", &voiced));
+            // Later: written again, with the count. A failure after the first is not lost.
+            assert!(notes.note(t0 + secs(61), "stt/moonshine-base-en-int8", &voiced));
+            assert!(!notes.note(t0 + secs(62), "stt/moonshine-base-en-int8", &voiced));
+            assert!(notes.note(t0 + secs(200), "stt/moonshine-base-en-int8", &voiced));
+        });
+        assert!(notes.has_warned());
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 3, "{log}");
+        assert!(lines[0].contains("WARN") && lines[0].contains("sigil::sherpa"), "{log}");
+        assert!(lines[0].contains("stt/moonshine-base-en-int8") && lines[0].contains("12000 ms") && lines[0].contains("100% voiced"), "{log}");
+        assert!(!lines[0].contains("more since"), "{log}");
+        assert!(lines[1].contains("(2 more since the last warning)"), "{log}");
+        assert!(lines[2].contains("(1 more since the last warning)"), "{log}");
+        // Silence, short audio and quiet noise are not a warning, and do not count or start the
+        // interval.
+        let hiss: Vec<f32> = (0..12 * SAMPLE_RATE as usize).map(|i| if i % 2 == 0 { 0.001 } else { -0.001 }).collect();
+        let quiet = |piece: &[f32]| {
+            let mut fresh = EmptyDecodeLog::default();
+            let log = captured_log(|| assert!(!fresh.note(t0, "m", piece)));
+            (log, fresh.has_warned(), fresh.skipped)
+        };
+        assert_eq!(quiet(&pause(12_000)), (String::new(), false, 0));
+        assert_eq!(quiet(&voiced[..2 * SAMPLE_RATE as usize]), (String::new(), false, 0));
+        assert_eq!(quiet(&hiss), (String::new(), false, 0));
+    }
+
+    /// SenseVoice, Parakeet and the rest answer music and noise with no text on purpose; only
+    /// Moonshine's empty results are a failure sign.
+    #[test]
+    fn only_moonshine_warns_about_empty_results_for_voiced_audio() {
+        assert!(warns_on_empty_voiced(Some(Family::Moonshine)));
+        for family in [Some(Family::SenseVoice), Some(Family::Qwen3Asr), Some(Family::ParakeetTdt), Some(Family::WhisperLid), None] {
+            assert!(!warns_on_empty_voiced(family), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_failed_or_cancelled_piece_ends_the_utterance() {
+        let audio = vec![0.1f32; 30 * SAMPLE_RATE as usize];
+        let splitter = Splitter::new(SAMPLE_RATE, 8_000).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut calls = 0;
+        let err = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                calls += 1;
+                if calls == 2 {
+                    Err(AsrError::runtime("boom"))
+                } else {
+                    Ok(fake_piece(piece))
+                }
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!((calls, err.kind), (2, AsrErrorKind::Runtime));
+        // A cancel that arrives while a piece decodes stops before the next one.
+        let mut calls = 0;
+        let err = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                calls += 1;
+                cancel.store(true, Ordering::SeqCst);
+                Ok(fake_piece(piece))
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!((calls, err.kind), (1, AsrErrorKind::Cancelled));
+    }
+
+    #[test]
+    fn a_failed_or_cancelled_retry_ends_the_utterance() {
+        let (audio, splitter) = three_pieces();
+        let cancel = AtomicBool::new(false);
+        // The first half of the second piece fails.
+        let mut calls = 0;
+        let err = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                calls += 1;
+                match calls {
+                    2 => Ok(OfflineResult::default()),
+                    3 => Err(AsrError::runtime("boom")),
+                    _ => Ok(fake_piece(piece)),
+                }
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!((calls, err.kind), (3, AsrErrorKind::Runtime));
+        // A cancel that arrives while the first half decodes stops before the second.
+        let mut calls = 0;
+        let err = decode_in_chunks(
+            &audio,
+            &splitter,
+            &cancel,
+            |piece| {
+                calls += 1;
+                if calls == 3 {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+                Ok(if calls == 2 { OfflineResult::default() } else { fake_piece(piece) })
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!((calls, err.kind), (3, AsrErrorKind::Cancelled));
     }
 
     /// Catalog Parakeet starts on beam search, so the pipeline's custom terms never reload it;
@@ -1354,6 +1960,270 @@ mod tests {
                 .text,
             ""
         );
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Moonshine: utterances beyond sherpa-onnx's length limit
+    // -----------------------------------------------------------------------------------------
+
+    /// FLEURS English clips (16 kHz, read speech) with their reference transcripts from the P7
+    /// benchmark corpus at `SIGIL_TEST_MODELS_DIR/p7/corpus` (`None`, with a skip message, when it
+    /// is not there). Only clean clips of at least `min_seconds`, longest first, at most `max` of
+    /// them.
+    fn corpus_english(min_seconds: f64, max: usize) -> Option<Vec<(Vec<f32>, String)>> {
+        corpus_english_between(min_seconds, f64::INFINITY, max)
+    }
+
+    /// Like [`corpus_english`], for clips of `min_seconds` up to `max_seconds`.
+    fn corpus_english_between(min_seconds: f64, max_seconds: f64, max: usize) -> Option<Vec<(Vec<f32>, String)>> {
+        corpus_clips(&["clean"], min_seconds, max_seconds, max, true)
+    }
+
+    /// English corpus clips recorded in one of `conditions` (`clean`, `mic_codec`, `room_light`,
+    /// `babble_snr20`, `music_snr20`, `sfx_snr20`, `vrchat_mix`, ...) of `min_seconds` up to
+    /// `max_seconds`, at most `max` of them: the longest first, or in the order of the manifest.
+    fn corpus_clips(conditions: &[&str], min_seconds: f64, max_seconds: f64, max: usize, longest_first: bool) -> Option<Vec<(Vec<f32>, String)>> {
+        let root = std::path::PathBuf::from(std::env::var_os("SIGIL_TEST_MODELS_DIR")?)
+            .join("p7")
+            .join("corpus");
+        let Some(manifest) = std::fs::read(root.join("corpus.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        else {
+            eprintln!("{} has no corpus.json; skipped", root.display());
+            return None;
+        };
+        let mut items: Vec<(f64, String, String)> = manifest["items"]
+            .as_array()?
+            .iter()
+            .filter(|i| i["language"] == "en" && conditions.iter().any(|c| i["condition"] == *c))
+            .filter_map(|i| Some((i["seconds"].as_f64()?, i["audio"].as_str()?.to_string(), i["reference"].as_str()?.to_string())))
+            .filter(|(seconds, _, reference)| (min_seconds..=max_seconds).contains(seconds) && !reference.trim().is_empty())
+            .collect();
+        if longest_first {
+            items.sort_by(|a, b| b.0.total_cmp(&a.0));
+        }
+        items.truncate(max);
+        let mut out = Vec::new();
+        for (_, audio, reference) in items {
+            let (mono, rate) = crate::services::speech_rt::sherpa::probe::read_wav(&root.join(audio)).expect("readable corpus clip");
+            assert_eq!(rate, SAMPLE_RATE, "the corpus is 16 kHz");
+            out.push((mono, reference));
+        }
+        Some(out)
+    }
+
+    /// Lower-case words of `text`: letters, digits and apostrophes; everything else separates.
+    fn words(text: &str) -> Vec<String> {
+        text.to_lowercase()
+            .replace('\u{2019}', "'")
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Word error rate of `hypothesis` against `reference` (edit distance over words).
+    fn wer(reference: &str, hypothesis: &str) -> f64 {
+        let (r, h) = (words(reference), words(hypothesis));
+        let mut row: Vec<usize> = (0..=h.len()).collect();
+        for (i, rw) in r.iter().enumerate() {
+            let mut diag = row[0];
+            row[0] = i + 1;
+            for (j, hw) in h.iter().enumerate() {
+                let up = row[j + 1];
+                row[j + 1] = (diag + usize::from(rw != hw)).min(up + 1).min(row[j] + 1);
+                diag = up;
+            }
+        }
+        row[h.len()] as f64 / r.len().max(1) as f64
+    }
+
+    #[test]
+    fn wer_counts_word_edits() {
+        assert_eq!(wer("The cat sat.", "the cat sat"), 0.0);
+        assert!((wer("a b c d", "a x c") - 0.5).abs() < 1e-9);
+        assert_eq!(wer("a b", ""), 1.0);
+        assert_eq!(wer("don't stop", "Don\u{2019}t stop!"), 0.0);
+    }
+
+    /// The Moonshine engine as its concrete type (`real_parakeet` builds any catalog offline model).
+    fn real_moonshine(options: Value) -> Option<SherpaOfflineEngine> {
+        real_parakeet(ids::MOONSHINE_BASE_EN, options)
+    }
+
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_sherpa_length_limit_is_still_where_the_split_assumes() {
+        let _g = dll_lock();
+        let Some(e) = real_moonshine(Value::Null) else { return };
+        let Some(clips) = corpus_english(15.0, 1) else { return };
+        let audio = &clips[0].0;
+        let raw = |n: usize| {
+            e.recognizer
+                .as_ref()
+                .unwrap()
+                .transcribe(SAMPLE_RATE, &audio[..n], &sherpa_offline::DecodeOptions::default())
+                .unwrap()
+                .text
+        };
+        // Measured with sherpa-onnx 1.13.8 (see MOONSHINE_MAX_SEGMENT_MS). If this fails because
+        // the longer decode now works, sherpa fixed the bug: the split can go (or the limit grow).
+        assert!(!raw(148_350).is_empty(), "148350 samples must decode");
+        assert!(raw(148_351).is_empty(), "sherpa-onnx decodes 148351 samples now: re-measure the Moonshine limit");
+        assert!(raw(audio.len()).is_empty(), "{} samples", audio.len());
+        // The default limit leaves a small margin below the measurement.
+        let limit = MOONSHINE_MAX_SEGMENT_MS as usize * SAMPLE_RATE as usize / 1000;
+        assert!(limit + SAMPLE_RATE as usize / 4 <= 148_350, "at least a quarter of a second of margin");
+        assert!(!raw(limit).is_empty(), "the default limit must decode");
+        // With splitting off (`moonshineMaxSegmentMs: 0`) the engine hits the limit and says so
+        // (once): the empty result for a long, clearly voiced utterance is flagged.
+        let Some(mut off) = real_moonshine(json!({ "moonshineMaxSegmentMs": 0 })) else { return };
+        assert!(!off.empty_voiced.has_warned());
+        assert_eq!(off.transcribe(audio, &DecodeOptions::default()).unwrap().text, "");
+        assert!(off.empty_voiced.has_warned(), "the empty decode of {} voiced samples went unnoticed", audio.len());
+    }
+
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_transcribes_clips_of_15_seconds_and_more() {
+        let _g = dll_lock();
+        let Some(mut e) = real_moonshine(Value::Null) else { return };
+        let Some(clips) = corpus_english(15.0, 6) else { return };
+        assert!(!clips.is_empty());
+        let mut rates = Vec::new();
+        for (audio, reference) in &clips {
+            assert!(audio.len() >= 15 * SAMPLE_RATE as usize);
+            let r = e.transcribe(audio, &DecodeOptions::default()).unwrap();
+            let rate = wer(reference, &r.text);
+            eprintln!("{:.1} s: WER {rate:.3} in {} ms\n  ref: {reference}\n  got: {}", audio.len() as f64 / 16_000.0, r.decode_ms, r.text);
+            assert!(!r.text.trim().is_empty(), "no text for a {:.1} s clip", audio.len() as f64 / 16_000.0);
+            assert_eq!(r.lang.as_deref(), Some("en"));
+            rates.push(rate);
+        }
+        assert!(!e.empty_voiced.has_warned(), "nothing decoded to an empty text");
+        let mean = rates.iter().sum::<f64>() / rates.len() as f64;
+        eprintln!("WERs {rates:.3?}, mean {mean:.3}");
+        assert!(rates.iter().all(|r| *r <= 0.40), "{rates:.3?}");
+        assert!(mean <= 0.25, "mean WER {mean:.3}");
+    }
+
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_transcribes_a_minute_of_speech_and_follows_the_option() {
+        let _g = dll_lock();
+        let Some(mut e) = real_moonshine(Value::Null) else { return };
+        let Some(clips) = corpus_english(14.0, 4) else { return };
+        // The longest utterance the speech pipeline can close is 60 s: four clips back to back.
+        let audio: Vec<f32> = clips.iter().flat_map(|(a, _)| a.iter().copied()).collect();
+        let reference = clips.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(audio.len() > 55 * SAMPLE_RATE as usize, "{} s", audio.len() / SAMPLE_RATE as usize);
+        let r = e.transcribe(&audio, &DecodeOptions::default()).unwrap();
+        let rate = wer(&reference, &r.text);
+        eprintln!("{:.1} s: WER {rate:.3} in {} ms\n  got: {}", audio.len() as f64 / 16_000.0, r.decode_ms, r.text);
+        assert!(rate <= 0.25, "WER {rate:.3}: {}", r.text);
+        // A smaller limit from the engine options cuts more often and still reads right.
+        let Some(mut small) = real_moonshine(json!({ "moonshineMaxSegmentMs": 4000 })) else { return };
+        let r = small.transcribe(&audio, &DecodeOptions::default()).unwrap();
+        let rate = wer(&reference, &r.text);
+        eprintln!("4 s pieces: WER {rate:.3} in {} ms", r.decode_ms);
+        assert!(rate <= 0.30, "WER {rate:.3}: {}", r.text);
+    }
+
+    /// Pieces of a cut utterance come back empty from time to time (the corpus has a few); decoding
+    /// them again as two halves brings their words back.
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_pieces_that_come_back_empty_are_decoded_again() {
+        let _g = dll_lock();
+        let Some(mut e) = real_moonshine(Value::Null) else { return };
+        let conditions = ["clean", "mic_codec", "room_light", "babble_snr20", "music_snr20", "sfx_snr20", "vrchat_mix"];
+        let Some(clips) = corpus_clips(&conditions, 9.3, f64::INFINITY, usize::MAX, false) else { return };
+        let splitter = Splitter::new(SAMPLE_RATE, MOONSHINE_MAX_SEGMENT_MS).unwrap();
+        let (mut found, mut recovered_words) = (0, 0);
+        for (audio, reference) in &clips {
+            // Every piece decoded alone, as the engine decodes it first.
+            let alone: Vec<String> = splitter
+                .chunks(audio)
+                .map(|r| {
+                    let rec = e.recognizer.as_ref().unwrap();
+                    rec.transcribe(SAMPLE_RATE, &audio[r], &sherpa_offline::DecodeOptions::default())
+                        .unwrap()
+                        .text
+                })
+                .collect();
+            if alone.iter().all(|t| !is_blank(t)) {
+                continue;
+            }
+            found += 1;
+            let alone_words: usize = alone.iter().map(|t| words(t).len()).sum();
+            let via_engine = e.transcribe(audio, &DecodeOptions::default()).unwrap();
+            let engine_words = words(&via_engine.text).len();
+            eprintln!(
+                "{:.1} s: {} of {} pieces empty; {alone_words} words alone, {engine_words} through the engine (reference {})",
+                audio.len() as f64 / 16_000.0,
+                alone.iter().filter(|t| is_blank(t)).count(),
+                alone.len(),
+                words(reference).len()
+            );
+            assert!(engine_words >= alone_words, "the retry must not lose words");
+            recovered_words += engine_words - alone_words;
+            if found == 4 {
+                break;
+            }
+        }
+        assert!(found >= 1, "no clip of the corpus has a piece that decodes to no text any more");
+        assert!(recovered_words > 0, "{found} clips with empty pieces and none of their words came back");
+    }
+
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_utterances_up_to_the_limit_are_decoded_whole() {
+        let _g = dll_lock();
+        let Some(mut e) = real_moonshine(Value::Null) else { return };
+        // The 8 to 9 s clips that cutting at 8 s used to cut for nothing.
+        let Some(clips) = corpus_english_between(8.0, MOONSHINE_MAX_SEGMENT_MS as f64 / 1000.0, 8) else { return };
+        assert!(clips.len() >= 3, "{} clips of 8 to 9 s", clips.len());
+        for (audio, reference) in &clips {
+            let direct = e
+                .recognizer
+                .as_ref()
+                .unwrap()
+                .transcribe(SAMPLE_RATE, audio, &sherpa_offline::DecodeOptions::default())
+                .unwrap();
+            let via_engine = e.transcribe(audio, &DecodeOptions::default()).unwrap();
+            eprintln!("{:.2} s: WER {:.3}", audio.len() as f64 / 16_000.0, wer(reference, &via_engine.text));
+            assert_eq!(via_engine.text, direct.text, "{:.2} s was cut", audio.len() as f64 / 16_000.0);
+            assert!(!direct.text.is_empty());
+        }
+        assert!(!e.empty_voiced.has_warned());
+    }
+
+    #[test]
+    #[ignore = "needs SIGIL_APP_DATA_DIR with runtime/sherpa-onnx + stt/moonshine-base-en-int8, and SIGIL_TEST_MODELS_DIR with the p7 corpus"]
+    fn real_moonshine_short_utterances_take_the_unchanged_single_call() {
+        let _g = dll_lock();
+        let Some(mut e) = real_moonshine(Value::Null) else { return };
+        let Some(clips) = corpus_english(0.0, 100) else { return };
+        let limit = MOONSHINE_MAX_SEGMENT_MS as usize * SAMPLE_RATE as usize / 1000;
+        let mut checked = 0;
+        for (audio, _) in clips.iter().filter(|(a, _)| a.len() <= limit).take(8) {
+            let direct = e
+                .recognizer
+                .as_ref()
+                .unwrap()
+                .transcribe(SAMPLE_RATE, audio, &sherpa_offline::DecodeOptions::default())
+                .unwrap();
+            let via_engine = e.transcribe(audio, &DecodeOptions::default()).unwrap();
+            assert_eq!(via_engine.text, direct.text);
+            assert!(!direct.text.is_empty());
+            checked += 1;
+        }
+        assert!(checked >= 4, "{checked} clips of at most the limit");
+        // A silent long input is not an error and not logged as a failure.
+        let silence = vec![0.0f32; SAMPLE_RATE as usize * 20];
+        assert_eq!(e.transcribe(&silence, &DecodeOptions::default()).unwrap().text, "");
+        assert!(!e.empty_voiced.has_warned());
     }
 
     #[test]
