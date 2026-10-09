@@ -14,6 +14,15 @@
 //!   P3-C1 / P3-F), which starts as "off" everywhere until a measurement flips it.
 //!
 //! Resolution (request + availability + preset) is `voice_changer::capabilities::resolve_levers`.
+//!
+//! # Added by P3B-S0 (frozen; persisted strings never renamed)
+//! [`Lever::ContentNorm`] (`content_norm`, P3B-D: window-independent content normalisation) and
+//! [`Lever::F0Decode`] (`f0_decode`, P3B-F: cross-tick F0 decoding), appended to the contract order.
+//! Their `auto` value is off (`presets::auto_lever`: both are opt-in, P3B-I0), and they run only
+//! where `content::running_norm_available()` / `vc::f0_decode::available()` say so (both `true`
+//! now). `content_norm` also needs the encoder's `stream` variant (an opt-in export,
+//! `export_embedders.py --stream`) and turns itself off at load, with a note, when none is
+//! installed.
 
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -73,10 +82,16 @@ pub enum Lever {
     GpuPriority,
     /// Adaptive quality governor (P3-E). Legacy: fixed quality, the latency budget drops audio.
     Governor,
+    /// Window-independent content normalisation with running statistics and real left context
+    /// (P3B-D). Legacy: every window normalises its own statistics.
+    ContentNorm,
+    /// Cross-tick F0 decoding over the cached salience (P3B-F; not for singing). Legacy: each
+    /// call's own decode.
+    F0Decode,
 }
 
 impl Lever {
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 11;
     /// Every lever, in contract (`levers`) order.
     pub const ALL: [Lever; Lever::COUNT] = [
         Lever::PartialDecode,
@@ -88,6 +103,8 @@ impl Lever {
         Lever::CudaGraphs,
         Lever::GpuPriority,
         Lever::Governor,
+        Lever::ContentNorm,
+        Lever::F0Decode,
     ];
 
     /// The IPC / persisted param name of the lever.
@@ -102,6 +119,8 @@ impl Lever {
             Lever::CudaGraphs => "cuda_graphs",
             Lever::GpuPriority => "gpu_priority",
             Lever::Governor => "governor",
+            Lever::ContentNorm => "content_norm",
+            Lever::F0Decode => "f0_decode",
         }
     }
 

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use ort::session::Session;
 use ort::value::Tensor;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::services::neural_audio::ort_session::{build_session, normalize_ep, ModelSource, VcSessionOptions};
 
@@ -239,7 +239,7 @@ impl CpuFeed {
 // ---- GPU load ---------------------------------------------------------------------------------
 
 /// What the GPU load generator did.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuLoadReport {
     pub kind: GpuLoadKind,
     pub execution_provider: String,
@@ -256,6 +256,22 @@ pub struct GpuLoadReport {
     pub gflops: f64,
     pub cpu_ms: f64,
     pub error: Option<String>,
+    // ---- P3B-A ----
+    /// The load ran in its own `Sigil.exe --headless gpu-load` process (a game's process and
+    /// queue), and that process's id.
+    #[serde(default)]
+    pub out_of_process: bool,
+    #[serde(default)]
+    pub process_id: Option<u32>,
+    /// Runs per second of wall time and the time between run starts (ms): the load's "frame rate"
+    /// and frame time, the proxy of what contention costs a game.
+    #[serde(default)]
+    pub runs_per_second: f64,
+    #[serde(default)]
+    pub frame_ms: Option<Summary>,
+    /// Why it stopped (`stop`, `duration`, `parent_gone`, `error`).
+    #[serde(default)]
+    pub stop_reason: Option<String>,
 }
 
 struct GpuSession {
@@ -315,6 +331,27 @@ fn gpu_thread(
     ready: mpsc::Sender<Result<String, String>>,
     tally: LoadCpu,
 ) -> GpuLoadReport {
+    let mut on_ready = |r: Result<&str, &str>| {
+        let _ = ready.send(r.map(str::to_string).map_err(str::to_string));
+    };
+    let mut report = run_gpu_load(&spec, kind, &|| stop.load(Ordering::Relaxed), &mut on_ready, tally);
+    if report.stop_reason.is_none() {
+        report.stop_reason = Some("stop".into());
+    }
+    report
+}
+
+/// Run the GPU load of `spec` at its duty until `should_stop` (checked after every run and at
+/// least once per period while idle): open the session, one run, `on_ready` (`Ok(active EP)` or
+/// `Err(why)`), then the duty loop. The in-process load thread and the `--headless gpu-load` child
+/// both run this.
+pub(super) fn run_gpu_load(
+    spec: &GpuLoadSpec,
+    kind: GpuLoadKind,
+    should_stop: &dyn Fn() -> bool,
+    on_ready: &mut dyn FnMut(Result<&str, &str>),
+    tally: LoadCpu,
+) -> GpuLoadReport {
     let mut report = GpuLoadReport {
         kind,
         execution_provider: normalize_ep(&spec.execution_provider).to_string(),
@@ -329,12 +366,18 @@ fn gpu_thread(
         gflops: 0.0,
         cpu_ms: 0.0,
         error: None,
+        out_of_process: false,
+        process_id: None,
+        runs_per_second: 0.0,
+        frame_ms: None,
+        stop_reason: None,
     };
-    let mut gs = match open_gpu_session(&spec, kind) {
+    let mut gs = match open_gpu_session(spec, kind) {
         Ok(s) => s,
         Err(e) => {
-            let _ = ready.send(Err(format!("GPU load: {e}")));
+            on_ready(Err(&format!("GPU load: {e}")));
             report.error = Some(e);
+            report.stop_reason = Some("error".into());
             return report;
         }
     };
@@ -351,29 +394,37 @@ fn gpu_thread(
     let x = match Tensor::from_array((shape, data)) {
         Ok(x) => x,
         Err(e) => {
-            let _ = ready.send(Err(format!("GPU load input: {e}")));
+            on_ready(Err(&format!("GPU load input: {e}")));
             report.error = Some(e.to_string());
+            report.stop_reason = Some("error".into());
             return report;
         }
     };
     // One run before "ready" so kernel selection / allocation is not part of the measured load.
     if let Err(e) = gs.session.run(ort::inputs![input_name => &x]) {
         let msg = format!("GPU load run on {}: {e}", gs.active);
-        let _ = ready.send(Err(msg.clone()));
+        on_ready(Err(&msg));
         report.error = Some(msg);
+        report.stop_reason = Some("error".into());
         return report;
     }
-    let _ = ready.send(Ok(gs.active.clone()));
+    on_ready(Ok(&gs.active));
 
     let mut feed = CpuFeed::start(tally);
     let start = Instant::now();
     let period = Duration::from_secs_f64(spec.period_ms / 1000.0);
     let mut busy = Duration::ZERO;
     let mut run_ms = Vec::new();
-    while !stop.load(Ordering::Relaxed) {
+    let mut frame_ms = Vec::new();
+    let mut last_start: Option<Instant> = None;
+    while !should_stop() {
         let r0 = Instant::now();
+        if let Some(prev) = last_start.replace(r0) {
+            frame_ms.push(r0.duration_since(prev).as_secs_f64() * 1000.0);
+        }
         if let Err(e) = gs.session.run(ort::inputs![input_name => &x]) {
             report.error = Some(format!("GPU load run: {e}"));
+            report.stop_reason = Some("error".into());
             break;
         }
         let r = r0.elapsed();
@@ -381,7 +432,7 @@ fn gpu_thread(
         run_ms.push(r.as_secs_f64() * 1000.0);
         feed.update();
         let target = busy.div_f64(spec.duty);
-        while !stop.load(Ordering::Relaxed) {
+        while !should_stop() {
             let elapsed = start.elapsed();
             if elapsed >= target {
                 break;
@@ -392,6 +443,8 @@ fn gpu_thread(
     let wall = start.elapsed();
     report.runs = run_ms.len() as u64;
     report.run_ms = Summary::of(&run_ms);
+    report.frame_ms = Summary::of(&frame_ms);
+    report.runs_per_second = if wall.is_zero() { 0.0 } else { run_ms.len() as f64 / wall.as_secs_f64() };
     report.duty = if wall.is_zero() { 0.0 } else { busy.as_secs_f64() / wall.as_secs_f64() };
     let per_run = match kind {
         GpuLoadKind::Matmul => 2.0 * (n as f64).powi(3),
@@ -467,10 +520,234 @@ impl LoadReport {
     }
 }
 
+// ---- Out-of-process GPU load (P3B-A) ------------------------------------------------------------
+
+/// What the parent hands the `Sigil.exe --headless gpu-load <spec.json>` child
+/// (`gpu_load_child.rs`): the load, when to stop and where to report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuLoadChildSpec {
+    /// The load (`out_of_process` is ignored by the child).
+    pub load: GpuLoadSpec,
+    #[serde(default)]
+    pub kind: GpuLoadKind,
+    /// Longest run (s); the child also stops on the stop file or when its parent exits.
+    pub max_seconds: f64,
+    /// Created by the parent to stop the child.
+    pub stop_file: std::path::PathBuf,
+    /// Created by the child after its first run (holds the EP it runs on).
+    pub ready_file: std::path::PathBuf,
+    /// The child's [`GpuLoadReport`] (JSON), written when it stops.
+    pub report_file: std::path::PathBuf,
+    /// The parent's process id (the child stops when it is gone).
+    #[serde(default)]
+    pub parent_pid: Option<u32>,
+}
+
+/// Longest out-of-process load (the paced runs' 4 h limit plus a margin).
+const OOP_MAX_SECONDS: f64 = 4.0 * 3600.0 + 600.0;
+/// How long the parent waits for the child's first run.
+const OOP_READY_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long a stopped child may take to write its report before its job is terminated.
+const OOP_STOP_GRACE: Duration = Duration::from_secs(10);
+
+/// A running out-of-process GPU load: the child runs in its own Job Object
+/// (`process_host::job`, `KILL_ON_JOB_CLOSE`: it dies with the benchmark, even when the benchmark
+/// is killed), created suspended, assigned, then resumed so nothing it starts escapes the job.
+pub(crate) struct OopLoad {
+    dir: std::path::PathBuf,
+    spec: GpuLoadChildSpec,
+    child: Option<std::process::Child>,
+    job: Option<crate::services::process_host::job::Job>,
+}
+
+fn unique_dir() -> std::path::PathBuf {
+    static N: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!("sigil-gpu-load-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
+}
+
+impl OopLoad {
+    /// Start `Sigil.exe --headless gpu-load` (this executable) with `spec` and wait for its first
+    /// run.
+    pub(crate) fn start(spec: &GpuLoadSpec, kind: GpuLoadKind) -> Result<OopLoad, String> {
+        let exe = std::env::current_exe().map_err(|e| format!("the out-of-process GPU load needs this executable's path: {e}"))?;
+        Self::start_with(&exe, &["--headless", "gpu-load"], spec, kind, OOP_READY_TIMEOUT)
+    }
+
+    /// [`start`](Self::start) with another program (`program prefix_args... <spec.json>`; tests).
+    pub(crate) fn start_with(program: &std::path::Path, prefix_args: &[&str], spec: &GpuLoadSpec, kind: GpuLoadKind, ready_timeout: Duration) -> Result<OopLoad, String> {
+        let dir = unique_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let mut load = spec.clone();
+        load.out_of_process = false;
+        let child = GpuLoadChildSpec {
+            load,
+            kind,
+            max_seconds: OOP_MAX_SECONDS,
+            stop_file: dir.join("stop"),
+            ready_file: dir.join("ready"),
+            report_file: dir.join("report.json"),
+            parent_pid: Some(std::process::id()),
+        };
+        let spec_path = dir.join("spec.json");
+        let text = serde_json::to_string_pretty(&child).map_err(|e| e.to_string())?;
+        std::fs::write(&spec_path, text).map_err(|e| format!("cannot write {}: {e}", spec_path.display()))?;
+        let (process, job) = spawn_in_job(program, prefix_args, &spec_path, &dir)?;
+        let mut load = OopLoad {
+            dir,
+            spec: child,
+            child: Some(process),
+            job: Some(job),
+        };
+        let t0 = Instant::now();
+        loop {
+            if load.spec.ready_file.is_file() {
+                return Ok(load);
+            }
+            if load.child.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(Some(_)))) {
+                let report = load.finish();
+                return Err(report.error.unwrap_or_else(|| "the GPU load process exited during start-up".into()));
+            }
+            if t0.elapsed() > ready_timeout {
+                let report = load.finish();
+                return Err(format!(
+                    "the GPU load process was not ready within {} s{}",
+                    ready_timeout.as_secs(),
+                    report.error.map(|e| format!(" ({e})")).unwrap_or_default()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Stop the child (the stop file; its job is terminated when it has not exited within
+    /// [`OOP_STOP_GRACE`]), wait for it and return its report.
+    pub(crate) fn finish(mut self) -> GpuLoadReport {
+        let status = self.stop_child();
+        let mut report = std::fs::read_to_string(&self.spec.report_file)
+            .ok()
+            .and_then(|t| serde_json::from_str::<GpuLoadReport>(&t).ok())
+            .unwrap_or_else(|| {
+                let stderr = std::fs::read_to_string(self.dir.join("stderr.txt")).unwrap_or_default();
+                let stderr: String = stderr.trim().chars().take(2_000).collect();
+                let why = format!(
+                    "the GPU load process wrote no report ({}){}",
+                    status.as_deref().unwrap_or("not started"),
+                    if stderr.is_empty() { String::new() } else { format!(": {stderr}") }
+                );
+                GpuLoadReport {
+                    kind: self.spec.kind,
+                    execution_provider: normalize_ep(&self.spec.load.execution_provider).to_string(),
+                    execution_provider_active: String::new(),
+                    reason: None,
+                    size: self.spec.load.size,
+                    depth: self.spec.load.depth,
+                    duty_target: self.spec.load.duty,
+                    duty: 0.0,
+                    runs: 0,
+                    run_ms: None,
+                    gflops: 0.0,
+                    cpu_ms: 0.0,
+                    error: Some(why),
+                    out_of_process: true,
+                    process_id: None,
+                    runs_per_second: 0.0,
+                    frame_ms: None,
+                    stop_reason: Some("error".into()),
+                }
+            });
+        report.out_of_process = true;
+        report
+    }
+
+    /// Ask the child to stop, give it [`OOP_STOP_GRACE`] to report, then terminate its job;
+    /// returns how it ended (`exit code N` / `terminated`).
+    fn stop_child(&mut self) -> Option<String> {
+        let mut child = self.child.take()?;
+        let _ = std::fs::write(&self.spec.stop_file, b"stop");
+        let t0 = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) if t0.elapsed() < OOP_STOP_GRACE => std::thread::sleep(Duration::from_millis(20)),
+                _ => break None,
+            }
+        };
+        let text = match status {
+            Some(s) => format!("exit code {}", s.code().map_or_else(|| "?".to_string(), |c| c.to_string())),
+            None => {
+                if let Some(job) = &self.job {
+                    job.terminate(1);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                "terminated after it did not stop".to_string()
+            }
+        };
+        Some(text)
+    }
+}
+
+impl Drop for OopLoad {
+    fn drop(&mut self) {
+        let _ = self.stop_child();
+        // Closing the job kills anything left in it.
+        drop(self.job.take());
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Start `program prefix_args... spec` without a window, created suspended, in a fresh
+/// `KILL_ON_JOB_CLOSE` job, then resumed (stdout discarded, stderr to `dir/stderr.txt`).
+fn spawn_in_job(
+    program: &std::path::Path,
+    prefix_args: &[&str],
+    spec: &std::path::Path,
+    dir: &std::path::Path,
+) -> Result<(std::process::Child, crate::services::process_host::job::Job), String> {
+    use crate::services::process_host::job::{self, Job, JobLimits};
+    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+
+    let job = Job::create(JobLimits::default())?;
+    let stderr = std::fs::File::create(dir.join("stderr.txt")).map_err(|e| format!("cannot create the child's stderr file: {e}"))?;
+    let mut cmd = Command::new(program);
+    cmd.args(prefix_args).arg(spec).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::from(stderr));
+    let suspended = job::can_resume_suspended();
+    let mut flags = CREATE_NO_WINDOW.0;
+    if suspended {
+        flags |= CREATE_SUSPENDED.0;
+    }
+    cmd.creation_flags(flags);
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start {}: {e}", program.display()))?;
+    let fail = |child: &mut std::process::Child, e: String| {
+        let _ = child.kill();
+        let _ = child.wait();
+        e
+    };
+    if let Err(e) = job.assign(child.as_raw_handle()) {
+        return Err(fail(&mut child, e));
+    }
+    if suspended {
+        if let Err(e) = job::resume_suspended(child.as_raw_handle()) {
+            return Err(fail(&mut child, e));
+        }
+    }
+    Ok((child, job))
+}
+
+/// The GPU load of a [`LoadHandle`]: a thread of this process or a child process.
+enum GpuRunner {
+    Thread(JoinHandle<GpuLoadReport>),
+    Process(Box<OopLoad>),
+}
+
 /// Running load generators; [`LoadHandle::stop`] joins them.
 pub struct LoadHandle {
     stop: Arc<AtomicBool>,
-    gpu: Option<JoinHandle<GpuLoadReport>>,
+    gpu: Option<GpuRunner>,
     cpu: Vec<JoinHandle<BurnerResult>>,
     cpu_spec: Option<CpuLoadSpec>,
     tally: LoadCpu,
@@ -484,12 +761,14 @@ impl LoadHandle {
         Self::start_kind(load, GpuLoadKind::Matmul)
     }
 
-    /// [`start`](Self::start) with the GPU load graph `kind` (P3-F: the conv hammer).
+    /// [`start`](Self::start) with the GPU load graph `kind` (P3-F: the conv hammer). A GPU load
+    /// with `out_of_process` runs in a `Sigil.exe --headless gpu-load` child (P3B-A).
     pub fn start_kind(load: &LoadSpec, kind: GpuLoadKind) -> Result<LoadHandle, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let tally = LoadCpu::default();
         let gpu = match &load.gpu {
             None => None,
+            Some(spec) if spec.out_of_process => Some(GpuRunner::Process(Box::new(OopLoad::start(spec, kind)?))),
             Some(spec) => {
                 let (tx, rx) = mpsc::channel();
                 let (spec, stop2, tally2) = (spec.clone(), stop.clone(), tally.clone());
@@ -498,7 +777,7 @@ impl LoadHandle {
                     .spawn(move || gpu_thread(spec, kind, stop2, tx, tally2))
                     .map_err(|e| format!("cannot start the GPU load thread: {e}"))?;
                 match rx.recv() {
-                    Ok(Ok(_active)) => Some(handle),
+                    Ok(Ok(_active)) => Some(GpuRunner::Thread(handle)),
                     Ok(Err(e)) => {
                         let _ = handle.join();
                         return Err(e);
@@ -548,7 +827,10 @@ impl LoadHandle {
     /// Stop and join every generator.
     pub fn stop(self) -> LoadReport {
         self.stop.store(true, Ordering::Relaxed);
-        let gpu = self.gpu.and_then(|h| h.join().ok());
+        let gpu = self.gpu.and_then(|g| match g {
+            GpuRunner::Thread(h) => h.join().ok(),
+            GpuRunner::Process(p) => Some(p.finish()),
+        });
         let results: Vec<BurnerResult> = self.cpu.into_iter().filter_map(|h| h.join().ok()).collect();
         let mean = |f: fn(&BurnerResult) -> f64| {
             if results.is_empty() {

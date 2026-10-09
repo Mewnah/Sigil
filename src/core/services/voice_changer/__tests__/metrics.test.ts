@@ -26,6 +26,7 @@ const sample = (over: Partial<VoiceChangerMetrics> = {}): VoiceChangerMetrics =>
     vram_mb: null,
     governor_level: null,
     levers: null,
+    cushion_ms: null,
     ...over,
 });
 
@@ -46,7 +47,15 @@ describe("metrics normalization", () => {
             vram_mb: null,
             governor_level: null,
             levers: null,
+            cushion_ms: null,
         });
+    });
+
+    it("reads the output cushion the queue holds (P3B-H) and drops nonsense", () => {
+        expect(normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, cushion_ms: 17.5 })?.cushion_ms).toBe(17.5);
+        expect(normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, cushion_ms: null })?.cushion_ms).toBeNull();
+        expect(normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, cushion_ms: "17" })?.cushion_ms).toBeNull();
+        expect(normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, cushion_ms: -3 })?.cushion_ms).toBe(0);
     });
 
     it("reads the P3 fields and normalizes the levers in use", () => {

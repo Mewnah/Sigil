@@ -7,6 +7,9 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use super::cushion::{AdaptiveCushion, Observation, Shed, SILENCE_RMS_FLOOR};
+use super::params::OutputCushion;
+
 /// Extra ring top-up (frames per channel) beyond one device callback + one chunk, absorbing
 /// scheduling jitter between the worker tick and the device callback.
 const RING_TOPUP_MARGIN_FRAMES: usize = 64;
@@ -85,13 +88,22 @@ const VALLEY_PUSHES: usize = 256;
 ///   pre-stall level), and a short glitch costs nothing beyond itself.
 /// - **Drift:** otherwise, when the smallest queue level over a second of pushed audio stays above
 ///   the gate level by more than one chunk / capture period / device callback (clock drift between
-///   capture and playback devices), the excess is trimmed.
+///   capture and playback devices), the excess is trimmed. (The adaptive cushion keeps the user's
+///   prefill as this gate level, see [`OutputPlayback::drift_gate`]: its own target is the valley the
+///   worst dip lands on, not the level the queue stands at between dips.)
 /// - Every trim (and the `max_queue` cap) is a splice, not a cut: [`TRIM_FADE_MS`] of the audio
 ///   that continues what the device already has crossfades (equal power) into the first kept
 ///   audio; when the kept audio has not been converted yet, the fade finishes on the next push.
 ///
 /// A trim never goes below the level steady playback already reached (or the gate level), so it
 /// never causes an underrun by itself. Whole frames only; nothing here runs on the audio callback.
+///
+/// **Adaptive cushion** (`output_cushion = adaptive`, P3B-H, [`super::cushion`]): the gate level is not
+/// the user's prefill but the valley the stream needs, found from the lateness of its pushes over a
+/// window of minutes and shed with the audio that is silent anyway (or, after a long stretch without
+/// silence, in small crossfaded splices). It never re-gates while playing (a dropout); only after an
+/// underrun, with the queue empty anyway, it re-gates one step toward the user's value. The user's
+/// prefill is its upper bound.
 pub(crate) struct OutputPlayback {
     deque: VecDeque<f32>,
     prefill_target: usize,
@@ -149,9 +161,22 @@ pub(crate) struct OutputPlayback {
     window_pushed: usize,
     trimmed_frames: u64,
     recoveries: u64,
+    /// How the prefill is sized (`fixed`: the user's prefill; `adaptive`: [`AdaptiveCushion`]).
+    cushion: OutputCushion,
+    /// The adaptive controller (`Some` exactly when `cushion` is [`OutputCushion::Adaptive`]).
+    adaptive: Option<AdaptiveCushion>,
+    /// Interleaved samples the queue discarded so far (every trim, cut and drop): the coordinate shift
+    /// of the adaptive window.
+    removed_total: u64,
+    /// The last status slot written to the cushion trace (`SIGIL_VC_CUSHION_TRACE`).
+    trace_slot: u64,
     /// Frames trimmed by each rule (recovery, drift, cap), for tests.
     #[cfg(test)]
     trimmed_by: [u64; 3],
+    /// Tests: the drift trim keyed to the adaptive target (what it was before P3B-H's fix), to show the
+    /// test that catches it.
+    #[cfg(test)]
+    drift_keyed_to_target: bool,
 }
 
 fn rms_interleaved(samples: &[f32]) -> f32 {
@@ -210,8 +235,14 @@ impl OutputPlayback {
             window_pushed: 0,
             trimmed_frames: 0,
             recoveries: 0,
+            cushion: OutputCushion::Fixed,
+            adaptive: None,
+            removed_total: 0,
+            trace_slot: 0,
             #[cfg(test)]
             trimmed_by: [0; 3],
+            #[cfg(test)]
+            drift_keyed_to_target: false,
         };
         s.set_output_rate(DEFAULT_RATE);
         s
@@ -241,8 +272,53 @@ impl OutputPlayback {
         self
     }
 
+    /// The output cushion mode (params `output_cushion`): `adaptive` sizes the gate from the stream
+    /// (see the type docs), with the prefill as its cap.
+    pub(crate) fn with_cushion(mut self, cushion: OutputCushion) -> Self {
+        self.cushion = cushion;
+        self.adaptive = (cushion == OutputCushion::Adaptive).then(|| AdaptiveCushion::new(self.rate, self.ch, self.prefill_target, 0));
+        self
+    }
+
+    /// Tests: the adaptive history before the first shed.
+    #[cfg(test)]
+    pub(crate) fn set_cushion_history_ms(&mut self, ms: f64) {
+        if let Some(a) = self.adaptive.as_mut() {
+            a.set_history_ms(ms);
+        }
+    }
+
+    /// The smallest cushion a voice allows (`min_output_buffer_ms` of a burst family, interleaved
+    /// samples; 0 = none): the adaptive floor. A no-op in fixed mode, where the prefill already is it.
+    pub(crate) fn set_cushion_floor(&mut self, samples: usize) {
+        if let Some(a) = self.adaptive.as_mut() {
+            a.set_voice_floor(samples);
+        }
+    }
+
+    /// The cushion the queue holds now (interleaved samples): the adaptive target, else the gate level
+    /// (the user's prefill). For the metrics and the UI.
+    pub(crate) fn cushion_samples(&self) -> usize {
+        self.gate_base()
+    }
+
+    /// Sheds of the adaptive cushion `(events, samples)` and its underrun growths (tests, metrics).
+    #[allow(dead_code)] // Diagnostics accessor.
+    pub(crate) fn adaptive_stats(&self) -> Option<((u64, u64), u64)> {
+        self.adaptive.as_ref().map(|a| (a.sheds(), a.grows()))
+    }
+
+    /// The output cushion mode in effect.
+    #[allow(dead_code)] // P3B-S0 frozen API (P3B-H, the benchmark).
+    pub(crate) fn cushion(&self) -> OutputCushion {
+        self.cushion
+    }
+
     fn set_output_rate(&mut self, rate: u32) {
         self.rate = rate.max(1);
+        if let Some(a) = self.adaptive.as_mut() {
+            a.set_rate(self.rate);
+        }
         let rate = f64::from(self.rate);
         self.fade_frames = ((TRIM_FADE_MS * rate / 1000.0).round() as usize).max(1);
         self.drift_window = ((DRIFT_WINDOW_MS * rate / 1000.0).round() as usize).max(1) * self.ch;
@@ -351,10 +427,38 @@ impl OutputPlayback {
         (frames_out as usize).saturating_mul(self.ch)
     }
 
+    /// The prefill the gate is built on: the user's, or the adaptive controller's target.
+    fn gate_base(&self) -> usize {
+        match &self.adaptive {
+            Some(a) => a.target(),
+            None => self.prefill_target,
+        }
+    }
+
     /// Level at which the prefill gate opens: the prefill, or one full device callback when that
     /// is longer (a gate below one callback would underrun the very first period).
     fn gate_target(&self) -> usize {
-        self.prefill_target.max(self.callback_samples())
+        self.gate_base().max(self.callback_samples())
+    }
+
+    /// The level the clock-drift trim brings the drift window's smallest queue level down to: the
+    /// gate level of a fixed cushion; with the adaptive one the gate level of the USER's prefill (the
+    /// controller's cap), not of its target. The target is the valley, the level the stream's worst dip
+    /// lands on; between dips the queue stands the dip's depth above it. A drift ceiling keyed to the
+    /// target trimmed that standing level away on the first dip-free window (a window's smallest level
+    /// over the target plus one period is "drift"), so the next late tick deeper than the slack ran the
+    /// device dry. The controller sheds what the stream's lateness allows below the cap; this trim
+    /// only bounds clock drift, as it does with the fixed cushion, so the adaptive queue never
+    /// stands higher than the fixed one would.
+    fn drift_gate(&self) -> usize {
+        #[cfg(test)]
+        if self.drift_keyed_to_target {
+            return self.gate_target();
+        }
+        match &self.adaptive {
+            Some(a) => self.gate_target().max(a.cap()),
+            None => self.gate_target(),
+        }
     }
 
     /// Samples the ring should hold after a top-up: one full device callback (which can be
@@ -405,6 +509,7 @@ impl OutputPlayback {
         if n > 0 {
             self.deque.drain(0..n);
             self.pending_at = self.pending_at.saturating_sub(n / ch);
+            self.removed_total += n as u64;
         }
     }
 
@@ -449,6 +554,7 @@ impl OutputPlayback {
         self.pending_pos = 0;
         self.pending_at = 0;
         self.deque.drain(..drop * ch);
+        self.removed_total += (drop * ch) as u64;
         self.trimmed_frames += drop as u64;
         // The fade-in: whatever audio follows the dropped part (the rest arrives with the next push).
         self.blend_pending();
@@ -479,9 +585,13 @@ impl OutputPlayback {
         }
         self.prefill_target = prefill_target;
         self.max_queue_samples = max_queue_samples;
+        if let Some(a) = self.adaptive.as_mut() {
+            // The user's prefill is the adaptive cap: a new one starts the window over.
+            a.set_cap(prefill_target);
+        }
         let over = (self.deque.len() + ring_used).saturating_sub(self.queue_cap());
         self.trim_samples(over);
-        if self.deque.len() + ring_used < self.prefill_target {
+        if self.deque.len() + ring_used < self.gate_base() {
             self.prefilled = false;
         }
         self.steady_valley = None;
@@ -505,10 +615,100 @@ impl OutputPlayback {
         if starved && self.prefilled && !samples.is_empty() {
             // The device ran dry while playing: whatever catch-up follows is stale.
             self.start_recovery();
+            // Adaptive: the cushion was too tight. The queue is empty anyway, so this is the one
+            // moment to re-gate: it refills to the grown target before it plays.
+            if let Some(a) = self.adaptive.as_mut() {
+                let before = a.target();
+                a.on_underrun(self.consumed_total);
+                tracing::debug!(
+                    target: "sigil::vc::cushion",
+                    "output cushion: underrun, target {:.1} -> {:.1} ms (floor {:.1} ms, learned {:.1} ms)",
+                    a.ms(before),
+                    a.ms(a.target()),
+                    a.ms(a.floor_total()),
+                    a.ms(a.learned_floor())
+                );
+                crate::services::voice_changer::cushion::trace(format_args!(
+                    "underrun at {:.2} s: target {:.1} -> {:.1} ms, learned {:.1} ms",
+                    a.ms(self.consumed_total as usize),
+                    a.ms(before),
+                    a.ms(a.target()),
+                    a.ms(a.learned_floor())
+                ));
+                self.prefilled = false;
+                self.steady_valley = None;
+            }
+        }
+        // Adaptive: what the controller sheds from this push (silence from the head of a quiet
+        // chunk, or a crossfaded splice of the queue after the chunk is queued).
+        let mut samples = samples;
+        let mut splice = 0usize;
+        if self.prefilled && !starved && !self.recovering && !samples.is_empty() && self.adaptive.is_some() {
+            let silent = rms_interleaved(samples) < truncate_rms.max(SILENCE_RMS_FLOOR);
+            let obs = Observation {
+                level_before,
+                removed_total: self.removed_total,
+                consumed_total: self.consumed_total,
+                chunk_len: samples.len(),
+                silent,
+                callback_len: self.callback_samples(),
+                capture_burst: self.in_burst_samples(),
+            };
+            let shed = self.adaptive.as_mut().map(|a| a.observe(&obs)).unwrap_or(Shed::None);
+            if let (Some(a), Shed::Silent(n) | Shed::Splice(n)) = (self.adaptive.as_ref(), shed) {
+                tracing::debug!(
+                    target: "sigil::vc::cushion",
+                    "output cushion: shed {:.1} ms ({}), valley {:.1} ms, floor {:.1} ms, target {:.1} ms",
+                    a.ms(n),
+                    if matches!(shed, Shed::Silent(_)) { "silence" } else { "splice" },
+                    a.valley(self.removed_total).map_or(0.0, |v| a.ms(v)),
+                    a.ms(a.floor_total()),
+                    a.ms(a.target())
+                );
+            }
+            if let (Some(a), Shed::Silent(n) | Shed::Splice(n)) = (self.adaptive.as_ref(), shed) {
+                crate::services::voice_changer::cushion::trace(format_args!(
+                    "shed {:.1} ms ({}) at {:.2} s: valley {:.1} floor {:.1} target {:.1}",
+                    a.ms(n),
+                    if matches!(shed, Shed::Silent(_)) { "silence" } else { "splice" },
+                    a.ms(self.consumed_total as usize),
+                    a.valley(self.removed_total).map_or(0.0, |v| a.ms(v)),
+                    a.ms(a.floor_total()),
+                    a.ms(a.target())
+                ));
+            }
+            if let Some(a) = self.adaptive.as_ref() {
+                if crate::services::voice_changer::cushion::trace_on() {
+                    let every = (crate::services::voice_changer::cushion::TRACE_STATUS_EVERY_MS * f64::from(self.rate) / 1000.0) as u64 * self.ch as u64;
+                    let slot = self.consumed_total / every.max(1);
+                    if slot != self.trace_slot {
+                        self.trace_slot = slot;
+                        crate::services::voice_changer::cushion::trace(format_args!(
+                            "{:.1} s level {:.1} {}",
+                            a.ms(self.consumed_total as usize),
+                            a.ms(level_before),
+                            a.status(self.removed_total)
+                        ));
+                    }
+                }
+            }
+            match shed {
+                Shed::Silent(n) => {
+                    // Whole frames from the head of the quiet chunk: nobody hears them.
+                    let drop = (n / self.ch * self.ch).min(samples.len());
+                    samples = &samples[drop..];
+                    self.removed_total += drop as u64;
+                }
+                Shed::Splice(n) => splice = n,
+                Shed::None => {}
+            }
         }
         self.last_chunk_len = samples.len();
         self.deque.extend(samples.iter().copied());
         self.blend_pending();
+        if splice > 0 {
+            self.trim_samples(splice);
+        }
 
         if !samples.is_empty() && self.prefilled {
             if self.recovering {
@@ -517,7 +717,7 @@ impl OutputPlayback {
                 self.window_min = self.window_min.min(level_before);
                 self.window_pushed += samples.len();
                 if self.window_pushed >= self.drift_window {
-                    let gate = self.gate_target();
+                    let gate = self.drift_gate();
                     if self.window_min != usize::MAX && self.window_min > gate + self.drift_slack() {
                         self.trim_counted(self.window_min - gate, 1);
                     } else if self.window_min != usize::MAX {
@@ -539,7 +739,7 @@ impl OutputPlayback {
                 self.truncate_silent_streak = 0;
             }
             if self.truncate_silent_streak >= truncate_chunks {
-                self.drop_front((self.deque.len() + ring_used).saturating_sub(self.prefill_target));
+                self.drop_front((self.deque.len() + ring_used).saturating_sub(self.gate_base()));
                 self.truncate_silent_streak = 0;
             }
         } else {
@@ -734,7 +934,7 @@ pub(crate) fn adapt_channels_interleaved_into(data: &[f32], from_ch: usize, to_c
 
 #[cfg(test)]
 mod tests {
-    use super::{adapt_channels_interleaved_into, OutputPlayback, RingPlayout, HOLD_DECAY_FRAMES, RECOVER_FRAMES};
+    use super::{adapt_channels_interleaved_into, OutputCushion, OutputPlayback, RingPlayout, HOLD_DECAY_FRAMES, RECOVER_FRAMES};
     use rtrb::RingBuffer;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -967,6 +1167,15 @@ mod tests {
         played: Vec<f32>,
         /// (time in frames, queue level in frames) at every push, before the push.
         push_levels: Vec<(u64, usize)>,
+        /// `(period, quiet)` in blocks: the last `quiet` blocks of every `period` are silent (a
+        /// pause in the speech); `None` = a continuous sine.
+        quiet: Option<(u64, u64)>,
+        block_index: u64,
+        /// Frames of voiced (non-silent) audio pushed.
+        voiced_pushed: u64,
+        /// Extra frames the worker's push is late by at the blocks `late_every` apart (jitter).
+        late: Option<(u64, u64)>,
+        next_late_at: u64,
         t: u64,
         next_cap: u64,
         next_cb: u64,
@@ -979,13 +1188,20 @@ mod tests {
 
     impl Sim {
         fn new(prefill_ms: f64, max_queue_ms: f64, chunk: usize, cap: usize, cb: usize) -> Sim {
+            Self::with_cushion(prefill_ms, max_queue_ms, chunk, cap, cb, OutputCushion::Fixed)
+        }
+
+        fn with_cushion(prefill_ms: f64, max_queue_ms: f64, chunk: usize, cap: usize, cb: usize, cushion: OutputCushion) -> Sim {
             let frames = |ms: f64| (f64::from(SIM_RATE) * ms / 1000.0).ceil() as usize;
             let cb_len = Arc::new(AtomicUsize::new(0));
             let burst = Arc::new(AtomicUsize::new(0));
             let (prod, cons) = RingBuffer::<f32>::new(SIM_RING);
             let underruns = Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let pb = OutputPlayback::new(frames(prefill_ms) * SIM_CH, frames(max_queue_ms) * SIM_CH, SIM_CH, cb_len.clone())
-                .with_capture_burst(burst.clone(), 1, SIM_RATE, SIM_RATE);
+            let mut pb = OutputPlayback::new(frames(prefill_ms) * SIM_CH, frames(max_queue_ms) * SIM_CH, SIM_CH, cb_len.clone())
+                .with_capture_burst(burst.clone(), 1, SIM_RATE, SIM_RATE)
+                .with_cushion(cushion);
+            // The simulations are minutes long: a short history before the first shed.
+            pb.set_cushion_history_ms(8_000.0);
             let playout = RingPlayout::new(cons, SIM_CH, cb_len).with_underrun_counter(underruns.clone());
             Sim {
                 pb,
@@ -1003,6 +1219,11 @@ mod tests {
                 blocks_per_wake: usize::MAX,
                 played: Vec::new(),
                 push_levels: Vec::new(),
+                quiet: None,
+                block_index: 0,
+                voiced_pushed: 0,
+                late: None,
+                next_late_at: 0,
                 t: 0,
                 next_cap: cap as u64,
                 next_cb: (cb / 2) as u64,
@@ -1026,9 +1247,18 @@ mod tests {
                 self.input_waiting -= self.chunk;
                 let first = self.input_pos;
                 self.input_pos += self.chunk as u64;
+                let quiet = self.quiet.is_some_and(|(period, q)| self.block_index % period >= period - q);
+                self.block_index += 1;
+                if !quiet {
+                    self.voiced_pushed += self.chunk as u64;
+                }
                 let block: Vec<f32> = (0..self.chunk as u64)
                     .flat_map(|i| {
-                        let v = (2.0 * std::f64::consts::PI * 220.0 * (first + i) as f64 / f64::from(SIM_RATE)).sin() as f32 * 0.5;
+                        let v = if quiet {
+                            0.0
+                        } else {
+                            (2.0 * std::f64::consts::PI * 220.0 * (first + i) as f64 / f64::from(SIM_RATE)).sin() as f32 * 0.5
+                        };
                         [v, v]
                     })
                     .collect();
@@ -1063,6 +1293,22 @@ mod tests {
                     self.next_cap += self.cap as u64;
                     self.burst.store(self.cap, Ordering::Relaxed);
                     self.input_waiting += self.cap;
+                    // Jitter: every `every`-th capture period the worker is `extra` frames late.
+                    let held = self.late.is_some_and(|(every, extra)| {
+                        let k = (self.next_cap / self.cap as u64) % every.max(1);
+                        k == 0 && extra > 0 && {
+                            self.next_late_at = self.t + extra;
+                            true
+                        }
+                    });
+                    // A worker that is late stays late: later capture periods do not wake it (the hold
+                    // ends at the first event at or after `next_late_at`, below).
+                    if !self.stalled && !held && self.next_late_at == 0 {
+                        self.convert_waiting();
+                    }
+                }
+                if self.next_late_at != 0 && self.t >= self.next_late_at {
+                    self.next_late_at = 0;
                     if !self.stalled {
                         self.convert_waiting();
                     }
@@ -1278,5 +1524,139 @@ mod tests {
         }
         assert!(starved[HOLD_DECAY_FRAMES - 1].abs() < 1e-6);
         assert!(starved[HOLD_DECAY_FRAMES..].iter().all(|&v| v == 0.0));
+    }
+
+    // ---- adaptive cushion (P3B-H) ----
+
+    /// A speech-like stream (pauses of 0.4 s every 1.2 s): the adaptive cushion starts at the user's
+    /// 35 ms, sheds the silence once it has watched the stream, and holds a smaller queue than the
+    /// fixed one, with no underrun, no trim of voiced audio and none of the user's speech lost.
+    #[test]
+    fn the_adaptive_cushion_sheds_silence_and_never_underruns() {
+        let run = |cushion| {
+            let mut sim = Sim::with_cushion(35.0, 70.0, 512, 480, 480, cushion);
+            sim.quiet = Some((112, 38));
+            sim.run_for(60 * 48_000);
+            sim
+        };
+        let (fixed, adaptive) = (run(OutputCushion::Fixed), run(OutputCushion::Adaptive));
+        assert_eq!(fixed.pb.adaptive_stats(), None);
+        let (steady_fixed, steady_adaptive) = (median(fixed.levels_between(20.0, 60.0)), median(adaptive.levels_between(20.0, 60.0)));
+        // The fixed queue holds its 35 ms gate level; the adaptive one the stream's floor: a 10 ms
+        // callback / capture burst + 2 ms (the spread of this steady stream is a few ms).
+        eprintln!("steady pre-push queue: fixed {steady_fixed} frames, adaptive {steady_adaptive} frames");
+        assert!(steady_fixed >= 1_500, "the fixed queue holds its 35 ms: {steady_fixed} frames");
+        assert!(steady_adaptive + 600 <= steady_fixed, "adaptive {steady_adaptive} frames vs fixed {steady_fixed}");
+        assert!(steady_adaptive >= 12 * 48, "never below the floor: {steady_adaptive}");
+        assert_eq!(adaptive.underruns(), 0);
+        assert_eq!(adaptive.pb.recoveries(), 0, "no recovery was needed");
+        let ((sheds, shed_samples), grows) = adaptive.pb.adaptive_stats().unwrap();
+        assert!(sheds > 0 && shed_samples > 0 && grows == 0, "{sheds} {shed_samples} {grows}");
+        // The cushion shown is the controller's target, below the user's prefill.
+        assert!(adaptive.pb.cushion_samples() < 1_680 * SIM_CH);
+        assert_eq!(fixed.pb.cushion_samples(), 1_680 * SIM_CH);
+        // Only silence was shed: every frame of voiced audio pushed was played or is still queued.
+        let played_voiced = adaptive.played.iter().filter(|v| v.abs() > 0.0).count() as u64;
+        let queued = (adaptive.pb.queue_len() + adaptive.ring_used()) as u64 / SIM_CH as u64;
+        assert!(played_voiced + queued + 480 >= adaptive.voiced_pushed, "{played_voiced} played + {queued} queued of {}", adaptive.voiced_pushed);
+        assert_eq!(adaptive.pb.trimmed_frames(), 0, "silence is dropped from the chunk, nothing is spliced");
+    }
+
+    /// Jitter the stream really has (a worker 8 ms late every 40th capture period, i.e. a block-
+    /// completing tick) is inside the window the controller watches: it sheds only down to what that
+    /// dip leaves, so the jittered stream still never runs dry.
+    #[test]
+    fn the_adaptive_cushion_keeps_what_the_observed_lateness_needs() {
+        let mut sim = Sim::with_cushion(35.0, 70.0, 512, 480, 480, OutputCushion::Adaptive);
+        sim.quiet = Some((112, 38));
+        sim.late = Some((40, 8 * 48));
+        sim.run_for(120 * 48_000);
+        assert_eq!(sim.underruns(), 0, "levels {:?}", sim.levels_between(100.0, 101.0));
+        let low = *sim.levels_between(30.0, 120.0).iter().min().unwrap();
+        assert!(low >= 480, "the queue never fell below one device callback: {low} frames");
+        let ((sheds, _), _) = sim.pb.adaptive_stats().unwrap();
+        assert!(sheds > 0);
+    }
+
+    /// Rare late ticks DEEPER than the drift trim's slack above its gate (14-25 ms late every 3 s, where
+    /// the slack is one period plus a margin, about 12 ms), with the larger prefill a jittery system
+    /// uses (60 ms). The controller sheds down to what the dips leave: its target (the valley, the
+    /// level the worst dip lands on) becomes the floor, and the queue stands the dip's depth above it
+    /// between dips. A drift trim keyed to that target trimmed the standing level away on the first
+    /// dip-free window and the next late tick ran the device dry, until the target had grown back.
+    /// The drift trim keeps the user's prefill as its ceiling in adaptive mode (the fixed cushion's
+    /// own), so the controller's cushion stands.
+    #[test]
+    fn the_adaptive_cushion_survives_late_ticks_deeper_than_the_drift_slack() {
+        let run = |prefill_ms: f64, late_ms: u64, keyed_to_target: bool| {
+            let mut sim = Sim::with_cushion(prefill_ms, 2.0 * prefill_ms, 512, 480, 480, OutputCushion::Adaptive);
+            sim.pb.drift_keyed_to_target = keyed_to_target;
+            sim.quiet = Some((112, 38));
+            sim.late = Some((300, late_ms * 48));
+            sim.run_for(150 * 48_000);
+            sim
+        };
+        // The drift trim keyed to the target (the old behaviour) runs the device dry: this test catches it.
+        let old = run(60.0, 14, true);
+        let (_, old_grows) = old.pb.adaptive_stats().unwrap();
+        assert!(old.underruns() > 0 && old_grows > 0, "the trim keyed to the target should underrun here ({} underruns, trims {:?})", old.underruns(), old.pb.trimmed_by);
+        assert!(old.pb.trimmed_by[1] > 0, "by trimming the standing level: {:?}", old.pb.trimmed_by);
+        for (prefill_ms, late_ms) in [(60.0, 14), (60.0, 20), (60.0, 25), (80.0, 25)] {
+            let sim = run(prefill_ms, late_ms, false);
+            let ((sheds, _), grows) = sim.pb.adaptive_stats().unwrap();
+            let label = format!("prefill {prefill_ms} ms, {late_ms} ms late every 3 s: {sheds} sheds, {grows} growths, trims {:?}", sim.pb.trimmed_by);
+            assert_eq!(sim.underruns(), 0, "{label}");
+            assert!(sheds > 0 && grows == 0, "{label}");
+            assert_eq!(sim.pb.recoveries(), 0, "{label}");
+            assert_eq!(sim.pb.trimmed_by[1], 0, "no drift trim: the cushion is the controller's: {label}");
+            // Never above the fixed cushion: the queue stands the dip's depth over the floor between
+            // dips, which is below the user's prefill plus the slack.
+            let standing = median(sim.levels_between(60.0, 150.0));
+            assert!(standing <= (prefill_ms * 48.0) as usize + 480, "{label}: standing {standing} frames");
+            // The worst dip never took the queue under one device callback.
+            let low = *sim.levels_between(30.0, 150.0).iter().min().unwrap();
+            assert!(low >= 480, "{label}: the queue fell to {low} frames");
+        }
+    }
+
+    /// A worker stall the window never saw runs the queue dry: the cushion then grows one step toward
+    /// the user's prefill, re-gates once (the queue is empty anyway) and refills before playing, and
+    /// the stream settles again without a second underrun. Nothing re-gates while playing normally.
+    #[test]
+    fn a_stall_grows_the_adaptive_cushion_once() {
+        let mut sim = Sim::with_cushion(35.0, 70.0, 512, 480, 480, OutputCushion::Adaptive);
+        sim.quiet = Some((112, 38));
+        sim.run_for(30 * 48_000);
+        assert_eq!(sim.underruns(), 0);
+        let shrunk = sim.pb.cushion_samples();
+        assert!(shrunk < 1_680 * SIM_CH);
+        // A 0.5 s stall: the device starves.
+        sim.stalled = true;
+        sim.run_for(24_000);
+        sim.end_stall(7_200);
+        sim.run_for(10 * 48_000);
+        let ((_, _), grows) = sim.pb.adaptive_stats().unwrap();
+        assert_eq!(grows, 1);
+        assert!(sim.pb.cushion_samples() > shrunk && sim.pb.cushion_samples() <= 1_680 * SIM_CH, "{} -> {}", shrunk, sim.pb.cushion_samples());
+        let after_stall = sim.underruns();
+        sim.run_for(60 * 48_000);
+        assert_eq!(sim.underruns(), after_stall, "no further underrun once it settled");
+        // The cooldown held shrinking off for the 30 s after the underrun: the cushion is still
+        // above the shrunk one 10 s later, and the stream plays on.
+        assert!(sim.levels_between(40.0, 45.0).iter().min().copied().unwrap_or(0) >= 480);
+    }
+
+    /// The user's prefill is the cap and the floor of a voice that needs a larger buffer is
+    /// respected: the adaptive queue is never above the fixed one and never below the floor.
+    #[test]
+    fn the_adaptive_cushion_respects_its_cap_and_a_voice_floor() {
+        let mut sim = Sim::with_cushion(35.0, 70.0, 512, 480, 480, OutputCushion::Adaptive);
+        sim.pb.set_cushion_floor(30 * 48 * SIM_CH);
+        sim.quiet = Some((112, 38));
+        sim.run_for(60 * 48_000);
+        let low = *sim.levels_between(20.0, 60.0).iter().min().unwrap();
+        assert!(low >= 30 * 48, "a voice's 30 ms minimum holds: {low} frames");
+        assert!(sim.pb.cushion_samples() <= 1_680 * SIM_CH);
+        assert_eq!(sim.underruns(), 0);
     }
 }

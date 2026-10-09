@@ -1,0 +1,21 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-C same-rig compute rows at vc-rs's shape (100 ms chunk + 100 ms extra): the voice in ${SLOT} on ${EP} with ${PITCH} F0, a 100 ms engine and device block, 100 ms extra context, built directly so the per-component compute (content, F0, enc, flowdec) is reported. Sigil's stages run with their host copies, so its component rows are 'model step incl. host I/O', next to vc-rs's trtexec model-only numbers (another GPU and measurement: listed by scripts/vc-bench/vcrs_probe.py, never judged). A timing run: hold the GPU timing lock.",
+  "seed": 20261003,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 4800, "extra_context_ms": 100, "crossfade_ms": 20 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 100,
+    "build": "direct"
+  },
+  "runs": [
+    { "mode": "offline", "name": "vcrs-shape", "repeat": 8 }
+  ],
+  "output": { "write_timeline": false, "write_audio": false }
+}

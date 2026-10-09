@@ -152,6 +152,10 @@ pub struct VoiceChangerState {
     pub(super) metrics_vram_mb: Arc<AtomicU32>,
     /// Governor quality level (0 = full quality).
     pub(super) metrics_governor_level: Arc<AtomicU32>,
+    /// The output cushion the queue holds (us; `METRIC_UNSET` = not measured; P3B-H).
+    pub(super) metrics_cushion_us: Arc<AtomicU32>,
+    /// The device block the run uses (frames; 0 = the hot param's; P3B-H `device_block`).
+    pub(super) metrics_chunk_frames: Arc<AtomicU32>,
     /// Levers, accelerator and precision the running engine uses.
     pub(super) run_levers: Arc<Mutex<Option<EffectiveLevers>>>,
     /// EP outcome of the running model (`None` for classic / sidecar or when stopped).
@@ -281,6 +285,8 @@ impl VoiceChangerState {
             metrics_e2e_us: Arc::new(AtomicU32::new(0)),
             metrics_vram_mb: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_governor_level: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_cushion_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_chunk_frames: Arc::new(AtomicU32::new(0)),
             run_levers: Arc::new(Mutex::new(None)),
             run_ep: Arc::new(Mutex::new(None)),
             held_slots: Arc::new(Mutex::new(None)),
@@ -306,6 +312,8 @@ impl VoiceChangerState {
         self.metrics_e2e_us.store(0, Ordering::Relaxed);
         self.metrics_vram_mb.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_governor_level.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_cushion_us.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_chunk_frames.store(0, Ordering::Relaxed);
         *lock(&self.run_levers) = None;
         self.mmcss.reset();
         *lock(&self.run_ep) = None;
@@ -738,6 +746,135 @@ fn same_dir(a: &str, b: &str) -> bool {
     Path::new(a.trim()) == Path::new(b.trim())
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// GPU prewarm (P3B-H)
+// ---------------------------------------------------------------------------------------------
+
+/// `SIGIL_VC_PREWARM=1` turns the GPU prewarm on. It is OFF by default: the dev-rig measurement
+/// (7 ABBA fresh-process pairs, CUDA, debug build) found no end-to-end gain (median first load 1669 ms
+/// prewarmed against 1644 ms cold, plus the 265 ms the prewarm itself takes) and the prewarm creates
+/// the CUDA context at app start, which holds about 338 MB of VRAM for the whole session even if the
+/// voice changer is never started. The release-build rig did not complete, so P3B-I0 kept it opt-in;
+/// P7-B can measure it again.
+pub(super) const PREWARM_ENV: &str = "SIGIL_VC_PREWARM";
+/// Wait after the app starts before the prewarm runs: the UI is up and the window is not competing
+/// for the same cores.
+pub(super) const PREWARM_APP_START_DELAY: Duration = Duration::from_secs(4);
+
+/// What the process has warmed: the `(rung, device)` whose preflight and canary ran, and whether a
+/// prewarm thread is pending.
+#[derive(Default)]
+struct PrewarmState {
+    warmed: Option<(&'static str, i32)>,
+    pending: bool,
+}
+
+static PREWARM: Mutex<PrewarmState> = Mutex::new(PrewarmState { warmed: None, pending: false });
+
+/// Whether `SIGIL_VC_PREWARM` (`value`) asks for the prewarm: only an explicit `1` / `on` / `true` /
+/// `yes`.
+fn prewarm_requested(value: Option<&str>) -> bool {
+    matches!(value.map(str::trim), Some("1" | "on" | "true" | "yes"))
+}
+
+fn prewarm_enabled() -> bool {
+    prewarm_requested(std::env::var(PREWARM_ENV).ok().as_deref())
+}
+
+/// The GPU rung and device the saved settings point at, if the voice changer would load a voice
+/// there: RVC mode, a voice selected, and a GPU rung (not the CPU). `None` otherwise.
+pub(super) fn prewarm_target(st: &VoiceChangerState) -> Option<(&'static str, i32)> {
+    if *lock(&st.mode) != VoiceChangerMode::Rvc {
+        return None;
+    }
+    let rvc = lock(&st.rvc).clone();
+    if rvc.slot_dir.trim().is_empty() {
+        return None;
+    }
+    let preset = crate::services::neural_audio::RvcPresetProfile::from_str(&rvc.preset);
+    let rung = super::params::effective_rvc_ep(&rvc.execution_provider, preset);
+    (rung != "cpu").then_some((rung, rvc.gpu_device_index))
+}
+
+/// Lower the calling thread to the idle priority (the prewarm must never compete with the UI, a
+/// game or a running voice).
+#[cfg(windows)]
+fn lower_to_idle_priority() {
+    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_IDLE};
+    // SAFETY: the pseudo-handle of the calling thread.
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+    }
+}
+
+#[cfg(not(windows))]
+fn lower_to_idle_priority() {}
+
+impl VoiceChangerState {
+    /// Warm the GPU path the saved settings point at, once per process and rung, off every hot path:
+    /// the NVIDIA runtime pack's DLLs and the EP's canary (`ort_session::check_gpu_ep`: the cached
+    /// preflight and canary session), on a thread at the idle priority that waits `delay` first. The
+    /// voice changer's first load then skips them (about 0.2-0.3 s of a cold CUDA load). Nothing is
+    /// kept beyond what ONNX Runtime keeps for the process; no content encoder or model is touched.
+    ///
+    /// Called at app start and when the voice-changer panel asks for the metrics while stopped, and
+    /// only when `SIGIL_VC_PREWARM=1` ([`PREWARM_ENV`]: off by default, see there). A no-op while a
+    /// run is active, without a GPU target and for a rung already warmed.
+    pub(super) fn prewarm(&self, why: &'static str, delay: Duration) {
+        if !prewarm_enabled() {
+            return;
+        }
+        self.prewarm_with(why, delay, |rung, device| {
+            crate::services::neural_audio::ort_session::check_gpu_ep(rung, device)
+        });
+    }
+
+    /// [`prewarm`](Self::prewarm) without the switch and with the warm-up itself replaceable (tests).
+    pub(super) fn prewarm_with(&self, why: &'static str, delay: Duration, warm: impl FnOnce(&'static str, i32) -> Result<(), String> + Send + 'static) {
+        if self.is_running.load(Ordering::Acquire) {
+            return;
+        }
+        let Some((rung, device)) = prewarm_target(self) else { return };
+        {
+            let mut p = PREWARM.lock().unwrap_or_else(PoisonError::into_inner);
+            if p.pending || p.warmed == Some((rung, device)) {
+                return;
+            }
+            p.pending = true;
+        }
+        let st = self.clone();
+        let spawned = std::thread::Builder::new().name("sigil-vc-prewarm".into()).spawn(move || {
+            lower_to_idle_priority();
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
+            // The settings may have changed, or a run started, while this waited.
+            let still = !st.is_running.load(Ordering::Acquire) && prewarm_target(&st) == Some((rung, device));
+            let started = Instant::now();
+            let result = if still { warm(rung, device) } else { Ok(()) };
+            let mut p = PREWARM.lock().unwrap_or_else(PoisonError::into_inner);
+            p.pending = false;
+            match result {
+                Ok(()) if still => {
+                    p.warmed = Some((rung, device));
+                    tracing::info!(
+                        "voice changer: {rung} prewarmed on device {device} in {:.0} ms ({why})",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                Ok(()) => {}
+                // A failed warm-up is not remembered: the start's own preflight reports it.
+                Err(e) => tracing::debug!("voice changer: {rung} prewarm on device {device} failed ({why}): {e}"),
+            }
+        });
+        if let Err(e) = spawned {
+            PREWARM.lock().unwrap_or_else(PoisonError::into_inner).pending = false;
+            tracing::debug!("voice changer: could not start the prewarm thread ({e})");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,5 +1261,85 @@ mod tests {
         assert!(same_dir("C:\\voices\\a", "C:\\voices\\a\\"));
         assert!(same_dir(" C:\\voices\\a ", "C:\\voices\\a"));
         assert!(!same_dir("C:\\voices\\a", "C:\\voices\\b"));
+    }
+
+    /// The prewarm is opt-in: only an explicit `SIGIL_VC_PREWARM=1` (or on / true / yes) turns it on.
+    #[test]
+    fn the_prewarm_is_off_unless_asked_for() {
+        assert!(!prewarm_requested(None));
+        for off in ["", "0", "off", "false", "no", "maybe", "2"] {
+            assert!(!prewarm_requested(Some(off)), "{off:?}");
+        }
+        for on in ["1", " 1 ", "on", "true", "yes"] {
+            assert!(prewarm_requested(Some(on)), "{on:?}");
+        }
+    }
+
+    /// The prewarm targets the GPU rung the saved settings point at (RVC mode, a voice, a GPU
+    /// rung), warms it once per process and rung on its own thread, and never during a run.
+    #[test]
+    fn the_prewarm_targets_the_saved_gpu_rung_and_runs_once() {
+        use std::sync::mpsc;
+        let st = VoiceChangerState::new();
+        assert_eq!(prewarm_target(&st), None, "classic mode warms nothing");
+        *lock(&st.mode) = VoiceChangerMode::Rvc;
+        assert_eq!(prewarm_target(&st), None, "no voice selected");
+        {
+            let mut rvc = lock(&st.rvc);
+            rvc.slot_dir = "C:/voices/a".into();
+            rvc.execution_provider = "cuda".into();
+            rvc.gpu_device_index = 1;
+        }
+        assert_eq!(prewarm_target(&st), Some(("cuda", 1)));
+        lock(&st.rvc).execution_provider = "dml".into();
+        assert_eq!(prewarm_target(&st).map(|t| t.0), Some("dml"));
+        lock(&st.rvc).execution_provider = "cpu".into();
+        assert_eq!(prewarm_target(&st), None, "the CPU rung needs no warm-up");
+        lock(&st.rvc).execution_provider = "cuda".into();
+
+        // A run in progress is never disturbed.
+        let (tx, rx) = mpsc::channel();
+        st.is_running.store(true, Ordering::Release);
+        let t = tx.clone();
+        st.prewarm_with("test", Duration::ZERO, move |r, d| {
+            t.send((r, d)).unwrap();
+            Ok(())
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        st.is_running.store(false, Ordering::Release);
+
+        // Once stopped it warms the target on its own thread ...
+        PREWARM.lock().unwrap().warmed = None;
+        let t = tx.clone();
+        st.prewarm_with("test", Duration::ZERO, move |r, d| {
+            t.send((r, d)).unwrap();
+            Ok(())
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(("cuda", 1)));
+        let start = Instant::now();
+        while PREWARM.lock().unwrap().warmed != Some(("cuda", 1)) && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // ... and not again for the same rung (the panel asks every time it opens).
+        let t = tx.clone();
+        st.prewarm_with("panel", Duration::ZERO, move |r, d| {
+            t.send((r, d)).unwrap();
+            Ok(())
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "warmed once");
+        // A failed warm-up is not remembered: the next ask tries again.
+        PREWARM.lock().unwrap().warmed = None;
+        let (tx2, rx2) = mpsc::channel();
+        st.prewarm_with("test", Duration::ZERO, move |_, _| {
+            tx2.send(()).unwrap();
+            Err("no GPU".into())
+        });
+        rx2.recv_timeout(Duration::from_secs(5)).unwrap();
+        let start = Instant::now();
+        while PREWARM.lock().unwrap().pending && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(PREWARM.lock().unwrap().warmed, None);
+        PREWARM.lock().unwrap().warmed = None;
     }
 }

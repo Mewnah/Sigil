@@ -54,20 +54,21 @@ use super::fallback::MuteConceal;
 use super::metrics::{frames_to_ms, ProcessTimeWindow};
 use super::params::{
     clamp_output_buffer_ms, effective_pitch_extractor, effective_rvc_ep, normalize_execution_provider, pitch_fallback_reason,
-    requested_rvc_ep, resolve_rvc_paths, RvcParamsState, VoiceChangerHotParams, VoiceChangerMode,
+    requested_rvc_ep, resolve_rvc_paths, DeviceBlockMode, OutputCushion, RvcParamsState, VoiceChangerHotParams, VoiceChangerMode,
 };
 use super::resample::PolyphaseResampler;
 use super::state::{lock, MmcssFlag, VoiceChangerState, VoiceSelection, VoiceTuning};
 use super::timeline::{self, tick_flags, VcTick};
 use crate::services::audio::hub::{self, now_qpc_ns, MuteGroup};
 use crate::services::diagnostics::{ep_outcomes, EpOutcome};
-use crate::services::neural_audio::chunk_processor::{apply_formant_interleaved, rvc_output_tilt, FormantLpState};
+use crate::services::neural_audio::chunk_processor::{apply_formant_interleaved, model_divisor_chunk, model_divisor_chunk_auto, rvc_output_tilt, FormantLpState};
 use crate::services::neural_audio::denoise::{self, Denoiser, DenoiserKind};
 use crate::services::neural_audio::gpu::arena::VramProbe;
 use crate::services::neural_audio::ort_session::VcSessionOptions;
 use crate::services::neural_audio::vc::engine::governor::{self, Governor, GovernorConfig, QualityLevel, TickLoad};
 use crate::services::neural_audio::vc::engine::{EffectiveLevers, Lever};
 use crate::services::neural_audio::vc::import;
+use crate::services::neural_audio::vc::manifest::SlotFormat;
 use crate::services::neural_audio::vc::traits::VoiceControls;
 use crate::services::neural_audio::{
     clamp_chunk_frames, ClassicPhaseVocoderProcessor, OnnxVoiceBridge, RvcPresetProfile, SidecarVoiceBridge, VoiceChunkPipeline,
@@ -746,6 +747,8 @@ fn voice_request(mut s: RvcParamsState, base: &RvcBase, levers: &EffectiveLevers
         latency_budget_ms: base.latency_budget_ms,
         // A background load sets its own flag (`VoiceSet`); the first load sets the run's.
         cancel: None,
+        // P3B-S0 (no-op until P3B-D).
+        content_context_ms: s.content_context_ms,
     })
 }
 
@@ -1122,7 +1125,49 @@ fn port_limits(h: &VoiceChangerHotParams, voice_min: Option<(f64, f64)>) -> Port
         Some((p, q)) => clamp_output_buffer_ms(h.output_prefill_ms.max(p), h.output_max_queue_ms.max(q)),
         None => clamp_output_buffer_ms(h.output_prefill_ms, h.output_max_queue_ms),
     };
-    PortLimits { prefill_ms, max_queue_ms }
+    PortLimits {
+        prefill_ms,
+        max_queue_ms,
+        // The adaptive cushion's floor: what the active voice needs (a burst family's blocks).
+        min_prefill_ms: voice_min.map_or(0.0, |(p, _)| p),
+    }
+}
+
+/// The device block of a run (frames): the setting, or under `device_block = model_divisor` a divisor
+/// of a template voice's engine block (`chunk_processor::model_divisor_chunk`: 10 ms at the device
+/// rate, so the harness holds back `block - chunk` instead of a burst cushion). With an explicit
+/// `block_ms` that is a divisor of that block; with the block on automatic (the default) the engine
+/// derives its block from the device block, so the divisor is taken from the block the configured chunk
+/// derives and only when it derives the same one (`model_divisor_chunk_auto`). The mode applies to RVC
+/// runs whose voice is a template voice; every other voice keeps the setting. The second value says why
+/// the mode did not apply (for the log).
+fn run_chunk_frames(st: &VoiceChangerState, setting: u32, rate: u32) -> (usize, Option<&'static str>) {
+    let configured = clamp_chunk_frames(setting);
+    if *lock(&st.mode) != VoiceChangerMode::Rvc {
+        return (configured, None);
+    }
+    let rvc = lock(&st.rvc).clone();
+    if rvc.device_block != DeviceBlockMode::ModelDivisor {
+        return (configured, None);
+    }
+    let slot = rvc.slot_dir.trim();
+    if slot.is_empty() || !matches!(super::factory::slot_format(Path::new(slot)), Ok(SlotFormat::SigilRvc)) {
+        return (configured, Some("the voice is not a Sigil template voice"));
+    }
+    let explicit = rvc.block_ms > 0.0;
+    let chunk = if explicit {
+        model_divisor_chunk(rvc.block_ms, rate)
+    } else {
+        model_divisor_chunk_auto(configured, rate)
+    };
+    match chunk {
+        Some(chunk) => (chunk, None),
+        None if explicit => (configured, Some("the sample rate has no whole-frame 10 ms")),
+        None => (
+            configured,
+            Some("the engine block follows the device block here (set an engine block to divide), or the sample rate has no whole-frame 10 ms"),
+        ),
+    }
 }
 
 /// The active voice's output-buffer minimum (RVC mode).
@@ -1197,7 +1242,16 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
     st.aux_feed.reset(r_in, ch_in);
 
     let h_init = *lock(&st.hot_params);
-    let chunk_frames = clamp_chunk_frames(h_init.chunk_frames);
+    let (chunk_frames, device_block_note) = run_chunk_frames(&st, h_init.chunk_frames, r_in);
+    st.metrics_chunk_frames.store(chunk_frames as u32, Ordering::Relaxed);
+    if chunk_frames != clamp_chunk_frames(h_init.chunk_frames) {
+        tracing::info!(
+            "voice changer: device block {chunk_frames} frames ({:.2} ms), a divisor of the engine block (device_block = model_divisor)",
+            chunk_frames as f64 * 1000.0 / f64::from(r_in.max(1))
+        );
+    } else if let Some(why) = device_block_note {
+        tracing::info!("voice changer: device_block = model_divisor does not apply: {why}");
+    }
     let need = chunk_frames * ch_in;
     if need == 0 {
         return Err("Invalid chunk size or channel count.".into());
@@ -1281,8 +1335,9 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
                 vram_cap_mb: (ep_hint == "cuda").then_some(rvc_settings.vram_cap_mb),
                 // The voice changer's rows stay the plain `vc` / `vc.*` keys.
                 component_prefix: None,
-                // Benchmarked configuration (ort rc.13 default).
-                cpu_arena: false,
+                // Benchmarked configuration (ort rc.13 default; P3B-G decides per preset).
+                cpu_arena: crate::services::neural_audio::ort_session::vc_cpu_arena_default(preset),
+                dynamic_block_base: None,
             };
             // Same rule as the inspector and the start preflight: a method this build cannot run
             // (or a GPU-only one on the CPU) runs its stand-in, and the user is told.
@@ -1318,6 +1373,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
                 extra_context_ms: rvc_settings.extra_context_ms,
                 crossfade_ms: rvc_settings.crossfade_ms,
                 chunk_frames,
+                sola_search_ms: rvc_settings.sola_search_ms,
             };
             let key = desired_key(&rvc_settings, &base);
             let mut request = voice_request(rvc_settings.clone(), &base, &levers).map_err(&rvc_load_err)?;
@@ -1475,6 +1531,12 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         burst: capture.burst(),
         burst_ch: ch_in,
         burst_rate: r_in,
+        // The adaptive cushion applies to the main output of an RVC run; the monitor stays fixed.
+        cushion: if role == DeviceRole::Output && mode == VoiceChangerMode::Rvc {
+            rvc_settings.output_cushion
+        } else {
+            OutputCushion::Fixed
+        },
     };
     let mut out = OutputPort::start(
         port_setup(DeviceRole::Output, &output_device_name, Some(st.metrics_underruns.clone()), |m| &m.output),
@@ -1898,6 +1960,8 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         let enqueue_ns = now_qpc_ns();
         st.metrics_buffer_samples
             .store(out.queued_samples().min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        st.metrics_cushion_us
+            .store((out.cushion_ms() * 1000.0).clamp(0.0, f64::from(u32::MAX - 1)) as u32, Ordering::Relaxed);
 
         // ---- Governor. ----
         let backlog_ms = frames_to_ms(capbuf.frames_waiting() as f64, r_in);
@@ -2379,6 +2443,7 @@ mod tests {
             extra_context_ms: 32.0,
             crossfade_ms: 10.0,
             chunk_frames: BLOCK,
+            sola_search_ms: None,
         }
     }
 

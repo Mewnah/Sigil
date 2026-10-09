@@ -30,6 +30,25 @@ pub type CuDevicePtr = u64;
 pub type CuGraph = *mut c_void;
 /// `CUgraphExec`.
 pub type CuGraphExec = *mut c_void;
+/// `CUevent`.
+pub type CuEvent = *mut c_void;
+
+/// `CU_EVENT_DEFAULT` (timing on, the waiting thread spins or yields per the context's flags).
+pub const EVENT_DEFAULT: u32 = 0;
+/// `CU_EVENT_BLOCKING_SYNC`: `cuEventSynchronize` blocks the calling thread (an OS wait woken by
+/// the driver) instead of spinning, whatever the context's scheduling flags (P3B-G).
+pub const EVENT_BLOCKING_SYNC: u32 = 1;
+/// `CU_EVENT_DISABLE_TIMING`: no timestamps (cheaper record and wait).
+pub const EVENT_DISABLE_TIMING: u32 = 2;
+
+/// `CU_CTX_SCHED_*` (the low 3 bits of a context's flags): how a host thread waits for the GPU in
+/// `cuStreamSynchronize` / `cuCtxSynchronize` and in ONNX Runtime's own syncs. `AUTO` (the driver
+/// default) spins while the process has fewer active contexts than logical CPUs.
+pub const CTX_SCHED_AUTO: u32 = 0;
+pub const CTX_SCHED_SPIN: u32 = 1;
+pub const CTX_SCHED_YIELD: u32 = 2;
+pub const CTX_SCHED_BLOCKING_SYNC: u32 = 4;
+pub const CTX_SCHED_MASK: u32 = 7;
 
 /// `CU_STREAM_CAPTURE_MODE_THREAD_LOCAL`: only this thread's unsafe calls are refused during the
 /// capture; other threads (STT / TTS engines, a game overlay) are not affected, unlike the global
@@ -37,6 +56,8 @@ pub type CuGraphExec = *mut c_void;
 pub const CAPTURE_MODE_THREAD_LOCAL: u32 = 1;
 
 const CUDA_SUCCESS: CuResult = 0;
+/// `CUDA_ERROR_NOT_READY` (`cuEventQuery` / `cuStreamQuery`: the work has not completed yet).
+pub const CUDA_ERROR_NOT_READY: CuResult = 600;
 /// `CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR` / `_MINOR`.
 const ATTR_CC_MAJOR: i32 = 75;
 const ATTR_CC_MINOR: i32 = 76;
@@ -97,6 +118,17 @@ type FnGraphInstantiate = unsafe extern "system" fn(*mut CuGraphExec, CuGraph, u
 type FnGraphLaunch = unsafe extern "system" fn(CuGraphExec, CuStream) -> CuResult;
 type FnGraphExecDestroy = unsafe extern "system" fn(CuGraphExec) -> CuResult;
 type FnGraphDestroy = unsafe extern "system" fn(CuGraph) -> CuResult;
+type FnEventCreate = unsafe extern "system" fn(*mut CuEvent, u32) -> CuResult;
+type FnEventRecord = unsafe extern "system" fn(CuEvent, CuStream) -> CuResult;
+type FnEventQuery = unsafe extern "system" fn(CuEvent) -> CuResult;
+type FnEventSynchronize = unsafe extern "system" fn(CuEvent) -> CuResult;
+type FnEventElapsedTime = unsafe extern "system" fn(*mut f32, CuEvent, CuEvent) -> CuResult;
+type FnEventDestroy = unsafe extern "system" fn(CuEvent) -> CuResult;
+type FnStreamWaitEvent = unsafe extern "system" fn(CuStream, CuEvent, u32) -> CuResult;
+type FnCtxSetFlags = unsafe extern "system" fn(u32) -> CuResult;
+type FnCtxGetFlags = unsafe extern "system" fn(*mut u32) -> CuResult;
+type FnPrimaryCtxSetFlags = unsafe extern "system" fn(CuDevice, u32) -> CuResult;
+type FnPrimaryCtxGetState = unsafe extern "system" fn(CuDevice, *mut u32, *mut i32) -> CuResult;
 
 /// The loaded driver entry points (process lifetime; the library is never unloaded).
 pub struct CudaDriver {
@@ -130,6 +162,19 @@ pub struct CudaDriver {
     graph_launch: FnGraphLaunch,
     graph_exec_destroy: FnGraphExecDestroy,
     graph_destroy: FnGraphDestroy,
+    // P3B-G: events (GPU time per plan run, blocking waits, cross-stream ordering).
+    event_create: FnEventCreate,
+    event_record: FnEventRecord,
+    event_query: FnEventQuery,
+    event_synchronize: FnEventSynchronize,
+    event_elapsed_time: FnEventElapsedTime,
+    event_destroy: FnEventDestroy,
+    stream_wait_event: FnStreamWaitEvent,
+    // P3B-G: the context's scheduling flags (optional exports: `cuCtxSetFlags` is CUDA 12.1+).
+    ctx_set_flags: Option<FnCtxSetFlags>,
+    ctx_get_flags: Option<FnCtxGetFlags>,
+    primary_ctx_set_flags: Option<FnPrimaryCtxSetFlags>,
+    primary_ctx_get_state: Option<FnPrimaryCtxGetState>,
 }
 
 // SAFETY: the struct holds only function pointers into a library that stays loaded for the life of
@@ -225,6 +270,18 @@ impl CudaDriver {
                 graph_launch: sym(&lib, "cuGraphLaunch")?,
                 graph_exec_destroy: sym(&lib, "cuGraphExecDestroy")?,
                 graph_destroy: sym(&lib, "cuGraphDestroy")?,
+                event_create: sym(&lib, "cuEventCreate")?,
+                event_record: sym(&lib, "cuEventRecord")?,
+                event_query: sym(&lib, "cuEventQuery")?,
+                event_synchronize: sym(&lib, "cuEventSynchronize")?,
+                // CUDA 12.8+ headers map cuEventElapsedTime to the `_v2` export (same signature).
+                event_elapsed_time: sym(&lib, "cuEventElapsedTime_v2").or_else(|_| sym(&lib, "cuEventElapsedTime"))?,
+                event_destroy: sym(&lib, "cuEventDestroy_v2")?,
+                stream_wait_event: sym(&lib, "cuStreamWaitEvent")?,
+                ctx_set_flags: sym(&lib, "cuCtxSetFlags").ok(),
+                ctx_get_flags: sym(&lib, "cuCtxGetFlags").ok(),
+                primary_ctx_set_flags: sym(&lib, "cuDevicePrimaryCtxSetFlags_v2").ok(),
+                primary_ctx_get_state: sym(&lib, "cuDevicePrimaryCtxGetState").ok(),
                 _lib: lib,
             })
         }
@@ -433,6 +490,73 @@ impl PrimaryContext {
         Ok(p)
     }
 
+    /// A new event of this context (`EVENT_*` flags), destroyed by
+    /// [`destroy_event`](Self::destroy_event) (or owned by a [`CudaEvent`]).
+    pub fn create_event(&self, flags: u32) -> Result<CuEvent, String> {
+        let _scope = self.enter().map_err(|r| format!("cuCtxPushCurrent: {}", self.driver.describe(r)))?;
+        let mut ev: CuEvent = std::ptr::null_mut();
+        // SAFETY: valid out pointer; a context is current.
+        self.driver.check(unsafe { (self.driver.event_create)(&mut ev, flags) }, "cuEventCreate")?;
+        if ev.is_null() {
+            return Err("cuEventCreate returned no event".into());
+        }
+        Ok(ev)
+    }
+
+    /// Destroy an event from [`create_event`](Self::create_event) (errors are logged). The driver
+    /// defers the release until the event's recorded work completes.
+    pub fn destroy_event(&self, ev: CuEvent) {
+        if ev.is_null() {
+            return;
+        }
+        let Ok(_scope) = self.enter() else {
+            return;
+        };
+        // SAFETY: an event created under this context, destroyed once.
+        let r = unsafe { (self.driver.event_destroy)(ev) };
+        if r != CUDA_SUCCESS {
+            tracing::warn!(target: "sigil::gpu", "cuEventDestroy: {}", self.driver.describe(r));
+        }
+    }
+
+    /// The scheduling flags of this context (`CTX_SCHED_*`, masked), when the driver can tell
+    /// (`cuCtxGetFlags`, else the primary context's state).
+    pub fn sched_flags(&self) -> Option<u32> {
+        let _scope = self.enter().ok()?;
+        if let Some(get) = self.driver.ctx_get_flags {
+            let mut flags = 0u32;
+            // SAFETY: valid out pointer; a context is current.
+            if unsafe { get(&mut flags) } == CUDA_SUCCESS {
+                return Some(flags & CTX_SCHED_MASK);
+            }
+        }
+        let get_state = self.driver.primary_ctx_get_state?;
+        let (mut flags, mut active) = (0u32, 0i32);
+        // SAFETY: valid out pointers and device.
+        (unsafe { get_state(self.device, &mut flags, &mut active) } == CUDA_SUCCESS).then_some(flags & CTX_SCHED_MASK)
+    }
+
+    /// Set this (primary) context's scheduling flags (`CTX_SCHED_*`; process-wide: every CUDA user
+    /// of the device in this process, ONNX Runtime's own syncs included, waits that way from now on).
+    /// `cuCtxSetFlags` (CUDA 12.1+) on the current context, else `cuDevicePrimaryCtxSetFlags`.
+    pub fn set_sched_flags(&self, sched: u32) -> Result<(), String> {
+        let sched = sched & CTX_SCHED_MASK;
+        let _scope = self.enter().map_err(|r| format!("cuCtxPushCurrent: {}", self.driver.describe(r)))?;
+        if let (Some(set), Some(get)) = (self.driver.ctx_set_flags, self.driver.ctx_get_flags) {
+            let mut flags = 0u32;
+            // SAFETY: valid out pointer; a context is current.
+            self.driver.check(unsafe { get(&mut flags) }, "cuCtxGetFlags")?;
+            // SAFETY: the current context's flags with only the scheduling bits replaced.
+            return self.driver.check(unsafe { set((flags & !CTX_SCHED_MASK) | sched) }, "cuCtxSetFlags");
+        }
+        let set = self
+            .driver
+            .primary_ctx_set_flags
+            .ok_or_else(|| "this NVIDIA driver cannot change a context's scheduling flags".to_string())?;
+        // SAFETY: a valid device; only the scheduling bits are set.
+        self.driver.check(unsafe { set(self.device, sched) }, "cuDevicePrimaryCtxSetFlags")
+    }
+
     /// Free memory from [`alloc_host`](Self::alloc_host).
     pub fn free_host(&self, p: *mut c_void) {
         if p.is_null() {
@@ -585,6 +709,51 @@ impl ContextScope<'_> {
         CudaDriver::ok(unsafe { (self.ctx.driver.stream_synchronize)(stream) })
     }
 
+    /// Enqueue a record of `ev` on `stream` (it completes when everything enqueued before it on
+    /// `stream` has). Never allocates.
+    #[inline]
+    pub fn record_event(&self, ev: CuEvent, stream: CuStream) -> Result<(), i32> {
+        // SAFETY: an event and a stream of this context.
+        CudaDriver::ok(unsafe { (self.ctx.driver.event_record)(ev, stream) })
+    }
+
+    /// Whether `ev`'s recorded work has completed (an event never recorded counts as complete).
+    /// Never allocates or blocks.
+    #[inline]
+    pub fn query_event(&self, ev: CuEvent) -> Result<bool, i32> {
+        // SAFETY: an event of this context.
+        match unsafe { (self.ctx.driver.event_query)(ev) } {
+            CUDA_SUCCESS => Ok(true),
+            CUDA_ERROR_NOT_READY => Ok(false),
+            r => Err(r),
+        }
+    }
+
+    /// Wait for `ev`'s recorded work: blocks the thread for an `EVENT_BLOCKING_SYNC` event, else
+    /// waits per the context's scheduling flags. Never allocates.
+    #[inline]
+    pub fn sync_event(&self, ev: CuEvent) -> Result<(), i32> {
+        // SAFETY: an event of this context.
+        CudaDriver::ok(unsafe { (self.ctx.driver.event_synchronize)(ev) })
+    }
+
+    /// Make `stream`'s later work wait for `ev`'s recorded work (device-side; the host does not
+    /// wait). Never allocates.
+    #[inline]
+    pub fn stream_wait_event(&self, stream: CuStream, ev: CuEvent) -> Result<(), i32> {
+        // SAFETY: a stream and an event of this context; flags 0 (CU_EVENT_WAIT_DEFAULT).
+        CudaDriver::ok(unsafe { (self.ctx.driver.stream_wait_event)(stream, ev, 0) })
+    }
+
+    /// Milliseconds between two completed timing events (`EVENT_DEFAULT`). Never allocates.
+    #[inline]
+    pub fn elapsed_ms(&self, start: CuEvent, end: CuEvent) -> Result<f32, i32> {
+        let mut ms = 0f32;
+        // SAFETY: two timing events of this context, both recorded and completed.
+        CudaDriver::ok(unsafe { (self.ctx.driver.event_elapsed_time)(&mut ms, start, end) })?;
+        Ok(ms)
+    }
+
     /// Start recording `stream` into a graph ([`CAPTURE_MODE_THREAD_LOCAL`]).
     pub fn begin_capture(&self, stream: CuStream) -> Result<(), String> {
         // SAFETY: a stream of this context that is not capturing.
@@ -650,6 +819,33 @@ impl ContextScope<'_> {
             // SAFETY: an executable from `instantiate`, destroyed once.
             let _ = unsafe { (self.ctx.driver.graph_exec_destroy)(exec) };
         }
+    }
+}
+
+/// An event of a retained primary context (destroyed on drop).
+pub struct CudaEvent {
+    ev: CuEvent,
+    ctx: std::sync::Arc<PrimaryContext>,
+}
+
+// SAFETY: an event handle of a context usable from any thread (the owner serialises use).
+unsafe impl Send for CudaEvent {}
+
+impl CudaEvent {
+    pub fn new(ctx: &std::sync::Arc<PrimaryContext>, flags: u32) -> Result<CudaEvent, String> {
+        Ok(CudaEvent { ev: ctx.create_event(flags)?, ctx: std::sync::Arc::clone(ctx) })
+    }
+
+    /// The raw handle (valid while `self` lives).
+    #[inline]
+    pub fn raw(&self) -> CuEvent {
+        self.ev
+    }
+}
+
+impl Drop for CudaEvent {
+    fn drop(&mut self) {
+        self.ctx.destroy_event(self.ev);
     }
 }
 

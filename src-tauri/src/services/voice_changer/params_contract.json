@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Frozen P0 IPC contract between the Rust voice-changer plugin (P0-A) and the TS VoiceChangerService (P0-B), written by P0-S0; extended for the Sigil Voice Engine by P3-S0 ('p3_new' entries and the *_p3_* sections) and for the voice families by P5-S0 (the *_p5_* sections and 'families').",
+    "Frozen P0 IPC contract between the Rust voice-changer plugin (P0-A) and the TS VoiceChangerService (P0-B), written by P0-S0; extended for the Sigil Voice Engine by P3-S0 ('p3_new' entries and the *_p3_* sections), for the voice families by P5-S0 (the *_p5_* sections and 'families') and for the voice-engine optimization phase by P3B-S0 ('p3b_new' entries and params_p3b_new_fields).",
     "Rust reads it in its tests (include_str!) and src/core/services/voice_changer/__tests__/params.test.ts reads it, so the normalize lists on both sides match (no silent option remapping).",
     "'existing' = what Rust accepts today (set_voice_changer_params). 'p0_new' = fields P0-A adds to VoiceChangerParams / VoiceChangerMetrics and P0-B sends / shows; until P0-A lands, Rust ignores unknown params fields and TS must treat the new metrics fields as optional.",
     "'baseline' = the values every build runs; the other values of an enum run once their workstream lands (voice_changer_get_capabilities lists what this build runs; until then a value runs its 'stand_in' / 'base'). The UI offers only baseline values plus what the capabilities list.",
@@ -81,9 +81,23 @@
       "fallback": "speech",
       "p3_new": true,
       "$comment": "speech = 50-1100 Hz (legacy); singing = up to 2.5 kHz (P3-D). Per voice."
+    },
+    "output_cushion": {
+      "values": ["fixed", "adaptive"],
+      "default": "fixed",
+      "fallback": "fixed",
+      "p3b_new": true,
+      "$comment": "P3B-S0: fixed = the prefill as set (today); adaptive = sized from the measured lateness of block-completing ticks (P3B-H; an explicit user value wins). Restart."
+    },
+    "device_block": {
+      "values": ["fixed", "model_divisor"],
+      "default": "fixed",
+      "fallback": "fixed",
+      "p3b_new": true,
+      "$comment": "P3B-S0: fixed = chunk_frames as set (today); model_divisor = template voices use the WASAPI period when it divides the model block, else 10 ms at the device rate (P3B-H). Restart."
     }
   },
-  "levers": ["partial_decode", "anchored_noise", "nsf_phase0", "f0_cache", "gpu_knn", "io_binding", "cuda_graphs", "gpu_priority", "governor"],
+  "levers": ["partial_decode", "anchored_noise", "nsf_phase0", "f0_cache", "gpu_knn", "io_binding", "cuda_graphs", "gpu_priority", "governor", "content_norm", "f0_decode"],
   "numbers": {
     "pitch_semitones": { "min": -24, "max": 24, "default": 0 },
     "formant_shift": { "min": -1, "max": 1, "default": 0 },
@@ -116,7 +130,9 @@
     "noise_scale": { "min": 0, "max": 1, "default": 0.66666, "p3_new": true },
     "silence_db": { "min": -90, "max": -10, "default": -42, "p3_new": true, "$comment": "Silence-gate threshold, RMS dBFS (the legacy RMS skip 0.008 is -41.9 dBFS)." },
     "hot_slots": { "min": 1, "max": 8, "default": 1, "p3_new": true },
-    "vram_budget_mb": { "min": 0, "max": 65536, "default": 0, "p3_new": true, "$comment": "0 = automatic (resources governor)." }
+    "vram_budget_mb": { "min": 0, "max": 65536, "default": 0, "p3_new": true, "$comment": "0 = automatic (resources governor)." },
+    "sola_search_ms": { "min": 0, "max": 10, "default": -1, "auto": -1, "p3b_new": true, "$comment": "P3B-S0: SOLA search window (ms); -1 (any negative value on set) = automatic, today's overlap / 2 (P3B-H). Restart." },
+    "content_context_ms": { "min": 0, "max": 3000, "default": -1, "auto": -1, "p3b_new": true, "$comment": "P3B-S0: left context of the content encoder (ms); -1 (any negative value on set) = the preset's, the enc window (P3B-D). Restart." }
   },
   "chunk_frames": {
     "values": [160, 192, 224, 256, 320, 384, 448, 512, 576, 640, 704, 768, 896, 1024, 1280, 1536, 2048, 2304, 2560, 2816, 3072, 3584, 4096, 5120, 6144, 8192, 10240, 12288, 16384, 20480, 24576, 32768, 40960, 48000],
@@ -160,6 +176,14 @@
     "reference_voice_id": "string, voice-library id of a zero-shot voice's reference ('' = none; an invalid id is stored as ''). Per voice (slot.json); switch: a change loads the voice with that reference in the background"
   },
   "slot_json_p5_fields": ["reference_voice_id"],
+  "params_p3b_new_fields": {
+    "content_norm": "string (see enums.lever_mode); P3B-D, offered when voice_changer_get_capabilities lists it",
+    "f0_decode": "string (see enums.lever_mode); P3B-F, offered when voice_changer_get_capabilities lists it",
+    "output_cushion": "string (see enums.output_cushion)",
+    "sola_search_ms": "number (see numbers.sola_search_ms); -1 = automatic",
+    "device_block": "string (see enums.device_block)",
+    "content_context_ms": "number (see numbers.content_context_ms); -1 = the preset's"
+  },
   "metrics_existing_fields": {
     "buffer_ms": "number, output queue (deque + ring) in ms",
     "process_ms": "number, EMA of per-block processing time",
@@ -225,7 +249,7 @@
   },
   "commands": {
     "$comment": "IPC semantics added by P0-A (recorded at P0 INTEGRATE). New voice_changer:error codes: device, monitor_unavailable, sidecar_connect, onnx_load, worker_error (engine stopped, except monitor_unavailable, which only loses the monitor). onnx_infer, sidecar_length, sidecar_exchange and rvc_convert now mean that block was muted, never dry input.",
-    "set_voice_changer_params": "Returns the effective VoiceChangerParams (not null) after Rust clamps and normalizes. On set, every params_p0_new_fields and params_p3_new_fields entry is optional: absent or null keeps the stored value; get_voice_changer_params always returns them.",
+    "set_voice_changer_params": "Returns the effective VoiceChangerParams (not null) after Rust clamps and normalizes. On set, every params_p0_new_fields, params_p3_new_fields, params_p5_new_fields and params_p3b_new_fields entry is optional: absent or null keeps the stored value; get_voice_changer_params always returns them (an optional number's 'automatic' travels as its numbers.<name>.auto value).",
     "voice_changer:params": "Event, payload VoiceChangerParams. Emitted when Rust changed what was sent, e.g. entering an RVC voice (another slot, or switching into RVC mode) whose <slot>/slot.json supplies pitch_semitones, formant_shift, index_rate, protect, pitch_extractor, speaker_id, rms_mix, formant_semitones and f0_range. TS treats the event as a trigger. It ignores it while its own set is in flight, and otherwise re-reads get_voice_changer_params, dropping that read if a set was sent meanwhile. TS serializes set_voice_changer_params (one in flight; the next payload is built after the previous reply is adopted).",
     "start_voice_changer": "{ inputDevice? }: when given, replaces and persists params.input_device ('' = system default); when absent, the stored input_device is used.",
     "persistence": "Rust is authoritative: <app_data>/voice-changer/settings.json ({version: 1, params, outside_rvc?}; enabled is always saved false; the optional outside_rvc {pitch_semitones, formant_shift} object keeps the other modes' pitch and formant while RVC mode is active) and <slot>/slot.json for per-voice values. The TS service is not persisted (no patchService) and hydrates from get_voice_changer_params."

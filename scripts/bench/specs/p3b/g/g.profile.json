@@ -1,0 +1,379 @@
+{
+  "$comment": "P3B-G working profile (run-perf-gate.ps1 -Profile scripts/bench/specs/p3b/g/g.profile.json): the rows behind P3B-G's measurements, all on engine.template.json (or P3B-A's load / CPU templates, read-only). Rows are interleaved with -CompareEnv (a P3B-G switch on one exe: SIGIL_CUDA_TUNING=wait=..., SIGIL_VC_DEVICE_CHAIN=0, SIGIL_GPU_PROCESS_PRIORITY=high, SIGIL_VC_CPU_ARENA=1, ...) or -CompareVars (spec variables such as LEVERS_JSON or INTRA_THREADS_JSON). P3B-A owns scripts/bench/profiles/; the rows P3B-I0 should lift into the p3b profile are listed in this folder's README.",
+  "schema": "sigil-bench-profile/1",
+  "name": "p3b-g",
+  "description": "P3B-G execution layer: CUDA waits and syncs, cuDNN workspace / arena, DirectML queue sharing, GPU kNN footprint, process GPU priority, CPU session efficiency.",
+  "specs": [],
+  "vars": {
+    "CLIP": "",
+    "SLOT": "",
+    "CONTENT_ENCODER": "",
+    "EP": "cuda",
+    "PITCH": "rmvpe",
+    "PRESET": "low_latency",
+    "BLOCK_MS": "40",
+    "EXTRA_MS": "64",
+    "BUILD": "auto",
+    "LEVERS_JSON": "{}",
+    "QOS": "app",
+    "WORKER_PRIORITY": "auto",
+    "INTRA_THREADS_JSON": "null",
+    "CPU_ARENA_JSON": "null",
+    "DYNAMIC_BLOCK_BASE_JSON": "null",
+    "INDEX": "",
+    "INDEX_RATE_JSON": "0.0",
+    "VRAM_SAMPLE_MS_JSON": "0",
+    "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}]",
+    "CPU_PRESET": "streamer",
+    "CPU_BLOCK_MS": "120",
+    "CPU_REPEAT_JSON": "4",
+    "PACED_S_JSON": "60",
+    "PITCH_CPU": "swiftf0",
+    "CONTENT_ENCODER_CPU": "",
+    "LOAD_BLOCK_MS": "40",
+    "LOOKAHEAD_MS": "0",
+    "PRECISION": "auto"
+  },
+  "templates": [
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-levers",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-core",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-levers-core",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 60, \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-dml-core",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}, {\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-paced",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-sat",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"sat-cpu\", \"profile\": \"custom\", \"seconds\": 40, \"warmup_s\": 1, \"load\": {\"gpu\": {\"duty\": 0.7, \"period_ms\": 16.667, \"execution_provider\": \"cuda\", \"size\": 256, \"depth\": 8}, \"cpu\": {\"threads\": 10, \"duty\": 0.9, \"period_ms\": 16.667}}}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cuda-sat-hard",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"sat-hard\", \"profile\": \"custom\", \"seconds\": 40, \"clock\": \"wall\", \"warmup_s\": 1, \"load\": {\"gpu\": {\"duty\": 0.7, \"period_ms\": 16.667, \"execution_provider\": \"cuda\", \"size\": 256, \"depth\": 8}, \"cpu\": {\"threads\": 12, \"duty\": 1.0, \"period_ms\": 16.667}}}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/silent.template.json",
+      "name": "g-cuda-silent",
+      "requires": [
+        "SLOT"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"paced\", \"name\": \"silent\", \"seconds\": 30, \"clock\": \"wall\", \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-oop-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-oop-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 60, \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-vram-cuda-levers",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-vram-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 8}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-knn-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP",
+        "INDEX"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "BUILD": "direct",
+        "INDEX_RATE_JSON": "0.5",
+        "LEVERS_JSON": "{\"gpu_knn\": \"on\"}",
+        "VRAM_SAMPLE_MS_JSON": "20",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 4}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 30, \"clock\": \"wall\", \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-knn-dml",
+      "requires": [
+        "SLOT",
+        "CLIP",
+        "INDEX"
+      ],
+      "vars": {
+        "EP": "dml",
+        "BUILD": "direct",
+        "INDEX_RATE_JSON": "0.5",
+        "LEVERS_JSON": "{\"gpu_knn\": \"on\"}",
+        "VRAM_SAMPLE_MS_JSON": "20",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 4}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 30, \"clock\": \"wall\", \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/a/load.template.json",
+      "name": "g-load-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "LEVERS_JSON": "{\"io_binding\": \"on\"}"
+      }
+    },
+    {
+      "file": "specs/p3b/a/load.template.json",
+      "name": "g-load-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cpu",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cpu",
+        "PITCH": "swiftf0",
+        "PRESET": "low_latency",
+        "BLOCK_MS": "120",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 4}, {\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 60, \"clock\": \"wall\", \"warmup_s\": 1}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-cpu-offline",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cpu",
+        "PITCH": "swiftf0",
+        "PRESET": "low_latency",
+        "BLOCK_MS": "120",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 4}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/autotune.template.json",
+      "name": "g-cpu-autotune",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cpu",
+        "PITCH": "swiftf0",
+        "PRESET": "low_latency",
+        "BLOCK_MS": "120",
+        "RUNS_JSON": "[{\"mode\": \"autotune\", \"name\": \"autotune\", \"request\": {\"execution_providers\": [\"cpu\"], \"pitch_extractors\": [\"swiftf0\"], \"preset\": \"low_latency\", \"rtf_limit\": 0.6, \"max_seconds\": 1500, \"verify_fidelity\": true}}]"
+      }
+    },
+    {
+      "file": "specs/p3b/a/sve-cpu.template.json",
+      "name": "g-sve-cpu",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ]
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-knn-probe-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP",
+        "INDEX"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "PRECISION": "auto",
+        "BUILD": "direct",
+        "INDEX_RATE_JSON": "0.5",
+        "LEVERS_JSON": "{\"gpu_knn\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 2}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-knn-probe-cuda-fp16",
+      "requires": [
+        "SLOT",
+        "CLIP",
+        "INDEX"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "PRECISION": "fp16",
+        "BUILD": "direct",
+        "INDEX_RATE_JSON": "0.5",
+        "LEVERS_JSON": "{\"gpu_knn\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 2}]"
+      }
+    },
+    {
+      "file": "specs/p3b/g/engine.template.json",
+      "name": "g-knn-probe-dml",
+      "requires": [
+        "SLOT",
+        "CLIP",
+        "INDEX"
+      ],
+      "vars": {
+        "EP": "dml",
+        "PRECISION": "auto",
+        "BUILD": "direct",
+        "INDEX_RATE_JSON": "0.5",
+        "LEVERS_JSON": "{\"gpu_knn\": \"on\"}",
+        "RUNS_JSON": "[{\"mode\": \"offline\", \"name\": \"offline\", \"repeat\": 2}]"
+      }
+    }
+  ],
+  "metrics": [
+    "call_ms_p95",
+    "call_ms_p99",
+    "rtf_p95",
+    "latency_ms_p95",
+    "cpu_cores",
+    "vram_engine_mb"
+  ]
+}

@@ -152,6 +152,13 @@ impl OutputSide {
         }
     }
 
+    /// The output cushion mode of the stream (`stream.output_cushion`, P3B-S0), handed to the
+    /// voice changer's `OutputPlayback`.
+    pub(super) fn with_cushion(mut self, cushion: crate::services::voice_changer::params::OutputCushion) -> Self {
+        self.playback = self.playback.with_cushion(cushion);
+        self
+    }
+
     fn ring_used(&self) -> usize {
         self.ring_cap.saturating_sub(self.producer.slots())
     }

@@ -1,0 +1,46 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-E RMVPE A/B spec, offline only (fast interleaving of graph / precision switches): the Sigil Voice Engine on ${EP}, ${PITCH} F0, the Low-latency preset, 40 ms blocks: f0_ms_steady_* (RMVPE per call), call_ms_*, vram_engine_mb, engine_load_ms, load_pitch_plan_ms.",
+  "seed": 20260930,
+  "input": {
+    "kind": "wav",
+    "path": "${CLIP}"
+  },
+  "stream": {
+    "input_rate": 48000,
+    "output_rate": 48000,
+    "input_channels": 1,
+    "output_channels": 2,
+    "block_frames": ${BLOCK_FRAMES},
+    "extra_context_ms": ${EXTRA_MS}
+  },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    {
+      "mode": "offline",
+      "name": "offline",
+      "repeat": ${OFFLINE_REPEAT_JSON}
+    }
+  ],
+  "thresholds": {
+    "model_errors": {
+      "max": 0
+    }
+  },
+  "output": {
+    "write_timeline": false,
+    "write_audio": false
+  }
+}

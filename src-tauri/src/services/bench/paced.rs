@@ -38,9 +38,10 @@ use serde::Serialize;
 use crate::services::neural_audio::VcStreamHarness;
 use crate::services::rt_thread::{self, WorkerPriority};
 
+use super::attribution::{insert_call_metrics, insert_t1, p95_shares, JoinStats, T1Parts};
 use super::engine::{AlgorithmicLatency, Engine, ModelTimes};
 use super::load_sim::{LoadCpu, LoadHandle, LoadReport};
-use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, thread_cpu_time, Metrics, Summary, VramPeak};
+use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, process_cycles, thread_cpu_time, thread_cycles, Metrics, Summary, VramPeak};
 use super::report::{RunOutcome, TickRecord};
 use super::spec::{ClockKind, PacedRun, StreamSpec};
 use super::vc_rt::{InputSide, OutputSide, Pushed, VcTick};
@@ -191,6 +192,16 @@ struct Sim {
     underrun_frames: u64,
     trimmed_frames: u64,
     audio: Option<Vec<f32>>,
+    // ---- P3B-A: the T1 decomposition of every latency sample ----
+    /// Start / end (s, run clock) of every tick, the emitted frames after it and the model calls
+    /// made by then (both cumulative).
+    tick_start: Vec<f64>,
+    tick_end: Vec<f64>,
+    emit_end: Vec<u64>,
+    calls_end: Vec<u64>,
+    /// `(playback time, emitted frame)` of every latency sample (decomposed after the run, when
+    /// every tick is on record).
+    t1_samples: Vec<(f64, f64)>,
 }
 
 impl Sim {
@@ -246,8 +257,9 @@ impl Sim {
                 self.played_any = true;
                 if t >= self.warmup_s {
                     let first = self.out_map.get(self.out_ring_out as f64);
-                    if let Some(cap) = first.and_then(|e| self.capture_of_emitted(e)) {
+                    if let Some((e, cap)) = first.and_then(|e| self.capture_of_emitted(e).map(|c| (e, c))) {
                         self.latencies.push((t, (t - self.capture_time(cap)) * 1000.0));
+                        self.t1_samples.push((t, e));
                     }
                 }
                 self.out_ring_out += played.frames as u64;
@@ -257,6 +269,73 @@ impl Sim {
             }
             self.out_next += 1;
         }
+    }
+
+    /// Where a fixed-block engine's blocks start in the harness's input (device frames): the
+    /// offset `o` with engine block `j` = harness input `[j * b - o, (j + 1) * b - o)`, from the
+    /// ticks that made each model call (call `j` runs at the first tick whose input completes block
+    /// `j`, its lookahead included). `None` when the calls do not fit one offset (a harness that
+    /// skipped a call) or there are none.
+    fn engine_block_offset(&self, b: f64) -> Option<f64> {
+        let blk = self.block as f64;
+        let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+        let mut prev = 0u64;
+        for (k, &c) in self.calls_end.iter().enumerate() {
+            for j in prev..c {
+                let end = (j + 1) as f64 * b;
+                lo = lo.max(end - (k + 1) as f64 * blk);
+                hi = hi.min(end - k as f64 * blk);
+            }
+            prev = c;
+        }
+        (prev > 0 && lo <= hi).then_some(0.5 * (lo + hi))
+    }
+
+    /// The T1 decomposition of the sample played at `t` that carries emitted frame `e` (see
+    /// [`T1Parts`]; the parts sum to its latency exactly). `engine` is a fixed-block engine's block
+    /// (device frames) and its offset ([`engine_block_offset`](Self::engine_block_offset)): the
+    /// model call that converted the sample is the call of its engine block (otherwise the model
+    /// runs on every tick). `None` when part of the path is not on record.
+    fn t1_parts(&self, t: f64, e: f64, engine: Option<(f64, f64)>) -> Option<T1Parts> {
+        let s = (e - self.delay_out) * self.r_in / self.r_out;
+        if s < 0.0 {
+            return None;
+        }
+        let kb = (s / self.block as f64).floor() as usize;
+        let cap = self.capture_of_input(s)?;
+        // Capture callback k delivers capture frames [k * cb, (k + 1) * cb) at (k + 1) periods.
+        let delivered = |frame: f64| ((frame.max(0.0).floor() / self.cap_cb as f64).floor() + 1.0) * self.cap_period;
+        let tc = self.capture_time(cap);
+        let td = delivered(cap);
+        let last_ring = *self.block_ring_start.get(kb)? + self.block as u64 - 1;
+        let td_last = delivered(self.cap_map.get(last_ring as f64)?);
+        let (ts, te) = (*self.tick_start.get(kb)?, *self.tick_end.get(kb)?);
+        let k_emit = self.emit_end.partition_point(|&x| (x as f64) <= e.floor());
+        let te_emit = *self.tick_end.get(k_emit)?;
+        let k_model = match engine {
+            Some((b, o)) => {
+                let j = ((s + o) / b).floor().max(0.0) as u64;
+                self.calls_end.partition_point(|&c| c <= j).max(kb)
+            }
+            None => kb,
+        };
+        let ms = 1000.0;
+        let (engine_wait, model, after) = if k_model > kb {
+            let (ts_m, te_m) = (*self.tick_start.get(k_model)?, *self.tick_end.get(k_model)?);
+            ((ts_m - te) * ms, (te_m - ts_m) * ms, te_m)
+        } else {
+            (0.0, 0.0, te)
+        };
+        Some(T1Parts {
+            capture: (td - tc) * ms,
+            block_wait: (td_last - td) * ms,
+            queue: (ts - td_last) * ms,
+            compute: (te - ts) * ms,
+            engine_wait,
+            model,
+            hold: (te_emit - after) * ms,
+            output: (t - te_emit) * ms,
+        })
     }
 
     /// Account one worker push.
@@ -351,6 +430,8 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     }
     let priority = WorkerPriority::from_str_lossy(&s.worker_priority);
     rt_thread::set_worker_priority(priority, p.engine.info.gpu());
+    // P3B-A: the worker's priority and EcoQoS state as the run measures it.
+    let worker_state = super::gpu_state::thread_state();
     let clock_kind = p.run.clock;
     let virtual_clock = clock_kind != ClockKind::Wall;
     p.engine.set_simulated(virtual_clock);
@@ -375,7 +456,7 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     let out_cb = s.playback_callback_frames();
     let mut input = InputSide::new(r_in, ch_in, block, s.latency_budget_ms);
     let (prefill_ms, max_queue_ms) = p.engine.info.output_buffer_ms(s);
-    let mut output = OutputSide::new(r_out, ch_out, prefill_ms, max_queue_ms, r_in, ch_in, cap_cb * ch_in);
+    let mut output = OutputSide::new(r_out, ch_out, prefill_ms, max_queue_ms, r_in, ch_in, cap_cb * ch_in).with_cushion(s.output_cushion());
     let budget_frames = input.budget_frames();
 
     let mut sim = Sim {
@@ -409,7 +490,13 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         audio: p
             .record_audio
             .then(|| Vec::with_capacity((duration * f64::from(r_out)) as usize * ch_out + 4096)),
+        tick_start: Vec::with_capacity((duration / (block_ms / 1000.0)) as usize + 16),
+        tick_end: Vec::with_capacity((duration / (block_ms / 1000.0)) as usize + 16),
+        emit_end: Vec::with_capacity((duration / (block_ms / 1000.0)) as usize + 16),
+        calls_end: Vec::with_capacity((duration / (block_ms / 1000.0)) as usize + 16),
+        t1_samples: Vec::with_capacity((duration * f64::from(r_out) / out_cb.max(1) as f64) as usize + 16),
     };
+    let mut joins = JoinStats::with_capacity(sim.tick_end.capacity());
 
     let mut stalls = p.run.stalls.clone();
     stalls.sort_by(|a, b| a.at_s.total_cmp(&b.at_s));
@@ -428,6 +515,7 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     let mut progress_at = Instant::now();
     let mut cancelled = false;
 
+    let cycles0 = (process_cycles(), thread_cycles());
     let cpu0 = process_cpu_time();
     let load0 = load_cpu.ms();
     let wcpu0 = thread_cpu_time();
@@ -532,9 +620,16 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         }
 
         let t_end = clock.now();
+        if calls > 0 {
+            joins.record(tick.harness.last_join());
+        }
         sim.run_output(t_end, &mut output);
         let pushed = output.push(&out.audio);
         sim.note_push(pushed, out.owed_frames);
+        sim.tick_start.push(t_start);
+        sim.tick_end.push(t_end);
+        sim.emit_end.push(sim.emitted_total);
+        sim.calls_end.push(sim.calls_end.last().copied().unwrap_or(0) + u64::from(calls));
         timeline.push(TickRecord {
             tick: timeline.len() as u64,
             t_ms: t_start * 1000.0,
@@ -572,6 +667,7 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         (Some(a), Some(b)) => Some(b.saturating_sub(a)),
         _ => None,
     };
+    let cycles1 = (process_cycles(), thread_cycles());
     if cancelled {
         return Err("cancelled".into());
     }
@@ -606,13 +702,30 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         "over_budget_ratio".into(),
         basis.iter().filter(|&&c| c > budget_ms).count() as f64 / basis.len().max(1) as f64,
     );
-    let (warmup_ms, model_errors, skipped) = times
+    let (warmup_ms, model_errors, skipped, attribution, p95) = times
         .lock()
         .map(|t| {
             insert_components(&mut m, &t.components);
-            (t.warmup_ms, t.errors, t.skipped)
+            let a = insert_call_metrics(&mut m, &timeline, &t.calls, p.engine.info.gpu());
+            (t.warmup_ms, t.errors, t.skipped, a, p95_shares(&t.calls))
         })
-        .unwrap_or((0.0, 0, 0));
+        .unwrap_or_default();
+    let join_details = joins.insert(&mut m, p.engine.info.output_rate);
+    let latency_p50 = m.get("latency_ms_p50").copied();
+    // The T1 decomposition of every latency sample, with a fixed-block engine's calls mapped to
+    // its blocks.
+    let engine_block = p.engine.fixed_block().map(|b| b as f64 * f64::from(r_in) / 16_000.0);
+    let engine_map = engine_block.map(|b| (b, sim.engine_block_offset(b)));
+    let t1_engine = engine_map.and_then(|(b, o)| o.map(|o| (b, o)));
+    let t1: Vec<T1Parts> = sim.t1_samples.iter().filter_map(|&(t, e)| sim.t1_parts(t, e, t1_engine)).collect();
+    let mut t1_details = insert_t1(&mut m, &t1, latency_p50);
+    if let (Some(obj), Some((b, o))) = (t1_details.as_object_mut(), engine_map) {
+        obj.insert("engine_block_frames".into(), b.into());
+        obj.insert("engine_block_offset_frames".into(), o.into());
+        if o.is_none() {
+            obj.insert("note".into(), "the model calls do not fit one block offset: engine_wait / model are not split from hold".into());
+        }
+    }
     m.insert("model_errors".into(), model_errors as f64);
     m.insert("algorithmic_latency_ms".into(), p.probe.ms);
     m.insert("engine_load_ms".into(), p.engine.info.load_ms);
@@ -645,6 +758,11 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     if clock_kind != ClockKind::Simulated {
         if let Some(ms) = process_cpu_ms {
             m.insert("cpu_cores".into(), cores(Duration::from_secs_f64(ms / 1000.0), Duration::from_secs_f64(clock_s)));
+            // P3B-A: core-seconds per audio-second of the blocks processed.
+            let audio_s = timeline.len() as f64 * block_ms / 1000.0;
+            if audio_s > 0.0 {
+                m.insert("core_s_per_audio_s".into(), ms / 1000.0 / audio_s);
+            }
         }
         if let Some(w) = worker_cpu {
             m.insert("worker_cpu_cores".into(), cores(w, Duration::from_secs_f64(clock_s)));
@@ -671,6 +789,12 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
         "vram_peak_process_mb": vram.peak_mb,
         "worker_priority": priority.as_str(),
         "silent_ticks": skipped,
+        "worker_thread": worker_state,
+        "cycles": super::metrics::cycle_details(cycles0, cycles1, attribution.calls),
+        "attribution": attribution,
+        "p95_shares": p95,
+        "joins": join_details,
+        "t1": t1_details,
     });
     Ok(RunOutcome {
         metrics: m,
@@ -823,6 +947,34 @@ mod tests {
         assert!(audio.len() >= 6 * 48_000 - 480, "{}", audio.len());
     }
 
+    /// P3B-A: the T1 decomposition of a fixed-block engine (40 ms engine blocks on 512-frame device
+    /// blocks): the model calls map to the engine blocks with one offset, so the wait for the rest
+    /// of the engine block and the model call are split from the hold-back; every sample's parts add
+    /// up to its latency, and the median decomposition explains the p50.
+    #[test]
+    fn fixed_block_latency_splits_into_engine_wait_model_and_hold() {
+        let s = spec(serde_json::json!({
+            "name": "t",
+            "engine": {"kind": "stub", "compute_ms": 3.0, "fixed_block_ms": 40},
+            "stream": {"output_channels": 1, "output_prefill_ms": CUSHION_MS, "output_max_queue_ms": 200},
+            "runs": [{"mode": "paced", "name": "p", "seconds": 8, "clock": "simulated", "warmup_s": 1}]
+        }));
+        let input = render_input(&s.input, 48_000, 1, 1).unwrap();
+        let out = paced(&s, &input);
+        let m = &out.metrics;
+        let t1 = &out.details["t1"];
+        assert_eq!(t1["engine_block_frames"], 1920.0, "{t1}");
+        assert!(t1["engine_block_offset_frames"].is_number(), "the calls fit one block offset: {t1}");
+        // 40 ms blocks over 10.67 ms device blocks: most samples wait for the rest of their engine
+        // block, and the call that converts them is a 3 ms model tick.
+        assert!(m["t1_engine_wait_ms_p50"] > 0.0 && m["t1_engine_wait_ms_max"] <= 45.0, "{m:?}");
+        assert!(m["t1_model_ms_max"] <= 3.5, "the model tick is the stub's 3 ms: {m:?}");
+        assert!(m["t1_residual_p50_ms"].abs() <= 1.0, "{m:?}");
+        // The parts' means add up to the mean latency exactly.
+        assert!((t1["sum_of_means_ms"].as_f64().unwrap() - t1["latency_mean_ms"].as_f64().unwrap()).abs() < 1e-6, "{t1}");
+        assert!(m["t1_hold_ms_min"] >= -1e-9, "no sample is emitted before its model call: {m:?}");
+    }
+
     /// The traced latency is the real one: with an identity engine, the played audio is the
     /// input delayed by exactly the traced latency (cross-correlation agrees within a sample).
     #[test]
@@ -958,9 +1110,10 @@ mod tests {
         let wall = t0.elapsed().as_secs_f64();
         assert!((1.5..10.0).contains(&wall), "{wall}");
         let m = &out.metrics;
-        // Real time on whatever the PC is doing (tests run in parallel): check the loop's
-        // structure, not its timing.
-        assert!(m["blocks"] > 40.0, "{}", m["blocks"]);
+        // Real time on whatever the PC is doing (tests run in parallel, beside concurrent
+        // builds): check the loop's structure, not its timing (1.5 s is 140 blocks on an idle PC;
+        // a starved worker converts fewer and the budget drops the rest).
+        assert!(m["blocks"] >= 10.0, "{}", m["blocks"]);
         assert_eq!(m["backlog_over_budget_ms"], 0.0);
         assert!(m.contains_key("latency_ms_p99") && m.contains_key("cpu_cores"), "{m:?}");
     }

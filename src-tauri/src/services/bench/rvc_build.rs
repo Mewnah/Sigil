@@ -16,10 +16,25 @@
 //!
 //! Every session is recorded under the `bench.` component prefix, so a benchmark never overwrites
 //! the voice changer's EP diagnostics rows.
+//!
+//! # P3B-B
+//! - Template voices are planned with the stream harness's real geometry
+//!   (`SigilRvcRequest::stream`: the returned span, the harness's extra context and crossfade, and
+//!   `lookahead_ms`), as the voice changer's factory plans them.
+//! - A direct template build carries a [`ProbeChannel`] in its plan: the fidelity scorer v2
+//!   requests the engine probe's hooks (fed-F0 tap, oracle overrides) through it before a stream
+//!   pass, and reads what the probe recorded through `VoiceConversionModel::telemetry`. A build
+//!   whose plan has no attached channel (a factory build) has no probe the benchmark can reach.
+//! - The ceiling's instances pin the content-encoder variant `rvc.content_variant` (`fp32` /
+//!   `fp16` / `int8`; `auto` = the stream's resolution) for P3B-D's precision checks.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use crate::services::neural_audio::vc::engine::content::EmbedderKind;
+use crate::services::neural_audio::vc::engine::probe::{ProbeCounts, ProbeSetup};
+use crate::services::neural_audio::vc::engine::StreamGeometry;
 
 use crate::services::diagnostics::{self, EpOutcome};
 use crate::services::neural_audio::denoise::{self, DenoiserKind};
@@ -81,6 +96,64 @@ pub(crate) struct RvcPlan {
     pub noise_seed: u64,
     /// The stream's latency budget (ms; a family's default stall timeout, P5-S0).
     pub latency_budget_ms: f64,
+    // ---- P3B-B ----
+    /// The stream harness's crossfade (ms) and extra context (16 kHz samples): the geometry the
+    /// engine plans with.
+    pub crossfade_ms: f64,
+    pub harness_extra_16k: usize,
+    /// Templates folder; `None` = the bundled one (tests point it at their fixture).
+    pub templates_dir: Option<PathBuf>,
+    /// The benchmark's line to a direct template build's engine probe.
+    pub probe: ProbeChannel,
+}
+
+/// A benchmark's line to the engine probe of a directly built template voice (P3B-B): a setup
+/// requested here is applied by the model before its next call, warm-up, stream configuration or
+/// stream reset, so it is in place when a harness starts streaming.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ProbeChannel(Arc<Mutex<ProbeChannelState>>);
+
+#[derive(Debug, Default)]
+struct ProbeChannelState {
+    pending: Option<ProbeSetup>,
+    /// A model applies this channel's requests (a direct template build).
+    attached: bool,
+    /// How often the overrides applied since the last setup (copied after every call).
+    applied: ProbeCounts,
+}
+
+impl ProbeChannel {
+    /// Whether a model listens on this channel.
+    pub fn attached(&self) -> bool {
+        lock(&self.0).attached
+    }
+
+    /// Ask for `setup` from the model's next call on (replaces an earlier request not yet applied).
+    pub fn request(&self, setup: ProbeSetup) {
+        lock(&self.0).pending = Some(setup);
+    }
+
+    fn attach(&self) {
+        lock(&self.0).attached = true;
+    }
+
+    /// How often the probe's overrides applied since the last setup was applied.
+    pub fn applied(&self) -> ProbeCounts {
+        lock(&self.0).applied
+    }
+
+    fn take(&self) -> Option<ProbeSetup> {
+        let mut st = lock(&self.0);
+        let setup = st.pending.take();
+        if setup.is_some() {
+            st.applied = ProbeCounts::default();
+        }
+        setup
+    }
+
+    fn store_applied(&self, counts: ProbeCounts) {
+        lock(&self.0).applied = counts;
+    }
 }
 
 /// Resolve `spec` for a stream (see the module docs).
@@ -114,8 +187,11 @@ pub(crate) fn plan(spec: &RvcSpec, stream: &StreamSpec, priority: WorkerPriority
         thread_priority: Some(priority),
         vram_cap_mb: if ep == "cuda" { spec.vram_cap_mb } else { None },
         component_prefix: Some(BENCH_COMPONENT_PREFIX),
-        // Same CPU allocator as the voice changer it measures.
-        cpu_arena: false,
+        // Same CPU allocator as the voice changer it measures, unless the spec pins it (P3B-S0).
+        cpu_arena: spec
+            .cpu_arena
+            .unwrap_or_else(|| crate::services::neural_audio::ort_session::vc_cpu_arena_default(preset)),
+        dynamic_block_base: spec.dynamic_block_base,
     };
     // The engine factory's seed rule (the voice's source hash, else its folder name), so a direct
     // build and the offline ceiling draw the same time-anchored noise as the factory's engine.
@@ -145,6 +221,10 @@ pub(crate) fn plan(spec: &RvcSpec, stream: &StreamSpec, priority: WorkerPriority
         app_data: diagnostics::app_data_dir(),
         noise_seed,
         latency_budget_ms: stream.latency_budget_ms,
+        crossfade_ms: stream.crossfade_ms,
+        harness_extra_16k: stream.extra_samples_16k(),
+        templates_dir: None,
+        probe: ProbeChannel::default(),
     })
 }
 
@@ -301,6 +381,8 @@ fn factory_request(p: &RvcPlan) -> EngineRequest {
         reference_clip: explicit(&p.spec.reference_clip),
         latency_budget_ms: p.latency_budget_ms,
         cancel: None,
+        // P3B-S0: the spec's content context (P3B-B / P3B-D plumb it).
+        content_context_ms: None,
     }
 }
 
@@ -376,10 +458,12 @@ fn build_direct(p: &RvcPlan) -> Result<BuiltVoice, String> {
             add_recorded_outcomes(&mut outcomes, since);
             finish_info(&mut info, p, outcomes, &["vc.flowdec", "vc.enc"]);
             let stats = Arc::new(Mutex::new(None));
+            p.probe.attach();
             Ok(BuiltVoice {
                 model: Box::new(SveProbe {
                     inner: engine,
                     last: stats.clone(),
+                    probe: p.probe.clone(),
                 }),
                 info,
                 plan: p.clone(),
@@ -456,6 +540,9 @@ fn pitch_for(p: &RvcPlan) -> Result<(Box<dyn PitchExtractor>, Vec<String>), Stri
             rmvpe_path: rmvpe.as_deref(),
             app_data: ad,
             small_models_on_cpu: true,
+            precision: p.precision,
+            expected_call_frames: None,
+            max_context_16k: None,
         },
         GpuLevers::from_effective(&p.levers),
     )?;
@@ -480,12 +567,40 @@ fn build_legacy(p: &RvcPlan) -> Result<RvcModel, String> {
 /// shapes; returns the engine and load notes.
 fn build_sve(p: &RvcPlan, preset_override: Option<EnginePreset>) -> Result<(SigilRvcEngine, Vec<String>), String> {
     let manifest = load_slot_manifest(&p.slot)?;
-    let templates_dir = crate::services::neural_audio::vc::import::templates_dir()
+    let templates_dir = p
+        .templates_dir
+        .clone()
+        .or_else(crate::services::neural_audio::vc::import::templates_dir)
         .ok_or("the bundled vc-templates folder was not found")?;
-    let (pitch, notes) = pitch_for(p)?;
+    let (pitch, mut notes) = pitch_for(p)?;
     let preset = preset_override.unwrap_or_else(|| {
         engine_preset(p.preset, p.block_ms, p.chunk_frames, p.device_rate, p.extra_context_ms, p.precision)
     });
+    // The stream's instance plans with the harness's geometry and lookahead, as the voice changer's
+    // factory asks for it; the ceiling's instances (a preset override) plan their own shapes.
+    let (stream, lookahead_ms) = match preset_override {
+        None => (Some(stream_geometry(p, &preset, manifest.sample_rate)?), p.spec.lookahead_ms.max(0.0)),
+        Some(_) => (None, 0.0),
+    };
+    // A pinned content-encoder variant (the ceiling's; P3B-D's precision checks).
+    let content_encoder = match (preset_override, pinned_content_variant(&p.spec.content_variant)?) {
+        (Some(_), Some(variant)) => {
+            let kind = EmbedderKind::from_manifest(manifest.embedder.as_deref(), manifest.emb_channels)?;
+            if matches!(kind, EmbedderKind::ContentVec768 | EmbedderKind::ContentVec256) {
+                let file = crate::services::neural_audio::vc::assets::model_file(kind.catalog_id(), Some(variant))
+                    .ok_or_else(|| format!("content_variant {variant}: {} has no installed model.{variant}.onnx", kind.catalog_id()))?;
+                notes.push(format!("ceiling: content encoder pinned to {}", file.display()));
+                Some(file)
+            } else {
+                notes.push(format!(
+                    "content_variant {variant}: the {} encoder cannot be pinned; the ceiling uses the store's order",
+                    kind.as_str()
+                ));
+                explicit(&p.spec.hubert)
+            }
+        }
+        _ => explicit(&p.spec.hubert),
+    };
     let mut engine = SigilRvcEngine::load(SigilRvcRequest {
         slot_dir: p.slot.clone(),
         manifest,
@@ -494,17 +609,44 @@ fn build_sve(p: &RvcPlan, preset_override: Option<EnginePreset>) -> Result<(Sigi
         session: p.session.clone(),
         levers: p.levers.clone(),
         pitch,
-        content_encoder: explicit(&p.spec.hubert),
+        content_encoder,
         index: explicit(&p.spec.index),
         preset,
         f0_range: p.f0_range,
         noise_seed: p.noise_seed,
+        // P3B-B: the geometry the factory plans with (P3B-H makes the load use it).
+        lookahead_ms,
+        stream,
+        content_context_16k: None,
     })?;
     engine.set_silence_skip(p.spec.silence_skip);
     if preset_override.is_none() && p.spec.lookahead_ms > 0.0 {
         engine.set_lookahead_ms(p.spec.lookahead_ms)?;
     }
     Ok((engine, notes))
+}
+
+/// The harness geometry of a stream build: the engine block (`block_ms` rounded up to 20 ms) plus
+/// the harness's SOLA tail at the stream's crossfade, its extra context and crossfade.
+fn stream_geometry(p: &RvcPlan, preset: &EnginePreset, sample_rate: u32) -> Result<StreamGeometry, String> {
+    let block_16k = crate::services::neural_audio::vc::engine::plan::block_frames(preset.block_ms)? * 160;
+    let tail = crate::services::neural_audio::vc::stream::sola_tail_in_16k(p.crossfade_ms, sample_rate);
+    Ok(StreamGeometry {
+        want_16k: block_16k + tail,
+        harness_extra_16k: p.harness_extra_16k,
+        crossfade_ms: p.crossfade_ms,
+    })
+}
+
+/// `rvc.content_variant`: `None` for `auto`, else `fp32` / `fp16` / `int8`.
+pub(crate) fn pinned_content_variant(v: &str) -> Result<Option<&'static str>, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => Ok(None),
+        "fp32" => Ok(Some("fp32")),
+        "fp16" => Ok(Some("fp16")),
+        "int8" => Ok(Some("int8")),
+        other => Err(format!("rvc.content_variant '{other}' is not auto, fp32, fp16 or int8")),
+    }
 }
 
 /// The offline ceiling's instance of a template voice: `cfg`'s block and lookahead with
@@ -565,15 +707,29 @@ pub(crate) fn ceiling_levers(run: &EffectiveLevers, exact: bool) -> EffectiveLev
     l
 }
 
-/// A template voice that reports each tick's compute breakdown.
+/// A template voice that reports each tick's compute breakdown and applies the probe setups the
+/// benchmark requests on its [`ProbeChannel`].
 struct SveProbe {
     inner: SigilRvcEngine,
     last: Arc<Mutex<Option<TickStats>>>,
+    probe: ProbeChannel,
+}
+
+impl SveProbe {
+    fn apply_probe(&mut self) {
+        if let Some(setup) = self.probe.take() {
+            self.inner.probe_mut().configure(setup);
+        }
+    }
 }
 
 impl VoiceConversionModel for SveProbe {
     fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+        self.apply_probe();
         let r = self.inner.convert(ctx);
+        if self.inner.probe().active() {
+            self.probe.store_applied(self.inner.probe().applied());
+        }
         *lock(&self.last) = Some(self.inner.tick_stats());
         r
     }
@@ -591,6 +747,7 @@ impl VoiceConversionModel for SveProbe {
     }
 
     fn warmup_at(&mut self, ctx: &ConversionCtx<'_>) -> Result<(), String> {
+        self.apply_probe();
         self.inner.warmup_at(ctx)
     }
 
@@ -603,6 +760,7 @@ impl VoiceConversionModel for SveProbe {
     }
 
     fn reset_stream(&mut self) {
+        self.apply_probe();
         self.inner.reset_stream();
     }
 
@@ -611,7 +769,16 @@ impl VoiceConversionModel for SveProbe {
     }
 
     fn configure_stream(&mut self, block: usize, want: usize, extra: usize) -> Result<usize, String> {
+        self.apply_probe();
         self.inner.configure_stream(block, want, extra)
+    }
+
+    fn time_anchored(&self) -> bool {
+        self.inner.time_anchored()
+    }
+
+    fn telemetry(&self) -> Option<&dyn crate::services::neural_audio::vc::traits::ModelTelemetry> {
+        self.inner.telemetry()
     }
 }
 
@@ -714,6 +881,47 @@ mod tests {
         );
         assert_eq!(outcomes.keys().collect::<Vec<_>>(), ["vc.enc", "vc.pitch"]);
         assert_eq!(outcomes["vc.enc"].active, "cuda", "the builder's own row wins");
+    }
+
+    /// `rvc.content_variant` values, and the probe channel's request / apply / counts cycle.
+    #[test]
+    fn content_variants_and_the_probe_channel() {
+        assert_eq!(pinned_content_variant("auto").unwrap(), None);
+        assert_eq!(pinned_content_variant("").unwrap(), None);
+        assert_eq!(pinned_content_variant(" FP16 ").unwrap(), Some("fp16"));
+        assert_eq!(pinned_content_variant("int8").unwrap(), Some("int8"));
+        assert!(pinned_content_variant("bf16").is_err());
+        let ch = ProbeChannel::default();
+        assert!(!ch.attached());
+        ch.attach();
+        let clone = ch.clone();
+        assert!(clone.attached(), "a plan clone shares the channel");
+        clone.request(ProbeSetup {
+            fed_f0: true,
+            ..ProbeSetup::default()
+        });
+        ch.store_applied(ProbeCounts {
+            f0_calls: 3,
+            ..ProbeCounts::default()
+        });
+        let taken = ch.take().expect("the request");
+        assert!(taken.fed_f0);
+        assert!(ch.take().is_none(), "applied once");
+        assert_eq!(ch.applied(), ProbeCounts::default(), "a new setup resets the counts");
+    }
+
+    /// The stream build's geometry is the harness's: block + SOLA tail at the stream's crossfade.
+    #[test]
+    fn stream_geometry_is_the_harness_shape() {
+        let (root, slot, _) = crate::services::neural_audio::vc::test_models::write_slot("bench-geometry");
+        let stream: StreamSpec = serde_json::from_value(serde_json::json!({"crossfade_ms": 20, "extra_context_ms": 64})).unwrap();
+        let p = plan(&rvc(serde_json::json!({"slot_dir": slot, "block_ms": 40})), &stream, WorkerPriority::Auto).unwrap();
+        let preset = engine_preset(p.preset, p.block_ms, p.chunk_frames, p.device_rate, p.extra_context_ms, p.precision);
+        let g = stream_geometry(&p, &preset, 40_000).unwrap();
+        assert_eq!(g.want_16k, 640 + 481);
+        assert_eq!(g.harness_extra_16k, 1_024);
+        assert_eq!(g.crossfade_ms, 20.0);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// The exact ceiling drops only partial decode; the F0 cache, the rendition-defining levers

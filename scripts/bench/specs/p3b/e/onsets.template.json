@@ -1,0 +1,24 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-E measure-first (1): one offline pass of the clip through the Sigil Voice Engine on ${EP} with ${PITCH} F0 (Low-latency preset, 40 ms blocks, 64 ms extra context): the call attribution counts the F0 calls that carried more than 31 audio frames (onset_calls: the whole-window calls after a silence skip, which a 32-frame RMVPE plan cannot hold in one call) next to the steady calls (call_ms_onset_* / call_ms_steady_*, f0_ms_onset_* / f0_ms_steady_*). Materialize with run_onsets.ps1.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": {},
+    "build": "direct"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

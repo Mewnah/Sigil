@@ -13,17 +13,20 @@
  */
 import { normalizeChunkFramesValue } from "./chunkFrames";
 import {
+    autoOrClamped,
     clampFinite,
     clampLatencyBudgetMs,
     effectiveRvcEp,
     normalizeAuxMicGate,
     normalizeDenoiser,
+    normalizeDeviceBlock,
     normalizeExecutionProvider,
     normalizeF0Range,
     normalizeLatencyPreset,
     normalizeLeverMode,
     normalizeMode,
     normalizeOnnxExecutionProvider,
+    normalizeOutputCushion,
     normalizePitchExtractor,
     normalizePrecision,
     normalizeRvcProfile,
@@ -111,6 +114,17 @@ export interface VoiceChangerParamsRust {
     // ---- P5 (params_contract.json `params_p5_new_fields`; optional on `set`, absent = keep) ----
     /** Voice-library id of a zero-shot voice's reference (`""` = none). Per voice; switch. */
     reference_voice_id?: string | null;
+    // ---- P3B (params_contract.json `params_p3b_new_fields`; optional on `set`, absent = keep) ----
+    content_norm?: string | null;
+    f0_decode?: string | null;
+    /** `fixed` / `adaptive`. */
+    output_cushion?: string | null;
+    /** ms; -1 (`AUTO_MS`) = automatic. */
+    sola_search_ms?: number | null;
+    /** `fixed` / `model_divisor`. */
+    device_block?: string | null;
+    /** ms; -1 (`AUTO_MS`) = the preset's. */
+    content_context_ms?: number | null;
 }
 
 /** State key of every engine lever (Rust snake_case param -> TS camelCase field). */
@@ -124,6 +138,8 @@ export const LEVER_STATE_KEYS = {
     cuda_graphs: "cudaGraphs",
     gpu_priority: "gpuPriority",
     governor: "governor",
+    content_norm: "contentNorm",
+    f0_decode: "f0Decode",
 } as const satisfies Record<VcLever, keyof VoiceChangerState>;
 
 export type RustParamKey = keyof VoiceChangerParamsRust;
@@ -185,6 +201,11 @@ export const RUST_PARAM_KEYS: readonly RustParamKey[] = [
     "hot_slots",
     "vram_budget_mb",
     "reference_voice_id",
+    // P3B (the levers are in VC_LEVERS above)
+    "output_cushion",
+    "sola_search_ms",
+    "device_block",
+    "content_context_ms",
 ];
 
 /** A finite number, else `fallback` (JSON has no NaN/Infinity: they would fail Rust's deserialize). */
@@ -263,10 +284,16 @@ export function toRustParams(vc: VoiceChangerState): VoiceChangerParamsRust {
         cuda_graphs: str(vc.cudaGraphs),
         gpu_priority: str(vc.gpuPriority),
         governor: str(vc.governor),
+        content_norm: str(vc.contentNorm),
+        f0_decode: str(vc.f0Decode),
         denoiser: str(vc.denoiser),
         hot_slots: uint(vc.hotSlots, R.hot_slots.default),
         vram_budget_mb: uint(vc.vramBudgetMb, R.vram_budget_mb.default),
         reference_voice_id: str(vc.referenceVoiceId),
+        output_cushion: str(vc.outputCushion),
+        sola_search_ms: finite(vc.solaSearchMs, R.sola_search_ms.default),
+        device_block: str(vc.deviceBlock),
+        content_context_ms: finite(vc.contentContextMs, R.content_context_ms.default),
     };
 }
 
@@ -405,12 +432,32 @@ const FROM_RUST: { [K in RustParamKey]: (p: Partial<VoiceChangerParamsRust>, pre
     cuda_graphs: (p, prev) => leverFromRust("cuda_graphs", p, prev),
     gpu_priority: (p, prev) => leverFromRust("gpu_priority", p, prev),
     governor: (p, prev) => leverFromRust("governor", p, prev),
+    content_norm: (p, prev) => leverFromRust("content_norm", p, prev),
+    f0_decode: (p, prev) => leverFromRust("f0_decode", p, prev),
     denoiser: (p, prev) => ({ denoiser: p.denoiser == null ? prev.denoiser : normalizeDenoiser(p.denoiser) }),
     hot_slots: (p, prev) => ({
         hotSlots: Math.round(clampFinite(p.hot_slots, R.hot_slots.min, R.hot_slots.max, prev.hotSlots)),
     }),
     vram_budget_mb: (p, prev) => ({
         vramBudgetMb: Math.round(clampFinite(p.vram_budget_mb, R.vram_budget_mb.min, R.vram_budget_mb.max, prev.vramBudgetMb)),
+    }),
+    // P3B fields: absent (older backend) keeps the current value; negative numbers are AUTO_MS.
+    output_cushion: (p, prev) => ({
+        outputCushion: p.output_cushion == null ? prev.outputCushion : normalizeOutputCushion(p.output_cushion),
+    }),
+    sola_search_ms: (p, prev) => ({
+        solaSearchMs: autoOrClamped(p.sola_search_ms, R.sola_search_ms.min, R.sola_search_ms.max, prev.solaSearchMs),
+    }),
+    device_block: (p, prev) => ({
+        deviceBlock: p.device_block == null ? prev.deviceBlock : normalizeDeviceBlock(p.device_block),
+    }),
+    content_context_ms: (p, prev) => ({
+        contentContextMs: autoOrClamped(
+            p.content_context_ms,
+            R.content_context_ms.min,
+            R.content_context_ms.max,
+            prev.contentContextMs,
+        ),
     }),
 };
 

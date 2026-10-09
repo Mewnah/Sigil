@@ -21,6 +21,20 @@
 //!
 //! # Added by P3-C1
 //! [`ShapePlan::for_stream`], [`DEFAULT_SOLA_TAIL_16K`], and the fields after `f0_margin_frames`.
+//!
+//! # Frozen by P3B-S0
+//! [`sola_tail_16k`]`(crossfade_ms, out_sr)`: the harness's SOLA tail at a crossfade, delegating to
+//! `stream::sola_tail_in_16k` (the formula lives there; [`DEFAULT_SOLA_TAIL_16K`] equals it at 20 ms).
+//!
+//! # Content window (P3B-D)
+//! The content encoder's window is separate from the `enc` window: by default it *is* the context
+//! (`context_16k`), and with a content context (`SigilRvcRequest::content_context_16k`, the
+//! `content_context_ms` param) it reaches further back, to [`ShapePlan::content_window_16k`]
+//! samples ending at the newest input, so the encoder sees real left context (RVC trains on
+//! ~3.7 s slices; the `enc` window is ~0.44 s) while `enc`, the flowdec window, F0 and the stream
+//! harness keep their shapes. The extra samples are a whole number of the encoder's 320-sample
+//! frames, so its frames stay on the stream's absolute grid: 50 Hz frame `k` of the window is 50 Hz
+//! frame `k - content_offset_frames50` of the context ([`ShapePlan::content_offset_frames50`]).
 
 use crate::services::neural_audio::vc::import::layout::Streaming;
 
@@ -38,6 +52,17 @@ pub const MAX_CONTEXT_FRAMES: usize = 400;
 pub const DEFAULT_SOLA_TAIL_16K: usize = 481;
 /// Longest lookahead (latency the engine may trade for cleaner block joins).
 pub const MAX_LOOKAHEAD_FRAMES: usize = 8;
+/// The content encoder's frame hop at 16 kHz (`EmbedderKind::frontend`).
+pub const CONTENT_HOP_16K: usize = 320;
+/// Longest content window (the `content_context_ms` param goes to 3 s; the window is that or the
+/// context, whichever is longer, rounded to the encoder's frames).
+pub const MAX_CONTENT_WINDOW_16K: usize = MAX_CONTEXT_FRAMES * HOP_16K;
+
+/// The stream harness's SOLA tail (16 kHz samples) at a `crossfade_ms` crossfade for a template
+/// that outputs `out_sr` Hz (P3B-S0; `stream::sola_tail_in_16k`).
+pub fn sola_tail_16k(crossfade_ms: f64, out_sr: u32) -> usize {
+    crate::services::neural_audio::vc::stream::sola_tail_in_16k(crossfade_ms, out_sr)
+}
 
 /// Shapes of one tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -172,6 +197,27 @@ impl ShapePlan {
     pub fn out_samples(&self) -> usize {
         (self.want_16k * self.upp * 100 + 8_000) / 16_000
     }
+
+    /// Samples the content encoder sees per tick for a content context of `content_context_16k`
+    /// (`None` or anything up to the context: the context itself, as before P3B-D). A longer
+    /// context extends the window to the left by whole 320-sample encoder frames, capped at
+    /// [`MAX_CONTENT_WINDOW_16K`].
+    pub fn content_window_16k(&self, content_context_16k: Option<usize>) -> usize {
+        let c = self.context_16k;
+        match content_context_16k {
+            Some(want) if want > c => {
+                let extra = (want.min(MAX_CONTENT_WINDOW_16K).saturating_sub(c)).div_ceil(CONTENT_HOP_16K) * CONTENT_HOP_16K;
+                c + extra
+            }
+            _ => c,
+        }
+    }
+
+    /// 50 Hz content frames the window of `content_window_16k` adds before the context (the offset
+    /// of the context's first content frame in the window's features).
+    pub fn content_offset_frames50(&self, content_window_16k: usize) -> usize {
+        content_window_16k.saturating_sub(self.context_16k) / CONTENT_HOP_16K
+    }
 }
 
 fn ms_to_16k(ms: f64) -> usize {
@@ -201,6 +247,14 @@ mod tests {
     use crate::services::neural_audio::vc::engine::options::PrecisionMode;
     use crate::services::neural_audio::vc::engine::presets::engine_preset;
     use crate::services::neural_audio::vc::rvc::RvcPresetProfile;
+
+    /// The default tail is the harness's formula at its default 20 ms crossfade (P3B-S0).
+    #[test]
+    fn default_sola_tail_is_the_harness_formula() {
+        for sr in [32_000, 40_000, 48_000] {
+            assert_eq!(sola_tail_16k(20.0, sr), DEFAULT_SOLA_TAIL_16K, "{sr}");
+        }
+    }
 
     fn streaming(flow: u32, dec: u32) -> Streaming {
         Streaming {
@@ -251,6 +305,32 @@ mod tests {
         assert_eq!(full.window_start, 0);
         assert_eq!(full.decode_frames, full.enc_frames - 35);
         assert!(full.decode_frames >= full.return_frames);
+    }
+
+    /// The content window is the context unless a longer content context asks for more; the extra
+    /// is whole encoder frames, so the window stays on the stream's 320-sample grid, and the `enc`
+    /// window, the flowdec window and the context the harness feeds are unchanged.
+    #[test]
+    fn content_window_extends_left_in_whole_encoder_frames() {
+        let s = streaming(24, 11);
+        let preset = engine_preset(RvcPresetProfile::LowLatency, 40.0, 512, 48_000, 64.0, PrecisionMode::Auto);
+        let p = ShapePlan::new(&s, &preset, 40_000, true).unwrap();
+        assert_eq!(p.context_16k, 7_040);
+        for none in [None, Some(0), Some(1_000), Some(7_040)] {
+            assert_eq!(p.content_window_16k(none), p.context_16k, "{none:?}");
+            assert_eq!(p.content_offset_frames50(p.content_window_16k(none)), 0);
+        }
+        // 1 s: 8960 more samples = 28 frames of 320.
+        let w = p.content_window_16k(Some(16_000));
+        assert_eq!(w, 16_000);
+        assert_eq!((w - p.context_16k) % CONTENT_HOP_16K, 0);
+        assert_eq!(p.content_offset_frames50(w), 28);
+        // Not a whole frame more: rounded up to one.
+        let w = p.content_window_16k(Some(7_041));
+        assert_eq!(w, 7_040 + 320);
+        assert_eq!(p.content_offset_frames50(w), 1);
+        // Capped.
+        assert!(p.content_window_16k(Some(10_000_000)) <= MAX_CONTENT_WINDOW_16K + CONTENT_HOP_16K);
     }
 
     /// Extra context grows only the encoders' shapes; the flowdec window stays the same.

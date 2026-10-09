@@ -22,9 +22,10 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::services::diagnostics::EpOutcome;
+use crate::services::neural_audio::telemetry::{self, TickTelemetry};
 use crate::services::neural_audio::vc::engine::options::EffectiveLevers;
 use crate::services::neural_audio::vc::engine::TickStats;
-use crate::services::neural_audio::vc::traits::ConversionCtx;
+use crate::services::neural_audio::vc::traits::{ConversionCtx, StageRecord};
 use crate::services::neural_audio::{VcStreamHarness, VoiceConversionModel};
 use crate::services::rt_thread::WorkerPriority;
 
@@ -155,6 +156,20 @@ pub struct ModelTimes {
     pub components: Vec<TickStats>,
     /// Ticks the engine skipped as silence (no inference).
     pub skipped: u64,
+    /// P3B-A: one record per `convert` call, in order (the attribution of `attribution.rs`).
+    pub calls: Vec<CallRecord>,
+}
+
+/// One model call (P3B-A): its time, the direct build's breakdown, the telemetry the call
+/// recorded (stage spans, host waits on the GPU, GPU time; while the benchmark records) and the
+/// engine's stage record (P3B-B's probe, when active).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CallRecord {
+    pub model_ms: f64,
+    pub stats: Option<TickStats>,
+    pub tel: Option<TickTelemetry>,
+    pub stage: Option<StageRecord>,
+    pub error: bool,
 }
 
 /// A loaded engine, shared by a spec's runs.
@@ -225,12 +240,29 @@ impl VoiceConversionModel for ModelHandle {
         if let Some(r) = &self.recorder {
             lock(r).record(ctx);
         }
+        // P3B-A: this call's telemetry only (anything recorded since the last call, e.g. a
+        // ceiling's ticks, is dropped), read after the timed region.
+        let recording = telemetry::recording();
+        if recording {
+            let _ = telemetry::take_tick();
+        }
         let t0 = Instant::now();
-        let result = lock(&self.model).convert(ctx);
+        let mut model = lock(&self.model);
+        let result = model.convert(ctx);
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let stage = model.telemetry().and_then(|t| t.last_stages());
+        drop(model);
+        let tel = recording.then(telemetry::take_tick);
         let tick = self.stats.as_ref().and_then(|s| lock(s).take());
         let mut times = lock(&self.times);
         times.convert_ms.push(ms);
+        times.calls.push(CallRecord {
+            model_ms: ms,
+            stats: tick,
+            tel,
+            stage,
+            error: result.is_err(),
+        });
         if let Some(t) = tick {
             if t.skipped {
                 times.skipped += 1;
@@ -286,6 +318,12 @@ impl VoiceConversionModel for ModelHandle {
 
     fn configure_stream(&mut self, block: usize, want: usize, extra: usize) -> Result<usize, String> {
         lock(&self.model).configure_stream(block, want, extra)
+    }
+
+    // P3B-S0: the model sits behind a lock here, so its telemetry is read through
+    // `Engine::with_model` (`telemetry()` keeps the trait default).
+    fn time_anchored(&self) -> bool {
+        lock(&self.model).time_anchored()
     }
 }
 

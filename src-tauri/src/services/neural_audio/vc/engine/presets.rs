@@ -59,6 +59,54 @@
 //!   run.
 //! - `gpu_knn` (P3-D, exact GPU retrieval) and the `governor` (P3-E) stay off until the benchmark
 //!   measures them on a voice with an index / under the contention runs.
+//!
+//! # P3B defaults (P3B-I0, 2026-10; evidence in `scripts/bench/specs/p3b/<letter>/README.md`, ADR 0010)
+//! Every number is an ABBA-interleaved comparison inside one executable (`run-perf-gate.ps1`), and a
+//! lever that can lower fidelity never became a default (rule R6). The engine has no preset table
+//! for these; each switch lives next to its code, with its kill switch.
+//!
+//! On (the lossless or measured-better paths; kill switch in brackets):
+//! - the content encoder as a fixed-shape session plan (`SIGIL_VC_CONTENT_PLAN=0`; CUDA content
+//!   p50 4.91 -> 1.82 ms, DirectML 4.27 -> 1.49 ms, offline call p95 CUDA 11.66 -> 7.40 ms, DirectML
+//!   12.17 -> 8.98 ms) and the F0 overlap helper (`SIGIL_VC_F0_OVERLAP=0`; bit-identical audio);
+//! - final shapes at load and the parallel cold start (`SIGIL_VC_FINAL_SHAPES=0`,
+//!   `SIGIL_VC_PARALLEL_LOAD=0`; cold load CUDA 1837 -> 1009 ms, DirectML 2504 -> 1300 ms), with
+//!   `enc` / `flowdec` building on two threads;
+//! - the device-resident generator chain (`SIGIL_VC_DEVICE_CHAIN=0`; bit-identical audio, 4 -> 3
+//!   syncs per call), the hybrid CUDA wait (`SIGIL_CUDA_TUNING=wait=spin`; worker CPU down 84-94 %
+//!   on every row, call p95 / p99 neutral), arena shrink before the graph capture
+//!   (`SIGIL_CUDA_TUNING=shrink=0`; -40 MB; a capture whose shrink run is refused retries without
+//!   it) and the CPU arena (`SIGIL_VC_CPU_ARENA=0`; RTF -5.9 %);
+//! - F0: the parallel SwiftF0 / RMVPE fusion lane (`SIGIL_VC_FUSION_PARALLEL=0`; bit-identical to
+//!   the serial path, CUDA F0 stage 4.66 -> 3.12 ms). The F0 cache itself is P3's
+//!   (`F0Geometry::DEFAULT`): the primed cold start and onset continuity are opt-in, see below.
+//!
+//! Off (measured, but they trade fidelity, memory or safety for the number; every one is a switch):
+//! - `f0_decode` and `content_norm` (levers, off in [`auto_lever`]): the cross-tick decoder did not
+//!   improve pitch on real speech and lowered speaker similarity; running normalisation raises
+//!   speaker cosine by about 0.01 at +0.04 dB MCD and needs an unpublished encoder variant;
+//! - the primed F0 cold start and onset continuity (`SIGIL_VC_F0_PRIME=1`,
+//!   `SIGIL_VC_F0_CONTINUITY=1`, or both with `SIGIL_VC_F0_GEOMETRY=primed`): they keep every
+//!   extractor call inside its plan, but moved 3 to 22 of about 5,000 fed frames on the pause clips
+//!   (one by an octave) and were never measured with FCPE (rule R6);
+//! - the 32-frame RMVPE plan (`SIGIL_RMVPE_PLAN_FRAMES=32`, "VRAM saver": DirectML 854 -> 654 MB,
+//!   but gross pitch error 4.9 -> 8.2 % on noisy and creaky synthetic speech), RMVPE fp16 under
+//!   `auto` (its default-plan gate missed on DirectML), filled F0 calls
+//!   (`SIGIL_VC_F0_GEOMETRY=filled`, the measured combination with priming and continuity;
+//!   `SIGIL_VC_F0_LEAD=fill` alone changes only the lead; speaker cosine -0.02), 1 s of content
+//!   context;
+//! - the adaptive output cushion (it underran under the 70 % loads), `device_block=model_divisor`
+//!   (-17.4 ms paced on CUDA, not yet measured under every load, on DirectML / CPU or on a live
+//!   device), a 10 ms Low-latency lookahead (+10 ms for +0.03 speaker similarity), the 10 ms
+//!   crossfade (fails the T5 v2 gate), the frame-aligned SOLA tail (cosine v2 -0.014), the GPU
+//!   prewarm (no first-load gain, holds a 338 MB CUDA context), fp16 kNN storage on CUDA
+//!   (rounding 2.7e-4; the exact blend stays), the GPU process priority, denormals as zero,
+//!   `dynamic_block_base` and the shared DirectML queue (`SIGIL_VC_DML_SHARED=1`: the cold load is
+//!   about 0.1 s faster, but the content stage's p95 regressed on the one queue, +22 % under a
+//!   70 % GPU load, and the gate's 0.05 s bound was not met);
+//! - the CPU int8 ContentVec stays first on VNNI CPUs: the downstream rule marginally fired
+//!   (speaker cosine -0.0026 against 0.002, MCD and V/UV better), but the fp32 encoder's CPU cost
+//!   was not measured and the Streamer is already over its RTF target.
 
 use crate::services::neural_audio::vc::rvc::RvcPresetProfile;
 
@@ -131,12 +179,44 @@ pub fn auto_lever(_profile: RvcPresetProfile, lever: Lever, base_ep: &str) -> bo
         Lever::IoBinding => matches!(base, "cuda" | "dml"),
         Lever::CudaGraphs => base == "cuda",
         Lever::GpuKnn | Lever::GpuPriority | Lever::Governor => false,
+        // P3B-S0: new levers start off. P3B-I0 kept them off (opt-in): see "P3B defaults" above.
+        Lever::ContentNorm | Lever::F0Decode => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P3B-I0's decisions (see "P3B defaults" above): the measured-better paths are the defaults and
+    /// the levers that trade fidelity, memory or safety stay switches. A change here is a decision
+    /// that needs its interleaved numbers (rule R6), not an incidental edit.
+    #[test]
+    fn p3b_defaults_are_the_decided_ones() {
+        use crate::services::neural_audio::gpu::{cuda_wait::WaitMode, plan::SHRINK_BEFORE_CAPTURE, sched_priority};
+        use crate::services::neural_audio::ort_session::{VC_CPU_ARENA_DEFAULT, VC_DENORMAL_ZERO_DEFAULT, VC_DML_SHARED_DEFAULT};
+        use crate::services::neural_audio::vc::{rmvpe::FP16_UNDER_AUTO, stream::{SolaSlack, SOLA_SLACK_DEFAULT}};
+        // On.
+        assert_eq!(WaitMode::DEFAULT, WaitMode::Hybrid);
+        let on = [
+            SHRINK_BEFORE_CAPTURE,
+            VC_CPU_ARENA_DEFAULT,
+            super::super::generator::PARALLEL_LOAD_DEFAULT,
+            super::super::load::PARALLEL_LOAD_DEFAULT,
+        ];
+        assert!(on.iter().all(|&b| b), "{on:?}");
+        // Off.
+        // The shared DirectML queue stays a switch: its content-stage p95 regressed (R3) and the
+        // load gain missed T9's bound (`ort_session::VC_DML_SHARED_DEFAULT`).
+        let off = [VC_DENORMAL_ZERO_DEFAULT, VC_DML_SHARED_DEFAULT, FP16_UNDER_AUTO, super::super::retrieval::KNN_FP16_ON_CUDA_DEFAULT];
+        assert!(off.iter().all(|&b| !b), "{off:?}");
+        assert!(sched_priority::DEFAULT.is_none());
+        assert_eq!(SOLA_SLACK_DEFAULT, SolaSlack::Legacy);
+        for ep in ["cpu", "cuda", "dml"] {
+            assert!(!auto_lever(RvcPresetProfile::LowLatency, Lever::ContentNorm, ep), "{ep}");
+            assert!(!auto_lever(RvcPresetProfile::LowLatency, Lever::F0Decode, ep), "{ep}");
+        }
+    }
 
     #[test]
     fn block_comes_from_the_device_block_when_unset() {

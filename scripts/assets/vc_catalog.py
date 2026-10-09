@@ -148,7 +148,7 @@ def vc_embedders(stage):
         "$comment": [
             "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@" + HF_APPLIO + " Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; unpublished (installed by local import or SIGIL_LOCAL_ASSETS). Written by scripts/assets/vc_catalog.py.",
             "Contract: audio [1,N] f32 16 kHz (raw, not normalised) -> feats [1,T,C] f32, T = (N - 400) // 320 + 1 (400-sample receptive field, 320 hop, checked per checkpoint); C = 768 (256 for contentvec-256). The contract rvc.rs feeds BYO encoders.",
-            "embedder.json in each entry: the contract, parity per variant and device class (CPU: ONNX Runtime CPU; GPU: DirectML) and the recommended variant per class. fp16 = transformer in fp16 (the conv front end stays fp32); it misses the fp16 gate on DirectML for contentvec and hubert-ja (those run fp32 on GPUs). int8 (CPU, VNNI) ships only for contentvec / contentvec-256: dynamic int8 of the other encoders misses its gate (activation outliers).",
+            "embedder.json in each entry: the contract, parity per variant and device class (CPU: ONNX Runtime CPU; GPU: DirectML) and the recommended variant per class. fp16 = transformer in fp16 (the conv front end stays fp32); it misses the export gate's fp16 parity on DirectML for contentvec and hubert-ja, and embedder.json 'recommended' is the export gate's pick, not the engine's order: the engine runs fp16 first on GPUs because the downstream scorer is neutral (docs/adr/0011-vc-content-encoder-precision.md). int8 (CPU, VNNI) ships only for contentvec / contentvec-256: dynamic int8 of the other encoders misses its gate (activation outliers).",
             "vc/embedder-spin is an addition to the frozen ids (Applio's first SPIN embedder, embedder_model \"spin\"); the engine's EmbedderKind needs a variant for it (P3-C1).",
         ],
         "entries": entries,
@@ -188,6 +188,7 @@ def bench_models(stage):
             "bench/dnsmos-p835: DNSMOS P.835 (model.onnx: input_1 [N,144160] = 9.01 s at 16 kHz -> [N,3] raw SIG/BAK/OVRL, mapped by DNS-Challenge's non-personalised polynomials) and P.808 (p808.onnx: input_1 [N,900,120] log-mel).",
             "bench/campplus: CAM++ speaker embedding (3D-Speaker zh-cn common, sherpa-onnx export): x [N,T,80] Kaldi fbank minus its time mean -> embedding [N,192].",
             "bench/gpu-load: Sigil's GPU hammer for the contention mode (8 x Conv 3x3 32->32 + ReLU, x [1,32,H,W] -> y), built by export_bench.py; unpublished.",
+            "bench/campplus-exact: the same CAM++ checkpoint re-exported by scripts/vc-templates/export_bench.py with exact segment pooling (>= 100 dB SNR against upstream; P3B-B, ADR 0009); same I/O contract as bench/campplus; unpublished (local-only until the user publishes it), staged at %LOCALAPPDATA%/sigil-dev-cache/vc-assets/bench/campplus-exact/model.onnx.",
         ],
         "entries": [
             entry("bench/dnsmos-p835", "bench", "1", "DNSMOS P.835", "Speech-quality predictor for the voice-changer benchmark.",
@@ -200,6 +201,8 @@ def bench_models(stage):
             entry("bench/campplus", "bench", "1", "CAM++ speaker embedding", "Speaker-similarity model for the voice-changer benchmark.",
                   "Apache-2.0", "published", [upstream_file("model.onnx", 28281138, "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
                                                             release("k2-fsa/sherpa-onnx", "speaker-recongition-models", "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"))]),
+            entry("bench/campplus-exact", "bench", "1", "CAM++ speaker embedding (exact pooling)", "Speaker-similarity model of the voice-changer benchmark's scorer v2.",
+                  "Apache-2.0", "unpublished", [staged_file("bench/campplus-exact", "model.onnx", stage)]),
             entry("bench/gpu-load", "bench", "1", "GPU load generator", "A fixed convolution workload the benchmark runs next to the voice changer to simulate a game.",
                   "AGPL-3.0-or-later", "unpublished", [staged_file("bench/gpu-load", "model.onnx", stage)]),
         ],

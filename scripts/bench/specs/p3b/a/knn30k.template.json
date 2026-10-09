@@ -1,0 +1,29 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-A advisory T3 row: the voice in ${SLOT} on ${EP} with a synthetic 30k-row retrieval index (${KNN_INDEX}, from scripts/bench/specs/p3b/a/make-synthetic-index.py: the values do not matter for VRAM and compute, the exact kNN reads every row) on the GPU kNN graph, index rate 0.5: the Quality-with-the-GPU-index VRAM row (<= 900 MB), retrieval's per-call cost (retrieval_ms_*) and the T2 reference row of an indexed voice under the 70 % hammer. The default voice ships no index, so retrieval was never benchmarked before.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64, "index_rate": 0.5 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "index": "${KNN_INDEX}",
+    "levers": { "gpu_knn": "on" },
+    "build": "direct",
+    "qos": "${QOS}"
+  },
+  "vram": { "sample_ms": 20 },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": 4 },
+    { "mode": "paced", "name": "paced", "seconds": 30, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h2-load70", "profile": "h2_load70", "seconds": 30, "warmup_s": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": false, "write_audio": false }
+}

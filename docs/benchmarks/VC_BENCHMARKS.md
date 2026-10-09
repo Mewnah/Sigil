@@ -21,8 +21,8 @@ Status words:
 | Rig (H2) | AMD Ryzen 7 7800X3D (8 cores, 16 threads), NVIDIA RTX 4090 24 GB (driver 32.0.16.1714), Windows 11 Pro 26200 |
 | Build | Sigil 0.4.0-1, release (`lto`, one codegen unit), ONNX Runtime 1.28.0 (ort 2.0.0-rc.13), CUDA 13 runtime pack `runtime/nvidia-cuda13` |
 | Voice | The MIT default voice (`vc/voice-default`, `default.pth`: RVC v2, 40 kHz, f0, HiFiGAN-NSF, ContentVec 768), imported by Sigil's `.pth` importer into the `v2-40k-f0-hifigan` template (`sigil-rvc-1`) |
-| Models | `vc/embedder-contentvec`, `vc/pitch-rmvpe`, `vc/pitch-fcpe`, `vc/pitch-swiftf0`, `vc/pitch-crepe-tiny`, `bench/campplus`, `bench/dnsmos-p835` |
-| Clip | `en-jfk.wav` (5.8 s of public-domain speech, 16 kHz), resampled to the 48 kHz device rate. The plan's 20-clip consented corpus does not exist yet, so the fidelity rows describe this one clip. |
+| Models | `vc/embedder-contentvec`, `vc/pitch-rmvpe`, `vc/pitch-fcpe`, `vc/pitch-swiftf0`, `vc/pitch-crepe-tiny`, `bench/campplus` (the legacy scorer), `bench/campplus-exact` (scorer v2; unpublished, local), `bench/dnsmos-p835` |
+| Clip | `en-jfk.wav` (3.85 s of public-domain speech, 24 kHz mono; P3B-B corrected the earlier "5.8 s at 16 kHz"), resampled to the 48 kHz device rate. The plan's 20-clip consented corpus does not exist, so the P3 fidelity rows describe this one clip; scorer v2 rows (P3B) use the 18 local dev-cache clips (13 sherpa-onnx and 5 transcribe samples, ten languages), each at three offsets, as a corpus mean with a bootstrap CI ([ADR 0009](../adr/0009-vc-scorer-v2.md)). |
 | Stream | The voice changer's defaults: 48 kHz mono in, stereo out, 512-frame device block (10.7 ms), 64 ms extra context, 20 ms crossfade, 35 / 70 ms output cushion, 300 ms latency budget |
 | Reference configuration | The plan's: 40 ms engine blocks, RMVPE on the GPU, the Low-latency preset with the `auto` levers. In P3-F's runs below `auto` meant the algorithmic levers on (partial decode, anchored noise, phase0, F0 cache) and the GPU levers off; since P3-I0 it also turns IOBinding (CUDA, DirectML) and CUDA graphs (CUDA) on ([P3 integration](#p3-integration-p3-i0-the-benchmark-decided-defaults)). On the CPU, the Streamer preset: 80 ms blocks, SwiftF0 |
 | Conditions | 2026-09-30. Runs one after another; each waited until no other build, test or benchmark ran on the PC. The desktop stayed in use (a browser playing video: about 15 % of the video-decode engine, under 5 % 3D). The same spec repeated gives up to ±20 % on a p95 and more on CUDA under load; the tables say where runs disagreed. |
@@ -55,13 +55,13 @@ compute is gated on the `h2-load70` run (H2 is the dev rig under the load simula
 | T4 | Streamer ≤ 1.5 cores at RTF ≤ 0.6 (80–128 ms blocks) | Streamer preset: 0.99 cores at RTF 3.35 (one ONNX Runtime thread); the default thread pool: RTF 0.92 at 120 ms with 4.6 cores, 0.64 at 200 ms with 3.4 cores | missed |
 | T4 | Enabled and silent ≤ 0.02 cores, no GPU inference | DirectML 0.0095 cores; CUDA +levers 0.022 cores; the model is not run while silent | met (DirectML) |
 | T4 | ONNX Runtime never spins | every session is built through `ort_session` with spinning off | met (by construction) |
-| T5 | CAM++ speaker cosine vs the offline ceiling ≥ 0.97 | DirectML 0.935; CUDA 0.924–0.929; CPU 0.951; the autotuned CPU preset (200 ms blocks) 0.972. **With 20 ms of lookahead (Quality, P3-I0): CUDA 0.975** | met with lookahead on CUDA; missed at the Low-latency shape |
+| T5 | CAM++ speaker cosine vs the offline ceiling ≥ 0.97 | DirectML 0.935; CUDA 0.924–0.929; CPU 0.951; the autotuned CPU preset (200 ms blocks) 0.972. **With 20 ms of lookahead (Quality, P3-I0): CUDA 0.975**, not demonstrated after the P3 final gate (the same shape scored 0.948); re-baselined as an advisory row under scorer v2 ([P3B](#p3b-voice-engine-optimization-p3b-i0)) | advisory; missed at the Low-latency shape |
 | T5 | MCD within 0.5 dB | 1.70 dB (CUDA 1.72, CPU 1.57). **P3 final gate:** DirectML 1.68, CUDA 1.66 | missed |
 | T5 | Voiced F0 RMSE ≤ 15 cents; V/UV error ≤ 3 % | RMVPE on DirectML 68 cents, 8.0 %; RMVPE on CUDA 49 cents, 6.8 % (68 cents, 9.2 % on its CUDA-graph plan since P3-I0); SwiftF0 on the CPU 53 cents, 8.4 %; CUDA with 20 ms lookahead 63 cents, 3.5 %. **P3 final gate (RMVPE's mel end-aligned, [below](#p3-final-gate-pitch-track-fixes)):** DirectML 47 cents, 3.8 %; CUDA 53 cents, 3.5 % (part of the RMSE gain is the scorer's own RMVPE) | missed (V/UV within 0.8 pt) |
 | T5 | 0 block-boundary clicks | 0 in every run at 40 ms blocks and longer | met |
 | T5 | CER of the converted speech ≤ offline + 1 pt | stream, ceiling and the unconverted input transcribe identically (Whisper tiny.en): +0 pt | met |
 | T6 | Head to head: DNSMOS +0.05, GPE ≤ each, A/B ≥ 60 %, latency ≤ 0.7× | needs the competitors' outputs (`scripts/vc-bench`) | not measured |
-| T6 | Normalized RTF below vc-rs (13.9 ms p95 per 100 ms) and rvc-realtime (15.7 ms per 60 ms) | RMVPE: 13.6 ms per 100 ms, 15.9 ms per 60 ms (DirectML); SwiftF0 with CUDA graphs: 10.1 ms per 40 ms, 10.6 ms per 80 ms; on a faster GPU than rvc-realtime's | not met on equal terms |
+| T6 | Normalized RTF below vc-rs and rvc-realtime, decided only from same-GPU runs (P3B) | the published rows are other GPUs ([Competitors](#competitors-t6)); SVE at vc-rs's shape on the 4090 (P3B-C, one run): CUDA call p50 / p95 / p99 7.98 / 10.98 / 11.66 ms per 100 ms (RTF p95 0.11), DirectML p95 17.09 ms | undecided (no same-GPU run) |
 | T7 | Backlog never above budget + one block | 0 ms over in every run (stub, DirectML, CUDA, CPU, 3 s stalls) | met |
 | T7 | Back within budget ≤ 2 blocks after a 3 s stall | 0 blocks (stub, DirectML, CUDA) | met |
 | T7 | 30 min soak with 0 underruns; EP failure shown within 1 s; a returning device resumes within 2 s | not measured here (the P0 / P1 tests cover the EP report and the device watcher) | not measured |
@@ -83,6 +83,83 @@ at 70 % of the GPU), and it runs every F0 method within about 10–15 ms per 40 
 is the absolute speed of the per-call fixed costs (T2), latency at the reference block (T1), VRAM
 with RMVPE (T3), the CPU generator (T4) and the streaming pitch track (T5).
 [What closes the gaps](#what-closes-the-gaps) lists the fixes the numbers point to.
+
+**P3B update (2026-10-09).** The rows above are the P3 / P5 values. P3B cut the content and F0 cost, the CUDA CPU and the cold load, and re-defined T5 and T6; its before / after rows, the targets as revised and the misses are in [P3B voice-engine optimization](#p3b-voice-engine-optimization-p3b-i0).
+
+## P3B voice-engine optimization (P3B-I0)
+
+P3B was designed after P3 missed several targets. It measured first, fixed what the measurements named, re-defined the targets that could not be met as written (accepted by the user: [plan → P3B outcomes](../SPEECH_STACK_IMPLEMENTATION_PLAN.md#p3b-outcomes-binding-amendments-for-p7)) and rebuilt the benchmark so a before/after claim means something ([ADR 0009](../adr/0009-vc-scorer-v2.md), [ADR 0010](../adr/0010-sve-optimization-p3b.md), [README → Interleaved A/B](README.md#interleaved-ab-p3b-a-the-evidence-a-beforeafter-claim-needs)). Same rig (H2: Ryzen 7 7800X3D, RTX 4090), 2026-10-01 to 2026-10-09.
+
+**How to read the numbers.** Every before/after below is an ABBA-interleaved comparison inside one executable (a switch), with the paired interval; absolute figures come from one workstream's executable and are provisional (some runs overlapped other builds; each workstream's README records the background load). By the user's scope change of 2026-10-09 (VRChat streamers using STT captions are the main audience, the voice changer is secondary), P3B-I0 ran **no final regression scorecard**: it ran one functional smoke per execution provider on the integrated build ([below](#integrated-smoke-p3b-i0)), and **P7-B runs the single final scorecard of the shipped defaults** on a quiet machine. Rows P3B did not re-measure say so.
+
+### What was wrong, and what changed
+
+The per-call cost was overhead, not arithmetic: about 1 ms of GPU math against 9.6 ms measured, roughly a thousand small launches, four serial CPU-GPU syncs per call, ContentVec still an eager dynamic-shape session (51-60 % of the p95 under load: CUDA 12.2 of 20.4 ms, DirectML 8.3 of 16.3 ms), an RMVPE plan sized for the first whole-window call, F0 serial behind the content encoder and a CUDA wait that spun a core. The shipped fixes are in [ADR 0010](../adr/0010-sve-optimization-p3b.md#decision); the levers that were measured but trade fidelity, memory or safety for speed are switches and are listed there with the reason.
+
+### Scorecard v2 (targets as revised; v1 rows above stay for continuity)
+
+"Before" is the P5 baseline (exe-s0, behaviour identical to P5) unless the row says otherwise; "after" is the workstream's interleaved measurement of the shipped default (unless it says *opt-in*).
+
+| Target (revised) | Before | After (P3B) | Status |
+|---|---|---|---|
+| **T1** Low latency, engine-added p99 ≤ 85 ms (95 ms reported as achieved if the 10 ms crossfade fails its gate), paced, 40 ms blocks | 132.6 ms (p50 = p99). Decomposition at p50: capture 7.6, block wait 2.5, queue 1.0, compute 4.2, engine wait 17.0, model 11.8, hold-back 38.6, output 49.9 ms | shipped defaults unchanged, 132.6 ms. Opt-in 10 ms device block: **115.2 ms** (-17.4 ms, -13.1 %, CI -14.8..-13.1 %; 0 underruns in 7 pairs, a 30-minute soak and one out-of-process-load run); probed algorithmic latency 67.6 → 60.2 ms. Adaptive cushion (experimental) read 97.2 ms on a calm PC once but underran under the 70 % loads. The 10 ms crossfade (83-86 ms) fails the T5 v2 gate (cosine v2 -0.040, DNSMOS -0.16) | **missed** (95 ms not reached by a default; 115.2 ms opt-in) |
+| **T1** Streamer (CPU), p99 with a game on H3 ≤ 280 ms at 120 ms blocks | 784.9 ms (one thread) | shipped Streamer preset (one ONNX Runtime thread) 719 ms; the default thread pool 280.6 ms at 4.7 cores offline | **missed** for the preset, borderline for the pool (provisional until an H3 live record) |
+| **T2a** H2 idle per-call p95 ≤ 6 ms | CUDA 10.9, DirectML 11.1 ms | offline p95 CUDA **7.4-7.6**, DirectML **9.0-9.1** (content p50 4.9 → 1.8 / 4.3 → 1.5 ms; F0 overlapped); the integrated build's smoke read CUDA 7.2 and DirectML 7.8 ms (one run, [below](#integrated-smoke-p3b-i0)) | **missed** (expected 6.5-7.5 / 7-8.5: CUDA at the edge, DirectML just above) |
+| **T2b** under the 70 % load: p95 ≤ 10, p99 ≤ 15 ms, ≤ 0.1 % over budget | CUDA 19.2-25.5, DirectML 17.1 ms | in-process hammer: CUDA p95 **9.35-9.60**, p99 9.96; DirectML 11.6 / 11.9. Out-of-process load (duty 0.70 held): CUDA 10.2 / 10.6, DirectML 11.3 / 11.6; H1 simulation CUDA 9.7, DirectML 11.5. 0 % over budget everywhere | **met** on CUDA in process, **missed** by 0.2-1.6 ms elsewhere |
+| **T3** DirectML one voice with RMVPE ≤ 650 MB | 861 MB | 853 MB (clean ledger: content 208, enc 154, flowdec 101, RMVPE 376); opt-in fp16 680, VRAM saver 654 | **missed** (654 with the opt-in saver) |
+| **T3** CUDA on H2 ≤ 800 MB incl. the context (reported separately) | 1312 MB (context 334-356) | 1374 MB, 1340 with the shrink default; opt-in fp16 1186, saver 1156 | **missed** (the weight floor makes 800 hard: 331 MiB of fp16 weights plus the context) |
+| **T3** load-peak overshoot ≤ +150 MB | +345 MB (a second RMVPE copy) | DirectML +200, CUDA +241 MB (was +348-379 / +520-680): RMVPE no longer has a transient, what is left is the content encoder's session init | **missed** |
+| **T3** extra hot voice ≤ +150 MB | +508 (DirectML), +620-660 (CUDA) | **+130 / +136 MB** with the shared RMVPE plan; second load 780 / 636 ms | **met** |
+| **T3** Quality with the GPU index ≤ 900 MB | not measured | kNN on 30 000 rows: footprint CUDA 106 MB fp32 (62 MB fp16, off), DirectML 68 MB; process 1526 MB | **missed** (CUDA context) |
+| **T4** GPU presets ≤ 0.25 cores; silent ≤ 0.02 | CUDA 0.40-0.63 paced; silent 0.0088 | CUDA paced **0.042** (-92.9 %), offline 0.215, under load 0.05; silent **0.0081**. DirectML 0.12 | **met** |
+| **T4** Streamer (fp32) RTF p99 ≤ 0.6 at ≤ 3.5 cores, 120 ms blocks | preset RTF 2.52 (0.99 cores); pool 0.92 (4.6 cores) | pool: RTF p99 0.79-0.90 at 3.3 cores (before the arena's −5.9 %); best measured policy (6 threads below normal, arena) p50 0.69 / p99 0.74-0.83 at 2.8 cores. The arithmetic needs at least 4.0 cores at perfect scaling for 0.6 | **missed** on RTF, met on cores (opt-in policy; no thread-count setting yet) |
+| **T5** identity, fed-F0 error, GPE, V/UV, envelope MCD, clicks (scorer v2) | see [ADR 0009](../adr/0009-vc-scorer-v2.md): at the P5 engine −0.054 / 22.9 cents / 1.42 % / 5.1 % / 0.601 dB over floor / 0 clicks | priming and continuity (opt-in since the P3B review: `SIGIL_VC_F0_PRIME=1`, `SIGIL_VC_F0_CONTINUITY=1`; rule R6, as they change 3 to 22 of about 5,000 fed frames on the pause clips and have no per-frame or FCPE evidence) change no per-clip median, so the shipped defaults read as before. Opt-in: lookahead 10 / 20 ms raises set-sim by +0.032 / +0.046 (env MCD −0.13 / −0.18 dB); the 32-frame plan 18.7 cents and V/UV 3.0 %; filled F0 17.8 cents and 2.3 % | **missed** (clicks met; DirectML `ja-long` has one narrow-window click to listen to) |
+| **T6** head to head | tooling absent | compare v2, the live tier, the drivers and the public-corpus fetch exist and are dry-run (10 local clips); no competitor renditions exist | **undecided** (manual) |
+| **T9** cold load ≤ 2.5 s | DirectML 2.7-3.2 s, CUDA 1.9-3.1 s | CUDA **1.0 s** (1837 → 1009 ms, -45 %), DirectML **1.1-1.3 s** (2504 → 1300 ms, -49 %), Quality CUDA 1485 ms, CPU 1.1 → 0.6 s; on the integrated build CUDA 967 ms and DirectML 1045 ms (5 ABBA pairs against the sequential load: -44 % / -51 %) | **met** |
+| T7, T8, T10 | see the P3 / P5 rows above | not re-measured | unchanged |
+
+### Method notes
+
+- **The gate's resolution** (two A/A sessions, 64 rows each): 62-64 NEUTRAL, no false REGRESSED. `call_ms_p95` interval half-width 1.3-4.3 % offline and under the hammer once clock-regime-mismatched pairs are set aside, 8-13 % paced. The slow runs were GPU clock states, confirmed with NVML clock and P-state evidence (SM clock held at 1170 of 2790 MHz with reason `gpu_idle` only; in another session 2790 → 1455 MHz offline, memory clock halved, 223 → 122 W, while another process used up to 68 % of the GPU's SMs; the host probe and CPU clock stayed steady). In the manual rounds p95 also tracked host CPU utilisation (Spearman +0.94, DirectML offline), so the gate flags both.
+- **A real-time cadence runs the GPU slower than offline** (about 1.1-1.8 GHz SM against 2.8 GHz): paced p95 is 14 ms against 7.6 offline. NVIDIA's *Prefer maximum performance* for Sigil.exe removes it (documented; Sigil never changes driver settings).
+- **The app's EcoQoS opt-out is worth about 30 %** on the CPU path under a simulated game (5 ABBA pairs: call p50 +29 % [+24, +36], core-seconds per audio-second +29 % without it, REGRESSED). P3's headless H3 rows lacked it, so they were pessimistic by about that much.
+- **Under-load share of the p95 (DML and CUDA)**: F0 52-54 % (it now overlaps content), content 33-40 %, flowdec 33-38 %, encoder 8-13 %, glue about 1 %, harness 0.19-0.28 ms; syncs per call CUDA 4 → 3 with the device chain (DirectML's plan waits are counted since P3B-G).
+- **RMVPE plan size** (stream path, 27 synthetic clips with exact truth): gross pitch error 4.89 % (64 frames, P3's size), 8.23 % (32 frames), 5.67 % (32 frames filled with real audio), 4.69 % (64 frames, lead 51); under noise and creak the 32-frame plan is much worse (5 dB SNR 12.2 against 5.0 %, creak 17.2 against 7.2 %). On real speech through the engine it is better (fed fine pitch error 19.5 against 22.4 cents, V/UV 3 against 4 %). Mixed evidence, so it is the opt-in "VRAM saver"; t32 kernel pruning is exact (|Δsalience| 3.3e-7 in Python, 0.0 in Rust on the real model).
+- **fp16 RMVPE** passes its pitch gate at the saver's plan on both EPs and on CUDA at the default plan; on DirectML at the default plan gross pitch error rose 4.893 → 4.950 % (+0.057 points against +0.05 allowed), so `auto` stays fp32.
+- **Content encoder precision**: GPU fp16 ContentVec misses the export's feature gate at some stream lengths but is neutral downstream (|Δcosine| < 0.001, MCD ±0.007 dB); CPU int8 vs fp32: cosine −0.0026 (2 of 5 better), DNSMOS −0.04, MCD −0.012 dB, V/UV −0.006.
+- **hot_slots = 2**: the content encoder is shared; the second voice's own RMVPE plan (+368-420 MB) and its transient plain session (+351-520 MB) dominated the P5 cost, which the plan-at-load change removed.
+- **Cold versus warm loads** (`load_twice`): CUDA 2318-2689 → 1281-1748 ms, DirectML 2973-3438 → 1620-1722 ms before the load changes; the cold loads above are after them.
+- **Aligned SOLA tail** (480 against 481 samples at a 20 ms crossfade): set-sim +0.0002, cosine v2 −0.0141 [−0.0247, −0.0052], so it stays legacy; **SOLA search** narrowing lowered fidelity (4 ms window: set-sim −0.012, cosine v2 −0.031); **crossfade**: 15 ms cosine v2 −0.018 / DNSMOS −0.103, 10 ms −0.040 / −0.162, 5 ms DNSMOS −0.44.
+- **Lookahead** (8 clips, paired CI against 0 ms, A/A noise ±0.001): 10 ms set-sim +0.032 [+0.013, +0.055], cosine v2 +0.029, env MCD −0.13 dB, F0 −3.2 cents, DNSMOS +0.053; 20 ms +0.046 [+0.023, +0.078], +0.036, −0.18 dB, −6.1 cents, +0.136 [+0.007, +0.27]. Clicks 0 at 10 ms, +0.25 at 20 ms. Quality's 20 ms now also runs on DirectML at CUDA's fidelity (cosine 0.957 against 0.956, MCD 1.743 against 1.742 dB).
+- **Content context and normalisation**: 1 s of content context costs +0.08-0.10 dB MCD on 7 of 8 clips; running normalisation with the onset glide raises cosine +0.009 / +0.012 (8/8, 6/8 clips) but MCD +0.04 dB on 6 of 8 and still mutes the onset after a pause (−17.8 against −7.4 dB). The onset muting comes from the generator's `enc_p`; the window's own GroupNorm partly masks it.
+- **Missed-target honesty**: the T5 v2 rows, T1, T3 and the Streamer RTF are *misses*; nothing in this section is a claim that they are met.
+
+### Integrated smoke (P3B-I0)
+
+What it proves: the integrated engine (every P3B workstream plus the defaults flipped by P3B-I0) loads, converts and plays on each execution provider, does not crash, and gives sane output. It is not a timing claim (one run per row, machine otherwise idle: no `rustc`, CPU about 7 % before the first run, GPU timing lock held). Executable: release build of the integrated tree (`sigil.exe` sha256 `a7cc2a05…`, 0 compiler warnings), the MIT default voice, Low latency / 40 ms blocks / RMVPE on the GPUs, the Streamer preset / 120 ms blocks / SwiftF0 on the CPU, 512-frame device blocks, the shipped defaults, clips `en-jfk` (3.85 s) and `de` (2.75 s).
+
+| | CUDA | DirectML | CPU (Streamer, one thread) |
+|---|---|---|---|
+| Runs | jfk offline + 30 s paced, de offline: all exit 0, 0 model errors | the same | jfk offline + 20 s paced, de offline: all exit 0, 0 model errors |
+| EPs in use (every component) | content, enc, flowdec, pitch: `cuda`, no fallback, no warnings | `dml`, no fallback, no warnings | `cpu` |
+| Cold load (first / second process) | 2060 / 981 ms (the first read the models from a cold file cache); generator built once | 1125 / 1048 ms | 634 / 625 ms |
+| Offline call p50 / p95 / p99 | 6.3 / 7.2 / 7.9 ms | 6.5 / 7.8 / 8.0 ms | 275 / 280 / 282 ms (RTF p99 2.35: the one-thread preset is not real time at 120 ms blocks, as measured before) |
+| Stage p50 (content / F0 / enc / flowdec) | 2.0 / 3.3 / 0.2 / 2.5 ms | 1.1 / 3.1 / 0.7 / 2.3 ms | 54 / 2.0 / 7.5 / 211 ms |
+| Syncs per call | 3 | 4 | 0 |
+| Paced (wall clock): latency p50 = p99, underruns | 132.6 ms, 0 | 132.6 ms, 0 | 638 / 811 ms, 1641 (expected: RTF > 1) |
+| Paced call p95 (idle-clock cadence) | 16.4 ms | 15.8 ms | 290 ms |
+| Worker CPU, offline / paced | 0.22 / 0.038 cores | 0.23 / 0.045 cores | 1.0 / 0.99 cores |
+| VRAM (process delta) | 1332 MB | 842 MB | 0 |
+| F0 extractor calls / over the plan's bound | 98 / 0 and 737 / 0 | 98 / 0 and 737 / 0 | 34 / 0 |
+| Output | 48 kHz stereo, length equals the input, finite, rms 0.107-0.126, peak 0.59-0.71 | the same (rms 0.107-0.126, peak 0.59-0.73) | the same (offline rms 0.107-0.109; the paced file includes the muted underruns) |
+
+Two integrated-build confirmations of flipped defaults (interleaved, one executable, the switch on side B; GPU timing lock held; 2026-10-09):
+
+- **Parallel cold load** (`SIGIL_VC_PARALLEL_LOAD=0` against the default, 5 ABBA rounds, `load-cuda` and `load-dml`): CUDA `engine_load_ms` 967 against 1719 ms (-44 %, all 5 pairs faster by 732-816 ms), DirectML 1045 against 2130 ms (-51 %, all 5 pairs faster by 1077-1109 ms); `generator_builds` 1; VRAM CUDA 1330 against 1300 MB (the parallel build's transient, +30 MB), DirectML equal.
+- **Hybrid CUDA wait** (`SIGIL_CUDA_TUNING=wait=spin` against the default, 4 ABBA rounds, jfk offline + 30 s paced): worker CPU offline 0.198 against 1.292 cores (-85 %), paced 0.041 against 0.463 (-91 %) (the spin side REGRESSED); call p95 8.22 against 8.24 ms offline and 17.29 against 17.09 ms paced, p99 NEUTRAL, latency p99 identical, 0 underruns. The GPU changed clock regime in every paced run (SM clock 855-1935 MHz), so absolute paced numbers are not comparable across rows.
+- **Shared DirectML queue** (`SIGIL_VC_DML_SHARED=0` against the default, `load-dml`, 6 ABBA rounds): offline call p50 7.20 against 7.91 ms (the unshared side is 12.3 % slower, CI 2.9..17.8 %), p95 7.84 against 8.64 ms (INCONCLUSIVE, unshared +11.4 %), VRAM 841 against 853 MB (-12 MB); the cold-load gain P3B-G measured is not reproduced on the integrated build (1246 against 1254 ms, NEUTRAL: the parallel cold start already hides it) and the worker CPU is higher with the shared queue (0.225 against 0.196 cores offline, +14 %, about 0.03 cores). A first, noisy run of the paced row (3 usable pairs, the GPU changed clock regime in 5 of 8 runs) agreed on the sign of the call p50. **Review fix (2026-10-09): the default is now off.** The integrated build measured it as the default; P3B-G's own gates showed the content stage's p95 REGRESSED on the one queue (+6.1 % [1.13, 7.26] paced, +21.9 % [19.46, 28.94] under the 70 % GPU load, where a game shares the GPU), the cold-load gain's CI bound (37 ms) is under T9's 0.05 s, the integrated build did not reproduce it, and the default also reaches sessions the gates never ran (kNN, the legacy bridge, P5's families). A call-level gain does not waive a regressed stage under load (rule R3). `SIGIL_VC_DML_SHARED=1` opts in; P7-B re-measures on a quiet rig.
+
+Measurements overlapped nothing else. The smoke specs and logs are in the P3B-I0 scratch folder; the CPU row is the shipped preset, so its underruns describe that preset on this PC (the per-PC autotuner exists for it), not a regression.
 
 ## P5 voice families
 
@@ -265,9 +342,14 @@ clip, 40 ms blocks, RMVPE, the Low-latency preset with `auto` levers):
   4 ms without; the same DirectML shape problem as a crossfade other than 20 ms), so a 40 ms block
   runs at 45 ms. The engine factory skips lookahead while the content encoder runs on DirectML, with
   a lever note, until that encoder runs a fixed shape there (P3-C1 follow-up).
-- **Scoring note:** fidelity runs with lookahead need `lead_s` ≥ 4 in the quality run. With the P3
-  profile's 1 s lead the scorer reported 2700–2900 clicks per 10 minutes and 130 cents F0 RMSE for
-  the same audio (an alignment artefact; P3-F follow-up).
+- **Scoring note (corrected by P3B-B, [ADR 0009](../adr/0009-vc-scorer-v2.md)):** fidelity runs with
+  lookahead need `lead_s` ≥ 4 in the quality run. With the P3 profile's 1 s lead the scorer reported
+  2700–2900 clicks per 10 minutes and 130 cents F0 RMSE for the same audio. The clicks came from v1's
+  click statistic, which estimated the background rate from the 3–8 events outside windows covering
+  about 70 % of a 40 ms block and placed those windows 20 ms late at 20 ms of lookahead (the returned
+  span's start in input coordinates); the F0 RMSE came from a few gross octave frames. Scorer v2
+  places the windows for the model delay, uses a conditional binomial and reads 0 on the saved
+  cases and 2 on the two lead-1 lookahead runs.
 
 ## P3 final gate: pitch-track fixes
 
@@ -456,13 +538,18 @@ the P1 finding).
 - **The joins are clean.** No run at 40 ms or longer has a seam click, and the streamed output's
   seam flux ratio (1.3–1.7) is lower than the ceiling's own back-to-back joins: time-anchored noise,
   phase0 and SOLA do their job.
-- **The gap is the streaming pitch track.** The streamed F0 is 41–78 cents from the offline F0 with
-  6–10 % voicing disagreements; the rest follows from it (MCD 1.4–1.7 dB, DNSMOS 0.2–0.3 below the
-  ceiling). It narrows with the block: at 200 ms the voice reaches a cosine of 0.972. The F0 cache
-  computes each frame's F0 from a short window when it first appears; 20 ms of lookahead (P3-I0,
-  the Quality preset) brings the cosine to 0.975 and the V/UV error to 3.5 % on CUDA.
-- **The cosine target is strict.** CAM++ scores two sentences of one speaker at 0.918 (below), so
-  0.97 between two renditions of one sentence is a high bar.
+- **The gap is mostly the content encoder's context, not the pitch track (P3B-B, [ADR 0009](../adr/0009-vc-scorer-v2.md)).**
+  Through the output analyzer the streamed F0 is 41–78 cents from the offline F0 with 6–10 % voicing
+  disagreements, but that figure is dominated by the analyzer's own error and a few gross frames. On the
+  engine's fed F0, oracle F0 recovers at most 0.03 dB of the envelope MCD, while the content features'
+  limited context (the residual ablation) recovers 0.31–0.32 dB, about half of the 0.60–0.64 dB the
+  stream sits over its floor; the rest is the generator's right context and the joins. Lookahead helps
+  for that reason (P3B-H, scorer v2: 20 ms raises the set similarity by +0.046 [+0.023, +0.078]).
+- **The cosine target was strict and the asset was not exact.** The legacy CAM++ asset scored two
+  sentences of one speaker at 0.918 over every frame; with the exact export on speech frames two
+  different 3.8 s utterances of one speaker score 0.778 (English) and 0.654 (Japanese), and the same
+  pair scored twice is bit-identical. T5's identity row is therefore a difference to the whole-utterance
+  ceiling against a target speaker set (ADR 0009).
 
 ## Component measurements (P3 workstreams)
 
@@ -627,24 +714,29 @@ How it got there:
 
 ## Competitors (T6)
 
-The head to head needs the competitors' outputs of the same voice and clip (manual, below). Until
-then, the published per-chunk figures are reference rows. They come from other PCs, so they bound
-rather than rank:
+T6 is defined statistically since P3B ([README → compare v2](README.md#modes)): a corpus of loudness-normalised clips, paired per-clip statistics, DNSMOS +0.05 at matched latency with the lower confidence bound above 0, GPE and MCD non-inferiority under every analyzer against EGG or consensus truth, and latency at most 0.7x as a Pareto row against each competitor's operating points, its minimum stable chunk on the same rig included. It is **undecided**: no competitor renditions exist (the installs and captures are manual, [Still to run](#still-to-run-manual)). The published per-chunk figures are reference rows from other PCs, so they bound rather than rank:
 
-| System | Per-chunk compute p95 | Chunk | Compute / chunk | GPU |
+| System | Per-chunk compute | Chunk | Compute / chunk | GPU and method |
 |---|---|---|---|---|
-| vc-rs (TensorRT, `trtexec`) | 13.9 ms | 100 ms | 0.139 | not stated |
-| rvc-realtime | 15.7 ms | 60 ms | 0.262 | RTX 3060 Ti |
-| SVE, DirectML, RMVPE, IOBinding + priority | 13.6 ms | 100 ms | 0.136 | RTX 4090 |
-| SVE, DirectML, RMVPE, IOBinding + priority | 15.9 ms | 60 ms | 0.265 | RTX 4090 |
-| SVE, CUDA + levers, SwiftF0 | 10.6 ms | 80 ms | 0.132 | RTX 4090 |
-| SVE, CUDA + levers, SwiftF0 | 10.1 ms | 40 ms | 0.252 | RTX 4090 |
+| vc-rs | 13.9 ms p95 | 100 ms | 0.139 | RTX 3060 Ti, `trtexec` with TensorRT 11, model only (transfers excluded): ContentVec 2.51, RMVPE 5.32, RVC 6.07 ms p95 |
+| rvc-realtime | p50 15.7 / p95 21.2 ms | 60 ms | 0.262 / 0.353 | RTX 3060 Ti, FCPE, fp16 |
+| SVE, CUDA, RMVPE (P3B-C, one run, vc-rs's shape) | p50 7.98 / p95 10.98 / p99 11.66 ms | 100 ms | 0.080 / 0.110 | RTX 4090; "model step incl. host I/O": components p95 content 3.78, F0 5.64, enc 1.73, flowdec 3.68 ms |
+| SVE, DirectML, RMVPE (same run) | p95 17.09 ms | 100 ms | 0.171 | RTX 4090 |
+| SVE, CUDA + levers, SwiftF0 (P3) | p95 10.6 / 10.1 ms | 80 / 40 ms | 0.132 / 0.252 | RTX 4090 |
 
-With RMVPE, SVE's per-call cost ties both references while running on a faster GPU than
-rvc-realtime's, so T6's "beats both on normalized RTF" is not shown. The per-call floor (the content
-encoder and F0, above) is what has to fall; the SwiftF0 rows show the direction.
+The 4090 and the 3060 Ti differ by roughly 1.5x to 5x depending on the workload, so no cross-rig ranking holds: `scripts/vc-bench/vcrs_probe.py` gives a normalized-RTF verdict only when the GPU names match. P3B-C's ablation dry run (10 local clips, SVE minus time anchoring at matched shapes) found no automatic metric that separates the time-anchoring levers (DNSMOS −0.011 [−0.120, +0.098] at 40 ms, MCD to the reference +0.007 dB, GPE 0), while the same metrics do separate block and context (DNSMOS 3.11–3.14 at a GUI-like 200 ms shape against 2.71–2.79 at 40 ms); a blind listening check comes before any conclusion, and the ablation margins are never published as competitor results. The +0.05 DNSMOS row needs 31–36 clips (50 % power) or 63–73 (80 %) at the measured paired SD of 0.14–0.15, so the public corpus (92 clips) can carry it and the 10-clip local corpus cannot (the blind A/B row carries the quality claim there). Inputs must be loudness-normalised: a −65 dBFS clip was silence-gated in both renditions. As a whole-clip analyzer SwiftF0 voices only 2–47 % of the speech frames and CREPE-tiny 78–100 %, so the strict four-analyzer consensus truth covers 2–44 % of speech frames: use EGG truth or `consensus_min_agree: 3`.
 
 ## Scorers and how to read them
+
+**Scorer v2** (P3B-B, [ADR 0009](../adr/0009-vc-scorer-v2.md); `scoring.analyzer: v2`, the v1 metrics are printed next to it):
+
+- **CAM++:** the legacy asset divides the last, partial 100-frame segment by the full kernel (`AveragePool` with `ceil_mode` in ONNX Runtime: 6.5–25.5 dB SNR against upstream on ragged lengths); `bench/campplus-exact` reads 104.5–117.4 dB, and is applied to speech frames only, so identical audio scores bit-identically across builds. The identity row is SIM(stream, target set) − SIM(whole ceiling, same set), the set being the other clips' whole-ceiling renditions.
+- **F0:** the engine's fed F0 (the probe taps the shifted pitch on the absolute 10 ms grid) against whole-clip RMVPE of the input: fine pitch error, gross pitch error, V/UV and onset lag. The RMVPE analyzer floor is 5.7 cents [3.8, 8.0], below 10, so the fine-pitch limit stays 15 cents. The output-analyzer RMSE is advisory.
+- **Clicks:** two conditional binomial tests (97.5 %): v1's windows placed for the model delay, and narrow windows at both crossfade boundaries; validated by planted pops and a null test.
+- **MCD:** the envelope MCD (F0-adaptive smoothed spectrum) over its same-seed floor (primary: the same seed with blocks shifted by 100 ms, 1.41–1.43 dB; a different seed reads 1.22, ceiling B against A about the same), and the offset-corrected MCD (SOLA timing accounts for 0.04–0.05 dB of the 1.91–1.93).
+- **Ablations** (oracle F0, oracle content, both, stream F0 in the ceiling, residual) say where a gap lives; **rescore** judges old WAVs with the current scorer.
+
+**Scorer v1** (kept next to v2 for one release):
 
 - **The offline ceiling** (T5) is the same voice converting the recorded 16 kHz model stream offline.
   The Sigil Voice Engine is fixed-shape, so the ceiling is a second instance with long shapes: 200 ms
@@ -657,7 +749,7 @@ encoder and F0, above) is what has to fall; the SwiftF0 rows show the direction.
   Before P3-F fixed this, an envelope search locked onto the wrong syllable and reported MCD
   16–55 dB and 17 "clicks" for a stream that is 1.7 dB from its ceiling with no seam clicks.
 - **CAM++ calibration** (`bench/campplus`; the ignored `real_scorers_rank_like_the_export_checks`
-  test): the two halves of the 5.8 s JFK clip score **0.918**, the JFK clip against a Japanese
+  test): the two halves of the 3.85 s JFK clip score **0.918**, the JFK clip against a Japanese
   speaker **0.089**.
 - **DNSMOS P.835** (`bench/dnsmos-p835`): the clean JFK clip scores OVRL **3.36**; with white noise
   at 0 dB SNR it scores **1.68**.
@@ -687,6 +779,7 @@ Why the ceiling has these shapes (measured on the default voice, CUDA, RMVPE, th
   ratio of 4.3: time-anchored noise and phase0 keep the excitation continuous, but a 40 ms decode
   window with no future context still leaves a step at every join. With 200 ms blocks and 80 ms of
   lookahead the seam ratio is 1.7 (the stream's crossfaded joins: 1.4).
+- **Other ceilings (P3B-B).** Ceiling B (400 ms blocks, 160 ms lookahead, 500 ms context) and the whole-utterance ceiling (the input region plus 1 s of reflect padding, one pass on a dynamic-shape CPU path, run precision plus an fp32 row) bracket the primary. The stream's first 200 ms after an onset sit −4.9 to −5.0 dB under its speech level, against A −3.7, B −2.4 to −3.3 and whole −2.1 to −2.2: no ceiling mutes onsets, and the stream mutes them a little more.
 - **Full decode, cached F0.** `ceiling.exact` (default) turns partial decode off in the ceiling. It
   keeps the F0 cache on: recomputing F0 over every block's window tracks the input's pitch slightly
   better (69 vs 80 cents RMSE against the input's own F0) but makes adjacent blocks disagree at their
@@ -694,40 +787,14 @@ Why the ceiling has these shapes (measured on the default voice, CUDA, RMVPE, th
 
 ## What closes the gaps
 
-In order of what they buy, with the workstream that owns each piece:
+P3B shipped what the measurements named and measured the rest ([P3B section](#p3b-voice-engine-optimization-p3b-i0)). What is left, in order of what it buys:
 
-1. **Done in P3-I0: the GPU levers are on for CUDA by default** (`engine::presets::auto_lever`):
-   IOBinding + CUDA graphs on CUDA, IOBinding on DirectML (allocation-free ticks); the priority
-   stream stays off (no gain measured in-process). CUDA per call 21.7 → 10.9 ms p95, 0 % of calls over
-   budget under both load simulations.
-2. **Latency (T1):** 85 ms needs 20 ms blocks with a 10 ms cushion and crossfade, which today costs
-   fidelity (cosine 0.77 against the ceiling) and does not run on DirectML (next item). The engine
-   has to hold quality at 20 ms (the content and F0 windows, P3-C1 / P3-D), and the voice changer can
-   then offer that stream as Low latency (P3-E / P3-G).
-3. **DirectML content encoder with a crossfade other than 20 ms** (P3-C1): 34–49 ms per call instead
-   of 4–5 ms; its input shape must be fixed like the generator's.
-4. **The content encoder** is the largest per-call cost (3.7–4.6 ms of a 9–11 ms call on every EP).
-   T2's 6 ms needs it on the plan path too: an fp16 ContentVec session with IOBinding and a CUDA
-   graph (P3-C1 / P3-C2).
-5. **RMVPE:** done in P3-I0, the engine factory builds the pitch extractor with the voice's GPU
-   levers, so RMVPE runs as its CUDA-graph plan (the 130–150 ms p99 spikes are gone). Done at the P3
-   final gate: the plan's F0 accuracy (the zero log-mel padding after short calls; V/UV 9.2 → 3.5 %
-   on CUDA, [P3 final gate](#p3-final-gate-pitch-track-fixes)). Still open: its VRAM (about 380 MB;
-   SwiftF0 or CREPE-tiny keep a DirectML voice under T3's 650 MB), and sizing the plan for the
-   incremental 24-frame call (32 mel frames) instead of the first whole-window call (64), which
-   would halve its compute (the whole-window call would then need its own path).
-6. **The CPU tier (T4):** with one ONNX Runtime thread (the Streamer preset) the 40 kHz HiFiGAN
-   decoder alone costs about 205 ms per 80 ms block, and the voice runs 3.4× slower than real time.
-   With the default thread pool, 120 ms blocks are just real time and 200 ms blocks leave headroom,
-   which is what the autotuner picks. T4's 1.5 cores at RTF 0.6 needs a cheaper CPU generator (a
-   smaller decoder or int8 weights, P3-A / P3-C1), not more threads.
-7. **Fidelity (T5):** 20 ms of lookahead (the `lookahead_ms` parameter, P3-I0) meets the cosine row
-   and nearly the V/UV row on CUDA; it needs the DirectML content encoder fixed (item 3) to run there.
-   The streaming pitch track is most of the remaining gap (F0 RMSE).
-8. **Cold load (T9):** 2.7–3.2 s on DirectML is session creation for four graphs; build them in
-   parallel or cache ONNX Runtime's optimized models (P3-C2).
-9. **Diagnostics:** done in P3-I0, the pitch bank returns the EP outcome of RMVPE and FCPE too, and
-   a bring-your-own ONNX voice lists its generator's outcome first.
+1. **Latency (T1: 132.6 ms against 85–95 ms).** The 10 ms device block (−17.4 ms, opt-in) once it is confirmed on DirectML, the CPU and a live WASAPI device (P7-B); the adaptive cushion if it can hold 0 underruns under every load (−18 ms on a calm PC); a lookahead other than 0 spends the delay it would save. The 10 ms crossfade (−8.7 ms) fails its fidelity gate, so 85 ms needs a model that sounds as good with less right context.
+2. **Per-call cost (T2).** CUDA is at 7.4–7.6 ms idle (6 ms is TensorRT-class work, deferred: no runtime pack) and 9.4 ms under load; DirectML 9.0 idle and 11.6 under load. What remains is RMVPE (3–5 ms) and the generator's launches; a merged DirectML `enc` + `flowdec` graph and F0 on a DirectML compute queue are the deferred follow-ups.
+3. **VRAM (T3).** The weight floor plus the CUDA context make 800 MB hard on H2; the VRAM saver (DirectML 654 MB, CUDA 1156) needs an app setting and a decision about its pitch cost; the content encoder's session-init transient (200–241 MB) is the largest peak left.
+4. **The CPU tier (T4).** RTF 0.6 at 120 ms blocks needs at least 4.0 cores at perfect scaling; the best measured policy (6 threads at below-normal priority, arena on) reaches 0.74–0.83 at 2.8 cores. The routes to the original 1.5 cores are the opt-in int8 CPU decoder (deferred) or longer blocks (200 ms: 0.62 at 2.8 cores). The Streamer preset still runs one thread; a thread-count setting and an H3 live record come before changing it.
+5. **Fidelity (T5 v2).** The content encoder's context is the largest piece of the gap; lookahead (10–20 ms) and the gated levers recover parts of it at a cost. DirectML `ja-long`'s seam needs a listening check.
+6. **Head to head (T6).** Needs the competitors' renditions (manual).
 
 ## Reproducing
 
@@ -737,7 +804,7 @@ In order of what they buy, with the workstream that owns each piece:
 2. Make an app-data folder for the benchmark (`SIGIL_APP_DATA_DIR`) and install the models with the
    store, one at a time: `sigil.exe --headless fetch vc/voice-default`, `vc/pitch-rmvpe`,
    `vc/pitch-swiftf0`, `vc/pitch-crepe-tiny`, `bench/campplus`, `bench/dnsmos-p835` and
-   `runtime/nvidia-cuda13` for CUDA; `vc/embedder-contentvec` and `vc/pitch-fcpe` are Sigil exports
+   `runtime/nvidia-cuda13` for CUDA (scorer v2 also needs `bench/campplus-exact`, unpublished: `SIGIL_LOCAL_ASSETS`); `vc/embedder-contentvec` and `vc/pitch-fcpe` are Sigil exports
    (unpublished: `SIGIL_LOCAL_ASSETS`). Import the voice with
    `sigil.exe --headless vc-import-worker job.json`, where `job.json` is `{"version": 1, "source":
    ".../default.pth", "out_dir": "<app data>/voice-changer/models/default", "smoke": true, "name":
@@ -760,11 +827,14 @@ In order of what they buy, with the workstream that owns each piece:
 6. Latency and silence: paced runs with `stream.output_prefill_ms`, `output_max_queue_ms` and
    `crossfade_ms` set, and a `{"kind": "synthetic", "signal": "silence"}` input.
 
+7. Before / after claims (P3B) come from interleaved runs, not single pairs: `run-perf-gate.ps1 -CompareExe | -CompareVars | -CompareEnv`, holding `gpu-lock.ps1`'s lock ([README → Interleaved A/B](README.md#interleaved-ab-p3b-a-the-evidence-a-beforeafter-claim-needs)). Fidelity: `scoring.analyzer: v2`, the corpus runner `scripts/bench/specs/p3b/b/run_corpus.ps1`, and `rescore` for old WAVs.
+
 Run nothing else heavy on the PC meanwhile: another GPU job changes every number, which is exactly
 what the contention runs measure on purpose.
 
 ## Still to run (manual)
 
+- **P7-B: the single final scorecard of the shipped voice-changer defaults** (user scope change, 2026-10-09), on a quiet machine, with the profile rows of `scripts/bench/profiles/p3b.json` and `run_corpus.ps1` for T5 v2. It also decides: `device_block=model_divisor` as the default (confirm on DirectML, the CPU and a live WASAPI device), the CPU int8 against fp32 ContentVec order (measure the fp32 encoder's CPU cost), the Streamer thread policy (6 threads at below-normal priority; needs a thread-count setting and an H3 record), and whether the Low-latency preset takes a 10 ms lookahead.
 - **H1 evidence (T1, T2, T7 under real load):** a friend with an RTX 3060 / 4060 runs the voice
   changer in VRChat while OBS records, starts a live recording from the voice changer's benchmark
   panel (`voice_changer_live_record_start`), and sends the `app_data/bench/results/live-<ms>/`
@@ -775,10 +845,13 @@ what the contention runs measure on purpose.
   run. The dev PC's virtual-cable endpoints are disabled, so the paced harness's engine-added latency
   stands in (it excludes the devices' own buffers).
 - **Head to head (T6):** RVC WebUI realtime and Applio realtime through `scripts/vc-bench` (offline
-  drivers in the user's own Python environments), w-okada VCClient through `play_record.py`, the same
-  voice and clips; score with a `compare` run and the blind A/B kit (`tools/listening-test`, 5+
-  listeners × 20 pairs). Neither app is installed on the dev rig, and the plan keeps competitor
-  installs manual.
+  drivers in the user's own Python environments, `--corpus` and `--sweep`), w-okada VCClient and other
+  live apps through `play_record.py` (the e2e play-and-record tier), the same voice and clips; fetch the
+  public corpus (`scripts/bench/fetch-public-corpus.py`, about 646 MB, one download at a time), then
+  score with a `compare` run (compare v2) and the blind A/B kit (`tools/listening-test`, 5+ listeners ×
+  20 pairs; a 20-trial page for the ablation dry run is already prepared). None of the apps is installed
+  on the dev rig, and the plan keeps competitor installs manual. Also listen to DirectML `ja-long`'s
+  seams (one narrow-window click) and publish `bench/campplus-exact` (local-only until then).
 - **Corpus (T5, T8):** the 20 consented speech clips (plus game-music bleed and singing) for the
   fidelity rows, and the user's 40-voice community corpus for the importer's T8 row.
 - **TensorRT-RTX (T9):** install `runtime/tensorrt-rtx` and run a `studio_trt` spec twice (the first

@@ -329,6 +329,110 @@ pub fn smooth_f0(f0: &mut [f32], window: usize) {
     }
 }
 
+/// Kill switch of the streaming smoother's edges (P3B-F): `SIGIL_VC_F0_EDGE=zero` makes
+/// [`smooth_f0_stream`] the P3 smoother ([`smooth_f0`]: the median zero-pads past both ends);
+/// anything else (or unset) replicates the end frames. Read once per process.
+pub const F0_EDGE_ENV: &str = "SIGIL_VC_F0_EDGE";
+
+/// Whether [`smooth_f0_stream`] zero-pads its median like P3 ([`F0_EDGE_ENV`]`=zero`).
+pub fn stream_edges_zero() -> bool {
+    static ZERO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ZERO.get_or_init(|| {
+        std::env::var(F0_EDGE_ENV)
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "zero" | "legacy" | "p3"))
+            .unwrap_or(false)
+    })
+}
+
+/// The streaming extractors' smoother (RMVPE and FCPE on the tick path; P3B-S0 call sites,
+/// P3B-F implementation): [`smooth_f0`]'s octave-jump repair and median over the contour,
+/// unvoiced frames included, but the median's window **replicates the end frames** instead of
+/// zero-padding past them, and it allocates nothing.
+///
+/// The newest frame of a streaming call is the one the voice is decoded with; a zero pad there
+/// pulls an onset at the newest frame to unvoiced (median of `[0, f, 0]`) and a voiced newest
+/// frame down to `min(previous, newest)`. Interior frames (`window / 2` or more from both ends)
+/// come out exactly as from [`smooth_f0`]; only the edge frames differ.
+///
+/// Measured (P3B-F, `engine::f0_cache::tests::lead_sweep_against_whole_clip_f0`, table
+/// geometry, 7 speech clips, 6 geometries x 3 readout lags): RMVPE's contour of an `n`-frame call
+/// has `n + 1` frames (FCPE's mel export too) and the F0 cache keeps the first `n`, so the zero pad
+/// lands on the dropped extra frame: on the cached frames the two edge rules are bit-identical. The
+/// edge rule matters only to callers that keep the whole contour (a whole-utterance call's first
+/// and last frame). What this change buys on the tick path is the allocation-free smoother (the
+/// last allocation of RMVPE's `f0_into`). `SIGIL_VC_F0_EDGE=zero` ([`F0_EDGE_ENV`]) is the switch
+/// back to the P3 smoother.
+///
+/// Whole-utterance callers keep [`smooth_f0`] (scipy `medfilt`, reference RVC).
+///
+/// # Frozen by P3B-S0 (signature; P3B-F implements)
+pub fn smooth_f0_stream(f0: &mut [f32], window: usize) {
+    if stream_edges_zero() {
+        smooth_f0(f0, window);
+    } else {
+        smooth_f0_replicated(f0, window);
+    }
+}
+
+/// [`smooth_f0_stream`]'s edge-replicating smoother, allocation-free (fixed scratch on the stack).
+fn smooth_f0_replicated(f0: &mut [f32], window: usize) {
+    let n = f0.len();
+    if n == 0 {
+        return;
+    }
+    for v in f0.iter_mut() {
+        if !(v.is_finite() && *v > 0.0) {
+            *v = 0.0;
+        }
+    }
+    // Octave-jump repair against the raw neighbours (as `smooth_f0`): `prev_raw` keeps the value
+    // frame `i - 1` had before it was repaired; frame `i + 1` is not repaired yet when read.
+    let jumps = |a: f32, b: f32| a / b > 1.9 || b / a > 1.9;
+    let mut prev_raw = 0.0f32;
+    for i in 0..n {
+        let cur = f0[i];
+        let next = if i + 1 < n { f0[i + 1] } else { 0.0 };
+        if cur > 0.0 {
+            let (mut sum, mut count, mut all_jump) = (0.0f32, 0usize, true);
+            for nb in [prev_raw, next] {
+                if nb > 0.0 {
+                    sum += nb;
+                    count += 1;
+                    all_jump &= jumps(cur, nb);
+                }
+            }
+            if count > 0 && all_jump {
+                f0[i] = sum / count as f32;
+            }
+        }
+        prev_raw = cur;
+    }
+    let w = window.clamp(1, 5);
+    let half = w / 2;
+    if half == 0 {
+        return;
+    }
+    // Median with the window clamped to the contour (edges replicate). `before` holds the values
+    // frames `i - half .. i` had before this pass overwrote them (at most two).
+    let mut before = [0.0f32; 2];
+    let mut win = [0.0f32; 5];
+    for i in 0..n {
+        for (k, slot) in win.iter_mut().enumerate().take(2 * half + 1) {
+            let j = (i + k).saturating_sub(half).min(n - 1);
+            *slot = if j < i { before[half - (i - j)] } else { f0[j] };
+        }
+        let wv = &mut win[..2 * half + 1];
+        wv.sort_unstable_by(f32::total_cmp);
+        let out = wv[half];
+        // Shift the history of original values, newest last.
+        if half == 2 {
+            before[0] = before[1];
+        }
+        before[half - 1] = f0[i];
+        f0[i] = out;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::smooth_f0;
@@ -396,6 +500,107 @@ mod tests {
         let mut f0 = vec![100.0, 100.0, 400.0, 100.0, 100.0];
         smooth_f0(&mut f0, 3);
         assert!(f0.iter().all(|&v| (v - 100.0).abs() < 1e-3), "{f0:?}");
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::{smooth_f0, smooth_f0_replicated};
+
+    /// Deterministic contours with voiced runs, dropouts, isolated frames and octave jumps.
+    fn contours() -> Vec<Vec<f32>> {
+        let mut out = Vec::new();
+        let mut s = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        for len in 1..40usize {
+            let f0: Vec<f32> = (0..len)
+                .map(|_| match next() % 9 {
+                    0 | 1 => 0.0,
+                    2 => 400.0,
+                    3 => f32::NAN,
+                    k => 140.0 + k as f32 * 3.0,
+                })
+                .collect();
+            out.push(f0);
+        }
+        out
+    }
+
+    /// Interior frames (`window / 2` or more from both ends) come out exactly as from `smooth_f0`;
+    /// only the edges differ.
+    #[test]
+    fn interior_frames_equal_smooth_f0() {
+        for window in [1usize, 3, 5] {
+            let half = window / 2;
+            for f0 in contours() {
+                let (mut a, mut b) = (f0.clone(), f0.clone());
+                smooth_f0(&mut a, window);
+                smooth_f0_replicated(&mut b, window);
+                let n = f0.len();
+                if n > 2 * half {
+                    assert_eq!(&a[half..n - half], &b[half..n - half], "window {window}: {f0:?}");
+                }
+                assert!(b.iter().all(|v| v.is_finite() && *v >= 0.0));
+            }
+        }
+    }
+
+    /// The edges replicate the end frames: an onset at the newest frame stays voiced (the zero pad
+    /// unvoiced it), a voiced newest frame keeps its value, an isolated voiced frame inside the
+    /// contour is still removed, and a single interior dropout is still filled.
+    #[test]
+    fn edges_replicate_the_end_frames() {
+        let mut f0 = vec![0.0, 0.0, 0.0, 150.0, 151.0];
+        let mut zero = f0.clone();
+        smooth_f0(&mut zero, 3);
+        smooth_f0_replicated(&mut f0, 3);
+        assert_eq!(zero[4], 150.0, "P3: the newest frame pulled to min(prev, newest)");
+        assert_eq!(f0, vec![0.0, 0.0, 0.0, 150.0, 151.0]);
+        let mut f0 = vec![0.0, 0.0, 0.0, 0.0, 180.0];
+        smooth_f0_replicated(&mut f0, 3);
+        assert_eq!(f0[4], 180.0, "an onset at the newest frame is kept");
+        let mut f0 = vec![0.0, 0.0, 200.0, 0.0, 0.0];
+        smooth_f0_replicated(&mut f0, 3);
+        assert_eq!(f0, vec![0.0; 5]);
+        let mut f0 = vec![110.0, 111.0, 0.0, 112.0, 113.0];
+        smooth_f0_replicated(&mut f0, 3);
+        // P3 (zero pad): [110, 110, 111, 112, 112]; the newest frame now keeps its value.
+        assert_eq!(f0, vec![110.0, 110.0, 111.0, 112.0, 113.0]);
+        // Window 5 at both ends.
+        let mut f0 = vec![100.0, 101.0, 102.0, 103.0];
+        smooth_f0_replicated(&mut f0, 5);
+        // [100,100,100,101,102] -> 100; [100,100,101,102,103] -> 101; [100,101,102,103,103] -> 102;
+        // [101,102,103,103,103] -> 103.
+        assert_eq!(f0, vec![100.0, 101.0, 102.0, 103.0]);
+        // The octave repair still runs first.
+        let mut f0 = vec![100.0, 100.0, 400.0, 100.0, 100.0];
+        smooth_f0_replicated(&mut f0, 3);
+        assert!(f0.iter().all(|&v| (v - 100.0).abs() < 1e-3), "{f0:?}");
+    }
+
+    #[test]
+    fn the_stream_smoother_is_allocation_free() {
+        use crate::services::neural_audio::gpu::alloc_probe::allocations_during;
+        let mut f0: Vec<f32> = (0..64)
+            .map(|i| if i % 11 < 2 { 0.0 } else { 150.0 + i as f32 })
+            .collect();
+        // The kill switch's first read (a process-wide `OnceLock`) may allocate.
+        super::smooth_f0_stream(&mut f0, 3);
+        let ((), n) = allocations_during(|| {
+            for w in [3usize, 5] {
+                smooth_f0_replicated(&mut f0, w);
+            }
+            super::smooth_f0_stream(&mut f0, 3);
+        });
+        // With `SIGIL_VC_F0_EDGE=zero` set, `smooth_f0_stream` is P3's (allocating) smoother.
+        if !super::stream_edges_zero() {
+            assert_eq!(n, 0);
+        }
     }
 }
 

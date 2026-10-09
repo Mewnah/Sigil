@@ -1,0 +1,26 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-A load probe (T9 / T4-WS0): one fresh process loads the voice in ${SLOT} on ${EP} with ${PITCH} F0 (${PRESET} preset, ${LOAD_BLOCK_MS} ms blocks, lookahead ${LOOKAHEAD_MS} ms, build ${BUILD}, process QoS ${QOS}) and converts the clip once: engine_load_ms with its wall-clock breakdown by load stage (load_<stage>_ms, report.engine.attribution.load) and the generator builds. Run it 5 times as 5 processes (run-perf-gate.ps1 -CompareExe <same exe> -Only load-* gives the rounds) for cold-load statistics.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "block_ms": ${LOAD_BLOCK_MS},
+    "lookahead_ms": ${LOOKAHEAD_MS},
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": false, "write_audio": false }
+}

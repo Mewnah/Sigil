@@ -18,6 +18,8 @@ scorecard against the plan's targets T1–T10 is [VC_BENCHMARKS.md](VC_BENCHMARK
 | IPC `plugin:bench\|run_benchmark({ spec, outDir? })` | "Benchmark this PC" and the autotuner. Returns the report; events `bench:progress` and `bench:done`. `plugin:bench\|cancel_benchmark`, `plugin:bench\|get_last_report`. Relative paths resolve against `app_data/bench/`, and `outDir` must stay inside it (default `app_data/bench/results/<name>-<unix ms>/`). One benchmark at a time. Every accepted call ends in one `bench:done`, including errors and panics; a call refused because a benchmark is already running emits none. |
 | `cargo test --manifest-path src-tauri/Cargo.toml bench` | Stub-model and fake-RVC plumbing, the latency tracer, the budget, the meters. No downloads, no devices. |
 | `scripts/bench/run-perf-gate.ps1` | Dev-rig perf gate: runs specs and compares against a baseline (a p95 regression over 5 % fails). `-Profile p3` also materializes the real-voice templates and checks the plan's T-targets. |
+| `scripts/bench/gpu-lock.ps1` | The dev rig's GPU timing lock (P3B rule R2): `-Acquire <tag>` / `-Release` / `-Run <tag> -Command ...` / `-Status`. Every timing-sensitive run (any `--headless bench` on a GPU or the CPU, ignored GPU cargo tests, ORT profiling, Python microbenchmarks) holds it; `run-perf-gate.ps1` takes it for each run (`-NoGpuLock`, `-GpuLockWait`, `-GpuLockTag`). A fair queue keeps an ABBA series from starving other waiters. Path: `-LockPath`, else `SIGIL_GPU_LOCK`, else the session lock, else `%LOCALAPPDATA%\sigil-bench\gpu_timing.lock`. Never hold it across a build. |
+| `Sigil.exe --headless gpu-load <spec.json>` | The benchmark's out-of-process GPU load (a DirectML convolution at a set duty, in its own process in a KILL_ON_JOB_CLOSE job, reporting the duty it achieved). The `h2_load70_oop` and `h2_load70_dml` contention profiles start it; you do not run it by hand. |
 | `scripts/bench/run-matrix.ps1` | One voice through a matrix of EP × F0 method × block × precision × context × levers; writes `matrix.md` / `matrix.csv`. |
 | IPC `plugin:voice-changer\|voice_changer_autotune({ request })` | The per-PC autotuner (the voice changer must be stopped). Progress on `voice_changer:autotune_progress`; the result is stored per GPU and driver in `app_data/voice-changer/autotune.json` and its report goes to `app_data/bench/results/autotune-<ms>/`. Also `voice_changer_cancel_autotune`, `voice_changer_get_autotune`. |
 | IPC `plugin:voice-changer\|voice_changer_live_record_start({ request })` / `voice_changer_live_record_stop` | Records the running voice changer's per-tick timeline for up to 10 minutes into `app_data/bench/results/live-<ms>/` (no audio, no paths: shareable as it is). |
@@ -209,6 +211,46 @@ or another run of the spec (`sigil.latency_from`, `sigil.latency_metric`). Metri
 `gross_pitch_error_margin` = the best competitor − Sigil (≥ 0), `latency_ratio` = Sigil / the
 fastest competitor (≤ 0.7). The blind A/B test of T6 uses the same WAVs: `tools/listening-test`.
 
+**compare v2** (P3B-C; T6 as the P3B plan defines it) scores a corpus instead of one clip, with
+`compare.corpus` pointing at a `sigil-compare-corpus/1` manifest (template `scripts/bench/corpus.example.json`,
+parsed by a test; `compare.candidates` are ignored then). Every compare run also reports the v2 rows in
+`details.v2`. The manifest lists clips (with `sha256`, optional EGG F0 truth and neutral references),
+the operating points of other systems (one WAV per clip, `{clip}` in the path, plus a driver sidecar
+`sigil-vc-bench-sidecar/1`), live captures, Sigil's own rows (`sigil.configs`: `shipping_default`,
+`autotuned`, `low_latency`, `quality`, built in-process), ablations, pre-registered margins, `min_clips`,
+the F0 analyzers, the loudness target (-26 LUFS, BS.1770-4), `consensus_min_agree`, stand-in references
+and `dump_f0`. Fairness: a rendition with another transpose, another voice or an input hash that does not
+match is refused; missing metadata is flagged; latencies compare only within a tier and latency kind (a
+live offset nobody calibrated is `uncalibrated` and compares with nothing);
+offline points count only when per-block p99 is below the block on this run's GPU (unknown is undecided,
+never a silent pass); Sigil's rows meet the same rules. The sidecars of all of a point's clips are
+merged (they must agree on the voice, transpose and block, or the point is refused; the per-block
+compute is the worst p95 / p99 over the clips). A live capture's sidecar carries only the voice the
+manifest asserts for the point. A point that misses clips (a missing, refused or muted rendition, an
+alignment failure, a conversion error, no DNSMOS where the clip needs one) is incomplete
+(`unscored_clips`, `points_incomplete`, `clips_unscored`) and decides nothing, a Sigil row included.
+A competitor whose index rate, protect, loudness mix or F0 method differs from the Sigil rows' is
+flagged (`operating point: ...`, listed in `t6.caveats`). Stand-in references are scored apart
+(`mcd_stand_in_db`; ablations only), so the T6 MCD row needs upstream references. A Sigil row's GPU is
+the adapter its engine ran on. The blind A/B manifest leaves out refused and real-time-infeasible
+points (`make_test.skipped`). Scoring: DNSMOS on loudness-normalised clips of at
+least 9.01 s (shorter clips get an advisory tiled score), F0 against EGG truth or the analyzers' consensus
+under every output analyzer, envelope and STFT MCD to the neutral references, CAM++ exact similarity to a
+leave-one-clip-out target set, artifacts per minute, seam clicks on each point's own block grid and the
+onset level after 300 ms of silence. Statistics are per-clip paired differences with the Student t 95 %
+interval deciding (Wilcoxon / Hodges-Lehmann and a clip bootstrap cross-check; a disagreement is flagged
+fragile). Per competitor point: DNSMOS +0.05 superiority at matched latency, GPE (under every analyzer)
+and MCD non-inferiority, and latency at most 0.7x as a Pareto row with non-inferiority on every quality
+row. A row is Pass, NotShown, Fail, Undecided, Refused or Excluded, and `t6_pass` is 1 only if every
+counted point passes every row. Metrics: `corpus_clips`, `corpus_clips_dnsmos`, `points_*`,
+`renditions_refused`, `t6_pass`, `t6_undecided`, `t6_rows_*`, `dnsmos_paired_sd`, `clips_needed_dnsmos_50` /
+`_80` and `ablation_<name>_<metric>_diff_mean|_sd|_lo|_hi|_clips`. `scripts/vc-bench/compare_export.py` writes
+`make_test.json` (aligned, trimmed, loudness-matched pairs for the blind A/B), `pareto.svg` and `t6.md`;
+`scripts/bench/fetch-public-corpus.py` fetches LibriSpeech test-clean and CMU ARCTIC (EGG truth) one
+download at a time (about 646 MB, resumable; `--dry-run`); `make-test-clips.py --local-corpus` builds a
+10-clip corpus from the dev cache. The exact manual commands for the competitors are in
+`scripts/vc-bench/README.md`; nothing installs a competitor.
+
 **autotune** runs the per-PC autotuner on the spec's `rvc` engine (`request`: the
 `AutotuneRequest` of `voice_changer_autotune`) and reports the chosen configuration
 (`autotune_*` metrics; `details` holds the result with every candidate measured). The search, per
@@ -287,6 +329,47 @@ newest frame to the estimated playout of its first converted sample), `block_ms_
 `gap_ticks`, `error_ticks`, `silent_ratio`, `governor_steps`, `governor_level_max`, `dropped_ms`,
 `backlog_max_ms`, `over_budget_ratio`, `cpu_cores`, `vram_mb_peak`, `timeline_dropped`,
 `underruns`.
+
+### Fidelity scorer v2, rescore, load_twice and attribution (P3B)
+
+- **`scoring.analyzer`** is `v1` (default, the P3 metrics), `v2` or `v2+ablations` ([ADR 0009](../adr/0009-vc-scorer-v2.md)).
+  A v2 quality run adds the exact CAM++ (`bench/campplus-exact`, speech frames only), the fed-F0 errors (the
+  engine's own F0 captured on the absolute frame grid against whole-clip RMVPE of the input: fine pitch error,
+  gross pitch error, V/UV, onset lag), two conditional binomial click tests (wide windows placed for the model
+  delay, narrow windows at the crossfade boundaries), the envelope MCD over its same-seed floor, the
+  offset-corrected MCD and the onset levels, with `quality.fidelity.offsets_s` (default 3 offsets, medians and
+  `_spread`), the ceilings A (`long_shape`, the primary), B and `whole` (`ceiling.mode`), the speaker target set
+  (`fidelity.reference_clips`) and, with `v2+ablations`, the oracle ablations. The v1 metrics are printed next to
+  them. `scripts/bench/specs/p3b/b/run_corpus.ps1` runs the whole local corpus (18 clips x 3 offsets), the
+  leave-one-clip-out rescore and `scripts/bench/score_v2/aggregate.py` (corpus means with bootstrap CIs and the
+  T5 v2 rows).
+- **`rescore`** scores saved stream / ceiling WAV pairs (`pairs[]` of `{name, stream, ceiling, input}`) with the
+  current scorer without converting anything, so an old executable's WAVs and a new one's are judged by one
+  scorer. Reports `clips`, `pairs` and the quality metrics; the offsets of one v2 run count as one clip.
+- **`load_twice`** loads a second voice while the first streams (the `hot_slots = 2` row) and reports
+  `second_load_ms`, `vram_second_voice_mb`, `vram_second_load_peak_mb` and `background_call_ms_p99`.
+- **Attribution, on every engine run:** per-call `content_ms`, `f0_ms`, `enc_ms`, `flowdec_ms`, `retrieval_ms`,
+  `post_ms`, `glue_ms` (the call minus the union of its stages), `overlap_ms`, `harness_ms`, `syncs_per_call`, the
+  onset calls apart (`call_ms_onset_*`), the SOLA joins (`join_offset_ms_*`, `join_step_ms_*`, `join_ncc_*`),
+  `f0_calls` / `f0_long_calls` (extractor calls over the run, and those longer than the extractor's bound: 0
+  with priming on a bounded plan), the paced T1 decomposition (`t1_<part>_ms_*`, `t1_at_p50_<part>_ms`,
+  `t1_residual_p50_ms`: a telescoping partition of each sample's path whose median sample adds up to
+  `latency_ms_p50`), `algorithmic_latency_table` (480 against 512 frames at 20/40/60/80 ms engine blocks), the
+  load window split by stage (`load_<stage>_ms`, `load_other_ms`, `load_attributed_ratio`, `generator_builds`),
+  VRAM (`vram_load_peak_mb`, `vram_load_overshoot_mb`, `vram_cuda_context_mb`, the per-component ledger and
+  the measured spans) and the run's GPU and host state (`state_*`: NVML clocks, P-state, clock-event reasons,
+  other processes using the GPU, a speed index, a fixed host micro-benchmark, power plan, process QoS).
+  `SIGIL_BENCH_GPU_TIMING=1` adds CUDA-event GPU time per plan (`gpu_<component>_ms_*`).
+- **New spec fields:** `engine.qos` (`app`: the voice changer's EcoQoS opt-out, or `none`), `engine.cpu_arena`,
+  `engine.dynamic_block_base`, `engine.content_variant` (`auto`, `fp32`, `fp16`, `int8`), `stream.output_cushion`
+  (`fixed`, `adaptive`), `stream.device_block` (`fixed`, `model_divisor`), `stream.sola_search_ms`, `vram.sample_ms`
+  (the load-peak sampler), the contention profiles `h2_load70_oop` (the out-of-process DirectML load) and
+  `h2_load70_dml`, and `load.gpu.out_of_process`.
+- **Environment switches of the benchmark:** `SIGIL_BENCH_STATE` (`off`, `light`, default full),
+  `SIGIL_BENCH_GPU_TIMING=1`, `SIGIL_BENCH_NVML_DEVICE`, `SIGIL_BENCH_ABLATIONS=1`, `SIGIL_ORT_PROFILE=<dir>` with
+  `SIGIL_ORT_PROFILE_FILTER=<component prefix>` (tooling only; never time with it on) and
+  `SIGIL_VC_F0_OVERLAP=0` for a clean per-component VRAM ledger. The engine's own kill switches are listed in
+  [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md#voice-engine-optimization-p3b).
 
 ### Load and stalls (paced)
 
@@ -512,6 +595,43 @@ intended notes with `python scripts/bench/score_singing.py <out>/offline.output.
 × levers cells (one after the other, never in parallel) and tabulates compute, RTF, latency, VRAM,
 CPU, load time and the per-component breakdown in `matrix.md` / `matrix.csv`.
 
+### Interleaved A/B (P3B-A): the evidence a before/after claim needs
+
+On this rig a single before/after pair is noise: the GPU clock governor holds the SM clock low for whole
+stretches, and the pair SD of `call_ms_p95` was 11-19 % offline. A claim therefore comes from interleaved runs
+of the two sides (A B, B A, A B, ...), whose paired log-ratios the gate summarises:
+
+```powershell
+# one executable, a switch (an environment variable on side B)
+pwsh scripts/bench/run-perf-gate.ps1 -Profile p3b -Exe <exe> -CompareExe <exe> -CompareEnv 'SIGIL_VC_DML_SHARED=1' -Only sve-dml -Slot <voice> -Clip <wav>
+# two executables, or two values of a profile variable
+pwsh scripts/bench/run-perf-gate.ps1 -Profile p3b -Exe <new> -CompareExe <old> -CompareVars 'BUILD=direct' -Only load-cuda -Slot <voice> -Clip <wav>
+# the gate's own resolution: the same exe on both sides, then feed -AASummary
+pwsh scripts/bench/run-perf-gate.ps1 -Profile p3b -Exe <exe> -CompareExe <exe> -Only aa-dml,aa-cuda -Slot <voice> -Clip <wav>
+```
+
+- `-Rounds` (default 7) ABBA rounds, grown by two while a row is INCONCLUSIVE up to `-MaxRounds` (15);
+  `-Only` selects profile rows, `-Resume` continues a session, `-AASummary <gate-summary.json>` with
+  `-TargetHalfWidthPct` sizes the rounds from an A/A session, `-AllowInconclusive` keeps the exit code 0.
+- Statistics are paired log-ratios with the exact Wilcoxon / Hodges-Lehmann interval from 6 pairs (Student t
+  below that; no bootstrap). The Rust mirror is `bench::metrics::paired`, with golden tests; `-SelfTest`
+  checks the gate itself in PowerShell 7 and 5.1.
+- Verdicts: REGRESSED (median above +5 % and the interval's lower bound above 0), INCONCLUSIVE (median above
+  +5 %, lower bound at or below 0), IMPROVED (upper bound below 0), NEUTRAL, and REFUSED for F0 metrics across
+  different analyzer stamps (`analyzer_version`). Only a REGRESSED p95 blocks a change.
+- Runs more than 10 % off the session median of their GPU or host state (`state_sm_clock_mhz`,
+  `state_mem_clock_mhz`, `state_speed_index_ms`, `state_host_probe_ms`, `state_cpu_effective_mhz`) are flagged in
+  `report.json` (`gate_state_flags`). Each paired row also carries `matched_*` statistics without the pairs whose
+  two sides ran in different GPU clock regimes (`-RegimeTolerancePct`, default 25): information only, the
+  verdict always uses every pair.
+- Measured resolution (two A/A sessions): 62-64 of 64 rows NEUTRAL, no false REGRESSED; `call_ms_p95` interval
+  half-width 1.3-4.3 % offline and under the 70 % hammer once regime-mismatched pairs are set aside, 8-13 % on
+  the paced rows (a real-time cadence lets the GPU drop clocks between ticks), so size paced rows with
+  `-AASummary` (about 15 rounds for 6 %).
+- The `p3b` profile (`scripts/bench/profiles/p3b.json`) holds the scorecard rows and their variables; each
+  workstream keeps its own rows and spec templates under `scripts/bench/specs/p3b/<a..h>/` (`*.profile.json`,
+  run with `-Profile <path>`; their READMEs list the commands and numbers).
+
 ## Inputs: synthetic clips and the corpus
 
 - `python scripts/bench/make-test-clips.py --out <dir>` writes the synthetic signals as WAV files.
@@ -526,8 +646,12 @@ CPU, load time and the per-component breakdown in `matrix.md` / `matrix.csv`.
 ## Competitors and listening tests
 
 `scripts/vc-bench/` holds offline drivers for RVC WebUI realtime and Applio realtime (they run in
-the user's own Python environment for those apps; nothing installs a competitor) and a
-play-and-record helper for live apps such as w-okada VCClient, whose output a `compare` run scores.
+the user's own Python environment for those apps; nothing installs a competitor; both take `--corpus` and
+`--sweep 40,60,100,250` and write driver sidecars) and a play-and-record helper for live apps such as w-okada
+VCClient, whose output a `compare` run scores (see **compare v2** above and `scripts/vc-bench/README.md`). The
+`e2e_loopback` mode also has a play-and-record run (`PlayRecordSpec`) that plays a clip and records the response on
+one time base, reporting the response delay (envelope, about 1 ms), driver glitches and dropouts inside speech;
+corpus captures use it, Sigil's live voice changer included.
 `tools/listening-test/` builds a blind A/B page from the same WAVs (`make_test.py`) and scores the
 answers with Wilson intervals (`score.py`): plan T6's preference test.
 
@@ -540,6 +664,7 @@ answers with Wilson intervals (`score.py`): plan T6's preference test.
 | `scripts/bench/specs/p3/sve-gpu.template.json` | Profile template: a template voice on a GPU EP (40 ms engine blocks on the 512-frame device block, 64 ms context, Low latency): offline, paced (wall clock), `h2_load70`, `h1_vrchat_obs` and fidelity. |
 | `scripts/bench/specs/p3/sve-cpu.template.json` | Profile template: the same voice on the CPU (Streamer, 80 ms blocks): offline, paced, `h3_cpu_game` and fidelity. |
 | `scripts/bench/specs/p3/matrix.template.json` | One `run-matrix.ps1` cell: offline plus a virtual-clock paced run. |
+| `scripts/bench/specs/p3b/<a..h>/` | P3B workstreams: the scorecard rows (`a`: GPU, CPU, A/A, loads, VRAM, kNN-30k), scorer v2 and the corpus (`b`), compare v2 (`c`), content stages and fidelity (`d`), RMVPE plan size and onsets (`e`), F0 geometry (`f`), execution layer (`g`) and load and pacing (`h`). Each README lists the commands and the measured numbers. |
 | `scripts/bench/specs/p5/zs-gpu.template.json` | Profile template: a Sigil-ZS voice with a reference clip on a GPU EP: offline, paced (wall clock), `h2_load70`, `h1_vrchat_obs` and fidelity against its one-off ceiling. |
 | `scripts/bench/specs/p5/ddsp-singing.template.json` | Profile template: a DDSP-SVC voice on the sung sweep at `SEMITONES` (default +12, so the output reaches D#7), CREPE in the singing range: offline, paced (virtual clock), `h1_vrchat_obs` and fidelity (CREPE analyzer). |
 

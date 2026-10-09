@@ -30,6 +30,7 @@
 //! - [`factory`]: the engine factory dispatching on `manifest.format`, and the hot voice set
 //!   (P3-E).
 //! - [`timeline`]: the per-tick timeline for telemetry and live recording (P3-E).
+//! - [`cushion`]: the adaptive output cushion (P3B-H; `output_cushion = adaptive`), driven by the playback queue.
 //! - [`cmd_import`]: `.pth` / `.zip` import and slot-store IPC (P3-B).
 //! - [`cmd_bench`]: autotune and live-record IPC (P3-F).
 //!
@@ -47,6 +48,7 @@ mod cmd_bench;
 mod cmd_family;
 mod cmd_import;
 mod commands;
+pub(crate) mod cushion;
 mod debug;
 mod devices;
 pub(crate) mod factory;
@@ -80,6 +82,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 Ok(dir) => state.attach_persistence(&dir),
                 Err(e) => tracing::warn!("voice changer: no app data folder ({e}); settings will not be saved"),
             }
+            // Opt-in (SIGIL_VC_PREWARM=1; off by default, see state::PREWARM_ENV): warm the saved GPU rung
+            // in the background once the UI is up (P3B-H).
+            state.prewarm("app start", state::PREWARM_APP_START_DELAY);
             app.manage(state);
             Ok(())
         })

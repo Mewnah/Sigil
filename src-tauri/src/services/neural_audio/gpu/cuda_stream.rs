@@ -65,6 +65,8 @@ impl PriorityStream {
     }
 
     fn on(ctx: Arc<PrimaryContext>, priority: i32) -> Result<PriorityStream, String> {
+        // P3B-G: `SIGIL_CUDA_CTX_SCHED` (an opt-in experiment) once per device.
+        super::cuda_wait::apply_ctx_sched_once(&ctx);
         let stream = ctx.create_stream(priority)?;
         let priority = ctx.stream_priority(stream).unwrap_or(priority);
         Ok(PriorityStream { raw: stream as usize, priority, ctx })

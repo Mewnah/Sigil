@@ -139,6 +139,12 @@ enum HeadlessCommand {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Run the benchmark's GPU load in this separate process (a game's own process and queue;
+    /// started by a benchmark with `load.gpu.out_of_process`). P3B.
+    GpuLoad {
+        /// Load spec (JSON).
+        spec: PathBuf,
+    },
 }
 
 /// Parse and run one headless command; returns the process exit code.
@@ -219,6 +225,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
             crate::services::mt_local::bench::headless_mt_bench(&spec, out.as_deref()),
             None,
         ),
+        HeadlessCommand::GpuLoad { spec } => report("gpu-load", crate::services::bench::gpu_load_child::run(&spec), None),
     }
 }
 
@@ -352,6 +359,14 @@ mod tests {
         let cli = HeadlessCli::try_parse_from(["mt-bench", "mt.json"]).unwrap();
         assert!(matches!(cli.command, HeadlessCommand::MtBench { out: None, .. }));
         assert_eq!(HeadlessCli::try_parse_from(["mt-bench"]).unwrap_err().exit_code(), 2);
+    }
+
+    /// P3B-S0: the out-of-process GPU load arm parses its spec path.
+    #[test]
+    fn gpu_load_parses() {
+        let cli = HeadlessCli::try_parse_from(["gpu-load", "load.json"]).unwrap();
+        assert!(matches!(cli.command, HeadlessCommand::GpuLoad { ref spec } if spec.ends_with("load.json")));
+        assert_eq!(HeadlessCli::try_parse_from(["gpu-load"]).unwrap_err().exit_code(), 2);
     }
 
     #[test]

@@ -98,6 +98,13 @@ const RULES: Record<RustParamKey, Rule> = {
     denoiser: ALL_RESTART,
     hot_slots: RVC_RESTART,
     vram_budget_mb: RVC_RESTART,
+    // P3B (P3B-S0): engine shape and the output side, read when the engine starts.
+    content_norm: RVC_RESTART,
+    f0_decode: RVC_RESTART,
+    output_cushion: ALL_RESTART,
+    sola_search_ms: RVC_RESTART,
+    device_block: RVC_RESTART,
+    content_context_ms: RVC_RESTART,
 };
 
 /** How a change of `key` applies while the engine runs in `mode`. */

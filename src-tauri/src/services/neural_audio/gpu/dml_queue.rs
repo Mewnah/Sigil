@@ -20,6 +20,18 @@
 //! `ID3D12Device::CreateCommandQueue` (vtable slot 8), `ID3D12Device::GetDeviceRemovedReason` (slot
 //! 37) and `DMLCreateDevice` (`DirectML.dll`, the copy next to `Sigil.exe` that ONNX Runtime uses).
 //!
+//! # Shared normal-priority device and queue (P3B-G, T9; opt-in, `SIGIL_VC_DML_SHARED=1`)
+//! [`DmlQueue::shared_normal`] hands every voice-engine DirectML session that does not ask for the
+//! high-priority queue one device, DIRECT queue (normal priority, what ONNX Runtime creates per
+//! session) and DirectML device per adapter, behind `SIGIL_VC_DML_SHARED` (`ort_session`): the
+//! sessions of a voice (content, pitch, `enc`, `flowdec`, kNN) skip creating their own. Like the
+//! high-priority queue, the cache holds weak references: the objects live while a plan (or a session
+//! build in flight) holds the queue and are released with the last holder, so stopping the voice
+//! changer gives the GPU its device back (a strong, process-long reference was an unaccounted
+//! residue the VRAM claims could not see). The device-removed check runs on every hand-out (a removed
+//! device is replaced at once; sessions built on it keep their own references until they are
+//! dropped).
+//!
 //! # Frozen by P3-S0
 //! - [`available`]`() -> bool` (cheap; `voice_changer::capabilities` calls it).
 
@@ -38,7 +50,7 @@ pub(crate) fn shared_or_create<K: Ord + Copy, T>(
     if let Some(live) = cache.get(&key).and_then(Weak::upgrade) {
         match usable(&live) {
             Ok(()) => return Ok(live),
-            Err(why) => tracing::warn!(target: "sigil::gpu", "{why}; the high-priority DirectML queue is created again"),
+            Err(why) => tracing::warn!(target: "sigil::gpu", "{why}; the DirectML queue is created again"),
         }
     }
     // Dead or unusable: forget it (plans that still hold it keep it alive until they are dropped).
@@ -77,6 +89,8 @@ mod imp {
     const COMMAND_LIST_TYPE_DIRECT: i32 = 0;
     /// `D3D12_COMMAND_QUEUE_PRIORITY_HIGH` (NORMAL = 0; GLOBAL_REALTIME = 10000 needs privileges).
     pub const QUEUE_PRIORITY_HIGH: i32 = 100;
+    /// `D3D12_COMMAND_QUEUE_PRIORITY_NORMAL` (the shared normal-priority queue, P3B-G).
+    pub const QUEUE_PRIORITY_NORMAL: i32 = 0;
     /// `D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT` (as ONNX Runtime sets it).
     const QUEUE_FLAG_DISABLE_GPU_TIMEOUT: i32 = 1;
     /// `DML_CREATE_DEVICE_FLAG_NONE`.
@@ -179,6 +193,7 @@ mod imp {
     /// adapter (each COM reference released on drop).
     pub struct DmlQueue {
         adapter: u32,
+        priority: i32,
         d3d12: *mut c_void,
         queue: *mut c_void,
         dml: *mut c_void,
@@ -190,20 +205,21 @@ mod imp {
 
     impl std::fmt::Debug for DmlQueue {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("DmlQueue").field("adapter", &self.adapter).field("priority", &QUEUE_PRIORITY_HIGH).finish()
+            f.debug_struct("DmlQueue").field("adapter", &self.adapter).field("priority", &self.priority).finish()
         }
     }
 
     impl DmlQueue {
-        /// Create the objects on DXGI adapter `adapter` (DirectML's `device_id`).
-        fn create(adapter: u32) -> Result<DmlQueue, String> {
+        /// Create the objects on DXGI adapter `adapter` (DirectML's `device_id`) with a queue at
+        /// `priority` (`QUEUE_PRIORITY_HIGH` / `QUEUE_PRIORITY_NORMAL`).
+        fn create(adapter: u32, priority: i32) -> Result<DmlQueue, String> {
             let entry = entry()?;
             // SAFETY: plain factory creation (DXGI needs no COM apartment).
             let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.map_err(|e| format!("CreateDXGIFactory1: {e}"))?;
             // SAFETY: valid factory; an out-of-range index is an error, not UB.
             let dxgi_adapter = unsafe { factory.EnumAdapters1(adapter) }
                 .map_err(|e| format!("the selected GPU does not exist on this PC (DXGI adapter {adapter}: {e})"))?;
-            let mut out = DmlQueue { adapter, d3d12: std::ptr::null_mut(), queue: std::ptr::null_mut(), dml: std::ptr::null_mut() };
+            let mut out = DmlQueue { adapter, priority, d3d12: std::ptr::null_mut(), queue: std::ptr::null_mut(), dml: std::ptr::null_mut() };
             // SAFETY: the adapter pointer is live for the call; out pointers are valid; on failure
             // the partially built `out` releases what it holds.
             unsafe {
@@ -213,7 +229,7 @@ mod imp {
                 }
                 let desc = QueueDesc {
                     ty: COMMAND_LIST_TYPE_DIRECT,
-                    priority: QUEUE_PRIORITY_HIGH,
+                    priority,
                     flags: QUEUE_FLAG_DISABLE_GPU_TIMEOUT,
                     node_mask: 0,
                 };
@@ -221,7 +237,10 @@ mod imp {
                 let create_queue: CreateCommandQueueFn = std::mem::transmute::<usize, CreateCommandQueueFn>(*vtbl.add(VTBL_CREATE_COMMAND_QUEUE));
                 let code = create_queue(out.d3d12, &desc, &IID_ID3D12_COMMAND_QUEUE, &mut out.queue);
                 if code < 0 || out.queue.is_null() {
-                    return Err(hr("ID3D12Device::CreateCommandQueue (high priority)", code));
+                    return Err(hr(
+                        if priority == QUEUE_PRIORITY_HIGH { "ID3D12Device::CreateCommandQueue (high priority)" } else { "ID3D12Device::CreateCommandQueue" },
+                        code,
+                    ));
                 }
                 let code = (entry.dml_create_device)(out.d3d12, DML_FLAG_NONE, &IID_IDML_DEVICE, &mut out.dml);
                 if code < 0 || out.dml.is_null() {
@@ -231,13 +250,24 @@ mod imp {
             // D3D12 returns the adapter's existing device while anything still holds it, even a
             // removed one: never build on that.
             out.check_not_removed()?;
-            tracing::info!(target: "sigil::gpu", "DirectML high-priority queue created on adapter {adapter}");
+            tracing::info!(
+                target: "sigil::gpu",
+                "DirectML {} queue created on adapter {adapter}",
+                if priority == QUEUE_PRIORITY_HIGH { "high-priority" } else { "shared normal-priority" }
+            );
             Ok(out)
         }
 
+        /// The live high-priority queues, per adapter.
         fn queues() -> &'static Mutex<BTreeMap<u32, Weak<DmlQueue>>> {
             static QUEUES: Mutex<BTreeMap<u32, Weak<DmlQueue>>> = Mutex::new(BTreeMap::new());
             &QUEUES
+        }
+
+        /// The live shared normal-priority queues, per adapter (P3B-G).
+        fn normal_queues() -> &'static Mutex<BTreeMap<u32, Weak<DmlQueue>>> {
+            static NORMAL: Mutex<BTreeMap<u32, Weak<DmlQueue>>> = Mutex::new(BTreeMap::new());
+            &NORMAL
         }
 
         /// The shared high-priority queue of DXGI adapter `adapter`: the one live plans already use,
@@ -245,17 +275,24 @@ mod imp {
         /// is replaced; a failure is not cached, so a later session retries.
         pub fn shared(adapter: u32) -> Result<Arc<DmlQueue>, String> {
             let mut queues = Self::queues().lock().unwrap_or_else(PoisonError::into_inner);
-            super::shared_or_create(&mut queues, adapter, DmlQueue::check_not_removed, || DmlQueue::create(adapter))
+            super::shared_or_create(&mut queues, adapter, DmlQueue::check_not_removed, || DmlQueue::create(adapter, QUEUE_PRIORITY_HIGH))
         }
 
-        /// Whether a live queue of `adapter` is cached (tests).
+        /// The shared normal-priority device and queue of DXGI adapter `adapter` (P3B-G; see the
+        /// module docs): the one live plans already use, else a new one, released with the last
+        /// holder. A device the driver removed is replaced on the next hand-out; a failure is not
+        /// cached.
+        pub fn shared_normal(adapter: u32) -> Result<Arc<DmlQueue>, String> {
+            let mut queues = Self::normal_queues().lock().unwrap_or_else(PoisonError::into_inner);
+            super::shared_or_create(&mut queues, adapter, DmlQueue::check_not_removed, || DmlQueue::create(adapter, QUEUE_PRIORITY_NORMAL))
+        }
+
+        /// Whether a live queue of `adapter` (high priority, or the shared normal one) is cached
+        /// (tests).
         #[cfg(test)]
-        pub(crate) fn cached(adapter: u32) -> bool {
-            Self::queues()
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .get(&adapter)
-                .is_some_and(|w| w.strong_count() > 0)
+        pub(crate) fn cached(adapter: u32, high_priority: bool) -> bool {
+            let map = if high_priority { Self::queues() } else { Self::normal_queues() };
+            map.lock().unwrap_or_else(PoisonError::into_inner).get(&adapter).is_some_and(|w| w.strong_count() > 0)
         }
 
         /// `Err` with the reason when the driver removed the D3D12 device (TDR, driver reset or
@@ -279,17 +316,18 @@ mod imp {
             self.adapter
         }
 
-        /// The queue priority (`D3D12_COMMAND_QUEUE_PRIORITY_HIGH`).
+        /// The queue priority (`D3D12_COMMAND_QUEUE_PRIORITY_HIGH`, or `_NORMAL` for the shared
+        /// normal-priority queue).
         pub fn priority(&self) -> i32 {
-            QUEUE_PRIORITY_HIGH
+            self.priority
         }
 
         /// Register DirectML on this device and queue for `builder` (DML1; ONNX Runtime takes its
         /// own references). The builder must not have another DirectML EP appended.
         pub fn append_to(&self, builder: &mut SessionBuilder) -> Result<(), String> {
             let api = ort::ep::directml::api().ok_or_else(|| "DirectML is not supported by the linked ONNX Runtime".to_string())?;
-            // SAFETY: live options, device and queue pointers (this object holds references for
-            // the life of the process).
+            // SAFETY: live options, device and queue pointers (this object holds a reference of
+            // each while it lives, and the caller holds this object).
             let status = unsafe { (api.SessionOptionsAppendExecutionProvider_DML1)(builder.ptr_mut(), self.dml, self.queue) };
             // SAFETY: a status just returned by ORT (released by `result_from_status`).
             unsafe { ort::Error::result_from_status(status) }.map_err(|e| e.to_string())
@@ -324,6 +362,10 @@ mod imp {
 
     impl DmlQueue {
         pub fn shared(_adapter: u32) -> Result<Arc<DmlQueue>, String> {
+            Err("DirectML is only available on Windows".into())
+        }
+
+        pub fn shared_normal(_adapter: u32) -> Result<Arc<DmlQueue>, String> {
             Err("DirectML is only available on Windows".into())
         }
 
@@ -389,6 +431,34 @@ mod cache_tests {
         assert!(!cache.contains_key(&0));
         assert_eq!(shared_or_create(&mut cache, 0, usable, create).unwrap().id, 5);
     }
+
+    /// P3B-G (review fix): the shared normal-priority queue lives in a weak cache like the
+    /// high-priority one. A cache that held a strong reference kept a D3D12 device, a queue and a
+    /// DirectML device on the GPU for the life of the process after the last voice stopped, which the
+    /// voice changer's VRAM claims cannot see. Two caches (one per priority) never hand one kind out
+    /// for the other.
+    #[test]
+    fn per_priority_weak_caches_release_with_their_last_holder() {
+        let mut high: BTreeMap<u32, Weak<Fake>> = BTreeMap::new();
+        let mut normal: BTreeMap<u32, Weak<Fake>> = BTreeMap::new();
+        let made = Cell::new(0u32);
+        let usable = |f: &Fake| if f.removed.get() { Err(format!("device {} removed", f.id)) } else { Ok(()) };
+        let create = || {
+            made.set(made.get() + 1);
+            Ok(Fake { id: made.get(), removed: Cell::new(false) })
+        };
+        let n = shared_or_create(&mut normal, 0, usable, create).unwrap();
+        let h = shared_or_create(&mut high, 0, usable, create).unwrap();
+        assert!(!Arc::ptr_eq(&n, &h), "one queue per priority and adapter");
+        let n2 = shared_or_create(&mut normal, 0, usable, create).unwrap();
+        assert!(Arc::ptr_eq(&n, &n2), "the live normal queue is shared");
+        // The last plan goes: no strong reference stays in the cache.
+        drop((n, n2));
+        assert!(normal[&0].upgrade().is_none(), "the cache must not keep the queue alive");
+        assert!(high[&0].upgrade().is_some(), "the other priority's holder is untouched");
+        let again = shared_or_create(&mut normal, 0, usable, create).unwrap();
+        assert_eq!(again.id, 3, "a released queue is created again");
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -396,11 +466,19 @@ mod tests {
     use super::*;
     use crate::services::diagnostics::gpu_mem;
 
+    /// The two hardware tests below create and release real queues; one at a time, so a test's
+    /// "released with its last holder" check cannot meet the other's queue.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// On a PC with a hardware adapter, the queue is created and shared per adapter while it is in
     /// use, reports its device as not removed, and is released with its last holder; a missing
     /// adapter is a clean error. (Session runs on it are covered by `plan`'s tests.)
     #[test]
     fn high_priority_queue_is_created_and_shared_per_adapter() {
+        let _serial = serial();
         let Some(adapter) = gpu_mem::adapters().into_iter().find(|a| !a.software) else {
             eprintln!("no hardware GPU; skipped");
             return;
@@ -415,15 +493,53 @@ mod tests {
         q.check_not_removed().expect("a fresh device is not removed");
         let again = DmlQueue::shared(adapter.index).unwrap();
         assert!(std::sync::Arc::ptr_eq(&q, &again), "one queue per adapter");
-        assert!(DmlQueue::cached(adapter.index));
+        assert!(DmlQueue::cached(adapter.index, true));
         let err = DmlQueue::shared(63).unwrap_err();
         assert!(err.contains("does not exist"), "{err}");
         // Other tests may hold the same adapter's queue concurrently (DirectML plans): only when
-        // these were the last holders is the cache empty afterwards.
+        // these were the last holders is this queue gone afterwards. (Its own weak handle is checked,
+        // not the cache: another test may create a queue of its own while this one is released.)
         let last = std::sync::Arc::strong_count(&q) == 2;
+        let weak = std::sync::Arc::downgrade(&q);
         drop((q, again));
         if last {
-            assert!(!DmlQueue::cached(adapter.index), "the queue is released with its last holder");
+            assert!(weak.upgrade().is_none(), "the queue is released with its last holder");
+        }
+    }
+
+    /// P3B-G (review fix): the shared normal-priority queue is a different object from the
+    /// high-priority one, is shared while a holder lives and is released with the last holder (the
+    /// GPU gets the device back when the voice changer stops).
+    #[test]
+    fn shared_normal_queue_is_released_with_its_last_holder() {
+        let _serial = serial();
+        let Some(adapter) = gpu_mem::adapters().into_iter().find(|a| !a.software) else {
+            eprintln!("no hardware GPU; skipped");
+            return;
+        };
+        if !available() {
+            eprintln!("DirectML entry points not present next to the test binary; skipped");
+            return;
+        }
+        let q = DmlQueue::shared_normal(adapter.index).expect("shared normal-priority queue");
+        assert_eq!((q.adapter(), q.priority()), (adapter.index, 0));
+        q.check_not_removed().expect("a fresh device is not removed");
+        let again = DmlQueue::shared_normal(adapter.index).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&q, &again), "one shared queue per adapter while it is held");
+        assert!(DmlQueue::cached(adapter.index, false));
+        // (That the priorities never share an object is the per-priority cache test above; this one
+        // stays off the high-priority queue the other hardware tests hold.)
+        // Other tests may hold the same adapter's shared queue concurrently (DirectML plans): only
+        // when these were the last holders is the queue gone afterwards.
+        let last = std::sync::Arc::strong_count(&q) == 2;
+        let weak = std::sync::Arc::downgrade(&q);
+        drop((q, again));
+        if last {
+            assert!(weak.upgrade().is_none(), "the shared queue is released with its last holder");
+            // A released queue is created again on demand.
+            let fresh = DmlQueue::shared_normal(adapter.index).unwrap();
+            assert!(weak.upgrade().is_none(), "the new queue is a different object");
+            drop(fresh);
         }
     }
 }

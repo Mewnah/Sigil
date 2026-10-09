@@ -126,6 +126,9 @@ pub struct VoiceChangerMetrics {
     pub governor_level: Option<u32>,
     /// Levers, accelerator and precision the running engine really uses.
     pub levers: Option<EffectiveLevers>,
+    /// The output cushion the queue holds now in ms (P3B-H): the adaptive controller's target, else the
+    /// fixed prefill (`null` while stopped or before the output runs).
+    pub cushion_ms: Option<f64>,
 }
 
 /// Frames at `rate` Hz in ms (0 while not running).
@@ -138,6 +141,11 @@ pub(super) fn frames_to_ms(frames: f64, rate: u32) -> f64 {
 }
 
 pub(super) fn collect_metrics(state: &VoiceChangerState) -> VoiceChangerMetrics {
+    // The panel asks for the metrics when it opens, also while stopped: a good moment to warm the GPU
+    // path the saved settings point at (P3B-H; once per process, idle priority, a no-op while running).
+    if !state.is_running.load(Ordering::Relaxed) {
+        state.prewarm("panel", std::time::Duration::ZERO);
+    }
     let r = state.output_sample_rate.load(Ordering::Relaxed);
     let ch = state.output_channels.load(Ordering::Relaxed).max(1) as f64;
     let buf_n = state.metrics_buffer_samples.load(Ordering::Relaxed) as f64;
@@ -145,7 +153,10 @@ pub(super) fn collect_metrics(state: &VoiceChangerState) -> VoiceChangerMetrics 
     let ema = state.metrics_process_ema_us.load(Ordering::Relaxed);
     let raw = state.metrics_process_us.load(Ordering::Relaxed);
     let proc_us = if ema > 0 { ema } else { raw } as f64;
-    let chunk_frames = lock(&state.hot_params).chunk_frames.max(1) as f64;
+    // The device block the run uses (a template voice's `model_divisor` block differs from the
+    // setting), else the setting.
+    let run_chunk = state.metrics_chunk_frames.load(Ordering::Relaxed);
+    let chunk_frames = if run_chunk > 0 { f64::from(run_chunk) } else { lock(&state.hot_params).chunk_frames.max(1) as f64 };
     let capture_sr = state.capture_sample_rate.load(Ordering::Relaxed);
     let chunk_sr = if capture_sr > 0 { capture_sr } else { r };
     let chunk_ms = frames_to_ms(chunk_frames, chunk_sr);
@@ -172,6 +183,10 @@ pub(super) fn collect_metrics(state: &VoiceChangerState) -> VoiceChangerMetrics 
         vram_mb: (running && vram != METRIC_UNSET).then_some(f64::from(vram)),
         governor_level: (running && level != METRIC_UNSET).then_some(level),
         levers: if running { lock(&state.run_levers).clone() } else { None },
+        cushion_ms: {
+            let c = state.metrics_cushion_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
     }
 }
 

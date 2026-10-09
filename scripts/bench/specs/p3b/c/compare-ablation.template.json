@@ -1,0 +1,26 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-C T6 dry run (compare v2): the voice in ${SLOT} converted by the Sigil Voice Engine at Sigil's reference shape (the spec's engine: ${EP}, ${PITCH} F0, 40 ms engine blocks on the voice changer's 512-frame device block, 64 ms extra, 20 ms crossfade, the shipping auto levers) and by the rows of the corpus manifest ${CORPUS}: SVE ablations (anchored noise and phase0 off: fresh noise and a phase reset every call, as RVC WebUI does; partial decode and the F0 cache on) at the same shape and at the nearest SVE shape to RVC WebUI's GUI defaults, labelled as ablations and never as competitors. Per-clip paired DNSMOS (loudness-normalised, clips of 9.01 s or more), envelope MCD to stand-in references (the voice's whole-utterance offline render with two other noise seeds), GPE against the analyzers' consensus under every analyzer, artifacts, seam clicks on each row's own block grid and onset levels. Materialized by run_dryrun.ps1.",
+  "seed": 20261003,
+  "input": { "kind": "synthetic", "signal": "voice", "seconds": 4 },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64, "crossfade_ms": 20 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "build": "direct"
+  },
+  "runs": [
+    {
+      "mode": "compare",
+      "name": "dryrun",
+      "corpus": "${CORPUS}",
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu" }
+    }
+  ],
+  "output": { "write_timeline": false, "write_audio": ${WRITE_AUDIO} }
+}

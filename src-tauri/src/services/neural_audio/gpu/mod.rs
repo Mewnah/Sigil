@@ -15,6 +15,10 @@
 //!   progress.
 //! - [`arena`]: the VRAM ledger (plans hold what they measured), the shared environment CUDA arena
 //!   and the VRAM cap.
+//! - [`cuda_wait`] (P3B-G): how a plan's thread waits for its CUDA run (spin, block on a
+//!   `CU_EVENT_BLOCKING_SYNC` event, or hybrid) and the opt-in context scheduling flags.
+//! - [`sched_priority`] (P3B-G): the process's cross-process GPU scheduling priority class (an
+//!   experiment behind `SIGIL_GPU_PROCESS_PRIORITY`).
 //!
 //! Every session still goes through `ort_session` (EP ladder, preflight, canary, CPU retry,
 //! `error_on_failure`, outcome records; `build_session_ext` applies the GPU extras per rung). A lever
@@ -41,6 +45,20 @@
 //!   device}`, [`cuda_driver`], `cuda_graph::CapturedGraph`.
 //! - Test builds: `alloc_probe` is the crate's single `#[global_allocator]` (a counting allocator;
 //!   `alloc_probe::allocations_during`). Other allocation-free checks reuse it.
+//!
+//! # Added by P3B-G
+//! - `SessionPlan::{run_async, wait, poll, wait_mode, set_vram_mb, arena_stats}` and
+//!   `SessionPlan::build_with(spec, CudaTuning)` (crate): a CUDA device-path run can be enqueued
+//!   without a host wait; every host access to the plan's buffers completes it first, and
+//!   `copy_rows_to` between two device-resident plans orders the copy after the producer's run on
+//!   the device (a CUDA event) and the producer's next run after the copy (another event), so
+//!   `enc` -> `flowdec` needs no host round trip (`vc::engine::generator`).
+//! - GPU time per plan run from CUDA events (`telemetry::record_gpu_time`, while
+//!   `telemetry::gpu_timing_enabled`), and the plans' CUDA arena statistics after their first runs
+//!   (`telemetry::arena_mark_session`).
+//! - `plan::CudaTuning::{wait, spin_us, shrink}` (`SIGIL_CUDA_TUNING=wait=..,spinus=..,shrink=..`),
+//!   `plan::SHRINK_BEFORE_CAPTURE`, [`cuda_wait`], [`sched_priority`], `cuda_driver::CudaEvent` and
+//!   the event / context-flag entry points.
 
 // P3-E's factory and the pitch bank drive these plans; parts of the API (row copies between
 // plans, output-download control, pinned-host accessors, the VRAM ledger snapshot and the shared
@@ -52,9 +70,11 @@ pub mod arena;
 pub mod cuda_driver;
 pub mod cuda_graph;
 pub mod cuda_stream;
+pub mod cuda_wait;
 pub mod dml_queue;
 pub mod io_binding;
 pub mod plan;
+pub mod sched_priority;
 pub mod trt;
 
 #[cfg(test)]

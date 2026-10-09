@@ -169,6 +169,239 @@ pub fn mel_cepstra(x: &[f32], sample_rate: u32, cfg: &MelCepConfig) -> (Vec<Vec<
 }
 
 // ---------------------------------------------------------------------------------------------
+// F0-adaptive spectral envelope (scorer v2's envelope MCD)
+// ---------------------------------------------------------------------------------------------
+
+/// Lowest F0 the envelope analysis adapts to (WORLD's default floor): the longest window is 3 / 71 s.
+pub const ENV_F0_FLOOR: f64 = 71.0;
+/// Highest F0 it adapts to.
+pub const ENV_F0_CEIL: f64 = 800.0;
+/// F0 of unvoiced frames: a three-period window of 120 Hz is the STFT MCD's 25 ms frame (WORLD's
+/// 500 Hz default gives 6 ms windows, whose noise estimates vary too much between renditions).
+pub const ENV_F0_UNVOICED: f64 = 120.0;
+/// CheapTrick's compensation lifter coefficient.
+const ENV_Q1: f64 = -0.15;
+/// FFT size of the envelope analysis at 16 kHz (`2^(1 + floor(log2(3 · 16000 / 71)))`).
+pub const ENV_FFT: usize = 1024;
+
+/// CheapTrick-style power envelope (WORLD, Morise 2015) at 16 kHz.
+pub struct EnvelopeAnalyzer {
+    fwd: std::sync::Arc<dyn realfft::RealToComplex<f64>>,
+    inv: std::sync::Arc<dyn realfft::ComplexToReal<f64>>,
+    frame: Vec<f64>,
+    spec: Vec<realfft::num_complex::Complex<f64>>,
+    cep: Vec<f64>,
+}
+
+impl Default for EnvelopeAnalyzer {
+    fn default() -> Self {
+        let mut planner = RealFftPlanner::<f64>::new();
+        let fwd = planner.plan_fft_forward(ENV_FFT);
+        let inv = planner.plan_fft_inverse(ENV_FFT);
+        let frame = fwd.make_input_vec();
+        let spec = fwd.make_output_vec();
+        let cep = inv.make_output_vec();
+        Self { fwd, inv, frame, spec, cep }
+    }
+}
+
+impl EnvelopeAnalyzer {
+    /// The power envelope (`ENV_FFT / 2 + 1` bins) of 16 kHz `x` around sample `centre` at `f0` Hz
+    /// (0 or not finite = unvoiced): a Hann window of three periods normalised to unit energy, the
+    /// windowed mean removed, `|FFT|²`, a rectangular smoothing over `2 f0 / 3` (mirrored at DC and
+    /// Nyquist), then the log spectrum liftered by `sin(π f0 q) / (π f0 q)` and the compensation
+    /// lifter `(1 − 2 q1) + 2 q1 cos(2π f0 q)` (q1 = −0.15). Samples outside `x` are zero. No
+    /// dither and no DC correction (a deterministic distance, not a vocoder).
+    pub fn power(&mut self, x: &[f32], centre: isize, f0: f64, out: &mut Vec<f64>) {
+        const SR: f64 = 16_000.0;
+        let f0 = if f0.is_finite() && f0 > 0.0 { f0.clamp(ENV_F0_FLOOR, ENV_F0_CEIL) } else { ENV_F0_UNVOICED };
+        let half = (1.5 * SR / f0).round() as isize;
+        let len = (2 * half + 1) as usize;
+        let mut w: Vec<f64> = (-half..=half)
+            .map(|i| 0.5 * (std::f64::consts::PI * i as f64 / (1.5 * SR / f0)).cos() + 0.5)
+            .collect();
+        let norm = w.iter().map(|v| v * v).sum::<f64>().sqrt();
+        w.iter_mut().for_each(|v| *v /= norm);
+        let seg = |i: isize| -> f64 {
+            let p = centre + i;
+            if p >= 0 && (p as usize) < x.len() {
+                f64::from(x[p as usize])
+            } else {
+                0.0
+            }
+        };
+        let mut wf: Vec<f64> = (-half..=half).zip(&w).map(|(i, &wi)| seg(i) * wi).collect();
+        let (sum_wf, sum_w) = (wf.iter().sum::<f64>(), w.iter().sum::<f64>());
+        for (v, &wi) in wf.iter_mut().zip(&w) {
+            *v -= wi * (sum_wf / sum_w);
+        }
+        self.frame.iter_mut().for_each(|v| *v = 0.0);
+        for (d, &s) in self.frame.iter_mut().zip(wf.iter().take(len.min(ENV_FFT))) {
+            *d = s;
+        }
+        self.fwd.process(&mut self.frame, &mut self.spec).expect("fft sizes");
+        let p: Vec<f64> = self.spec.iter().map(|c| c.norm_sqr()).collect();
+        let smoothed = linear_smoothing(&p, 2.0 * f0 / 3.0, SR, ENV_FFT);
+        // Liftering: real cepstrum (c2r of the log spectrum), lifters, back (r2c).
+        let bins = ENV_FFT / 2 + 1;
+        for (c, &v) in self.spec.iter_mut().zip(&smoothed) {
+            *c = realfft::num_complex::Complex::new(v.max(1e-20).ln(), 0.0);
+        }
+        self.spec[0].im = 0.0;
+        self.spec[bins - 1].im = 0.0;
+        self.inv.process(&mut self.spec, &mut self.cep).expect("ifft sizes");
+        let n = ENV_FFT as f64;
+        for (i, c) in self.cep.iter_mut().enumerate() {
+            let q = (i.min(ENV_FFT - i)) as f64 / SR;
+            let smooth = if q == 0.0 {
+                1.0
+            } else {
+                let a = std::f64::consts::PI * f0 * q;
+                a.sin() / a
+            };
+            let comp = (1.0 - 2.0 * ENV_Q1) + 2.0 * ENV_Q1 * (2.0 * std::f64::consts::PI * f0 * q).cos();
+            *c *= smooth * comp / n;
+        }
+        self.frame.copy_from_slice(&self.cep);
+        self.fwd.process(&mut self.frame, &mut self.spec).expect("fft sizes");
+        out.clear();
+        out.extend(self.spec.iter().map(|c| c.re.exp()));
+    }
+}
+
+/// WORLD's `LinearSmoothing`: the power spectrum `p` (`n_fft / 2 + 1` bins at `sr`) averaged over a
+/// rectangle `width_hz` wide, mirrored at DC and Nyquist, with the cumulative integral linearly
+/// interpolated at fractional edges.
+fn linear_smoothing(p: &[f64], width_hz: f64, sr: f64, n_fft: usize) -> Vec<f64> {
+    let bins = n_fft / 2 + 1;
+    let df = sr / n_fft as f64;
+    let half_w = width_hz / 2.0;
+    let pad = ((half_w / df).ceil() as usize + 2).min(bins - 2);
+    // ext = p[pad..=1] (reversed), p, p[bins-2 ..= bins-1-pad] (reversed).
+    let mut ext: Vec<f64> = (1..=pad).rev().map(|j| p[j]).collect();
+    ext.extend_from_slice(&p[..bins]);
+    ext.extend((1..=pad).map(|j| p[bins - 1 - j]));
+    let mut cum = Vec::with_capacity(ext.len() + 1);
+    cum.push(0.0);
+    let mut acc = 0.0;
+    for &v in &ext {
+        acc += v * df;
+        cum.push(acc);
+    }
+    // Edge `e` of the extended grid sits at `(e - pad) df - df / 2`.
+    let interp = |f: f64| -> f64 {
+        let pos = (f + df / 2.0) / df + pad as f64;
+        if pos <= 0.0 {
+            return cum[0];
+        }
+        let last = (cum.len() - 1) as f64;
+        if pos >= last {
+            return cum[cum.len() - 1];
+        }
+        let i = pos.floor() as usize;
+        let t = pos - i as f64;
+        cum[i] * (1.0 - t) + cum[i + 1] * t
+    };
+    (0..bins)
+        .map(|k| {
+            let f = k as f64 * df;
+            (interp(f + half_w) - interp(f - half_w)) / width_hz
+        })
+        .collect()
+}
+
+/// Mel-cepstra of the F0-adaptive envelope of 16 kHz `x` on the STFT MCD's frame grid (frame `i`
+/// spans `[160 i, 160 i + 400)`, centred at `160 i + 200`, its F0 the 10 ms analysis frame nearest
+/// the centre: `f0[(160 i + 280) / 160]`, 0 = unvoiced), through the same 40 Kaldi mel bands and
+/// cepstrum as [`mel_cepstra`]; and the energy (dB) of the plain 25 ms frames (the speech mask).
+pub fn envelope_mel_cepstra(x: &[f32], f0: &[f32], cfg: &MelCepConfig) -> (Vec<Vec<f64>>, Vec<f64>) {
+    const SR: u32 = 16_000;
+    let (win, hop) = (400usize, 160usize);
+    let filters = mel_filters(cfg.n_mels, ENV_FFT, SR, cfg.low_hz, cfg.high_hz.min(f64::from(SR) / 2.0));
+    let window = hann_symmetric(win);
+    let mut analyzer = EnvelopeAnalyzer::default();
+    let mut env = Vec::with_capacity(ENV_FFT / 2 + 1);
+    let mut ceps = Vec::new();
+    let mut energy = Vec::new();
+    for s in frames(x.len(), win, hop) {
+        let k = (s + 280) / hop;
+        let fv = f0.get(k).map_or(0.0, |&v| f64::from(v));
+        analyzer.power(x, (s + 200) as isize, fv, &mut env);
+        ceps.push(log_mel_cepstrum(&filters, &env, cfg));
+        let frame: Vec<f64> = x[s..s + win].iter().map(|&v| f64::from(v)).collect();
+        let p = power_spectrum(&frame, &window, 512);
+        energy.push(10.0 * (p.iter().sum::<f64>() / (512.0 * win as f64) + 1e-12).log10());
+    }
+    (ceps, energy)
+}
+
+/// [`envelope_mel_cepstra`]'s cepstra of frames of 16 kHz `x` centred at `centres` (samples of `x`;
+/// zeros outside it) with F0 `f0s` (Hz per frame, 0 = unvoiced): the offset-corrected envelope MCD
+/// reads the test at per-frame shifts.
+pub fn envelope_mel_cepstra_at(x: &[f32], centres: &[i64], f0s: &[f64], cfg: &MelCepConfig) -> Vec<Vec<f64>> {
+    const SR: u32 = 16_000;
+    let filters = mel_filters(cfg.n_mels, ENV_FFT, SR, cfg.low_hz, cfg.high_hz.min(f64::from(SR) / 2.0));
+    let mut analyzer = EnvelopeAnalyzer::default();
+    let mut env = Vec::with_capacity(ENV_FFT / 2 + 1);
+    centres
+        .iter()
+        .zip(f0s)
+        .map(|(&c, &f)| {
+            analyzer.power(x, c as isize, f, &mut env);
+            log_mel_cepstrum(&filters, &env, cfg)
+        })
+        .collect()
+}
+
+/// [`mel_cepstra`]'s cepstra of the `frame_ms` windows of `x` starting at `starts` (samples of `x`;
+/// zeros outside it), with the same per-frame arithmetic: starts `0, hop, 2 hop, ...` give
+/// [`mel_cepstra`]'s values bit for bit.
+pub fn mel_cepstra_at(x: &[f32], sample_rate: u32, starts: &[i64], cfg: &MelCepConfig) -> Vec<Vec<f64>> {
+    let sr = f64::from(sample_rate);
+    let win = ((cfg.frame_ms / 1000.0) * sr).round().max(16.0) as usize;
+    let n_fft = win.next_power_of_two();
+    let window = hann_symmetric(win);
+    let filters = mel_filters(cfg.n_mels, n_fft, sample_rate, cfg.low_hz, cfg.high_hz.min(sr / 2.0));
+    starts
+        .iter()
+        .map(|&s| {
+            let frame: Vec<f64> = (0..win as i64)
+                .map(|k| usize::try_from(s + k).ok().and_then(|i| x.get(i)).map_or(0.0, |&v| f64::from(v)))
+                .collect();
+            log_mel_cepstrum(&filters, &power_spectrum(&frame, &window, n_fft), cfg)
+        })
+        .collect()
+}
+
+/// The cepstrum of the log-amplitude mel spectrum of power spectrum `p` (each band floored at
+/// `cfg.range_db` under the loudest), as [`mel_cepstra`] computes it per frame.
+fn log_mel_cepstrum(filters: &[Vec<f64>], p: &[f64], cfg: &MelCepConfig) -> Vec<f64> {
+    let mel: Vec<f64> = filters.iter().map(|f| f.iter().zip(p).map(|(w, e)| w * e).sum::<f64>()).collect();
+    let loudest = mel.iter().cloned().fold(0.0f64, f64::max);
+    let floor = (loudest * 10f64.powf(-cfg.range_db / 10.0)).max(1e-30);
+    let log_mel: Vec<f64> = mel.iter().map(|&e| 0.5 * e.max(floor).ln()).collect();
+    cepstrum(&log_mel, cfg.order + 1)
+}
+
+/// `x` padded with `left` / `right` samples of reflection on each side (`numpy.pad(mode =
+/// "reflect")`: no edge repeat; repeated reflection for pads longer than the clip).
+pub fn reflect_pad(x: &[f32], left: usize, right: usize) -> Vec<f32> {
+    let n = x.len();
+    if n <= 1 {
+        return std::iter::repeat_n(x.first().copied().unwrap_or(0.0), left + n + right).collect();
+    }
+    let period = 2 * (n as isize - 1);
+    let at = |i: isize| -> f32 {
+        let mut j = i.rem_euclid(period);
+        if j >= n as isize {
+            j = period - j;
+        }
+        x[j as usize]
+    };
+    (-(left as isize)..(n + right) as isize).map(at).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
 // Kaldi fbank (CAM++ front end)
 // ---------------------------------------------------------------------------------------------
 
@@ -321,12 +554,15 @@ pub fn align(reference: &[f32], test: &[f32], sample_rate: u32, max_lag: usize, 
         // reference' = reference[-lo..] and test' = test.
         (reference.get((-lo) as usize..).unwrap_or(&[]), test)
     };
-    // A bounded reference window (the loudest ~4 s) keeps the FFT small on long clips.
-    let win = r_seg.len().min(sample_rate as usize * 4);
-    if win < hop * 4 || t_seg.len() < win {
+    // A bounded reference window (the loudest ~4 s) keeps the FFT small on long clips; it must
+    // fit in the test with the searched lags after it (a short clip whose test ends early, as a
+    // recorded model stream does, still gets a window: P3B-B).
+    let avail = t_seg.len().saturating_sub(2 * hop).min(r_seg.len());
+    let win = avail.min(sample_rate as usize * 4);
+    if win < hop * 4 {
         return Some(fallback);
     }
-    let start = loudest_window(r_seg, win, hop);
+    let start = loudest_window(&r_seg[..avail], win, hop);
     let reference_win = &r_seg[start..start + win];
     let recorded = &t_seg[start.min(t_seg.len())..];
     let lags = xcorr_lags(reference_win, recorded, 2 * hop);
@@ -520,6 +756,50 @@ mod tests {
         }
     }
 
+    /// `numpy.pad(x, (3, 5), mode="reflect")`, longer pads reflect again, and the smoothing keeps a
+    /// flat spectrum flat (mirrored edges included).
+    #[test]
+    fn reflect_pad_and_linear_smoothing() {
+        assert_eq!(reflect_pad(&[1.0, 2.0, 3.0, 4.0], 3, 5), vec![4.0, 3.0, 2.0, 1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 1.0, 2.0, 3.0]);
+        assert_eq!(reflect_pad(&[1.0, 2.0], 3, 0), vec![2.0, 1.0, 2.0, 1.0, 2.0]);
+        assert_eq!(reflect_pad(&[7.0], 1, 1), vec![7.0; 3]);
+        let flat = vec![2.0f64; ENV_FFT / 2 + 1];
+        let s = linear_smoothing(&flat, 100.0, 16_000.0, ENV_FFT);
+        assert!(s.iter().all(|v| (v - 2.0).abs() < 1e-9), "{:?}", &s[..4]);
+        // A single bin spreads over the rectangle, keeping its integral.
+        let mut spike = vec![0.0f64; ENV_FFT / 2 + 1];
+        spike[100] = 1.0;
+        let s = linear_smoothing(&spike, 200.0, 16_000.0, ENV_FFT);
+        let df = 16_000.0 / ENV_FFT as f64;
+        assert!((s.iter().sum::<f64>() * df - df).abs() < 1e-9);
+        assert!(s[100] > 0.0 && s[90] == 0.0 && s[110] == 0.0);
+    }
+
+    /// The fbank code is pinned: the CAM++ front end of a fixed signal hashes to the same value in
+    /// every build (values rounded to 1e-4, so a libm's last-bit difference does not count). A
+    /// change of the fbank changes every speaker score, so it must change this test too.
+    #[test]
+    fn kaldi_fbank_is_pinned() {
+        let x: Vec<f32> = (0..16_000)
+            .map(|n| {
+                let t = n as f64 / 16_000.0;
+                (0.25 * (2.0 * std::f64::consts::PI * 180.0 * t).sin() + 0.08 * (2.0 * std::f64::consts::PI * 1_234.0 * t).sin()) as f32
+            })
+            .collect();
+        let (fb, frames) = kaldi_fbank(&x, 80);
+        assert_eq!(frames, 98);
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in &fb {
+            for b in ((f64::from(*v) * 1e4).round() as i64).to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        assert_eq!(h, KALDI_FBANK_PIN, "kaldi_fbank changed: {h:#018x}");
+    }
+
+    /// See [`kaldi_fbank_is_pinned`].
+    const KALDI_FBANK_PIN: u64 = 0xf5b8_8b7e_5f1c_ba19;
+
     /// A delayed copy and a louder, slightly noisy copy are found at the right lag, positive and
     /// negative, to the sample.
     #[test]
@@ -547,5 +827,11 @@ mod tests {
         let (r, t) = overlap(&v, &other, 480);
         assert_eq!(r.len(), t.len());
         assert_eq!(r.len(), v.len());
+        // A short clip whose test ends early (a recorded model stream stops at its last call): the
+        // waveform refinement still runs, on the part of the clip the test holds.
+        let short = synth(SignalKind::Voice, 16_000, 3.0, 0.5, 12);
+        let truncated: Vec<f32> = std::iter::repeat_n(0.0, 2_000).chain(short[..40_000].iter().copied()).collect();
+        let a = align(&short, &truncated, 16_000, 8_000, true).expect("aligned");
+        assert!(a.waveform && (a.lag - 2_000.0).abs() < 0.6 && a.correlation > 0.99, "{a:?}");
     }
 }

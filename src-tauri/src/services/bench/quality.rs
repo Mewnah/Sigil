@@ -23,6 +23,26 @@
 //! CAM++ speaker cosine and DNSMOS P.835 are model-based and live in `scorers.rs`; the metric
 //! record of one clip is [`QualityMetrics`].
 //!
+//! # Scorer v2 (P3B-B, ADR 0009; `scoring.analyzer: v2`)
+//! Added next to the v1 functions, which keep their definitions (v1 metrics are reported next to
+//! the v2 ones):
+//! - [`f0_errors_v2`]: the v1 numbers plus the fine pitch error (RMSE over voiced frames that are
+//!   not gross errors) and every gross frame with its position and size, so a few octave frames no
+//!   longer read as "the tracker is 50 cents off"; V/UV stays strict.
+//! - [`fed_f0_errors`]: the same split for the F0 an engine fed its generator (captured on the
+//!   absolute frame grid by the engine's probe), with no output analyzer in between, plus the voicing
+//!   onset lag in frames ([`voicing_onsets`]).
+//! - [`envelope_mcd_db`]: MCD of the F0-adaptive spectral envelope (CheapTrick-style,
+//!   `dsp::envelope_mel_cepstra`) instead of the STFT, both renditions analysed with the reference's
+//!   F0 per frame.
+//! - [`binomial_clicks`]: seam clicks as the excess of artifact events in the join windows over
+//!   the 97.5 % quantile of Binomial(events, window coverage), conditional on the events found,
+//!   instead of v1's rate estimate from the few events away from the joins.
+//! - [`F0Analyzer::version`]: the analyzer's version stamp (method, model sha256 and a
+//!   fingerprint of its output on a fixed probe signal), written into every v2 report so F0 metrics
+//!   from different analyzers are never compared.
+//! - [`QUALITY_V2_SCALARS`] / [`QUALITY_V2_HIGHER_IS_BETTER`]: the v2 metric names.
+//!
 //! # Frozen by P3-S0 (signatures; P3-F implements)
 //! [`QualityMetrics`], [`F0Errors`], [`mcd_db`], [`f0_errors`], [`count_block_clicks`]. Both
 //! structs gained fields (P3-F); nothing was renamed.
@@ -190,6 +210,421 @@ pub fn f0_errors(reference: &[f32], test: &[f32]) -> Result<F0Errors, String> {
         frames: n,
     })
 }
+
+// ---------------------------------------------------------------------------------------------
+// Scorer v2: F0 split into fine and gross error, fed F0, onsets
+// ---------------------------------------------------------------------------------------------
+
+/// One gross pitch error: its frame (index into the contours given) and its size in cents.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct GrossFrame {
+    pub frame: usize,
+    pub cents: f64,
+}
+
+/// F0 errors of a contour against a reference, v2: the v1 numbers ([`F0Errors`], RMSE over every
+/// frame voiced in both) plus the fine pitch error over the voiced frames that are not gross errors
+/// and every gross frame. `RMSE² = (1 − g)·FPE² + g·mean(gross²)` with `g` the gross share.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct F0ErrorsV2 {
+    pub v1: F0Errors,
+    /// RMSE (cents) over voiced-in-both frames within 20 % of the reference; `None` when every such
+    /// frame is a gross error.
+    pub fine_rmse_cents: Option<f64>,
+    pub gross_frames: usize,
+    pub gross: Vec<GrossFrame>,
+}
+
+/// [`f0_errors`] split into fine and gross error (see [`F0ErrorsV2`]); frames where `mask` is
+/// `false` (or beyond it) are skipped, gross positions index the unmasked contours.
+pub fn f0_errors_v2(reference: &[f32], test: &[f32], mask: Option<&[bool]>) -> Result<F0ErrorsV2, String> {
+    let n = reference.len().min(test.len());
+    let keep = |i: usize| mask.is_none_or(|m| m.get(i).copied().unwrap_or(false));
+    let (mut sq, mut fine_sq, mut fine, mut both, mut vuv, mut frames) = (0.0f64, 0.0f64, 0usize, 0usize, 0usize, 0usize);
+    let mut gross = Vec::new();
+    for i in (0..n).filter(|&i| keep(i)) {
+        frames += 1;
+        let (r, t) = (reference[i], test[i]);
+        let (rv, tv) = (r.is_finite() && r > 0.0, t.is_finite() && t > 0.0);
+        if rv != tv {
+            vuv += 1;
+        }
+        if rv && tv {
+            let ratio = f64::from(t) / f64::from(r);
+            let cents = 1200.0 * ratio.log2();
+            sq += cents * cents;
+            both += 1;
+            if (ratio - 1.0).abs() > GROSS_PITCH_RATIO {
+                gross.push(GrossFrame { frame: i, cents });
+            } else {
+                fine_sq += cents * cents;
+                fine += 1;
+            }
+        }
+    }
+    if frames == 0 {
+        return Err("F0 errors: empty contours".into());
+    }
+    if both == 0 {
+        return Err("F0 errors: no frame is voiced in both contours".into());
+    }
+    Ok(F0ErrorsV2 {
+        v1: F0Errors {
+            rmse_cents: (sq / both as f64).sqrt(),
+            gross_pitch_error: gross.len() as f64 / both as f64,
+            vuv_error: vuv as f64 / frames as f64,
+            voiced_frames: both,
+            frames,
+        },
+        fine_rmse_cents: (fine > 0).then(|| (fine_sq / fine as f64).sqrt()),
+        gross_frames: gross.len(),
+        gross,
+    })
+}
+
+/// V/UV error with a tolerance: a frame (where `mask` keeps it) counts only when no test frame
+/// within `tol` frames has the reference's voicing. A diagnostic of SOLA's join jitter (a voicing
+/// edge moved by a frame), never a target: the strict V/UV error is the T5 row.
+pub fn vuv_error_tolerant(reference: &[f32], test: &[f32], mask: Option<&[bool]>, tol: usize) -> Option<f64> {
+    let n = reference.len().min(test.len());
+    let voiced = |v: f32| v.is_finite() && v > 0.0;
+    let keep = |i: usize| mask.is_none_or(|m| m.get(i).copied().unwrap_or(false));
+    let (mut frames, mut errors) = (0usize, 0usize);
+    for i in (0..n).filter(|&i| keep(i)) {
+        frames += 1;
+        let want = voiced(reference[i]);
+        if !(i.saturating_sub(tol)..=(i + tol).min(n - 1)).any(|j| voiced(test[j]) == want) {
+            errors += 1;
+        }
+    }
+    (frames > 0).then(|| errors as f64 / frames as f64)
+}
+
+/// Frames voiced after at least one unvoiced frame and voiced for [`ONSET_MIN_RUN`] frames
+/// (stable voicing onsets of a contour; frames where `mask` is `false` are not onsets).
+pub fn voicing_onsets(contour: &[f32], mask: Option<&[bool]>) -> Vec<usize> {
+    let voiced = |i: usize| contour.get(i).is_some_and(|&v| v.is_finite() && v > 0.0);
+    (1..contour.len())
+        .filter(|&i| mask.is_none_or(|m| m.get(i).copied().unwrap_or(false)))
+        .filter(|&i| !voiced(i - 1) && (i..i + ONSET_MIN_RUN).all(voiced))
+        .collect()
+}
+
+/// Voiced frames a reference onset needs after it.
+pub const ONSET_MIN_RUN: usize = 3;
+/// A test onset counts for a reference onset from this many frames before it ...
+pub const ONSET_EARLY_FRAMES: usize = 5;
+/// ... to this many frames after it; later is a missed onset.
+pub const ONSET_LATE_FRAMES: usize = 20;
+
+/// Errors of an engine's fed F0 (no output analyzer between) against a reference contour on the
+/// same absolute grid: fine pitch error, gross pitch error, strict V/UV and the voicing onset lag.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct FedF0Errors {
+    pub errors: F0ErrorsV2,
+    /// Reference onsets in the mask, and those the test reached within the window.
+    pub onsets: usize,
+    pub onsets_missed: usize,
+    /// Frames the test's voicing started after (positive) or before the reference's, per onset.
+    pub onset_lags: Vec<i64>,
+}
+
+impl FedF0Errors {
+    pub fn onset_lag_mean(&self) -> Option<f64> {
+        (!self.onset_lags.is_empty()).then(|| self.onset_lags.iter().sum::<i64>() as f64 / self.onset_lags.len() as f64)
+    }
+
+    pub fn onset_lag_median(&self) -> Option<f64> {
+        let mut v: Vec<f64> = self.onset_lags.iter().map(|&x| x as f64).collect();
+        (!v.is_empty()).then(|| median(&mut v))
+    }
+
+    /// The median of the lags' magnitudes (frames): the gateable form of the signed lag, where
+    /// early and late voicing both count against the engine and cannot cancel.
+    pub fn onset_lag_abs_median(&self) -> Option<f64> {
+        let mut v: Vec<f64> = self.onset_lags.iter().map(|&x| (x as f64).abs()).collect();
+        (!v.is_empty()).then(|| median(&mut v))
+    }
+}
+
+/// [`fed_f0_errors`] of `test` against `reference` over the frames `mask` keeps.
+pub fn fed_f0_errors(reference: &[f32], test: &[f32], mask: Option<&[bool]>) -> Result<FedF0Errors, String> {
+    let errors = f0_errors_v2(reference, test, mask)?;
+    let n = reference.len().min(test.len());
+    let voiced = |i: usize| test.get(i).is_some_and(|&v| v.is_finite() && v > 0.0);
+    let onsets = voicing_onsets(&reference[..n], mask);
+    let mut lags = Vec::new();
+    for &o in &onsets {
+        let from = o.saturating_sub(ONSET_EARLY_FRAMES);
+        let to = (o + ONSET_LATE_FRAMES).min(n.saturating_sub(1));
+        if let Some(j) = (from..=to).find(|&j| voiced(j)) {
+            lags.push(j as i64 - o as i64);
+        }
+    }
+    Ok(FedF0Errors {
+        errors,
+        onsets: onsets.len(),
+        onsets_missed: onsets.len() - lags.len(),
+        onset_lags: lags,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scorer v2: envelope MCD
+// ---------------------------------------------------------------------------------------------
+
+/// Envelope MCD (dB): the MCD of [`mcd_db`] computed on the F0-adaptive spectral envelope
+/// (`dsp::envelope_mel_cepstra`, CheapTrick-style) instead of the STFT. Both renditions are analysed
+/// with `f0_ref` (Hz per 10 ms frame of `reference`, 0 = unvoiced), so the distance is the
+/// signals', not the voicing decisions of an analyzer on the test. Speech frames as [`mcd_db`].
+pub fn envelope_mcd_db(reference: &[f32], test: &[f32], f0_ref: &[f32], sample_rate: u32) -> Result<f64, String> {
+    if sample_rate != 16_000 {
+        return Err(format!("envelope MCD: {sample_rate} Hz audio (expected 16 kHz)"));
+    }
+    let n = reference.len().min(test.len());
+    let cfg = MelCepConfig::default();
+    let (cr, er) = super::dsp::envelope_mel_cepstra(&reference[..n], f0_ref, &cfg);
+    let (ct, _) = super::dsp::envelope_mel_cepstra(&test[..n], f0_ref, &cfg);
+    mcd_of(&cr, &er, &ct, cfg.order).ok_or_else(|| "envelope MCD: the reference has no speech frames (or is shorter than a frame)".into())
+}
+
+/// Offset-corrected MCD (P3B-B): frame `i` of `reference` (the [`mcd_db`] grid at 16 kHz: samples
+/// `[160 i, 160 i + 400)`) against the window of `test` read `shift[i]` samples later, where test
+/// sample `j + test_origin` is the time of reference sample `j` (zeros outside `test`). Each window
+/// is contiguous test audio, so the shifts move the analysis, not the signal (splicing blocks back
+/// into place would add discontinuities of its own). Returns the STFT MCD and, with `f0_ref` (Hz per
+/// 10 ms frame of `reference`), the envelope MCD; speech frames as [`mcd_db`].
+pub fn mcd_db_shifted(reference: &[f32], test: &[f32], test_origin: i64, shift: &[i64], f0_ref: Option<&[f32]>) -> Result<(f64, Option<f64>), String> {
+    let cfg = MelCepConfig::default();
+    let (cr, er) = mel_cepstra(reference, 16_000, &cfg);
+    if cr.is_empty() {
+        return Err(format!("MCD: the clips are shorter than one {} ms frame", cfg.frame_ms));
+    }
+    let at = |i: usize| shift.get(i).copied().unwrap_or(0) + test_origin;
+    let starts: Vec<i64> = (0..cr.len()).map(|i| 160 * i as i64 + at(i)).collect();
+    let ct = super::dsp::mel_cepstra_at(test, 16_000, &starts, &cfg);
+    let mcd = mcd_of(&cr, &er, &ct, cfg.order).ok_or("MCD: the reference has no speech frames")?;
+    let env = match f0_ref {
+        Some(f0) => {
+            let (cre, ere) = super::dsp::envelope_mel_cepstra(reference, f0, &cfg);
+            let centres: Vec<i64> = (0..cre.len()).map(|i| 160 * i as i64 + 200 + at(i)).collect();
+            let f0s: Vec<f64> = (0..cre.len()).map(|i| f0.get((160 * i + 280) / 160).map_or(0.0, |&v| f64::from(v))).collect();
+            let cte = super::dsp::envelope_mel_cepstra_at(test, &centres, &f0s, &cfg);
+            mcd_of(&cre, &ere, &cte, cfg.order)
+        }
+        None => None,
+    };
+    Ok((mcd, env))
+}
+
+/// Mean MCD over the frames within [`MCD_SPEECH_RANGE_DB`] of the reference's loudest frame.
+fn mcd_of(cr: &[Vec<f64>], er: &[f64], ct: &[Vec<f64>], order: usize) -> Option<f64> {
+    let per = mcd_frames(cr, er, ct, order);
+    let kept: Vec<f64> = per.into_iter().flatten().collect();
+    (!kept.is_empty()).then(|| kept.iter().sum::<f64>() / kept.len() as f64)
+}
+
+/// Per-frame MCD (`None` for frames outside the speech range).
+pub(crate) fn mcd_frames(cr: &[Vec<f64>], er: &[f64], ct: &[Vec<f64>], order: usize) -> Vec<Option<f64>> {
+    let n = cr.len().min(ct.len()).min(er.len());
+    let peak = er[..n].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    (0..n)
+        .map(|i| {
+            (er[i] >= peak - MCD_SPEECH_RANGE_DB).then(|| {
+                let d2: f64 = (1..=order).map(|d| (cr[i][d] - ct[i][d]) * (cr[i][d] - ct[i][d])).sum();
+                MCD_K * (2.0 * d2).sqrt()
+            })
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scorer v2: conditional binomial clicks
+// ---------------------------------------------------------------------------------------------
+
+/// `ln P(X = k)` for every `k` of `X ~ Binomial(n, p)` (log space: no underflow at any `n`).
+fn binomial_log_pmf(n: u64, p: f64) -> Vec<f64> {
+    let p = p.clamp(0.0, 1.0);
+    let n_us = n as usize;
+    if p <= 0.0 || p >= 1.0 {
+        let at = if p <= 0.0 { 0 } else { n_us };
+        return (0..=n_us).map(|k| if k == at { 0.0 } else { f64::NEG_INFINITY }).collect();
+    }
+    let (lp, lq) = (p.ln(), (-p).ln_1p());
+    let mut out = Vec::with_capacity(n_us + 1);
+    let mut lc = 0.0f64; // ln C(n, k)
+    for k in 0..=n_us {
+        if k > 0 {
+            lc += ((n_us - k + 1) as f64).ln() - (k as f64).ln();
+        }
+        out.push(lc + k as f64 * lp + (n_us - k) as f64 * lq);
+    }
+    out
+}
+
+/// `P(X <= k)` for `X ~ Binomial(n, p)`, and `P(X >= k)`.
+pub fn binomial_cdf(k: u64, n: u64, p: f64) -> f64 {
+    if k >= n {
+        return 1.0;
+    }
+    let lp = binomial_log_pmf(n, p);
+    let m = lp.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let total: f64 = lp.iter().map(|v| (v - m).exp()).sum();
+    let below: f64 = lp[..=k as usize].iter().map(|v| (v - m).exp()).sum();
+    (below / total).clamp(0.0, 1.0)
+}
+
+/// `P(X >= k)` for `X ~ Binomial(n, p)`.
+pub fn binomial_at_least(k: u64, n: u64, p: f64) -> f64 {
+    if k == 0 {
+        1.0
+    } else if k > n {
+        0.0
+    } else {
+        (1.0 - binomial_cdf(k - 1, n, p)).max(0.0)
+    }
+}
+
+/// The smallest `k` with `P(X <= k) >= q` for `X ~ Binomial(n, p)` (scipy's `binom.ppf`).
+pub fn binomial_quantile(q: f64, n: u64, p: f64) -> u64 {
+    let lp = binomial_log_pmf(n, p);
+    let m = lp.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let w: Vec<f64> = lp.iter().map(|v| (v - m).exp()).collect();
+    let total: f64 = w.iter().sum();
+    let mut acc = 0.0;
+    for (k, x) in w.iter().enumerate() {
+        acc += x;
+        // A relative tolerance so a quantile on an exact atom is not missed by rounding.
+        if acc / total >= q - 1e-12 {
+            return k as u64;
+        }
+    }
+    n
+}
+
+/// Seam clicks, v2: given `events` artifact events in the scored region of which `at_join` fall in
+/// join windows covering `coverage` of it, the events beyond the 97.5 % quantile of
+/// Binomial(`events`, `coverage`). Conditioning on the events found removes v1's estimate of the
+/// background rate from the few events away from the joins (its comment's "a third": the windows
+/// cover about 70 % of a 40 ms block).
+pub fn binomial_clicks(at_join: u64, events: u64, coverage: f64) -> u64 {
+    if events == 0 {
+        return 0;
+    }
+    at_join.saturating_sub(binomial_quantile(BINOMIAL_CLICKS_Q, events, coverage.clamp(0.0, 1.0)))
+}
+
+/// Quantile of the click test ([`binomial_clicks`]).
+pub const BINOMIAL_CLICKS_Q: f64 = 0.975;
+
+// ---------------------------------------------------------------------------------------------
+// Scorer v2: metric names
+// ---------------------------------------------------------------------------------------------
+
+/// Metric names a v2 quality run (and a v2 rescore) adds next to the v1 [`QualityMetrics`] names
+/// (`report::QUALITY_SCALARS`). Headline values are medians over the run's offsets; the names in
+/// [`QUALITY_V2_SPREAD`] also report `<name>_spread` (max − min over the offsets).
+pub const QUALITY_V2_SCALARS: &[&str] = &[
+    "speaker_cosine_v2",
+    "speaker_set_sim",
+    "ceiling_speaker_set_sim",
+    "whole_speaker_set_sim",
+    "speaker_set_sim_delta",
+    "f0_fine_rmse_cents",
+    "f0_gross_frames",
+    "vuv_error_tolerant",
+    "fed_fpe_cents",
+    "fed_gpe",
+    "fed_vuv_error",
+    // Signed (negative = the voicing starts early): a diagnostic with no better direction, so a
+    // before/after gate reads the `_abs` form (lower is better).
+    "fed_onset_lag_frames",
+    "fed_onset_lag_abs_frames",
+    "fed_input_fpe_cents",
+    "fed_input_gpe",
+    "fed_input_vuv_error",
+    "fed_input_onset_lag_frames",
+    "fed_input_onset_lag_abs_frames",
+    "fed_input_onsets_missed",
+    "ceiling_fed_input_fpe_cents",
+    "ceiling_fed_input_gpe",
+    "ceiling_fed_input_vuv_error",
+    "whole_fed_input_fpe_cents",
+    "whole_fed_input_gpe",
+    "whole_fed_input_vuv_error",
+    "clicks_binomial",
+    "clicks_narrow",
+    "env_mcd_db",
+    "env_mcd_over_floor_db",
+    "mcd_offset_corrected_db",
+    "env_mcd_offset_corrected_db",
+    "mcd_floor_db",
+    "env_mcd_floor_db",
+    "mcd_floor_seed_db",
+    "env_mcd_floor_seed_db",
+    "mcd_offline_floor_db",
+    "env_mcd_offline_floor_db",
+    "mcd_db_vs_b",
+    "env_mcd_db_vs_b",
+    "mcd_db_vs_whole",
+    "env_mcd_db_vs_whole",
+    "speaker_cosine_v2_vs_whole",
+    "ceiling_b_dnsmos_ovrl",
+    "whole_dnsmos_ovrl",
+    "whole_fp32_dnsmos_ovrl",
+    "mcd_db_vs_whole_fp32",
+    "env_mcd_db_vs_whole_fp32",
+    "mcd_db_vs_long_shape",
+    "env_mcd_db_vs_long_shape",
+    "long_shape_speaker_set_sim",
+    "onset_rel_db",
+    "onset_rel_db_long_shape",
+    "onset_rel_db_b",
+    "onset_rel_db_whole",
+    "fidelity_offsets",
+    // Ablation rows whose oracle did not reach the generator (0 = all applied).
+    "ablation_rows_unapplied",
+    // spreads over the offsets
+    "speaker_cosine_v2_spread",
+    "speaker_set_sim_spread",
+    "env_mcd_db_spread",
+    "mcd_db_spread",
+    "f0_fine_rmse_cents_spread",
+    "fed_input_fpe_cents_spread",
+    "fed_input_vuv_error_spread",
+    "clicks_binomial_spread",
+];
+
+/// The v2 headline metrics whose spread over the offsets is reported (`<name>_spread`).
+pub const QUALITY_V2_SPREAD: &[&str] = &[
+    "speaker_cosine_v2",
+    "speaker_set_sim",
+    "env_mcd_db",
+    "mcd_db",
+    "f0_fine_rmse_cents",
+    "fed_input_fpe_cents",
+    "fed_input_vuv_error",
+    "clicks_binomial",
+];
+
+/// v2 metrics where a larger value is better (`report::higher_is_better` adds these).
+pub const QUALITY_V2_HIGHER_IS_BETTER: &[&str] = &[
+    "speaker_cosine_v2",
+    "speaker_set_sim",
+    "ceiling_speaker_set_sim",
+    "whole_speaker_set_sim",
+    "long_shape_speaker_set_sim",
+    "speaker_set_sim_delta",
+    "speaker_cosine_v2_vs_whole",
+    "ceiling_b_dnsmos_ovrl",
+    "whole_dnsmos_ovrl",
+    "whole_fp32_dnsmos_ovrl",
+    // Onset levels relative to the speech level (dB, negative): closer to 0 = less muted onset.
+    "onset_rel_db",
+    "onset_rel_db_long_shape",
+    "onset_rel_db_b",
+    "onset_rel_db_whole",
+];
 
 // ---------------------------------------------------------------------------------------------
 // Clicks
@@ -529,7 +964,14 @@ pub struct F0Analyzer {
     pub method: &'static str,
     /// Why another method runs than the one asked for.
     pub notes: Vec<String>,
+    /// The model file the method loads, when it has one (P3B-B: the version stamp).
+    model_path: Option<std::path::PathBuf>,
+    /// [`F0Analyzer::version`], computed once.
+    version: Option<String>,
 }
+
+/// Seconds of the analyzer's fingerprint signal ([`F0Analyzer::version`]).
+const ANALYZER_PROBE_SECONDS: f64 = 1.5;
 
 impl F0Analyzer {
     /// `method`: `auto` (offline RMVPE when its model is found, else DIO), or any pitch-bank
@@ -566,6 +1008,9 @@ impl F0Analyzer {
             rmvpe_path: model.filter(|_| wanted == "rmvpe" || wanted == "fusion"),
             app_data: app_data.as_deref(),
             small_models_on_cpu: true,
+            precision: crate::services::neural_audio::vc::engine::PrecisionMode::Auto,
+            expected_call_frames: None,
+            max_context_16k: None,
         };
         let mut notes = Vec::new();
         if method.trim().eq_ignore_ascii_case("auto") && wanted == "dio" {
@@ -574,10 +1019,17 @@ impl F0Analyzer {
         match create_pitch_extractor(&req) {
             Ok(bank) => {
                 notes.extend(bank.notes);
+                // The model file the bank loads (explicit, else the store / base-folder rule).
+                let model_path = model
+                    .filter(|p| p.is_file())
+                    .map(Path::to_path_buf)
+                    .or_else(|| resolve_pitch_model(bank.method, app_data.as_deref()));
                 F0Analyzer {
                     extractor: bank.extractor,
                     method: bank.method,
                     notes,
+                    model_path,
+                    version: None,
                 }
             }
             Err(e) => {
@@ -593,12 +1045,49 @@ impl F0Analyzer {
             extractor: Box::new(crate::services::neural_audio::vc::world::DioPitchExtractor::new().with_range(range)),
             method: "dio",
             notes,
+            model_path: None,
+            version: None,
         }
     }
 
     /// F0 (Hz, 0 = unvoiced) per 10 ms frame of a 16 kHz clip.
     pub fn contour(&mut self, audio_16k: &[f32]) -> Result<Vec<f32>, String> {
         self.extractor.f0(audio_16k)
+    }
+
+    /// The analyzer's version stamp (P3B-B): `<method>-<16 hex>`, the sha256 of the method, its
+    /// model file's sha256 and the exact output (f32 bits) on a fixed 1.5 s probe signal. It changes
+    /// whenever the model, the mel front end, the decoder or the post-filter change what the
+    /// analyzer reports (the constants live in the pitch bank, e.g. `vc/rmvpe.rs`), and only then;
+    /// F0 metrics of reports with different stamps are not comparable. Computed once.
+    pub fn version(&mut self) -> String {
+        if let Some(v) = &self.version {
+            return v.clone();
+        }
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(self.method.as_bytes());
+        h.update([0u8]);
+        match self.model_path.as_deref().map(super::scorers::file_sha256) {
+            Some(Ok(sha)) => h.update(sha.as_bytes()),
+            Some(Err(e)) => h.update(format!("unreadable model: {e}").as_bytes()),
+            None => h.update(b"no model"),
+        }
+        h.update([0u8]);
+        let probe = super::signals::synth(super::spec::SignalKind::Voice, 16_000, ANALYZER_PROBE_SECONDS, 0.5, 0xF0F0);
+        match self.contour(&probe) {
+            Ok(f0) => f0.iter().for_each(|v| h.update(v.to_bits().to_le_bytes())),
+            Err(e) => h.update(format!("probe failed: {e}").as_bytes()),
+        }
+        let digest = hex::encode(h.finalize());
+        let v = format!("{}-{}", self.method, &digest[..16]);
+        self.version = Some(v.clone());
+        v
+    }
+
+    /// The model file the analyzer loads, if any.
+    pub fn model_path(&self) -> Option<&Path> {
+        self.model_path.as_deref()
     }
 }
 
@@ -813,6 +1302,207 @@ mod tests {
         let mut m = Metrics::new();
         q.insert_into("ceiling_", &mut m);
         assert!(m.contains_key("ceiling_clicks"));
+    }
+
+    /// The v2 split on known contours: the v1 numbers are unchanged, the fine error excludes the
+    /// gross frames, and `RMSE² = (1 − g)·FPE² + g·mean(gross²)`.
+    #[test]
+    fn f0_errors_v2_split_fine_and_gross() {
+        let r = vec![200.0f32; 100];
+        let sharp = 200.0 * 2f32.powf(10.0 / 1200.0);
+        let mut t = vec![sharp; 100];
+        t[3] = 400.0;
+        t[40] = 100.0;
+        for f in t.iter_mut().skip(97) {
+            *f = 0.0;
+        }
+        let v1 = f0_errors(&r, &t).unwrap();
+        let v2 = f0_errors_v2(&r, &t, None).unwrap();
+        assert_eq!((v2.v1.rmse_cents, v2.v1.gross_pitch_error, v2.v1.vuv_error), (v1.rmse_cents, v1.gross_pitch_error, v1.vuv_error));
+        assert_eq!(v2.gross_frames, 2);
+        assert_eq!(v2.gross.iter().map(|g| g.frame).collect::<Vec<_>>(), vec![3, 40]);
+        assert!((v2.gross[0].cents - 1200.0).abs() < 1e-3 && (v2.gross[1].cents + 1200.0).abs() < 1e-3);
+        assert!((v2.fine_rmse_cents.unwrap() - 10.0).abs() < 1e-3, "{v2:?}");
+        let g = 2.0 / 97.0;
+        let fine = v2.fine_rmse_cents.unwrap();
+        let recomposed = ((1.0 - g) * fine * fine + g * 0.5 * (v2.gross[0].cents.powi(2) + v2.gross[1].cents.powi(2))).sqrt();
+        assert!((v2.v1.rmse_cents - recomposed).abs() < 1e-9, "{} vs {recomposed}", v2.v1.rmse_cents);
+        // A mask drops frames; positions stay those of the full contours.
+        let mask: Vec<bool> = (0..100).map(|i| i != 3).collect();
+        let m = f0_errors_v2(&r, &t, Some(&mask)).unwrap();
+        assert_eq!(m.gross.iter().map(|g| g.frame).collect::<Vec<_>>(), vec![40]);
+        assert_eq!(m.v1.frames, 99);
+        // Every voiced-in-both frame gross: no fine error.
+        assert_eq!(f0_errors_v2(&[100.0, 100.0], &[300.0, 300.0], None).unwrap().fine_rmse_cents, None);
+        assert!(f0_errors_v2(&[0.0; 3], &[0.0; 3], None).is_err());
+    }
+
+    /// The tolerant V/UV error forgives a voicing edge moved by a frame, not a wrong decision.
+    #[test]
+    fn tolerant_vuv_forgives_edges_only() {
+        let r = [0.0f32, 0.0, 100.0, 100.0, 100.0, 0.0, 0.0, 0.0];
+        let late = [0.0f32, 0.0, 0.0, 100.0, 100.0, 100.0, 0.0, 0.0];
+        assert_eq!(vuv_error_tolerant(&r, &late, None, 1), Some(0.0));
+        assert_eq!(f0_errors(&r, &late).unwrap().vuv_error, 0.25);
+        let wrong = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0];
+        assert_eq!(vuv_error_tolerant(&r, &wrong, None, 1), Some(3.0 / 8.0));
+        assert_eq!(vuv_error_tolerant(&r, &late, Some(&[false; 8]), 1), None);
+    }
+
+    /// Onsets of the reference and the test's lag to them.
+    #[test]
+    fn fed_f0_errors_report_onset_lags() {
+        // Reference: voiced 10..30 and 50..80; test: 2 frames late at the first, 1 early at the
+        // second; nothing voiced near a third onset at 90.
+        let mut r = vec![0.0f32; 100];
+        let mut t = vec![0.0f32; 100];
+        for i in (10..30).chain(50..80).chain(90..96) {
+            r[i] = 150.0;
+        }
+        for i in (12..30).chain(49..80) {
+            t[i] = 151.0;
+        }
+        assert_eq!(voicing_onsets(&r, None), vec![10, 50, 90]);
+        let e = fed_f0_errors(&r, &t, None).unwrap();
+        assert_eq!((e.onsets, e.onsets_missed), (3, 1));
+        assert_eq!(e.onset_lags, vec![2, -1]);
+        assert_eq!(e.onset_lag_median(), Some(0.5));
+        assert_eq!(e.onset_lag_mean(), Some(0.5));
+        assert_eq!(e.errors.gross_frames, 0);
+        assert!((e.errors.fine_rmse_cents.unwrap() - 1200.0 * (151.0f64 / 150.0).log2()).abs() < 1e-3);
+        // Masked onsets do not count.
+        let mask: Vec<bool> = (0..100).map(|i| i < 40).collect();
+        assert_eq!(voicing_onsets(&r, Some(&mask)), vec![10]);
+    }
+
+    /// The absolute lag cannot cancel early against late voicing; the signed one can.
+    #[test]
+    fn the_onset_lag_has_a_gateable_absolute_form() {
+        let e = FedF0Errors {
+            onset_lags: vec![-3, 3, -1, 1, 2],
+            ..FedF0Errors::default()
+        };
+        assert_eq!(e.onset_lag_median(), Some(1.0));
+        assert_eq!(e.onset_lag_abs_median(), Some(2.0));
+        assert_eq!(FedF0Errors::default().onset_lag_abs_median(), None);
+    }
+
+    /// Direction of the v2 metrics the perf gate compares: a level closer to 0 dB is a less muted
+    /// onset (higher is better); every direction-listed name is a metric a v2 run publishes; the
+    /// signed lags have an `_abs` form, and no signed name is in the higher-is-better list.
+    #[test]
+    fn v2_metric_directions_cover_the_onsets_and_the_signed_lags() {
+        for name in ["onset_rel_db", "onset_rel_db_long_shape", "onset_rel_db_b", "onset_rel_db_whole"] {
+            assert!(QUALITY_V2_HIGHER_IS_BETTER.contains(&name), "{name}");
+            assert!(QUALITY_V2_SCALARS.contains(&name), "{name}");
+        }
+        for name in QUALITY_V2_HIGHER_IS_BETTER {
+            assert!(QUALITY_V2_SCALARS.contains(name), "{name} is not a published v2 metric");
+        }
+        for signed in ["fed_onset_lag_frames", "fed_input_onset_lag_frames"] {
+            assert!(!QUALITY_V2_HIGHER_IS_BETTER.contains(&signed));
+            let abs = signed.replace("_lag_", "_lag_abs_");
+            assert!(QUALITY_V2_SCALARS.contains(&abs.as_str()), "{abs}");
+            assert!(!QUALITY_V2_HIGHER_IS_BETTER.contains(&abs.as_str()), "the absolute lag is lower-is-better");
+        }
+        assert!(QUALITY_V2_SCALARS.contains(&"ablation_rows_unapplied"));
+    }
+
+    /// The conditional binomial against scipy (`binom.ppf`, `binom.cdf`, `binom.sf`), and the saved
+    /// P3 cases: (30 events, 26 in the windows) and (36, 28) read 0, the lead-1 lookahead runs
+    /// (32, 29) and (42, 37) read 2.
+    #[test]
+    fn binomial_clicks_match_scipy_and_the_saved_cases() {
+        for (n, p, q975) in [(30u64, 0.7, 26u64), (36, 0.7, 30), (32, 0.7, 27), (42, 0.7, 35), (20, 0.15, 6), (40, 0.15, 11), (1_000, 0.7, 728), (5, 0.0, 0), (5, 1.0, 5)] {
+            assert_eq!(binomial_quantile(0.975, n, p), q975, "ppf(0.975, {n}, {p})");
+        }
+        assert!((binomial_cdf(20, 30, 0.7) - 0.411_191_314_759_277_84).abs() < 1e-9);
+        assert!((binomial_cdf(20, 42, 0.7) - 0.001_997_494_004_850_438_5).abs() < 1e-12);
+        assert!((binomial_at_least(26, 30, 0.7) - 0.030_154_943_102_089_3).abs() < 1e-9);
+        assert_eq!(binomial_clicks(26, 30, 0.7), 0);
+        assert_eq!(binomial_clicks(28, 36, 0.7), 0);
+        assert_eq!(binomial_clicks(29, 32, 0.7), 2);
+        assert_eq!(binomial_clicks(37, 42, 0.7), 2);
+        assert_eq!(binomial_clicks(0, 0, 0.7), 0);
+        // Every event at a join with a tiny coverage: all but the chance quantile are clicks.
+        assert_eq!(binomial_clicks(40, 40, 0.15), 40 - 11);
+    }
+
+    /// The envelope MCD against the NumPy replica (`scripts/bench/score_v2/common.py`,
+    /// `envelope_mcd_db`; values printed by it for these signals) within 0.01 dB (here to 1e-6),
+    /// and the STFT MCD against its replica.
+    #[test]
+    fn envelope_mcd_matches_the_numpy_replica() {
+        let n: Vec<f64> = (0..16_000).map(f64::from).collect();
+        let ph = |i: f64| 2.0 * PI * 150.0 * i / 16_000.0 + 0.8 * (2.0 * PI * 2.5 * i / 16_000.0).sin();
+        let reference: Vec<f32> = n
+            .iter()
+            .map(|&i| (0.3 * ph(i).sin() + 0.12 * (2.0 * PI * 450.0 * i / 16_000.0 + 0.3).sin() + 0.05 * (2.0 * PI * 2_100.0 * i / 16_000.0).sin()) as f32)
+            .collect();
+        let test: Vec<f32> = n
+            .iter()
+            .map(|&i| (0.3 * ph(i).sin() + 0.08 * (2.0 * PI * 450.0 * i / 16_000.0 + 0.3).sin() + 0.07 * (2.0 * PI * 2_300.0 * i / 16_000.0).sin()) as f32)
+            .collect();
+        let f0: Vec<f32> = (0..101).map(|m| if m < 60 { 150.0 } else { 0.0 }).collect();
+        let env = envelope_mcd_db(&reference, &test, &f0, 16_000).unwrap();
+        assert!((env - 4.747_933_147_454_606).abs() < 1e-6, "envelope MCD {env} vs the replica's 4.7479331");
+        let stft = mcd_db(&reference, &test, 16_000).unwrap();
+        assert!((stft - 4.647_140_913_431_759).abs() < 1e-6, "STFT MCD {stft} vs the replica's 4.6471409");
+        assert_eq!(envelope_mcd_db(&reference, &reference, &f0, 16_000).unwrap(), 0.0);
+        // A gain change moves only c0.
+        let loud: Vec<f32> = reference.iter().map(|x| x * 1.5).collect();
+        assert!(envelope_mcd_db(&reference, &loud, &f0, 16_000).unwrap() < 1e-3);
+        assert!(envelope_mcd_db(&reference, &test, &f0, 48_000).is_err());
+        // The envelope itself (the replica's `cheaptrick_power`).
+        let mut a = super::super::dsp::EnvelopeAnalyzer::default();
+        let mut p = Vec::new();
+        a.power(&reference, 4_000, 150.0, &mut p);
+        for (bin, want) in [(0usize, 0.014_534_816_071_221_12), (10, 7.573_810_729_255_779), (100, 2.053_005_417_675_389_2e-9)] {
+            // Bins 100 dB down carry the two FFTs' rounding (pocketfft vs realfft) through log / exp.
+            assert!((p[bin] / want - 1.0).abs() < 1e-4, "voiced bin {bin}: {} vs {want}", p[bin]);
+        }
+        a.power(&reference, 12_000, 0.0, &mut p);
+        for (bin, want) in [(3usize, 0.004_704_767_178_572_399), (200, 5.659_350_789_653_181e-11)] {
+            assert!((p[bin] / want - 1.0).abs() < 1e-4, "unvoiced bin {bin}: {} vs {want}", p[bin]);
+        }
+    }
+
+    /// The offset-corrected MCD reads each frame where the shift says: with no shift it is
+    /// [`mcd_db`] / [`envelope_mcd_db`] bit for bit, and a delayed copy read at its delay is at 0.
+    #[test]
+    fn shifted_mcd_reads_the_test_where_its_content_is() {
+        let x: Vec<f32> = (0..16_000)
+            .map(|i| {
+                let t = f64::from(i) / 16_000.0;
+                (0.3 * (2.0 * PI * 140.0 * t + 0.5 * (2.0 * PI * 3.0 * t).sin()).sin() + 0.1 * (2.0 * PI * 900.0 * t).sin()) as f32
+            })
+            .collect();
+        let y: Vec<f32> = x.iter().enumerate().map(|(i, v)| v * (1.0 + 0.3 * (i as f32 * 0.003).sin())).collect();
+        let f0 = vec![140.0f32; 101];
+        let (m, e) = mcd_db_shifted(&x, &y, 0, &[], Some(&f0)).unwrap();
+        assert_eq!(m.to_bits(), mcd_db(&x, &y, 16_000).unwrap().to_bits());
+        assert_eq!(e.unwrap().to_bits(), envelope_mcd_db(&x, &y, &f0, 16_000).unwrap().to_bits());
+        // A copy 37 samples late: read 37 samples later it is the reference.
+        let mut late = vec![0.0f32; 37];
+        late.extend_from_slice(&x);
+        let shift = vec![37i64; 200];
+        let (m0, _) = mcd_db_shifted(&x, &late, 0, &[], None).unwrap();
+        let (m1, e1) = mcd_db_shifted(&x, &late, 0, &shift, Some(&f0)).unwrap();
+        assert!(m0 > 0.0 && m1 == 0.0 && e1 == Some(0.0), "{m0} {m1} {e1:?}");
+        // The same through the origin.
+        assert_eq!(mcd_db_shifted(&x, &late, 37, &[], None).unwrap().0, 0.0);
+    }
+
+    /// The analyzer's version stamp is stable for one analyzer and names its method.
+    #[test]
+    fn analyzer_version_is_stable() {
+        let mut a = F0Analyzer::dio(F0Range::Speech, Vec::new());
+        let v = a.version();
+        assert!(v.starts_with("dio-") && v.len() == "dio-".len() + 16, "{v}");
+        assert_eq!(a.version(), v);
+        assert_eq!(F0Analyzer::dio(F0Range::Speech, Vec::new()).version(), v, "the same analyzer, the same stamp");
+        let mut sing = F0Analyzer::dio(F0Range::Singing, Vec::new());
+        assert!(sing.version().starts_with("dio-"));
     }
 
     #[test]

@@ -11,6 +11,16 @@
 //! (`rms_mix`, `formant_semitones`, `noise_scale`, `silence_db`) live in `VoiceChangerHotParams`
 //! and reach the model as `VoiceControls`; the rest are read when the engine starts. What this
 //! build can run is `capabilities.rs`.
+//!
+//! # P3B parameters (P3B-S0; frozen, change only through INTEGRATE)
+//! `params_contract.json` `params_p3b_new_fields`, read when the engine starts, no UI until P3B-H:
+//! the levers `content_norm` / `f0_decode` (like every lever), [`OutputCushion`] `output_cushion`
+//! (`fixed` default | `adaptive`), [`DeviceBlockMode`] `device_block` (`fixed` default |
+//! `model_divisor`), `sola_search_ms` (0-10 ms; [`AUTO_MS`] = automatic, today's overlap / 2) and
+//! `content_context_ms` (0-3000 ms; [`AUTO_MS`] = the preset's, plumbed to
+//! `SigilRvcRequest::content_context_16k`). "Automatic" travels as `-1` because an absent or null
+//! field on `set` keeps the stored value; any negative value sets it. All are no-ops until their
+//! workstream lands (P3B-H: cushion, device block, SOLA search; P3B-D: content context).
 
 use super::budget::{clamp_latency_budget_ms, DEFAULT_LATENCY_BUDGET_MS};
 use crate::services::neural_audio::vc::engine::options::{
@@ -49,6 +59,86 @@ pub(crate) const HOT_SLOTS_RANGE: (u32, u32) = (1, 8);
 pub(crate) const VRAM_BUDGET_MB_RANGE: (u32, u32) = (0, 65_536);
 const DEFAULT_RMS_MIX: f32 = 1.0;
 const DEFAULT_HOT_SLOTS: u32 = 1;
+
+// ---- P3B ranges (params_contract.json `numbers`, `p3b_new`) ----
+/// The wire value of "automatic" for the optional P3B numbers (`sola_search_ms`,
+/// `content_context_ms`); any negative value sets it.
+pub(crate) const AUTO_MS: f64 = -1.0;
+/// SOLA search window (ms) when not automatic.
+pub(crate) const SOLA_SEARCH_MS_RANGE: (f64, f64) = (0.0, 10.0);
+/// Content-encoder left context (ms) when not the preset's.
+pub(crate) const CONTENT_CONTEXT_MS_RANGE: (f64, f64) = (0.0, 3000.0);
+
+/// `None` (automatic) for a negative or non-finite value, else the value clamped to `range`.
+pub(crate) fn auto_or_clamped(v: f64, range: (f64, f64)) -> Option<f64> {
+    if !v.is_finite() || v < 0.0 {
+        None
+    } else {
+        Some(v.clamp(range.0, range.1))
+    }
+}
+
+/// How the output cushion (prefill) is sized (params `output_cushion`, P3B-S0; P3B-H implements
+/// `adaptive`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum OutputCushion {
+    /// The user's / preset's fixed prefill (today's behaviour).
+    #[default]
+    Fixed,
+    /// Sized from the measured lateness of block-completing ticks (opt-in).
+    Adaptive,
+}
+
+impl OutputCushion {
+    #[allow(dead_code)] // P3B-S0 frozen API (tests; the P3B-H UI list).
+    pub const ALL: [OutputCushion; 2] = [OutputCushion::Fixed, OutputCushion::Adaptive];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OutputCushion::Fixed => "fixed",
+            OutputCushion::Adaptive => "adaptive",
+        }
+    }
+
+    /// Case-insensitive; anything unknown is [`OutputCushion::Fixed`].
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "adaptive" => OutputCushion::Adaptive,
+            _ => OutputCushion::Fixed,
+        }
+    }
+}
+
+/// How the device block is chosen for template voices (params `device_block`, P3B-S0; P3B-H
+/// implements `model_divisor`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DeviceBlockMode {
+    /// `chunk_frames` as set (today's behaviour).
+    #[default]
+    Fixed,
+    /// A divisor of the model block (the WASAPI period when it divides the block, else 10 ms).
+    ModelDivisor,
+}
+
+impl DeviceBlockMode {
+    #[allow(dead_code)] // P3B-S0 frozen API (tests; the P3B-H UI list).
+    pub const ALL: [DeviceBlockMode; 2] = [DeviceBlockMode::Fixed, DeviceBlockMode::ModelDivisor];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceBlockMode::Fixed => "fixed",
+            DeviceBlockMode::ModelDivisor => "model_divisor",
+        }
+    }
+
+    /// Case-insensitive; anything unknown is [`DeviceBlockMode::Fixed`].
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "model_divisor" => DeviceBlockMode::ModelDivisor,
+            _ => DeviceBlockMode::Fixed,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -520,6 +610,13 @@ pub(super) struct RvcParamsState {
     /// Voice-library id of the zero-shot reference (per voice, `slot.json`; part of the voice
     /// selection: a change loads the voice with that reference in the background). `""` = none.
     pub(super) reference_voice_id: String,
+    // ---- P3B (P3B-S0; read when the engine starts) ----
+    pub(super) output_cushion: OutputCushion,
+    /// SOLA search window (ms); `None` = automatic (overlap / 2).
+    pub(super) sola_search_ms: Option<f64>,
+    pub(super) device_block: DeviceBlockMode,
+    /// Content-encoder left context (ms); `None` = the preset's.
+    pub(super) content_context_ms: Option<f64>,
 }
 
 /// A `reference_voice_id` as stored: a valid voice-library id (trimmed), else `""`.
@@ -560,6 +657,10 @@ impl Default for RvcParamsState {
             hot_slots: DEFAULT_HOT_SLOTS,
             vram_budget_mb: VRAM_BUDGET_MB_RANGE.0,
             reference_voice_id: String::new(),
+            output_cushion: OutputCushion::default(),
+            sola_search_ms: None,
+            device_block: DeviceBlockMode::default(),
+            content_context_ms: None,
         }
     }
 }
@@ -599,6 +700,19 @@ impl RvcParamsState {
         // P5 (P5-S0)
         if let Some(v) = params.reference_voice_id.as_deref() {
             self.reference_voice_id = normalize_reference_voice_id(v);
+        }
+        // P3B (P3B-S0)
+        if let Some(v) = params.output_cushion.as_deref() {
+            self.output_cushion = OutputCushion::from_str_lossy(v);
+        }
+        if let Some(v) = params.sola_search_ms.filter(|v| !v.is_nan()) {
+            self.sola_search_ms = auto_or_clamped(v, SOLA_SEARCH_MS_RANGE);
+        }
+        if let Some(v) = params.device_block.as_deref() {
+            self.device_block = DeviceBlockMode::from_str_lossy(v);
+        }
+        if let Some(v) = params.content_context_ms.filter(|v| !v.is_nan()) {
+            self.content_context_ms = auto_or_clamped(v, CONTENT_CONTEXT_MS_RANGE);
         }
     }
 }
@@ -750,6 +864,11 @@ pub struct VoiceChangerParams {
     pub gpu_priority: Option<String>,
     #[serde(default)]
     pub governor: Option<String>,
+    /// P3B levers (`params_p3b_new_fields`): `auto` / `on` / `off`.
+    #[serde(default)]
+    pub content_norm: Option<String>,
+    #[serde(default)]
+    pub f0_decode: Option<String>,
     /// `off` / `gtcrn` / `dfn3` / `dpdfnet`.
     #[serde(default)]
     pub denoiser: Option<String>,
@@ -765,6 +884,20 @@ pub struct VoiceChangerParams {
     /// switch: a change loads the voice with that reference in the background.
     #[serde(default)]
     pub reference_voice_id: Option<String>,
+
+    // ---- P3B (params_contract.json `params_p3b_new_fields`; absent / null on `set` keeps) ----
+    /// `fixed` / `adaptive` (P3B-H).
+    #[serde(default)]
+    pub output_cushion: Option<String>,
+    /// SOLA search window in ms (0-10); `-1` (any negative) = automatic (P3B-H).
+    #[serde(default)]
+    pub sola_search_ms: Option<f64>,
+    /// `fixed` / `model_divisor` (P3B-H).
+    #[serde(default)]
+    pub device_block: Option<String>,
+    /// Content-encoder left context in ms (0-3000); `-1` (any negative) = the preset's (P3B-D).
+    #[serde(default)]
+    pub content_context_ms: Option<f64>,
 }
 
 impl VoiceChangerParams {
@@ -780,6 +913,8 @@ impl VoiceChangerParams {
             Lever::CudaGraphs => self.cuda_graphs.as_deref(),
             Lever::GpuPriority => self.gpu_priority.as_deref(),
             Lever::Governor => self.governor.as_deref(),
+            Lever::ContentNorm => self.content_norm.as_deref(),
+            Lever::F0Decode => self.f0_decode.as_deref(),
         }
     }
 
@@ -796,6 +931,8 @@ impl VoiceChangerParams {
             Lever::CudaGraphs => self.cuda_graphs = v,
             Lever::GpuPriority => self.gpu_priority = v,
             Lever::Governor => self.governor = v,
+            Lever::ContentNorm => self.content_norm = v,
+            Lever::F0Decode => self.f0_decode = v,
         }
     }
 
@@ -817,6 +954,10 @@ impl VoiceChangerParams {
         self.hot_slots = Some(rvc.hot_slots);
         self.vram_budget_mb = Some(rvc.vram_budget_mb);
         self.reference_voice_id = Some(rvc.reference_voice_id.clone());
+        self.output_cushion = Some(rvc.output_cushion.as_str().to_string());
+        self.sola_search_ms = Some(rvc.sola_search_ms.unwrap_or(AUTO_MS));
+        self.device_block = Some(rvc.device_block.as_str().to_string());
+        self.content_context_ms = Some(rvc.content_context_ms.unwrap_or(AUTO_MS));
     }
 
     /// Clear every P3 field (as parsed from a sender that predates them).
@@ -838,6 +979,10 @@ impl VoiceChangerParams {
         self.hot_slots = None;
         self.vram_budget_mb = None;
         self.reference_voice_id = None;
+        self.output_cushion = None;
+        self.sola_search_ms = None;
+        self.device_block = None;
+        self.content_context_ms = None;
     }
 }
 
@@ -905,10 +1050,16 @@ impl Default for VoiceChangerParams {
             cuda_graphs: None,
             gpu_priority: None,
             governor: None,
+            content_norm: None,
+            f0_decode: None,
             denoiser: None,
             hot_slots: None,
             vram_budget_mb: None,
             reference_voice_id: None,
+            output_cushion: None,
+            sola_search_ms: None,
+            device_block: None,
+            content_context_ms: None,
         };
         // Concrete P3 defaults, like the P0 options (a default `set` is a full `get`).
         p.set_p3_from(&rvc_defaults, &VoiceChangerHotParams::default());
@@ -1212,6 +1363,50 @@ mod tests {
         assert_eq!(effective_rvc_ep("", RvcPresetProfile::StudioTrt), "cuda");
         assert_eq!(rvc_accelerator("", RvcPresetProfile::StudioTrt), Accelerator::TensorRtRtx);
         assert_eq!(rvc_accelerator("cuda", RvcPresetProfile::StudioTrt), Accelerator::None);
+    }
+
+    /// P3B fields (P3B-S0): enums normalize, negative numbers mean automatic, others clamp, and a
+    /// sender without them changes nothing.
+    #[test]
+    fn p3b_fields_apply_with_auto_and_clamps() {
+        let mut rvc = RvcParamsState::default();
+        let hot = VoiceChangerHotParams::default();
+        let mut got = VoiceChangerParams::default();
+        got.set_p3_from(&rvc, &hot);
+        assert_eq!(got.output_cushion.as_deref(), Some("fixed"));
+        assert_eq!(got.device_block.as_deref(), Some("fixed"));
+        assert_eq!((got.sola_search_ms, got.content_context_ms), (Some(AUTO_MS), Some(AUTO_MS)));
+        let mut p = VoiceChangerParams::default();
+        p.clear_p3();
+        p.output_cushion = Some(" Adaptive ".into());
+        p.device_block = Some("MODEL_DIVISOR".into());
+        p.sola_search_ms = Some(25.0);
+        p.content_context_ms = Some(1_500.0);
+        p.content_norm = Some("on".into());
+        p.f0_decode = Some("bogus".into());
+        rvc.apply_p3(&p);
+        assert_eq!(rvc.output_cushion, OutputCushion::Adaptive);
+        assert_eq!(rvc.device_block, DeviceBlockMode::ModelDivisor);
+        assert_eq!(rvc.sola_search_ms, Some(10.0));
+        assert_eq!(rvc.content_context_ms, Some(1_500.0));
+        assert_eq!(rvc.levers.get(Lever::ContentNorm), LeverMode::On);
+        assert_eq!(rvc.levers.get(Lever::F0Decode), LeverMode::Auto);
+        let before = rvc.clone();
+        let mut old = VoiceChangerParams::default();
+        old.clear_p3();
+        rvc.apply_p3(&old);
+        assert_eq!((rvc.sola_search_ms, rvc.content_context_ms), (before.sola_search_ms, before.content_context_ms));
+        assert_eq!(rvc.output_cushion, before.output_cushion);
+        p.sola_search_ms = Some(-5.0);
+        p.content_context_ms = Some(f64::INFINITY);
+        rvc.apply_p3(&p);
+        assert_eq!((rvc.sola_search_ms, rvc.content_context_ms), (None, None), "negative / non-finite = automatic");
+        for c in OutputCushion::ALL {
+            assert_eq!(OutputCushion::from_str_lossy(c.as_str()), c);
+        }
+        for d in DeviceBlockMode::ALL {
+            assert_eq!(DeviceBlockMode::from_str_lossy(d.as_str()), d);
+        }
     }
 
     /// P3 fields: present values are clamped / normalized into the state, absent ones keep it.

@@ -26,7 +26,7 @@ import {
     nvidiaAdapterPresent,
     precisionOptions,
 } from "@/core/services/voice_changer/options";
-import { showsControl } from "@/core/services/voice_changer/families";
+import { runsOnTemplateEngine, showsControl } from "@/core/services/voice_changer/families";
 import { leverStateKey } from "@/core/services/voice_changer/tuning";
 import type { VoiceChangerState } from "@/core/services/voice_changer/schema";
 import classNames from "classnames";
@@ -80,7 +80,7 @@ export const LookaheadMsSelect: FC<{ template: boolean; family?: boolean }> = ({
     return (
         <VcChoiceSelect
             labelKey="voice_changer.lookahead_ms"
-            infoKey="voice_changer.lookahead_ms_info"
+            infoKey="voice_changer.lookahead_ms_info_v2"
             value={String(vc.lookaheadMs)}
             options={values.map((ms) => ({
                 value: String(ms),
@@ -161,7 +161,7 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
     const levers = running ? metrics?.levers ?? null : null;
     const { kind, controls } = useVoiceFamily(voice);
     // No listed voice counts as a template voice (the default setup), like before P5.
-    const template = kind !== "legacy" && kind !== "family";
+    const template = runsOnTemplateEngine(kind);
     const legacyVoice = kind === "legacy";
     const familyVoice = kind === "family";
     const base = rvcBaseEp(vc.rvcExecutionProvider);

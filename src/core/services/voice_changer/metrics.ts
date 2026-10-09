@@ -2,7 +2,7 @@
  * Voice-changer run metrics (`get_voice_changer_metrics`) and the execution provider (EP) in use.
  *
  * The P0 fields (`process_p99_ms`, `backlog_ms`, `dropped_ms`, `underruns`, `ep`) and the P3 fields
- * (`process_p50_ms`, `process_p95_ms`, `e2e_ms`, `vram_mb`, `governor_level`, `levers`) are optional
+ * (`process_p50_ms`, `process_p95_ms`, `e2e_ms`, `vram_mb`, `governor_level`, `levers`, and P3B-H's `cushion_ms`) are optional
  * on the wire (params_contract.json: an older backend omits them), so they normalize to `null`.
  * Pure module: no Tauri, DOM or `window`.
  */
@@ -28,6 +28,8 @@ export interface VoiceChangerMetricsRust {
     vram_mb?: number | null;
     governor_level?: number | null;
     levers?: unknown;
+    // P3B-H: the output cushion the queue holds
+    cushion_ms?: number | null;
 }
 
 /** Normalized metrics: every number finite; P0 fields `null` when the backend does not report them. */
@@ -59,6 +61,11 @@ export interface VoiceChangerMetrics {
     governor_level: number | null;
     /** P3: levers, accelerator and precision the running engine really uses. */
     levers: VcEffectiveLevers | null;
+    /**
+     * P3B-H: the output cushion the queue holds now (ms): the adaptive controller's target, else the
+     * fixed prefill; `null` from a backend that predates it or before the output runs.
+     */
+    cushion_ms: number | null;
 }
 
 function num(n: unknown): number {
@@ -98,6 +105,7 @@ export function normalizeMetrics(raw: unknown): VoiceChangerMetrics | null {
         vram_mb: optNum(m.vram_mb),
         governor_level: optNum(m.governor_level),
         levers: normalizeEffectiveLevers(m.levers),
+        cushion_ms: optNum(m.cushion_ms),
     };
 }
 

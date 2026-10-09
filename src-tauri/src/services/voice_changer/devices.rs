@@ -54,6 +54,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamError};
 
+use super::params::OutputCushion;
 use super::playback::{adapt_channels_interleaved_into, OutputPlayback, RingPlayout, OUT_RING_MAX_SAMPLES, OUT_RING_MIN_SAMPLES};
 use super::resample::PolyphaseResampler;
 use super::state::{MmcssFlag, MmcssStatus};
@@ -867,6 +868,9 @@ pub(super) enum PortEvent {
 pub(super) struct PortLimits {
     pub(super) prefill_ms: f64,
     pub(super) max_queue_ms: f64,
+    /// The smallest cushion the active voice allows (`min_output_buffer_ms`; 0 = none): the adaptive
+    /// cushion's floor. Fixed ports already hold it in `prefill_ms`.
+    pub(super) min_prefill_ms: f64,
 }
 
 /// A running output device (see the module docs).
@@ -895,6 +899,8 @@ pub(super) struct OutputPort {
     burst: Arc<AtomicUsize>,
     burst_ch: usize,
     burst_rate: u32,
+    /// How the queue's cushion is sized (kept for a reopened device).
+    cushion: OutputCushion,
     resampler: Option<PolyphaseResampler>,
     chans: Vec<f32>,
     resampled: Vec<f32>,
@@ -919,6 +925,8 @@ pub(super) struct PortSetup {
     pub(super) burst: Arc<AtomicUsize>,
     pub(super) burst_ch: usize,
     pub(super) burst_rate: u32,
+    /// How the queue's cushion is sized (the main output of an RVC run; the monitor stays fixed).
+    pub(super) cushion: OutputCushion,
 }
 
 impl OutputPort {
@@ -955,6 +963,7 @@ impl OutputPort {
             burst: setup.burst,
             burst_ch: setup.burst_ch.max(1),
             burst_rate: setup.burst_rate.max(1),
+            cushion: setup.cushion,
             resampler: (dev_rate != setup.run_rate).then(|| PolyphaseResampler::new(setup.run_rate, dev_rate, dev_ch)),
             chans: Vec::new(),
             resampled: Vec::new(),
@@ -979,8 +988,10 @@ impl OutputPort {
         let callback_len = Arc::new(AtomicUsize::new(0));
         // The main output counts into the metrics' counter; the monitor into its own.
         let underruns = setup.underruns.clone().unwrap_or_else(|| Arc::new(AtomicU64::new(0)));
-        let playback = OutputPlayback::new(prefill, max_queue, dev_ch, callback_len.clone())
-            .with_capture_burst(setup.burst.clone(), setup.burst_ch, setup.burst_rate, dev_rate);
+        let mut playback = OutputPlayback::new(prefill, max_queue, dev_ch, callback_len.clone())
+            .with_capture_burst(setup.burst.clone(), setup.burst_ch, setup.burst_rate, dev_rate)
+            .with_cushion(setup.cushion);
+        playback.set_cushion_floor(ms_to_samples(setup.limits.min_prefill_ms, dev_rate, dev_ch));
         let callbacks = Arc::new(AtomicU64::new(0));
         let playout = RingPlayout::new(consumer, dev_ch, callback_len)
             .with_callback_counter(callbacks.clone())
@@ -1025,9 +1036,16 @@ impl OutputPort {
         (self.playback.trimmed_frames(), self.playback.recoveries())
     }
 
+    /// The cushion the queue holds now (ms): the adaptive target, else the prefill (P3B-H).
+    pub(super) fn cushion_ms(&self) -> f64 {
+        self.playback.cushion_samples() as f64 / self.dev_ch as f64 * 1000.0 / f64::from(self.dev_rate.max(1))
+    }
+
     /// New queue limits from the hot params.
     pub(super) fn set_limits(&mut self, limits: PortLimits) {
         self.limits = limits;
+        self.playback
+            .set_cushion_floor(ms_to_samples(limits.min_prefill_ms, self.dev_rate, self.dev_ch));
         let used = self.ring_used();
         self.playback.update_limits(
             ms_to_samples(limits.prefill_ms, self.dev_rate, self.dev_ch),
@@ -1147,6 +1165,7 @@ impl OutputPort {
             burst: self.burst.clone(),
             burst_ch: self.burst_ch,
             burst_rate: self.burst_rate,
+            cushion: self.cushion,
         };
         // Release the old stream first (an exclusive driver may refuse a second one).
         self.stream = None;

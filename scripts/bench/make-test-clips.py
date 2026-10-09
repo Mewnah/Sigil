@@ -26,6 +26,18 @@ Usage:
     python scripts/bench/make-test-clips.py --out clips --mix voice music_bleed:-20
 
 Files are 16-bit PCM mono (`--float` writes 32-bit float) peak-normalized to --level-dbfs.
+
+Interim local corpus (P3B-C; plan T6 dry run), from real speech clips already on this PC:
+
+    python scripts/bench/make-test-clips.py --local-corpus --out <dir> [--inputs a.wav b.wav ...]
+
+Each input is resampled to 16 kHz mono; clips of at least --min-seconds (10 s; DNSMOS needs 9.01 s)
+stay whole, shorter ones are joined in a seeded order with 300 ms gaps until they reach it. Every
+clip is loudness-normalised to --lufs (-26 LUFS, ITU-R BS.1770-4: a voice changer's silence gate
+then sees a mic-like level) and listed in `<dir>/corpus.json` (`sigil-compare-corpus/1`, with each
+clip's sha256 and sources). The default inputs are the dev cache's speech clips (the sherpa-onnx
+test clips and the transcribe samples). This mode needs numpy, scipy and soundfile; the corpus is
+local only and never committed.
 """
 
 from __future__ import annotations
@@ -196,9 +208,96 @@ def parse_mix(items: list[str]) -> list[tuple[str, float]]:
     return out
 
 
+def default_local_inputs() -> list[str]:
+    cache = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "sigil-dev-cache")
+    out = []
+    for sub in (os.path.join("sherpa-onnx", "clips"), os.path.join("models", "transcribe", "samples")):
+        d = os.path.join(cache, sub)
+        if os.path.isdir(d):
+            out += sorted(os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(".wav"))
+    return out
+
+
+def local_corpus(out: str, inputs: list[str], seed: int, min_s: float, gap_ms: float, lufs: float) -> str:
+    """Build the interim local corpus (see the module docs); returns the manifest's path."""
+    import hashlib
+    import json
+
+    import numpy as np
+    import soundfile as sf
+    from scipy.signal import resample_poly
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts", "vc-bench"))
+    import vcbench_common as vb
+
+    rate = 16000
+    clips = []
+    for p in inputs:
+        x, sr = sf.read(p, dtype="float32", always_2d=True)
+        x = x.mean(axis=1)
+        if sr != rate:
+            g = math.gcd(sr, rate)
+            x = resample_poly(x, rate // g, sr // g).astype("float32")
+        clips.append((os.path.splitext(os.path.basename(p))[0], p, x))
+    long = [c for c in clips if len(c[2]) / rate >= min_s]
+    short = [c for c in clips if len(c[2]) / rate < min_s]
+    random.Random(seed).shuffle(short)
+    groups = [[c] for c in long]
+    cur, total = [], 0.0
+    for c in short:
+        cur.append(c)
+        total += len(c[2]) / rate + (gap_ms / 1000.0 if len(cur) > 1 else 0.0)
+        if total >= min_s:
+            groups.append(cur)
+            cur, total = [], 0.0
+    if cur:
+        if groups and len(groups[-1]) > 1:
+            groups[-1] += cur  # the remainder joins the last joined clip
+        else:
+            print(f"left over (under {min_s} s): {[c[0] for c in cur]}")
+    os.makedirs(os.path.join(out, "clips"), exist_ok=True)
+    entries = []
+    for g in groups:
+        parts = []
+        for i, c in enumerate(g):
+            if i:
+                parts.append(np.zeros(int(gap_ms / 1000.0 * rate), dtype="float32"))
+            parts.append(c[2])
+        x = np.concatenate(parts)
+        loud = vb.loudness_lufs(x, rate)
+        gain = (lufs - loud) if loud is not None else 0.0
+        peak = float(np.max(np.abs(x))) * 10 ** (gain / 20)
+        if peak > 10 ** (-1 / 20):
+            gain -= 20 * math.log10(peak / 10 ** (-1 / 20))
+        x = (x * 10 ** (gain / 20)).astype("float32")
+        cid = g[0][0] if len(g) == 1 else "join-" + "-".join(c[0] for c in g)
+        cid = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in cid)[:90]
+        rel = f"clips/{cid}.wav"
+        path = os.path.join(out, rel)
+        sf.write(path, x, rate, subtype="PCM_16")
+        with open(path, "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        entries.append({"id": cid, "input": rel, "sha256": sha, "seconds": round(len(x) / rate, 3),
+                        "source": " + ".join(os.path.basename(c[1]) for c in g),
+                        "notes": f"16 kHz mono, {lufs} LUFS (gain {gain:+.1f} dB); local dev-cache speech, never committed"})
+    manifest = {"schema": "sigil-compare-corpus/1", "name": os.path.basename(os.path.normpath(out)),
+                "description": f"Interim local corpus (make-test-clips.py --local-corpus, seed {seed}): the dev cache's speech clips, {min_s} s or longer, {lufs} LUFS.",
+                "clips": entries, "points": [], "min_clips": 20}
+    mpath = os.path.join(out, "corpus.json")
+    with open(mpath, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=1)
+    print(f"{len(entries)} clips -> {mpath}")
+    return mpath
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True, help="output folder (created)")
+    ap.add_argument("--local-corpus", action="store_true", help="build the interim local corpus (see the docs)")
+    ap.add_argument("--inputs", nargs="+", default=None, help="--local-corpus inputs (default: the dev cache's speech clips)")
+    ap.add_argument("--min-seconds", type=float, default=10.0)
+    ap.add_argument("--gap-ms", type=float, default=300.0)
+    ap.add_argument("--lufs", type=float, default=-26.0)
     ap.add_argument("--rate", type=int, default=48000)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--level-dbfs", type=float, default=-12.0, help="peak level of every clip")
@@ -209,6 +308,12 @@ def main(argv: list[str]) -> int:
                     help="also write one clip mixing these signals (e.g. voice music_bleed:-20)")
     ap.add_argument("--float", action="store_true", help="write 32-bit float WAV instead of 16-bit PCM")
     args = ap.parse_args(argv)
+    if args.local_corpus:
+        inputs = args.inputs or default_local_inputs()
+        if not inputs:
+            ap.error("no inputs (and no dev-cache clips found)")
+        local_corpus(args.out, inputs, args.seed, args.min_seconds, args.gap_ms, args.lufs)
+        return 0
     if not 8000 <= args.rate <= 384000 or not 0 < args.seconds <= 3600:
         ap.error("rate must be 8000-384000 and seconds 0-3600")
     os.makedirs(args.out, exist_ok=True)

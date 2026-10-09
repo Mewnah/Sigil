@@ -1,0 +1,82 @@
+{
+  "$comment": "P3B-E's own A/B profile (not a scorecard profile: the scorecard is scripts/bench/profiles/p3b.json, P3B-A's). Paths are relative to scripts/bench. Use with -CompareExe <same exe> -CompareEnv '<SIGIL_RMVPE_* switch>' (side B gets the switch). BUILD=direct: the engine without the voice factory, so the attribution splits onset ticks from steady ones (f0_ms_steady_*, call_ms_onset_*).",
+  "schema": "sigil-bench-profile/1",
+  "name": "p3b-e-rmvpe",
+  "description": "RMVPE plan size (the VRAM saver), t32 and fp16 A/B on DirectML and CUDA (P3B-E verification 3).",
+  "specs": [],
+  "vars": {
+    "CLIP": "",
+    "SLOT": "",
+    "CONTENT_ENCODER": "",
+    "BUILD": "direct",
+    "BLOCK_FRAMES": "512",
+    "EXTRA_MS": "64",
+    "PITCH": "rmvpe",
+    "LEVERS_JSON": "{}",
+    "QOS": "app",
+    "OFFLINE_REPEAT_JSON": "8",
+    "PACED_S_JSON": "30"
+  },
+  "templates": [
+    {
+      "file": "specs/p3b/e/rmvpe-gpu.template.json",
+      "name": "rmvpe-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml"
+      }
+    },
+    {
+      "file": "specs/p3b/e/rmvpe-gpu.template.json",
+      "name": "rmvpe-cuda-levers",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}"
+      }
+    },
+    {
+      "file": "specs/p3b/e/rmvpe-offline.template.json",
+      "name": "rmvpe-off-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml"
+      }
+    },
+    {
+      "file": "specs/p3b/e/rmvpe-offline.template.json",
+      "name": "rmvpe-off-cuda-levers",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "LEVERS_JSON": "{\"io_binding\": \"on\", \"cuda_graphs\": \"on\", \"gpu_priority\": \"on\"}"
+      }
+    }
+  ],
+  "metrics": [
+    "f0_ms_p50",
+    "f0_ms_p95",
+    "f0_ms_steady_p50",
+    "f0_ms_steady_p95",
+    "f0_ms_onset_p99",
+    "call_ms_p95",
+    "call_ms_p99",
+    "call_ms_onset_p99",
+    "vram_engine_mb",
+    "engine_load_ms",
+    "load_pitch_plan_ms"
+  ],
+  "targets": []
+}

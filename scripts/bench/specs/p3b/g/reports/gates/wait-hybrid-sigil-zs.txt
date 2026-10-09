@@ -1,0 +1,38 @@
+== run 1 side H 16:47:20 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 2243 ms, harness load 2143 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 38.75 ms, p95 40.10 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (13424 ms on the CPU), source 0.155
+== run 2 side S 16:47:46 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1883 ms, harness load 1417 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.36 ms, p95 38.08 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14707 ms on the CPU), source 0.155
+== run 3 side S 16:48:11 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1787 ms, harness load 1386 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.43 ms, p95 34.82 ms; joins 109 (mean corr 0.548, mean offset -48.4); speaker cosine to the reference: stream 0.556, offline 0.494 (14785 ms on the CPU), source 0.155
+== run 4 side H 16:48:36 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1813 ms, harness load 1408 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.92 ms, p95 36.87 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14543 ms on the CPU), source 0.155
+series done
+== run 1 side S 16:49:12 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1912 ms, harness load 1456 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.63 ms, p95 36.55 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14925 ms on the CPU), source 0.155
+== run 2 side H 16:49:38 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1810 ms, harness load 1379 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.71 ms, p95 34.36 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14509 ms on the CPU), source 0.155
+== run 3 side H 16:50:02 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1796 ms, harness load 1392 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.92 ms, p95 37.11 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14481 ms on the CPU), source 0.155
+== run 4 side S 16:50:27 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1784 ms, harness load 1382 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.34 ms, p95 34.62 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14810 ms on the CPU), source 0.155
+== run 5 side S 16:50:52 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1788 ms, harness load 1401 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.33 ms, p95 34.81 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14869 ms on the CPU), source 0.155
+== run 6 side H 16:51:17 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1819 ms, harness load 1406 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.98 ms, p95 38.90 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (14611 ms on the CPU), source 0.155
+== run 7 side H 16:51:42 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1818 ms, harness load 1427 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 36.40 ms, p95 39.65 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (13849 ms on the CPU), source 0.155
+== run 8 side S 16:52:06 rustc=0
+test services::neural_audio::vc::families::sigil_zs::tests::real_model_streams_on_the_gpu ... Sigil-ZS sessions (cuda requested): vc.zs.xlsr=cuda, vc.zs.lr=cuda, vc.zs.dit_step=cuda, vc.zs.hift_f0=cuda, vc.zs.hift_nsf=cuda
+Sigil-ZS sigil_low [steps 6, cfg 0.7, prompt 4 s] on cuda (jfk.wav): reference 1797 ms, harness load 1467 ms; VRAM +1334 MB loaded, +1334 MB streaming; 110 device blocks of 100 ms: tick p50 33.93 ms, p95 37.49 ms; joins 109 (mean corr 0.548, mean offset -48.9); speaker cosine to the reference: stream 0.558, offline 0.494 (13949 ms on the CPU), source 0.155
+series done

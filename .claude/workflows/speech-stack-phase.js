@@ -109,14 +109,14 @@ for (const id of (A.integrateIds || [])) {
 
 // ── Review ──
 phase('Review')
-const reviews = await pool(okReports, CONC, r => agent(
+const reviews = await pool(okReports, A.reviewConcurrency || CONC, r => agent(
   COMMON + '\n\nYOU ARE AN ADVERSARIAL REVIEWER for workstream ' + r.ws_id + '. Its report:\n' + JSON.stringify(r) + '\n\nRead the workstream entry and review the actual changes (git diff HEAD -- <files> for tracked files; read new files fully). Hunt for real defects: logic bugs, broken edge cases, real-time-safety violations (allocation/locking/logging in audio callbacks), epoch/race bugs, resource leaks, security issues (untrusted input, key leakage, origin checks), missed acceptance criteria, regressions to existing behaviour, persisted-enum renames, missing tests. Only report issues with a concrete failure scenario; no style nits. Do NOT edit files.',
   { label: 'review:' + r.ws_id, phase: 'Review', schema: REVIEW }))
 
 // ── Fix ──
 phase('Fix')
 const toFix = reviews.filter(Boolean).filter(v => (v.findings || []).some(f => f.severity !== 'low'))
-const fixes = await pool(toFix, CONC, v => agent(
+const fixes = await pool(toFix, A.fixConcurrency || CONC, v => agent(
   COMMON + '\n\nYOU ARE THE FIXER for workstream ' + v.ws_id + '. Review findings (JSON):\n' + JSON.stringify(v.findings) + '\n\nVerify each finding against the code; fix every real one (high and medium first, low ones too when cheap), staying inside the workstream owned/new paths (hotspot needs go in hotspot_requests). Add or update tests that would have caught them. Re-run the relevant checks.',
   { label: 'fix:' + v.ws_id, phase: 'Fix', schema: REPORT }))
 

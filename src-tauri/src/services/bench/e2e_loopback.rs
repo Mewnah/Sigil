@@ -15,13 +15,30 @@
 //!
 //! The same cross-correlation core ([`estimate_delay`]) measures the stream harness's algorithmic
 //! latency offline (see `engine::probe_algorithmic_latency`).
+//!
+//! # Play and record (P3B-C; plan T6 live tier)
+//! [`run_play_record`] plays one clip (a corpus clip) into the system under test and records its
+//! response on the same two devices and the same time base as the burst meter: the response WAV
+//! starts at the instant the clip's first sample played (minus the calibrated bare loop), so the
+//! system's delay is inside it. Every system is captured the same way, Sigil's live voice changer
+//! included (the compare mode's corpus `captures`). The run reports:
+//! - the delay of the response's energy envelope against the clip's ([`envelope_delay`], about
+//!   1 ms on 1 ms hops; the burst meter stays the latency reference, this is its cross-check);
+//! - driver glitches: steps of either stream's time base between consecutive callbacks
+//!   ([`timebase_glitches`]: audio the driver dropped or inserted), lost samples and device errors
+//!   (errors end the run);
+//! - dropouts inside speech ([`speech_dropouts`]): digital silence or a 30 dB drop of the response
+//!   inside the clip's loud speech, in runs of at least 20 ms.
+//!
+//! The devices sit behind [`DuplexBackend`] ([`CpalDuplex`] on real devices; the tests drive a
+//! loopback stub with a known delay, drift, glitch and dropout).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use realfft::RealFftPlanner;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::metrics::{insert_summary, Metrics};
 use super::signals::{db_to_amp, BurstTrain, SplitMix64};
@@ -423,6 +440,237 @@ fn secs_between(t: &cpal::StreamInstant, origin: &cpal::StreamInstant) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Duplex devices (the burst meter and play-and-record share them)
+// ---------------------------------------------------------------------------------------------
+
+/// What a duplex run recorded.
+#[derive(Debug, Clone, Default)]
+pub struct RawCapture {
+    pub output_device: String,
+    pub input_device: String,
+    /// Mono input (the picked channel, or the channel mix), input frames from the input stream's
+    /// frame 0.
+    pub recorded: Vec<f32>,
+    /// `(frame, seconds)` of every output / input callback on one clock (seconds from the first
+    /// output timestamp): the drivers' stream timestamps (WASAPI: the QPC position of each buffer).
+    pub out_ts: Vec<(f64, f64)>,
+    pub in_ts: Vec<(f64, f64)>,
+}
+
+/// Two devices that play one signal and record the other side of the path under test: real
+/// devices ([`CpalDuplex`]) or, in tests, a loopback stub with a known latency and known faults.
+pub trait DuplexBackend {
+    fn output_rate(&self) -> u32;
+    fn input_rate(&self) -> u32;
+    /// Play `signal` (mono at [`output_rate`](Self::output_rate), on every output channel) while
+    /// recording the input; returns once the whole signal has played. `progress` gets the share
+    /// played.
+    fn run(&mut self, signal: Arc<Vec<f32>>, cancel: &AtomicBool, progress: &dyn Fn(f64)) -> Result<RawCapture, String>;
+}
+
+/// The two cpal devices of a measurement, opened (named, configured) but not yet streaming.
+pub struct CpalDuplex {
+    out_dev: cpal::Device,
+    in_dev: cpal::Device,
+    out_cfg: cpal::SupportedStreamConfig,
+    in_cfg: cpal::SupportedStreamConfig,
+    out_name: String,
+    in_name: String,
+    pick: Option<usize>,
+}
+
+impl CpalDuplex {
+    /// Find and check both devices. Both names are checked before any device is touched (an empty
+    /// name never means the default: the meter plays loud signals).
+    pub fn open(output_device: &str, input_device: &str, input_channel: Option<u16>) -> Result<CpalDuplex, String> {
+        use cpal::traits::DeviceTrait;
+        use cpal::SampleFormat;
+        let out_choice = device_choice(output_device, false)?;
+        let in_choice = device_choice(input_device, true)?;
+        let host = cpal::default_host();
+        let out_dev = find_device(&host, out_choice, false)?;
+        let in_dev = find_device(&host, in_choice, true)?;
+        let out_name = out_dev.name().unwrap_or_default();
+        let in_name = in_dev.name().unwrap_or_default();
+        let out_cfg = out_dev
+            .default_output_config()
+            .map_err(|e| format!("output '{out_name}': {e}"))?;
+        let in_cfg = in_dev
+            .default_input_config()
+            .map_err(|e| format!("input '{in_name}': {e}"))?;
+        if out_cfg.sample_format() != SampleFormat::F32 {
+            return Err(format!(
+                "output '{out_name}' uses {:?} samples; the meter plays 32-bit float",
+                out_cfg.sample_format()
+            ));
+        }
+        let in_ch = usize::from(in_cfg.channels().max(1));
+        let pick = input_channel.map(usize::from);
+        if pick.is_some_and(|c| c >= in_ch) {
+            return Err(format!("input_channel {} but '{in_name}' has {in_ch} channel(s)", pick.unwrap_or(0)));
+        }
+        Ok(CpalDuplex {
+            out_dev,
+            in_dev,
+            out_cfg,
+            in_cfg,
+            out_name,
+            in_name,
+            pick,
+        })
+    }
+}
+
+impl DuplexBackend for CpalDuplex {
+    fn output_rate(&self) -> u32 {
+        self.out_cfg.sample_rate().0
+    }
+
+    fn input_rate(&self) -> u32 {
+        self.in_cfg.sample_rate().0
+    }
+
+    fn run(&mut self, signal: Arc<Vec<f32>>, cancel: &AtomicBool, progress: &dyn Fn(f64)) -> Result<RawCapture, String> {
+        use cpal::traits::{DeviceTrait, StreamTrait};
+        use cpal::SampleFormat;
+
+        let (out_name, in_name) = (self.out_name.clone(), self.in_name.clone());
+        let out_rate = self.output_rate();
+        let in_rate = self.input_rate();
+        let out_ch = usize::from(self.out_cfg.channels().max(1));
+        let in_ch = usize::from(self.in_cfg.channels().max(1));
+        let pick = self.pick;
+        let total_out = signal.len();
+
+        // Rings: timestamps (frame index, stream instant) of both streams, and the recorded audio.
+        let (mut out_ts_tx, mut out_ts_rx) = rtrb::RingBuffer::<(u64, cpal::StreamInstant)>::new(1 << 16);
+        let (mut in_ts_tx, mut in_ts_rx) = rtrb::RingBuffer::<(u64, cpal::StreamInstant)>::new(1 << 16);
+        let ring_len = (in_rate as usize * 4).max(1 << 16);
+        let (mut rec_tx, mut rec_rx) = rtrb::RingBuffer::<f32>::new(ring_len);
+        let written = Arc::new(AtomicU64::new(0));
+        let lost = Arc::new(AtomicU64::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
+
+        let out_stream = {
+            let signal = signal.clone();
+            let written = written.clone();
+            let failed = failed.clone();
+            let mut pos = 0usize;
+            self.out_dev
+                .build_output_stream(
+                    &self.out_cfg.config(),
+                    move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                        let _ = out_ts_tx.push((pos as u64, info.timestamp().playback));
+                        for frame in data.chunks_exact_mut(out_ch) {
+                            let v = signal.get(pos).copied().unwrap_or(0.0);
+                            frame.fill(v);
+                            pos += 1;
+                        }
+                        written.store(pos as u64, Ordering::Relaxed);
+                    },
+                    move |_| failed.store(true, Ordering::Relaxed),
+                    None,
+                )
+                .map_err(|e| format!("cannot open output '{out_name}': {e}"))?
+        };
+
+        let in_stream = {
+            let lost = lost.clone();
+            let failed = failed.clone();
+            let mut frames = 0u64;
+            // One conversion per sample format (allocation-free: each sample goes straight to the
+            // ring).
+            macro_rules! input_stream {
+                ($t:ty, $conv:expr) => {
+                    self.in_dev.build_input_stream(
+                        &self.in_cfg.config(),
+                        move |data: &[$t], info: &cpal::InputCallbackInfo| {
+                            let _ = in_ts_tx.push((frames, info.timestamp().capture));
+                            for f in data.chunks_exact(in_ch) {
+                                let v: f32 = match pick {
+                                    Some(c) => $conv(f[c]),
+                                    None => f.iter().map(|&s| $conv(s)).sum::<f32>() / in_ch as f32,
+                                };
+                                if rec_tx.push(v).is_err() {
+                                    lost.fetch_add(1, Ordering::Relaxed);
+                                }
+                                frames += 1;
+                            }
+                        },
+                        move |_| failed.store(true, Ordering::Relaxed),
+                        None,
+                    )
+                };
+            }
+            use crate::services::pcm_convert as pc;
+            match self.in_cfg.sample_format() {
+                SampleFormat::F32 => input_stream!(f32, |s: f32| s),
+                SampleFormat::I16 => input_stream!(i16, pc::i16_to_f32),
+                SampleFormat::I32 => input_stream!(i32, pc::i32_to_f32),
+                SampleFormat::U16 => input_stream!(u16, pc::u16_to_f32),
+                SampleFormat::U8 => input_stream!(u8, pc::u8_to_f32),
+                SampleFormat::I8 => input_stream!(i8, pc::i8_to_f32),
+                other => return Err(format!("input '{in_name}' uses unsupported {other:?} samples")),
+            }
+            .map_err(|e| format!("cannot open input '{in_name}': {e}"))?
+        };
+
+        in_stream.play().map_err(|e| format!("cannot start input '{in_name}': {e}"))?;
+        out_stream.play().map_err(|e| format!("cannot start output '{out_name}': {e}"))?;
+
+        let mut recorded: Vec<f32> = Vec::with_capacity(((total_out as f64 / f64::from(out_rate) + 2.0) * f64::from(in_rate)) as usize);
+        let mut out_ts = Vec::new();
+        let mut in_ts = Vec::new();
+        let started = Instant::now();
+        let expected = Duration::from_secs_f64(total_out as f64 / f64::from(out_rate));
+        let deadline = expected + Duration::from_secs(5);
+        let cancelled = loop {
+            std::thread::sleep(Duration::from_millis(20));
+            while let Ok(v) = rec_rx.pop() {
+                recorded.push(v);
+            }
+            while let Ok(p) = out_ts_rx.pop() {
+                out_ts.push(p);
+            }
+            while let Ok(p) = in_ts_rx.pop() {
+                in_ts.push(p);
+            }
+            let done = written.load(Ordering::Relaxed) as usize >= total_out;
+            progress((written.load(Ordering::Relaxed) as f64 / total_out.max(1) as f64).min(1.0));
+            if done || cancel.load(Ordering::Relaxed) || started.elapsed() > deadline || failed.load(Ordering::Relaxed) {
+                break cancel.load(Ordering::Relaxed);
+            }
+        };
+        drop(out_stream);
+        drop(in_stream);
+        while let Ok(v) = rec_rx.pop() {
+            recorded.push(v);
+        }
+        if cancelled {
+            return Err("cancelled".into());
+        }
+        if failed.load(Ordering::Relaxed) {
+            return Err("an audio device reported an error during the measurement (disconnected?)".into());
+        }
+        if (written.load(Ordering::Relaxed) as usize) < total_out {
+            return Err(format!("the output device '{out_name}' did not play the signal in time (is it running?)"));
+        }
+        if lost.load(Ordering::Relaxed) > 0 {
+            return Err(format!("{} recorded samples were lost (the meter fell behind)", lost.load(Ordering::Relaxed)));
+        }
+        // One time base: seconds from the first output timestamp.
+        let origin = out_ts.first().map(|p| p.1).ok_or("the output stream reported no timestamps")?;
+        Ok(RawCapture {
+            output_device: out_name,
+            input_device: in_name,
+            recorded,
+            out_ts: out_ts.iter().map(|(f, t)| (*f as f64, secs_between(t, &origin))).collect(),
+            in_ts: in_ts.iter().map(|(f, t)| (*f as f64, secs_between(t, &origin))).collect(),
+        })
+    }
+}
+
 /// Play the burst train on the output device, record the input device, and measure every burst.
 /// Plays audio: only run it on devices the user chose (a virtual cable is inaudible).
 pub fn run_live(
@@ -431,38 +679,21 @@ pub fn run_live(
     cancel: &AtomicBool,
     progress: &dyn Fn(f64, &str),
 ) -> Result<LoopbackOutcome, String> {
-    use cpal::traits::{DeviceTrait, StreamTrait};
-    use cpal::SampleFormat;
-
     // Both names are checked before any device is touched.
-    let out_choice = device_choice(&run.output_device, false)?;
-    let in_choice = device_choice(&run.input_device, true)?;
-    let host = cpal::default_host();
-    let out_dev = find_device(&host, out_choice, false)?;
-    let in_dev = find_device(&host, in_choice, true)?;
-    let out_name = out_dev.name().unwrap_or_default();
-    let in_name = in_dev.name().unwrap_or_default();
-    let out_cfg = out_dev
-        .default_output_config()
-        .map_err(|e| format!("output '{out_name}': {e}"))?;
-    let in_cfg = in_dev
-        .default_input_config()
-        .map_err(|e| format!("input '{in_name}': {e}"))?;
-    if out_cfg.sample_format() != SampleFormat::F32 {
-        return Err(format!(
-            "output '{out_name}' uses {:?} samples; the meter plays 32-bit float",
-            out_cfg.sample_format()
-        ));
-    }
-    let out_rate = out_cfg.sample_rate().0;
-    let in_rate = in_cfg.sample_rate().0;
-    let out_ch = usize::from(out_cfg.channels().max(1));
-    let in_ch = usize::from(in_cfg.channels().max(1));
-    let pick = run.input_channel.map(usize::from);
-    if pick.is_some_and(|c| c >= in_ch) {
-        return Err(format!("input_channel {} but '{in_name}' has {in_ch} channel(s)", pick.unwrap_or(0)));
-    }
+    let mut dev = CpalDuplex::open(&run.output_device, &run.input_device, run.input_channel)?;
+    run_bursts(&mut dev, run, seed, cancel, progress)
+}
 
+/// The burst meter on any duplex backend.
+fn run_bursts(
+    dev: &mut dyn DuplexBackend,
+    run: &LoopbackRun,
+    seed: u64,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f64, &str),
+) -> Result<LoopbackOutcome, String> {
+    let out_rate = dev.output_rate();
+    let in_rate = dev.input_rate();
     let shape = burst_shape(run);
     let onsets = schedule(run, out_rate, seed);
     let tail_s = run.max_latency_ms / 1000.0 + shape.burst_s + 0.3;
@@ -475,138 +706,13 @@ pub fn run_live(
         };
         train.render(out_rate, total_out)
     });
-
-    // Rings: timestamps (frame index, stream instant) of both streams, and the recorded audio.
-    let (mut out_ts_tx, mut out_ts_rx) = rtrb::RingBuffer::<(u64, cpal::StreamInstant)>::new(1 << 16);
-    let (mut in_ts_tx, mut in_ts_rx) = rtrb::RingBuffer::<(u64, cpal::StreamInstant)>::new(1 << 16);
-    let ring_len = (in_rate as usize * 4).max(1 << 16);
-    let (mut rec_tx, mut rec_rx) = rtrb::RingBuffer::<f32>::new(ring_len);
-    let written = Arc::new(AtomicU64::new(0));
-    let lost = Arc::new(AtomicU64::new(0));
-    let failed = Arc::new(AtomicBool::new(false));
-
-    let out_stream = {
-        let signal = signal.clone();
-        let written = written.clone();
-        let failed = failed.clone();
-        let mut pos = 0usize;
-        out_dev
-            .build_output_stream(
-                &out_cfg.config(),
-                move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                    let _ = out_ts_tx.push((pos as u64, info.timestamp().playback));
-                    for frame in data.chunks_exact_mut(out_ch) {
-                        let v = signal.get(pos).copied().unwrap_or(0.0);
-                        frame.fill(v);
-                        pos += 1;
-                    }
-                    written.store(pos as u64, Ordering::Relaxed);
-                },
-                move |_| failed.store(true, Ordering::Relaxed),
-                None,
-            )
-            .map_err(|e| format!("cannot open output '{out_name}': {e}"))?
-    };
-
-    let in_stream = {
-        let lost = lost.clone();
-        let failed = failed.clone();
-        let mut frames = 0u64;
-        // One conversion per sample format (allocation-free: each sample goes straight to the ring).
-        macro_rules! input_stream {
-            ($t:ty, $conv:expr) => {
-                in_dev.build_input_stream(
-                    &in_cfg.config(),
-                    move |data: &[$t], info: &cpal::InputCallbackInfo| {
-                        let _ = in_ts_tx.push((frames, info.timestamp().capture));
-                        for f in data.chunks_exact(in_ch) {
-                            let v: f32 = match pick {
-                                Some(c) => $conv(f[c]),
-                                None => f.iter().map(|&s| $conv(s)).sum::<f32>() / in_ch as f32,
-                            };
-                            if rec_tx.push(v).is_err() {
-                                lost.fetch_add(1, Ordering::Relaxed);
-                            }
-                            frames += 1;
-                        }
-                    },
-                    move |_| failed.store(true, Ordering::Relaxed),
-                    None,
-                )
-            };
-        }
-        use crate::services::pcm_convert as pc;
-        match in_cfg.sample_format() {
-            SampleFormat::F32 => input_stream!(f32, |s: f32| s),
-            SampleFormat::I16 => input_stream!(i16, pc::i16_to_f32),
-            SampleFormat::I32 => input_stream!(i32, pc::i32_to_f32),
-            SampleFormat::U16 => input_stream!(u16, pc::u16_to_f32),
-            SampleFormat::U8 => input_stream!(u8, pc::u8_to_f32),
-            SampleFormat::I8 => input_stream!(i8, pc::i8_to_f32),
-            other => return Err(format!("input '{in_name}' uses unsupported {other:?} samples")),
-        }
-        .map_err(|e| format!("cannot open input '{in_name}': {e}"))?
-    };
-
-    in_stream.play().map_err(|e| format!("cannot start input '{in_name}': {e}"))?;
-    out_stream.play().map_err(|e| format!("cannot start output '{out_name}': {e}"))?;
-
-    let mut recorded: Vec<f32> = Vec::with_capacity(((total_out as f64 / f64::from(out_rate) + 2.0) * f64::from(in_rate)) as usize);
-    let mut out_ts = Vec::new();
-    let mut in_ts = Vec::new();
-    let started = Instant::now();
-    let expected = Duration::from_secs_f64(total_out as f64 / f64::from(out_rate));
-    let deadline = expected + Duration::from_secs(5);
-    let cancelled = loop {
-        std::thread::sleep(Duration::from_millis(20));
-        while let Ok(v) = rec_rx.pop() {
-            recorded.push(v);
-        }
-        while let Ok(p) = out_ts_rx.pop() {
-            out_ts.push(p);
-        }
-        while let Ok(p) = in_ts_rx.pop() {
-            in_ts.push(p);
-        }
-        let done = written.load(Ordering::Relaxed) as usize >= total_out;
-        progress(
-            (written.load(Ordering::Relaxed) as f64 / total_out as f64).min(1.0),
-            "playing and recording the burst train",
-        );
-        if done || cancel.load(Ordering::Relaxed) || started.elapsed() > deadline || failed.load(Ordering::Relaxed) {
-            break cancel.load(Ordering::Relaxed);
-        }
-    };
-    drop(out_stream);
-    drop(in_stream);
-    while let Ok(v) = rec_rx.pop() {
-        recorded.push(v);
-    }
-    if cancelled {
-        return Err("cancelled".into());
-    }
-    if failed.load(Ordering::Relaxed) {
-        return Err("an audio device reported an error during the measurement (disconnected?)".into());
-    }
-    if (written.load(Ordering::Relaxed) as usize) < total_out {
-        return Err(format!(
-            "the output device '{out_name}' did not play the burst train in time (is it running?)"
-        ));
-    }
-    if lost.load(Ordering::Relaxed) > 0 {
-        return Err(format!("{} recorded samples were lost (the meter fell behind)", lost.load(Ordering::Relaxed)));
-    }
-
-    // One time base: seconds from the first output timestamp.
-    let origin = out_ts.first().map(|p| p.1).ok_or("the output stream reported no timestamps")?;
-    let out_pts: Vec<(f64, f64)> = out_ts.iter().map(|(f, t)| (*f as f64, secs_between(t, &origin))).collect();
-    let in_pts: Vec<(f64, f64)> = in_ts.iter().map(|(f, t)| (*f as f64, secs_between(t, &origin))).collect();
-    let (out_map, out_jit) = Line::fit(&out_pts, out_rate).ok_or("no output timestamps")?;
-    let (in_map, in_jit) = Line::fit(&in_pts, in_rate).ok_or("the input stream reported no timestamps")?;
+    let raw = dev.run(signal, cancel, &|f| progress(f, "playing and recording the burst train"))?;
+    let (out_map, out_jit) = Line::fit(&raw.out_ts, out_rate).ok_or("no output timestamps")?;
+    let (in_map, in_jit) = Line::fit(&raw.in_ts, in_rate).ok_or("the input stream reported no timestamps")?;
 
     let template = shape.template(in_rate);
     let bursts = analyze(
-        &recorded,
+        &raw.recorded,
         &Analysis {
             template: &template,
             in_rate,
@@ -623,15 +729,416 @@ pub fn run_live(
     burst_metrics(&bursts, &mut metrics);
     metrics.insert("e2e_timebase_jitter_ms".into(), out_jit.max(in_jit) * 1000.0);
     Ok(LoopbackOutcome {
-        output_device: out_name,
-        input_device: in_name,
+        output_device: raw.output_device,
+        input_device: raw.input_device,
         output_rate: out_rate,
         input_rate: in_rate,
         bursts,
         timebase_jitter_ms: (out_jit * 1000.0, in_jit * 1000.0),
-        recorded_seconds: recorded.len() as f64 / f64::from(in_rate),
+        recorded_seconds: raw.recorded.len() as f64 / f64::from(in_rate),
         metrics,
     })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Play and record (P3B-C; plan T6 live tier)
+// ---------------------------------------------------------------------------------------------
+
+/// The play-and-record mode: play one clip into the system under test (any voice changer:
+/// Sigil's own live voice changer, w-okada, RVC WebUI, Applio, ...) and record its response, on
+/// the same devices and the same time base as the burst meter, so every system's live rendition
+/// is captured the same way.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayRecordSpec {
+    /// Output device (the cable into the system under test); required, `default` = the system
+    /// default (your speakers).
+    #[serde(default)]
+    pub output_device: String,
+    /// Input device (the cable out of the system under test); required, `default` = the system
+    /// default.
+    #[serde(default)]
+    pub input_device: String,
+    /// Recorded input channel (0-based); `None` = the mix of all channels.
+    #[serde(default)]
+    pub input_channel: Option<u16>,
+    /// Gain applied to the clip (dB).
+    #[serde(default)]
+    pub gain_db: f64,
+    /// Silence played (and recorded) before the clip: the system's start-up, and the noise floor.
+    #[serde(default = "default_pr_lead_ms")]
+    pub lead_ms: f64,
+    /// Silence played after the clip, on top of `max_latency_ms` (the system's tail).
+    #[serde(default = "default_pr_tail_ms")]
+    pub tail_ms: f64,
+    /// The bare loop's latency with the same devices (a direct cable): subtracted, so the
+    /// response's timeline is the system's own.
+    #[serde(default)]
+    pub calibration_ms: f64,
+    /// Longest response delay searched (and recorded after the clip).
+    #[serde(default = "default_pr_max_latency_ms")]
+    pub max_latency_ms: f64,
+    /// Shortest dropout reported inside speech (ms).
+    #[serde(default = "default_pr_dropout_ms")]
+    pub dropout_min_ms: f64,
+    /// A speech frame of the response this far (dB) below the response's level around it is a
+    /// dropout.
+    #[serde(default = "default_pr_dropout_db")]
+    pub dropout_db: f64,
+}
+
+fn default_pr_lead_ms() -> f64 {
+    1_000.0
+}
+fn default_pr_tail_ms() -> f64 {
+    1_000.0
+}
+fn default_pr_max_latency_ms() -> f64 {
+    1_500.0
+}
+fn default_pr_dropout_ms() -> f64 {
+    20.0
+}
+fn default_pr_dropout_db() -> f64 {
+    30.0
+}
+
+impl PlayRecordSpec {
+    /// Check the values (the device names are checked when the devices open).
+    pub fn validate(&self) -> Result<(), String> {
+        let check = |what: &str, v: f64, lo: f64, hi: f64| {
+            if v.is_finite() && v >= lo && v <= hi {
+                Ok(())
+            } else {
+                Err(format!("{what} = {v} is outside {lo}..={hi}"))
+            }
+        };
+        check("gain_db", self.gain_db, -60.0, 24.0)?;
+        check("lead_ms", self.lead_ms, 0.0, 10_000.0)?;
+        check("tail_ms", self.tail_ms, 0.0, 10_000.0)?;
+        check("calibration_ms", self.calibration_ms, -1_000.0, 5_000.0)?;
+        check("max_latency_ms", self.max_latency_ms, 10.0, 5_000.0)?;
+        check("dropout_min_ms", self.dropout_min_ms, 5.0, 1_000.0)?;
+        check("dropout_db", self.dropout_db, 6.0, 120.0)
+    }
+}
+
+/// A discontinuity of a stream's time base: consecutive callbacks whose timestamps disagree with
+/// their frame counts (the driver dropped or inserted audio: a WASAPI glitch).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Glitch {
+    /// `output` or `input`.
+    pub stream: &'static str,
+    /// When (s on the shared clock).
+    pub at_s: f64,
+    /// How far the time base stepped (ms; positive = audio missing).
+    pub step_ms: f64,
+}
+
+/// A gap in the response inside the clip's speech.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Dropout {
+    /// Start on the clip's timeline (s).
+    pub at_s: f64,
+    pub ms: f64,
+    /// `zeros` (digital silence: an underrun or a gate) or `drop` (far below the response's
+    /// level around it).
+    pub kind: &'static str,
+}
+
+/// Result of a play-and-record run.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlayRecordOutcome {
+    pub output_device: String,
+    pub input_device: String,
+    pub output_rate: u32,
+    pub input_rate: u32,
+    /// The response at the input rate on the clip's timeline: sample 0 was captured when the
+    /// clip's first sample played (plus `calibration_ms`), so the system's delay is inside it.
+    #[serde(skip)]
+    pub response: Vec<f32>,
+    /// The system's delay: the response's energy envelope against the clip's (ms; about 1 ms
+    /// accurate when the system keeps the timing of the speech); `None` when no match.
+    pub latency_ms: Option<f64>,
+    /// Correlation of the envelopes at that delay.
+    pub latency_correlation: Option<f64>,
+    /// RMS residual of the output / input time-base fits (ms).
+    pub timebase_jitter_ms: (f64, f64),
+    pub glitches: Vec<Glitch>,
+    pub dropouts: Vec<Dropout>,
+    pub metrics: Metrics,
+}
+
+/// Fine envelope alignment: where `reference`'s energy envelope sits in `response`'s (both at
+/// `rate`), searching delays `0..=max_lag_s`, on 1 ms hops of a 10 ms RMS window in dB (floored
+/// 60 dB under each peak), mean-removed normalized correlation, parabolic interpolation. Robust to
+/// a change of timbre (a voice changer), about 1 ms accurate. `(delay_s, correlation)`.
+pub fn envelope_delay(reference: &[f32], response: &[f32], rate: u32, max_lag_s: f64) -> Option<(f64, f64)> {
+    let hop = (rate as usize / 1000).max(1);
+    let win = 10 * hop;
+    let env = |x: &[f32]| -> Vec<f64> {
+        if x.len() < win {
+            return Vec::new();
+        }
+        let n = (x.len() - win) / hop + 1;
+        let mut acc: f64 = x[..win].iter().map(|&v| f64::from(v) * f64::from(v)).sum();
+        let mut e = Vec::with_capacity(n);
+        for k in 0..n {
+            if k > 0 {
+                let (out, inn) = ((k - 1) * hop, (k - 1) * hop + win);
+                acc -= x[out..out + hop].iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>();
+                acc += x[inn..(inn + hop).min(x.len())].iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>();
+            }
+            e.push(10.0 * (acc.max(0.0) / win as f64 + 1e-12).log10());
+        }
+        let peak = e.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        e.into_iter().map(|v| v.max(peak - 60.0)).collect()
+    };
+    let (er, et) = (env(reference), env(response));
+    if er.len() < 20 || et.len() < 20 {
+        return None;
+    }
+    let max_k = ((max_lag_s * 1000.0).round() as usize).min(et.len().saturating_sub(1));
+    let corr_at = |k: usize| -> Option<f64> {
+        let n = er.len().min(et.len().saturating_sub(k));
+        if n < er.len() / 2 || n < 20 {
+            return None;
+        }
+        let a = &er[..n];
+        let b = &et[k..k + n];
+        let ma = a.iter().sum::<f64>() / n as f64;
+        let mb = b.iter().sum::<f64>() / n as f64;
+        let (mut ab, mut aa, mut bb) = (0.0, 0.0, 0.0);
+        for (x, y) in a.iter().zip(b) {
+            let (x, y) = (x - ma, y - mb);
+            ab += x * y;
+            aa += x * x;
+            bb += y * y;
+        }
+        (aa > 0.0 && bb > 0.0).then(|| ab / (aa * bb).sqrt())
+    };
+    let corr: Vec<Option<f64>> = (0..=max_k).map(corr_at).collect();
+    let (k, c) = corr
+        .iter()
+        .enumerate()
+        .filter_map(|(k, c)| c.map(|c| (k, c)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let frac = match (k.checked_sub(1).and_then(|j| corr[j]), corr.get(k + 1).copied().flatten()) {
+        (Some(ym), Some(yp)) => parabolic(ym, c, yp),
+        _ => 0.0,
+    };
+    Some(((k as f64 + frac) * hop as f64 / f64::from(rate), c))
+}
+
+/// Steps of a stream's time base: the residuals of the line fit jump between consecutive
+/// callbacks by more than `tolerance_s`, or 6x the ordinary callback jitter (the robust spread,
+/// 1.4826 x MAD, of consecutive residual differences, so a step does not hide itself by inflating
+/// the jitter): audio the driver dropped (positive) or inserted.
+pub fn timebase_glitches(ts: &[(f64, f64)], line: &Line, tolerance_s: f64, stream: &'static str) -> Vec<Glitch> {
+    if ts.len() < 3 {
+        return Vec::new();
+    }
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let d: Vec<f64> = ts.windows(2).map(|w| (w[1].1 - line.at(w[1].0)) - (w[0].1 - line.at(w[0].0))).collect();
+    let centre = median(&mut d.clone());
+    let spread = 1.4826 * median(&mut d.iter().map(|x| (x - centre).abs()).collect());
+    let tol = tolerance_s.max(6.0 * spread);
+    d.iter()
+        .enumerate()
+        .filter(|(_, &x)| (x - centre).abs() > tol)
+        .map(|(i, &x)| Glitch {
+            stream,
+            at_s: ts[i + 1].1,
+            step_ms: (x - centre) * 1000.0,
+        })
+        .collect()
+}
+
+/// The time-base line of the glitch-free stretch of `ts` that contains time `t` (`whole` when that
+/// stretch has fewer than two callbacks): after a step the whole-run fit is off by part of it.
+fn local_line(ts: &[(f64, f64)], glitches: &[Glitch], t: f64, rate: u32, whole: Line) -> Line {
+    let lo = glitches.iter().map(|g| g.at_s).filter(|&g| g <= t).fold(f64::NEG_INFINITY, f64::max);
+    let hi = glitches.iter().map(|g| g.at_s).filter(|&g| g > t).fold(f64::INFINITY, f64::min);
+    let pts: Vec<(f64, f64)> = ts.iter().copied().filter(|p| p.1 >= lo && p.1 < hi).collect();
+    if pts.len() >= 2 {
+        Line::fit(&pts, rate).map_or(whole, |l| l.0)
+    } else {
+        whole
+    }
+}
+
+/// Dropouts of `response` inside the loud speech of `clip` (both mono at `rate`, `response`
+/// already shifted by the system's delay so frame `i` of both is the same instant): 10 ms frames
+/// within 25 dB of the clip's loud level (its 95th-percentile frame) where the response is digital
+/// silence (`zeros`) or `drop_db` under its median over the loud frames within 300 ms (`drop`),
+/// merged into runs of at least `min_ms`.
+pub fn speech_dropouts(clip: &[f32], response: &[f32], rate: u32, min_ms: f64, drop_db: f64) -> Vec<Dropout> {
+    let hop = (rate as usize / 100).max(1);
+    let n = clip.len().min(response.len()) / hop;
+    if n == 0 {
+        return Vec::new();
+    }
+    let db = |x: &[f32]| 10.0 * (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len().max(1) as f64 + 1e-20).log10();
+    let ec: Vec<f64> = (0..n).map(|i| db(&clip[i * hop..(i + 1) * hop])).collect();
+    let er: Vec<f64> = (0..n).map(|i| db(&response[i * hop..(i + 1) * hop])).collect();
+    let zero: Vec<bool> = (0..n).map(|i| response[i * hop..(i + 1) * hop].iter().all(|&v| v == 0.0)).collect();
+    let mut sorted = ec.clone();
+    sorted.sort_by(f64::total_cmp);
+    let loud = sorted[((n - 1) as f64 * 0.95) as usize];
+    let speech: Vec<bool> = ec.iter().map(|&e| e >= loud - 25.0 && e > -80.0).collect();
+    let reach = 30usize; // 300 ms of 10 ms frames
+    let flags: Vec<Option<&'static str>> = (0..n)
+        .map(|i| {
+            if !speech[i] {
+                return None;
+            }
+            if zero[i] {
+                return Some("zeros");
+            }
+            let mut around: Vec<f64> = (i.saturating_sub(reach)..(i + reach + 1).min(n))
+                .filter(|&j| speech[j] && !zero[j])
+                .map(|j| er[j])
+                .collect();
+            if around.len() < 5 {
+                return None;
+            }
+            around.sort_by(f64::total_cmp);
+            let median = around[around.len() / 2];
+            (er[i] < median - drop_db).then_some("drop")
+        })
+        .collect();
+    let min_frames = (min_ms / 10.0).ceil().max(1.0) as usize;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let Some(kind) = flags[i] else {
+            i += 1;
+            continue;
+        };
+        let start = i;
+        let mut zeros = 0usize;
+        while i < n && flags[i].is_some() {
+            if flags[i] == Some("zeros") {
+                zeros += 1;
+            }
+            i += 1;
+        }
+        if i - start >= min_frames {
+            out.push(Dropout {
+                at_s: start as f64 * 0.01,
+                ms: (i - start) as f64 * 10.0,
+                kind: if zeros * 2 >= i - start { "zeros" } else { kind },
+            });
+        }
+    }
+    out
+}
+
+/// Play `clip` (mono at `clip_rate`) through `dev` and analyse the response (see
+/// [`PlayRecordOutcome`]).
+pub fn play_record_with(
+    dev: &mut dyn DuplexBackend,
+    spec: &PlayRecordSpec,
+    clip: &[f32],
+    clip_rate: u32,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f64, &str),
+) -> Result<PlayRecordOutcome, String> {
+    spec.validate()?;
+    if clip.is_empty() {
+        return Err("play and record: the clip is empty".into());
+    }
+    let out_rate = dev.output_rate();
+    let in_rate = dev.input_rate();
+    let gain = db_to_amp(spec.gain_db) as f32;
+    let clip_out: Vec<f32> = super::signals::resample(clip, clip_rate, out_rate)?.into_iter().map(|v| v * gain).collect();
+    let peak = clip_out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if peak > 1.0 {
+        return Err(format!("play and record: the clip peaks at {:.1} dBFS after gain_db; lower gain_db", 20.0 * f64::from(peak).log10()));
+    }
+    let ms = |v: f64, rate: u32| (v / 1000.0 * f64::from(rate)).round().max(0.0) as usize;
+    let lead = ms(spec.lead_ms, out_rate);
+    let after = ms(spec.max_latency_ms + spec.tail_ms, out_rate);
+    let mut signal = vec![0.0f32; lead];
+    signal.extend_from_slice(&clip_out);
+    signal.resize(lead + clip_out.len() + after, 0.0);
+    let raw = dev.run(Arc::new(signal), cancel, &|f| progress(f, "playing the clip and recording the response"))?;
+    let (out_map, out_jit) = Line::fit(&raw.out_ts, out_rate).ok_or("the output stream reported no timestamps")?;
+    let (in_map, in_jit) = Line::fit(&raw.in_ts, in_rate).ok_or("the input stream reported no timestamps")?;
+    // Glitches: time-base steps of either stream (at least 2 ms).
+    let out_glitches = timebase_glitches(&raw.out_ts, &out_map, 0.002, "output");
+    let in_glitches = timebase_glitches(&raw.in_ts, &in_map, 0.002, "input");
+    // The input frame captured when the clip's first sample played (plus the bare loop), on the
+    // glitch-free stretches of both time bases around that instant.
+    let t_out = out_map.at(lead as f64);
+    let t_play = local_line(&raw.out_ts, &out_glitches, t_out, out_rate, out_map).at(lead as f64);
+    let t_cap = t_play + spec.calibration_ms / 1000.0;
+    let first = local_line(&raw.in_ts, &in_glitches, t_cap, in_rate, in_map).frame_at(t_cap).round();
+    if first < 0.0 {
+        return Err("play and record: the input started after the clip (raise lead_ms)".into());
+    }
+    let first = first as usize;
+    let clip_in = super::signals::resample(clip, clip_rate, in_rate)?;
+    let want = clip_in.len() + ms(spec.max_latency_ms + spec.tail_ms, in_rate);
+    let mut response = raw.recorded.get(first..).unwrap_or(&[]).to_vec();
+    response.truncate(want);
+    if response.len() < clip_in.len() {
+        return Err(format!(
+            "play and record: {:.2} s recorded after the clip started, the clip is {:.2} s",
+            response.len() as f64 / f64::from(in_rate),
+            clip_in.len() as f64 / f64::from(in_rate)
+        ));
+    }
+    let found = envelope_delay(&clip_in, &response, in_rate, spec.max_latency_ms / 1000.0);
+    let mut glitches = out_glitches;
+    glitches.extend(in_glitches);
+    glitches.sort_by(|a, b| a.at_s.total_cmp(&b.at_s));
+    let dropouts = match found {
+        Some((delay_s, _)) => {
+            let shift = (delay_s * f64::from(in_rate)).round() as usize;
+            speech_dropouts(&clip_in, response.get(shift..).unwrap_or(&[]), in_rate, spec.dropout_min_ms, spec.dropout_db)
+        }
+        None => Vec::new(),
+    };
+    let mut metrics = Metrics::new();
+    if let Some((d, c)) = found {
+        metrics.insert("play_record_latency_ms".into(), d * 1000.0);
+        metrics.insert("play_record_latency_correlation".into(), c);
+    }
+    metrics.insert("play_record_glitches".into(), glitches.len() as f64);
+    metrics.insert("play_record_dropouts".into(), dropouts.len() as f64);
+    metrics.insert("play_record_dropout_ms".into(), dropouts.iter().map(|d| d.ms).sum());
+    metrics.insert("play_record_timebase_jitter_ms".into(), out_jit.max(in_jit) * 1000.0);
+    metrics.insert("play_record_seconds".into(), response.len() as f64 / f64::from(in_rate));
+    Ok(PlayRecordOutcome {
+        output_device: raw.output_device,
+        input_device: raw.input_device,
+        output_rate: out_rate,
+        input_rate: in_rate,
+        response,
+        latency_ms: found.map(|f| f.0 * 1000.0),
+        latency_correlation: found.map(|f| f.1),
+        timebase_jitter_ms: (out_jit * 1000.0, in_jit * 1000.0),
+        glitches,
+        dropouts,
+        metrics,
+    })
+}
+
+/// [`play_record_with`] on the named real devices. Plays audio: only on devices the user named.
+pub fn run_play_record(
+    spec: &PlayRecordSpec,
+    clip: &[f32],
+    clip_rate: u32,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f64, &str),
+) -> Result<PlayRecordOutcome, String> {
+    spec.validate()?;
+    let mut dev = CpalDuplex::open(&spec.output_device, &spec.input_device, spec.input_channel)?;
+    play_record_with(&mut dev, spec, clip, clip_rate, cancel, progress)
 }
 
 #[cfg(test)]
@@ -885,5 +1392,264 @@ mod tests {
         let x = render_schedule(&shape, &onsets[..2], 48_000, onsets[1] as usize + 4_000);
         let e = estimate_delay(&shape.template(48_000), &x, x.len()).unwrap();
         assert!((e.lag - onsets[0] as f64).abs() < 0.05, "{}", e.lag);
+    }
+
+    // ---- Play and record (P3B-C) ----
+
+    /// A duplex "device pair" around a system under test that is a pure delay with gain: the
+    /// output stream starts the shared clock; the input stream starts later and runs fast; the
+    /// path delays the signal by `latency_s`. Optional faults: the capture loses `gap` seconds at a
+    /// shared time (a driver glitch: later frames were captured that much later), and the
+    /// system's output is muted over a span (a dropout).
+    struct LoopbackStub {
+        out_rate: u32,
+        in_rate: u32,
+        latency_s: f64,
+        gain: f32,
+        in_origin_s: f64,
+        in_ppm: f64,
+        period_s: f64,
+        capture_gap: Option<(f64, f64)>,
+        mute: Option<(f64, f64)>,
+        noise: f32,
+    }
+
+    impl LoopbackStub {
+        fn new(latency_s: f64) -> Self {
+            Self {
+                out_rate: 48_000,
+                in_rate: 44_100,
+                latency_s,
+                gain: 0.5,
+                in_origin_s: 0.037,
+                in_ppm: 20.0,
+                period_s: 0.01,
+                capture_gap: None,
+                mute: None,
+                noise: 0.000_5,
+            }
+        }
+    }
+
+    impl DuplexBackend for LoopbackStub {
+        fn output_rate(&self) -> u32 {
+            self.out_rate
+        }
+
+        fn input_rate(&self) -> u32 {
+            self.in_rate
+        }
+
+        fn run(&mut self, signal: Arc<Vec<f32>>, _cancel: &AtomicBool, progress: &dyn Fn(f64)) -> Result<RawCapture, String> {
+            let out_sr = f64::from(self.out_rate);
+            let dt = 1.0 / (f64::from(self.in_rate) * (1.0 + self.in_ppm * 1e-6));
+            let played_s = signal.len() as f64 / out_sr;
+            // Capture time of input frame j (the gap shifts every later frame).
+            let tau = |j: usize| {
+                let t = self.in_origin_s + j as f64 * dt;
+                match self.capture_gap {
+                    Some((at, gap)) if t >= at => t + gap,
+                    _ => t,
+                }
+            };
+            let sig = |t: f64| -> f32 {
+                // The system's output at shared time t: the signal played at t - latency.
+                if let Some((at, len)) = self.mute {
+                    if (at..at + len).contains(&t) {
+                        return 0.0;
+                    }
+                }
+                let x = (t - self.latency_s) * out_sr;
+                if x < 0.0 {
+                    return 0.0;
+                }
+                let i = x.floor() as usize;
+                let f = (x - i as f64) as f32;
+                let a = signal.get(i).copied().unwrap_or(0.0);
+                let b = signal.get(i + 1).copied().unwrap_or(0.0);
+                self.gain * (a + f * (b - a))
+            };
+            let mut rng = SplitMix64::new(77);
+            let mut recorded = Vec::new();
+            let mut in_ts = Vec::new();
+            let per_in = ((self.period_s / dt).round() as usize).max(1);
+            let mut j = 0usize;
+            while tau(j) < played_s + 0.05 {
+                if j.is_multiple_of(per_in) {
+                    in_ts.push((j as f64, tau(j)));
+                }
+                recorded.push(sig(tau(j)) + self.noise * rng.range(-1.0, 1.0) as f32);
+                j += 1;
+            }
+            let per_out = (self.period_s * out_sr).round() as usize;
+            let out_ts: Vec<(f64, f64)> = (0..signal.len()).step_by(per_out).map(|f| (f as f64, f as f64 / out_sr)).collect();
+            progress(1.0);
+            Ok(RawCapture {
+                output_device: "stub out".into(),
+                input_device: "stub in".into(),
+                recorded,
+                out_ts,
+                in_ts,
+            })
+        }
+    }
+
+    fn pr_spec(json: serde_json::Value) -> PlayRecordSpec {
+        let mut v = serde_json::json!({"output_device": "stub out", "input_device": "stub in", "lead_ms": 500, "tail_ms": 300, "max_latency_ms": 400});
+        if let (Some(o), Some(extra)) = (v.as_object_mut(), json.as_object()) {
+            for (k, x) in extra {
+                o.insert(k.clone(), x.clone());
+            }
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// The loudest `win`-sample stretch of `x` (searched on a 10 ms grid at 16 kHz).
+    fn loudest(x: &[f32], win: usize) -> usize {
+        let energy = |s: usize| x[s..s + win].iter().map(|v| v * v).sum::<f32>();
+        (0..x.len() - win).step_by(160).max_by(|&a, &b| energy(a).total_cmp(&energy(b))).unwrap()
+    }
+
+    /// The acceptance check of the live tier: the response comes back on the clip's timeline with
+    /// the path's delay inside it (about 1 ms), across rates and a drifting input clock, with no
+    /// glitch or dropout invented.
+    #[test]
+    fn play_record_recovers_the_delay_on_a_loopback_stub() {
+        let clip = synth(SignalKind::Voice, 16_000, 4.0, 0.5, 31);
+        let cancel = AtomicBool::new(false);
+        for (latency_s, calibration_ms) in [(0.1234, 0.0), (0.2101, 11.8)] {
+            let mut dev = LoopbackStub::new(latency_s);
+            let spec = pr_spec(serde_json::json!({"calibration_ms": calibration_ms}));
+            let o = play_record_with(&mut dev, &spec, &clip, 16_000, &cancel, &|_, _| {}).unwrap();
+            let want = latency_s * 1000.0 - calibration_ms;
+            let got = o.latency_ms.expect("delay found");
+            assert!((got - want).abs() < 1.5, "latency {got} ms, want {want} ms");
+            assert!(o.latency_correlation.unwrap() > 0.9, "{:?}", o.latency_correlation);
+            assert!(o.glitches.is_empty(), "{:?}", o.glitches);
+            assert!(o.dropouts.is_empty(), "{:?}", o.dropouts);
+            assert_eq!(o.input_rate, 44_100);
+            // The response is the clip, delayed: its waveform matches the clip at the delay.
+            let clip_in = crate::services::bench::signals::resample(&clip, 16_000, 44_100).unwrap();
+            let e = estimate_delay(&clip_in[..44_100], &o.response, 30_000).unwrap();
+            assert!((e.lag / 44.1 - want).abs() < 0.2, "waveform delay {} ms", e.lag / 44.1);
+            assert_eq!(o.metrics["play_record_glitches"], 0.0);
+        }
+    }
+
+    /// A capture discontinuity is flagged as an input glitch of about its size, and a muted span of
+    /// the system's output inside speech as a dropout where it happened; the delay before the
+    /// glitch is still recovered.
+    #[test]
+    fn glitches_and_dropouts_in_speech_are_flagged() {
+        let clip = synth(SignalKind::Voice, 16_000, 4.0, 0.5, 32);
+        // The loudest 150 ms of the clip (a syllable), muted in the system's output.
+        let loud = loudest(&clip, 2_400);
+        let latency_s = 0.15;
+        let lead_s = 0.5;
+        let mut dev = LoopbackStub::new(latency_s);
+        let mute_at = lead_s + loud as f64 / 16_000.0 + latency_s + 0.02;
+        dev.mute = Some((mute_at, 0.08));
+        dev.capture_gap = Some((lead_s + 3.2, 0.02));
+        let cancel = AtomicBool::new(false);
+        let o = play_record_with(&mut dev, &pr_spec(serde_json::json!({})), &clip, 16_000, &cancel, &|_, _| {}).unwrap();
+        assert!((o.latency_ms.unwrap() - 150.0).abs() < 2.0, "{:?}", o.latency_ms);
+        let g: Vec<&Glitch> = o.glitches.iter().filter(|g| g.stream == "input").collect();
+        assert_eq!(g.len(), 1, "{:?}", o.glitches);
+        // Reported at the first callback after the step: captured 20 ms late, within one period.
+        assert!((g[0].step_ms - 20.0).abs() < 1.0 && (g[0].at_s - (lead_s + 3.2 + 0.02)).abs() <= 0.011, "{:?}", g[0]);
+        assert!(!o.dropouts.is_empty(), "the muted syllable is a dropout");
+        let d = o.dropouts[0];
+        let expect_at = loud as f64 / 16_000.0 + 0.02;
+        assert!((d.at_s - expect_at).abs() < 0.03 && (40.0..=90.0).contains(&d.ms), "{d:?} (expected near {expect_at} s)");
+        // The capture adds the line's noise to the muted span: a drop, not digital silence.
+        assert_eq!(d.kind, "drop");
+        assert!(o.metrics["play_record_dropout_ms"] >= 40.0);
+    }
+
+    /// The burst meter runs unchanged on the refactored device layer (same analysis, same metrics).
+    #[test]
+    fn the_burst_meter_runs_on_any_duplex_backend() {
+        let run: LoopbackRun = serde_json::from_value(serde_json::json!({
+            "name": "t", "output_device": "stub out", "input_device": "stub in",
+            "bursts": 6, "interval_ms": 500, "max_latency_ms": 300, "warmup_ms": 300
+        }))
+        .unwrap();
+        let mut dev = LoopbackStub::new(0.0456);
+        dev.noise = 0.001;
+        let cancel = AtomicBool::new(false);
+        let o = run_bursts(&mut dev, &run, 3, &cancel, &|_, _| {}).unwrap();
+        assert_eq!(o.metrics["e2e_detected"], 6.0, "{:?}", o.bursts);
+        assert!((o.metrics["e2e_ms_p50"] - 45.6).abs() < 0.1, "{}", o.metrics["e2e_ms_p50"]);
+        assert!(o.timebase_jitter_ms.1 < 0.01);
+    }
+
+    #[test]
+    fn envelope_delay_finds_a_timbre_changed_copy() {
+        // The "converted" copy has another fine structure (noise instead of the voice) but the
+        // same syllable envelope, 87.5 ms later.
+        let x = synth(SignalKind::Voice, 16_000, 3.0, 0.5, 33);
+        let mut rng = SplitMix64::new(5);
+        let w = 160usize;
+        let env: Vec<f32> = (0..x.len())
+            .map(|i| {
+                let s = i.saturating_sub(w / 2);
+                let e = (s..(s + w).min(x.len())).map(|k| x[k] * x[k]).sum::<f32>() / w as f32;
+                e.sqrt()
+            })
+            .collect();
+        let mut y = vec![0.0f32; 1_400];
+        y.extend(env.iter().map(|&e| e * rng.range(-1.7, 1.7) as f32));
+        y.extend(vec![0.0; 4_000]);
+        let (d, c) = envelope_delay(&x, &y, 16_000, 0.3).unwrap();
+        assert!((d * 1000.0 - 87.5).abs() < 2.0, "{} ms (corr {c})", d * 1000.0);
+        assert!(c > 0.8, "{c}");
+        assert!(envelope_delay(&x[..100], &y, 16_000, 0.3).is_none(), "too short to align");
+    }
+
+    #[test]
+    fn speech_dropouts_skip_pauses_and_find_holes() {
+        let clip = synth(SignalKind::Voice, 16_000, 3.0, 0.5, 34);
+        assert!(speech_dropouts(&clip, &clip, 16_000, 20.0, 30.0).is_empty(), "an intact response has no dropouts");
+        // Silence in the clip's pauses is not a dropout: gate the response where the clip is quiet.
+        let gated: Vec<f32> = clip
+            .chunks(160)
+            .flat_map(|c| {
+                let rms = (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt();
+                let keep = rms > 0.01;
+                c.iter().map(move |&v| if keep { v } else { 0.0 })
+            })
+            .collect();
+        assert!(speech_dropouts(&clip, &gated, 16_000, 20.0, 30.0).is_empty(), "a gate in pauses is not a dropout");
+        // A 60 dB dip over 50 ms inside the loudest syllable.
+        let loud = loudest(&clip, 800) / 160 * 160;
+        let mut dipped = clip.clone();
+        dipped[loud..loud + 800].iter_mut().for_each(|v| *v *= 0.001);
+        let d = speech_dropouts(&clip, &dipped, 16_000, 20.0, 30.0);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, "drop");
+        assert!((d[0].at_s - loud as f64 / 16_000.0).abs() <= 0.011 && (40.0..=60.0).contains(&d[0].ms), "{d:?}");
+        // Digital silence there instead (an underrun): a `zeros` dropout.
+        let mut zeroed = clip.clone();
+        zeroed[loud..loud + 800].iter_mut().for_each(|v| *v = 0.0);
+        let d = speech_dropouts(&clip, &zeroed, 16_000, 20.0, 30.0);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, "zeros");
+    }
+
+    #[test]
+    fn play_record_specs_are_checked() {
+        assert!(pr_spec(serde_json::json!({})).validate().is_ok());
+        assert!(pr_spec(serde_json::json!({"gain_db": 40})).validate().is_err());
+        assert!(pr_spec(serde_json::json!({"max_latency_ms": 1})).validate().is_err());
+        assert!(serde_json::from_value::<PlayRecordSpec>(serde_json::json!({"output": "x"})).is_err(), "unknown fields are errors");
+        // Unnamed devices fail before any device is touched (never the default speakers).
+        let cancel = AtomicBool::new(false);
+        let spec: PlayRecordSpec = serde_json::from_value(serde_json::json!({"input_device": "x"})).unwrap();
+        let e = run_play_record(&spec, &[0.1; 1_000], 16_000, &cancel, &|_, _| {}).unwrap_err();
+        assert!(e.contains("output device is not named"), "{e}");
+        // A clip that would clip after the gain is refused.
+        let mut dev = LoopbackStub::new(0.1);
+        let e = play_record_with(&mut dev, &pr_spec(serde_json::json!({"gain_db": 12})), &[0.9; 16_000], 16_000, &cancel, &|_, _| {}).unwrap_err();
+        assert!(e.contains("peaks at"), "{e}");
     }
 }

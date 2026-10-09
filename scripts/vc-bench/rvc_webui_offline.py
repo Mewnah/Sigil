@@ -5,54 +5,104 @@
 Runs a WAV through the exact block loop of RVC WebUI's ``realtime_gui.py`` (``audio_callback``):
 input ring buffers, the input resampler to 16 kHz, ``rtrvc.RVC.infer`` with ``skip_head`` /
 ``return_length``, the output resampler, the optional volume-envelope mix, and the SOLA crossfade,
-then writes what the output device would have played. Sigil's ``compare`` mode scores the result
-against Sigil's own output of the same input (``scripts/bench/specs`` / ``docs/benchmarks``).
+then writes what the output device would have played (output block ``b`` at ``b x block`` in the
+file). Sigil's ``compare`` mode scores the result (``src-tauri/src/services/bench/compare.rs``).
 
-It runs in YOUR RVC WebUI environment (its Python, torch and models); Sigil installs nothing. The
-latency of the live app is measured separately with Sigil's e2e-loopback meter.
+It runs in YOUR RVC WebUI environment (its Python, torch and models); Sigil installs nothing.
+
+Every WAV gets a JSON sidecar (``<wav>.json``, ``sigil-vc-bench-sidecar/1``): the operating point
+(block, extra, crossfade and the SOLA buffer the GUI really uses, F0 method, index rate, rms mix,
+precision, EP, GPU, transpose), the input's and the voice's sha256, the per-block compute p50 / p95
+/ p99 (``infer`` + resampling + SOLA, the first two blocks left out), the RVC checkout's commit, the
+real-time feasibility (p99 below the block period) and the algorithmic latency of the loop:
+block + SOLA buffer + SOLA search - the mean SOLA offset (what the GUI's "delay" shows, minus the
+device's own latency). Sigil measures the latency again from the renditions themselves and flags a
+disagreement.
 
 Usage (from anywhere):
 
-    python scripts/vc-bench/rvc_webui_offline.py --rvc-root C:/RVC --pth C:/RVC/assets/weights/voice.pth \
-        --index C:/RVC/logs/voice/added_IVF.index --input speech.wav --out rvc-webui.wav \
-        --pitch 0 --f0method rmvpe --block-time 0.25 --crossfade-time 0.05 --extra-time 2.5
+    # one clip, the GUI's defaults (250 ms block, 50 ms crossfade, 2.5 s extra)
+    python scripts/vc-bench/rvc_webui_offline.py --rvc-root C:/RVC --pth C:/RVC/assets/weights/voice.pth \\
+        --input speech.wav --out rvc-webui.wav --f0method rmvpe
 
-The defaults are the GUI's defaults. The block loop follows realtime_gui.py at commit 81eed5e8
-(2026-08); older checkouts keep ``tools/rvc_for_realtime.py`` with other constructor arguments,
-which this driver maps by name (see ``make_rvc``). Noise reduction and the phase vocoder are off
-(the GUI's defaults). Per-block compute (``infer`` + resampling + SOLA) is printed as p50 / p95 /
-p99 so it can be put next to Sigil's ``block_ms``.
+    # every clip of a compare corpus, at four block sizes (one operating point each)
+    python scripts/vc-bench/rvc_webui_offline.py --rvc-root C:/RVC --pth voice.pth \\
+        --corpus <corpus>/corpus.json --out-dir <corpus>/out/rvc_webui --sweep 40,60,100,250
+
+The sweep keeps the extra context (``--extra-time``) and caps the crossfade at half the block; it
+prints the ``points`` entries to paste into the corpus manifest (one per block, ``wav`` with
+``{clip}``). Points whose p99 compute reaches the block period are marked infeasible in their
+sidecars and do not count in T6 (they cannot run live at that block on this GPU).
+
+The block loop follows realtime_gui.py at commit 81eed5e8 (2026-08); older checkouts keep
+``tools/rvc_for_realtime.py`` with other constructor arguments, which this driver maps by name (see
+``make_rvc``). Noise reduction and the phase vocoder are off (the GUI's defaults).
 """
 
 import argparse
 import inspect
+import json
 import os
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vcbench_common as vb  # noqa: E402
 
-def parse_args():
+
+def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rvc-root", required=True, help="RVC WebUI checkout (its assets/ must hold hubert and rmvpe)")
     ap.add_argument("--pth", required=True)
     ap.add_argument("--index", default="")
-    ap.add_argument("--input", required=True)
-    ap.add_argument("--out", required=True)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--input", help="one input clip")
+    src.add_argument("--corpus", help="a sigil-compare-corpus/1 manifest: every clip")
+    ap.add_argument("--out", help="output WAV (one clip; with --sweep, '{block}' in it or .b<block> is added)")
+    ap.add_argument("--out-dir", help="output folder (--corpus): <out-dir>[/b<block>]/<clip>.wav")
+    ap.add_argument("--point-name", default="rvc_webui", help="name of the point in the printed manifest entries")
     ap.add_argument("--pitch", type=int, default=0)
     ap.add_argument("--formant", type=float, default=0.0)
-    ap.add_argument("--index-rate", type=float, default=0.0)
+    ap.add_argument("--index-rate", type=float, default=0.0, help="retrieval strength (0 = off, Sigil's shipping default); use Sigil's value for the comparison")
     ap.add_argument("--f0method", default="rmvpe", choices=("pm", "harvest", "crepe", "rmvpe", "fcpe"))
     ap.add_argument("--samplerate", type=int, default=48000)
     ap.add_argument("--block-time", type=float, default=0.25)
     ap.add_argument("--crossfade-time", type=float, default=0.05)
     ap.add_argument("--extra-time", type=float, default=2.5)
-    ap.add_argument("--rms-mix-rate", type=float, default=0.0, help="the GUI's 'Loudness factor' (1 = off)")
+    ap.add_argument("--sweep", default="", help="block sizes in ms, e.g. 40,60,100,250 (one operating point each)")
+    ap.add_argument("--rms-mix-rate", type=float, default=1.0, help="the GUI's 'Loudness factor' (1 = off, Sigil's default; the GUI itself starts at 0)")
     ap.add_argument("--threshold", type=float, default=-60.0, help="the GUI's response threshold (dB); -60 = off")
-    return ap.parse_args()
+    ap.add_argument("--app-version", default="", help="RVC WebUI version label (default: the checkout's commit)")
+    args = ap.parse_args(argv)
+    if args.corpus and not args.out_dir:
+        ap.error("--corpus needs --out-dir")
+    if args.input and not args.out:
+        ap.error("--input needs --out")
+    return args
 
 
-def make_rvc(rtrvc, args, config):
-    """The RVC object, mapping arguments by name (the constructor changed across versions)."""
+def out_path(args, clip_id: str, block_ms: float, sweeping: bool) -> str:
+    tag = f"b{block_ms:g}"
+    if args.corpus:
+        d = os.path.join(args.out_dir, tag) if sweeping else args.out_dir
+        return os.path.join(d, f"{clip_id}.wav")
+    if not sweeping:
+        return args.out
+    if "{block}" in args.out:
+        return args.out.replace("{block}", f"{block_ms:g}")
+    stem, ext = os.path.splitext(args.out)
+    return f"{stem}.{tag}{ext or '.wav'}"
+
+
+def make_rvc(rtrvc, args, config, last=None):
+    """The RVC object, mapping arguments by name (the constructor changed across versions).
+
+    The driver builds a NEW object for every clip, passing the previous one as ``last`` (RVC's
+    ``last_rvc``: the loaded models are reused, the pitch / pitchf cache and the retrieval state
+    start empty). One object reused over clips would open clip N+1 with the tail of clip N in its
+    F0 cache, so a rendition would depend on the order the clips ran in; Sigil's engine starts
+    cold per clip. A version without ``last_rvc`` reloads the models for each clip (slower, the
+    same result)."""
     params = inspect.signature(rtrvc.RVC.__init__).parameters
     values = {
         "key": args.pitch,
@@ -61,7 +111,7 @@ def make_rvc(rtrvc, args, config):
         "index_path": args.index,
         "index_rate": args.index_rate,
         "config": config,
-        "last_rvc": None,
+        "last_rvc": last,
         "n_cpu": os.cpu_count() or 4,
         "inp_q": None,
         "opt_q": None,
@@ -73,48 +123,23 @@ def make_rvc(rtrvc, args, config):
     return rtrvc.RVC(**kwargs)
 
 
-def main():
-    args = parse_args()
-    root = os.path.abspath(args.rvc_root)
-    out_path = os.path.abspath(args.out)
-    in_path = os.path.abspath(args.input)
-    os.chdir(root)  # RVC loads its assets by relative path
-    sys.path.insert(0, root)
+def render(rvc, device, audio, args, samplerate, block_time, crossfade_time, extra_time):
+    """The GUI's block loop over ``audio`` (mono at ``samplerate``): ``(output, per-block ms, SOLA
+    offsets in samples, shape)``."""
     import numpy as np
-    import soundfile as sf
     import torch
     import torch.nn.functional as F
     import torchaudio.transforms as tat
     import librosa
 
-    argv, sys.argv = sys.argv, sys.argv[:1]  # RVC's Config parses the command line
-    try:
-        from configs.config import Config
-
-        config = Config()
-    finally:
-        sys.argv = argv
-    try:
-        from infer import rtrvc
-    except ImportError:
-        from tools import rvc_for_realtime as rtrvc  # older checkouts
-    rvc = make_rvc(rtrvc, args, config)
-    device = config.device
-
-    audio, sr = sf.read(in_path, dtype="float32", always_2d=True)
-    audio = librosa.to_mono(audio.T)
-    if sr != args.samplerate:
-        audio = librosa.resample(audio, orig_sr=sr, target_sr=args.samplerate)
-    samplerate = args.samplerate
-
     # start_vc (realtime_gui.py)
     zc = samplerate // 100
-    block_frame = int(np.round(args.block_time * samplerate / zc)) * zc
+    block_frame = int(np.round(block_time * samplerate / zc)) * zc
     block_frame_16k = 160 * block_frame // zc
-    crossfade_frame = int(np.round(args.crossfade_time * samplerate / zc)) * zc
+    crossfade_frame = int(np.round(crossfade_time * samplerate / zc)) * zc
     sola_buffer_frame = min(crossfade_frame, 4 * zc)
     sola_search_frame = zc
-    extra_frame = int(np.round(args.extra_time * samplerate / zc)) * zc
+    extra_frame = int(np.round(extra_time * samplerate / zc)) * zc
     input_wav = torch.zeros(extra_frame + crossfade_frame + sola_search_frame + block_frame, device=device, dtype=torch.float32)
     input_wav_res = torch.zeros(160 * input_wav.shape[0] // zc, device=device, dtype=torch.float32)
     rms_buffer = np.zeros(4 * zc, dtype="float32")
@@ -127,12 +152,13 @@ def main():
     resampler2 = tat.Resample(orig_freq=rvc.tgt_sr, new_freq=samplerate, dtype=torch.float32).to(device) if rvc.tgt_sr != samplerate else None
     sola_den_kernel = torch.ones(1, 1, sola_buffer_frame, device=device)
 
-    out_blocks = []
-    times = []
-    n_blocks = (len(audio) + block_frame - 1) // block_frame
-    padded = np.zeros(n_blocks * block_frame, dtype="float32")
-    padded[: len(audio)] = audio
-    for b in range(n_blocks):
+    out_blocks, times, offsets = [], [], []
+    # After the clip the loop keeps running on silence until its delay (block + SOLA buffer + SOLA
+    # search, the most it can be) has emitted the last of the speech; those blocks are neither
+    # timed nor counted in the SOLA offsets.
+    flush = vb.flush_blocks((block_frame + sola_buffer_frame + sola_search_frame) * 1000.0 / samplerate, block_time * 1000.0)
+    padded, n_blocks = vb.pad_blocks(audio, block_frame, flush)
+    for b in range(n_blocks + flush):
         indata = padded[b * block_frame : (b + 1) * block_frame].copy()
         t0 = time.perf_counter()
         # audio_callback (realtime_gui.py), without noise reduction and phase vocoder
@@ -174,14 +200,131 @@ def main():
         out = infer_wav[:block_frame].cpu().numpy()
         if str(device).startswith("cuda"):
             torch.cuda.synchronize()
-        times.append((time.perf_counter() - t0) * 1000.0)
+        if b < n_blocks:
+            times.append((time.perf_counter() - t0) * 1000.0)
+            offsets.append(sola_offset)
         out_blocks.append(out)
-    sf.write(out_path, np.concatenate(out_blocks), samplerate, subtype="FLOAT")
-    t = np.array(times[2:] or times)
-    print(
-        f"RVC WebUI realtime: {n_blocks} blocks of {block_frame} frames ({args.block_time * 1000:.0f} ms), "
-        f"compute p50 {np.percentile(t, 50):.2f} / p95 {np.percentile(t, 95):.2f} / p99 {np.percentile(t, 99):.2f} ms -> {out_path}"
-    )
+    shape = {
+        "flush_blocks": flush,
+        "block_frame": block_frame,
+        "crossfade_frame": crossfade_frame,
+        "sola_buffer_frame": sola_buffer_frame,
+        "sola_search_frame": sola_search_frame,
+        "extra_frame": extra_frame,
+    }
+    return np.concatenate(out_blocks), times, offsets, shape
+
+
+def algorithmic_latency_ms(shape: dict, offsets, samplerate: int) -> float:
+    """Block + SOLA buffer + SOLA search - the mean SOLA offset (ms): an output sample of block b
+    converts the input ``sola_buffer + search + block - offset`` samples before it plays."""
+    mean_off = sum(offsets) / len(offsets) if offsets else 0.0
+    frames = shape["block_frame"] + shape["sola_buffer_frame"] + shape["sola_search_frame"] - mean_off
+    return frames * 1000.0 / samplerate
+
+
+def main():
+    args = parse_args()
+    root = os.path.abspath(args.rvc_root)
+    for attr in ("out", "out_dir", "input", "corpus", "pth", "index"):
+        v = getattr(args, attr)
+        if v:
+            setattr(args, attr, os.path.abspath(v))
+    clips = vb.corpus_clips(args.corpus) if args.corpus else [(os.path.splitext(os.path.basename(args.input))[0], args.input)]
+    os.chdir(root)  # RVC loads its assets by relative path
+    sys.path.insert(0, root)
+    import numpy as np  # noqa: F401
+    import soundfile as sf
+    import librosa
+
+    argv, sys.argv = sys.argv, sys.argv[:1]  # RVC's Config parses the command line
+    try:
+        from configs.config import Config
+
+        config = Config()
+    finally:
+        sys.argv = argv
+    try:
+        from infer import rtrvc
+    except ImportError:
+        from tools import rvc_for_realtime as rtrvc  # older checkouts
+    rvc = None  # built per clip (make_rvc)
+    device = config.device
+    commit = vb.git_commit(root)
+    gpu = vb.gpu_name() if str(device).startswith("cuda") else ""
+    ep = "cuda" if str(device).startswith("cuda") else ("dml" if "privateuseone" in str(device) or "dml" in str(device) else "cpu")
+    blocks = vb.parse_sweep(args.sweep) if args.sweep else [args.block_time * 1000.0]
+    shapes = vb.sweep_shapes(blocks, args.crossfade_time * 1000.0, args.extra_time * 1000.0)
+    sweeping = bool(args.sweep)
+    snippets = []
+    for shp in shapes:
+        all_times, lat = [], []
+        for clip_id, path in clips:
+            audio, sr = sf.read(path, dtype="float32", always_2d=True)
+            audio = librosa.to_mono(audio.T)
+            if sr != args.samplerate:
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=args.samplerate)
+            rvc = make_rvc(rtrvc, args, config, last=rvc)  # fresh state per clip, models reused
+            out, times, offsets, shape = render(
+                rvc, device, audio, args, args.samplerate, shp["block_ms"] / 1000.0, shp["crossfade_ms"] / 1000.0, shp["extra_ms"] / 1000.0
+            )
+            dest = out_path(args, clip_id, shp["block_ms"], sweeping)
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            sf.write(dest, out, args.samplerate, subtype="FLOAT")
+            steady = times[2:] or times
+            call_ms = vb.percentiles(steady)
+            latency = algorithmic_latency_ms(shape, offsets, args.samplerate)
+            cfg = {
+                "block_ms": shape["block_frame"] * 1000.0 / args.samplerate,
+                "extra_ms": shape["extra_frame"] * 1000.0 / args.samplerate,
+                "crossfade_ms": shape["crossfade_frame"] * 1000.0 / args.samplerate,
+                "sola_buffer_ms": shape["sola_buffer_frame"] * 1000.0 / args.samplerate,
+                "sola_search_ms": shape["sola_search_frame"] * 1000.0 / args.samplerate,
+                "f0_method": args.f0method,
+                "index_rate": args.index_rate,
+                "protect": None,
+                "rms_mix": args.rms_mix_rate,
+                "precision": "fp16" if getattr(config, "is_half", False) else "fp32",
+                "ep": ep,
+                "gpu": gpu,
+                "transpose": args.pitch,
+                "formant": args.formant,
+                "threshold_db": args.threshold,
+                "samplerate": args.samplerate,
+            }
+            side = vb.make_sidecar(
+                system="rvc_webui",
+                app_version=args.app_version or commit[:8],
+                commit=commit,
+                input_path=path,
+                voice_path=args.pth,
+                config=cfg,
+                call_ms=call_ms,
+                latency_ms=latency,
+                latency_kind="algorithmic",
+                latency_note="block + SOLA buffer + SOLA search - mean SOLA offset, from the driver's block loop (no device latency)",
+                gpu=gpu,
+                output_rate=args.samplerate,
+                notes=["offline render of realtime_gui.py's block loop (scripts/vc-bench/rvc_webui_offline.py)"],
+                extra={"blocks": len(times), "flush_blocks": shape["flush_blocks"], "mean_sola_offset_frames": sum(offsets) / max(len(offsets), 1)},
+            )
+            vb.write_sidecar(dest, side)
+            all_times += steady
+            lat.append(latency)
+            print(
+                f"RVC WebUI realtime {clip_id}: {len(times)} blocks of {shape['block_frame']} frames ({cfg['block_ms']:.0f} ms), "
+                f"compute p50 {call_ms['p50']:.2f} / p95 {call_ms['p95']:.2f} / p99 {call_ms['p99']:.2f} ms, latency {latency:.1f} ms -> {dest}"
+            )
+        total = vb.percentiles(all_times)
+        ok = vb.feasible(total, shp["block_ms"])
+        print(f"  block {shp['block_ms']:g} ms: p99 {total['p99']:.2f} ms over every clip -> {'real time' if ok else 'NOT real time (excluded from T6 at this block)'}")
+        if args.corpus:
+            pattern = os.path.relpath(out_path(args, "{clip}", shp["block_ms"], sweeping), os.path.dirname(args.corpus)).replace("\\", "/")
+            name = f"{args.point_name}-{shp['block_ms']:g}" if sweeping else args.point_name
+            snippets.append(vb.point_snippet(name, "rvc_webui", pattern, {"block_ms": shp["block_ms"], "f0_method": args.f0method}, args.app_version or commit[:8]))
+    if snippets:
+        print("\npoints for the corpus manifest:")
+        print(json.dumps(snippets, indent=1))
 
 
 if __name__ == "__main__":

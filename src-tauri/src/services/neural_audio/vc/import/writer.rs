@@ -114,21 +114,72 @@ pub fn build<R: Read + Seek>(layout: &Layout, ckpt: &mut TorchCheckpoint<R>) -> 
 
 /// `weights.f16.bin`: every f32 word cast to f16 (so every layout offset halves). `Err` when a
 /// finite weight overflows f16, the voice then runs only with the fp32 graphs.
+///
+/// P3B-H: an overflow scan first (a finite weight at or past 65520 rounds to infinity), then the
+/// conversion 8 words at a time with the F16C instructions where the CPU has them (round to nearest
+/// even, the same bits as `half`'s scalar conversion), else `half`'s scalar loop. The 220 MB image
+/// of a 40 kHz voice converts in a fraction of the 70 ms the per-word loop took.
 pub fn f16_image(f32_image: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(f32_image.len() / 2);
-    let mut overflow = 0usize;
-    for c in f32_image.chunks_exact(4) {
-        let x = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-        let h = half::f16::from_f32(x);
-        if x.is_finite() && !h.is_finite() {
-            overflow += 1;
-        }
-        out.extend_from_slice(&h.to_bits().to_le_bytes());
-    }
+    let overflow = count_f16_overflows(f32_image);
     if overflow > 0 {
         return Err(format!("{overflow} weights exceed the fp16 range"));
     }
+    let words = f32_image.len() / 4;
+    // A zeroed allocation: fresh pages, no memset.
+    let mut out = vec![0u8; words * 2];
+    convert_f32_to_f16(&f32_image[..words * 4], &mut out);
     Ok(out)
+}
+
+/// Finite f32 words (little-endian) whose f16 rounding is infinity: magnitude from 65520 up to the
+/// largest finite value.
+fn count_f16_overflows(f32_image: &[u8]) -> usize {
+    const LIMIT: u32 = 0x477F_F000; // 65520.0
+    const INF: u32 = 0x7F80_0000;
+    f32_image
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0x7FFF_FFFF)
+        .filter(|&b| (LIMIT..INF).contains(&b))
+        .count()
+}
+
+/// `half`'s conversion of every word, in little-endian bytes.
+fn convert_f16_scalar(f32_image: &[u8], out: &mut [u8]) {
+    for (c, o) in f32_image.chunks_exact(4).zip(out.chunks_exact_mut(2)) {
+        let x = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        o.copy_from_slice(&half::f16::from_f32(x).to_bits().to_le_bytes());
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx,f16c")]
+unsafe fn convert_f16_f16c(f32_image: &[u8], out: &mut [u8]) {
+    use std::arch::x86_64::{__m128i, _mm256_cvtps_ph, _mm256_loadu_ps, _mm_storeu_si128, _MM_FROUND_TO_NEAREST_INT};
+    let words = f32_image.len() / 4;
+    let blocks = words / 8;
+    let src = f32_image.as_ptr();
+    let dst = out.as_mut_ptr();
+    for b in 0..blocks {
+        // SAFETY: block `b` reads 32 bytes at 32 * b < f32_image.len() and writes 16 bytes at 16 * b
+        // < out.len() (`out` holds 2 bytes per word); the loads and stores are unaligned.
+        let v = _mm256_loadu_ps(src.add(b * 32) as *const f32);
+        let h = _mm256_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(v);
+        _mm_storeu_si128(dst.add(b * 16) as *mut __m128i, h);
+    }
+    // The tail (fewer than 8 words) in scalar.
+    convert_f16_scalar(&f32_image[blocks * 32..], &mut out[blocks * 16..]);
+}
+
+fn convert_f32_to_f16(f32_image: &[u8], out: &mut [u8]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("f16c") && std::arch::is_x86_feature_detected!("avx") {
+            // SAFETY: the CPU features were just detected; `out` holds 2 bytes per f32 word.
+            unsafe { convert_f16_f16c(f32_image, out) };
+            return;
+        }
+    }
+    convert_f16_scalar(f32_image, out);
 }
 
 /// Little-endian bytes of an f32 slice.
@@ -149,5 +200,49 @@ mod tests {
         assert_eq!(back[..2], [1.0, -2.5]);
         assert!((back[2] - 0.1).abs() < 1e-4);
         assert!(f16_image(&f32_bytes(&[1.0e6])).is_err());
+    }
+
+    /// A tiny deterministic generator of f32 bit patterns (no dependency).
+    fn lcg(seed: &mut u64) -> u32 {
+        *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        (*seed >> 32) as u32
+    }
+
+    /// The SIMD conversion gives `half`'s bits for every finite value (all exponents, subnormals,
+    /// both zeros, the largest f16 and its rounding edge, odd lengths for the scalar tail), and the
+    /// overflow scan matches the scalar rule exactly.
+    #[test]
+    fn f16_image_matches_the_scalar_conversion() {
+        let mut seed = 0x5eed_u64;
+        let mut values: Vec<f32> = vec![0.0, -0.0, 1.0, -1.0, 65504.0, -65504.0, 65519.99, 6.0e-8, 5.9e-8, 3.0e-8, 1.0e-30, f32::MIN_POSITIVE, 0.1, 1.0 / 3.0];
+        while values.len() < 100_003 {
+            let bits = lcg(&mut seed);
+            let x = f32::from_bits(bits);
+            // Finite and inside f16's range, plus the whole exponent spread.
+            if x.is_finite() && x.abs() < 65_520.0 {
+                values.push(x);
+            }
+        }
+        for n in [0usize, 1, 7, 8, 9, 15, 16, 17, 1_000, 100_003] {
+            let img = f32_bytes(&values[..n]);
+            let got = f16_image(&img).expect("in range");
+            let mut want = vec![0u8; n * 2];
+            convert_f16_scalar(&img, &mut want);
+            assert_eq!(got.len(), n * 2);
+            assert_eq!(got, want, "{n} words");
+        }
+        // The overflow rule: 65520 and up (finite) overflow, infinities and NaN are not counted.
+        for (x, over) in [(65_504.0f32, 0usize), (65_519.0, 0), (65_520.0, 1), (-65_520.0, 1), (3.0e38, 1), (f32::INFINITY, 0), (f32::NAN, 0)] {
+            let img = f32_bytes(&[0.5, x, 0.25]);
+            assert_eq!(count_f16_overflows(&img), over, "{x}");
+            let scalar = [0.5f32, x, 0.25].iter().filter(|v| v.is_finite() && !half::f16::from_f32(**v).is_finite()).count();
+            assert_eq!(over, scalar, "{x}: the scan equals the scalar overflow test");
+        }
+        // Non-finite weights convert like `half` (the importer rejects them earlier).
+        let img = f32_bytes(&[f32::INFINITY, f32::NEG_INFINITY, f32::NAN]);
+        let h = f16_image(&img).expect("not an overflow");
+        let back: Vec<f32> = h.chunks_exact(2).map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect();
+        assert_eq!((back[0], back[1]), (f32::INFINITY, f32::NEG_INFINITY));
+        assert!(back[2].is_nan());
     }
 }

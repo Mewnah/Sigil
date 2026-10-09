@@ -9,6 +9,9 @@
 //! P5 (P5-S0 scaffold): [`families`] holds the voice-conversion families beyond RVC (DDSP-SVC,
 //! Sigil-ZS, MeanVC2, so-vits-svc, sidecar v2) and the shared zero-shot reference types; the engine
 //! factory (`voice_changer::factory`) dispatches to them by `manifest.format`.
+//!
+//! P3B (P3B-S0 scaffold): [`f0_decode`] (cross-tick F0 decoding, P3B-F); the engine gains
+//! `load` / `tick` / `probe` / `overlap` / `content_stats` (see `engine`).
 
 pub mod assets;
 pub mod autokey;
@@ -16,6 +19,8 @@ pub mod bases;
 pub mod crepe;
 /// The Sigil Voice Engine: the `SigilRvc` family over split templates (P3).
 pub mod engine;
+/// Cross-tick F0 decoding (P3B-F; stub by P3B-S0).
+pub mod f0_decode;
 pub mod f0_fusion;
 pub mod faiss;
 pub mod fcpe;

@@ -12,9 +12,10 @@ use std::time::Instant;
 use crate::services::neural_audio::VcStreamHarness;
 use crate::services::rt_thread::{self, WorkerPriority};
 
+use super::attribution::{insert_call_metrics, p95_shares, JoinStats};
 use super::ceiling::StreamRecorder;
 use super::engine::{AlgorithmicLatency, Engine, ModelTimes};
-use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, thread_cpu_time, Metrics};
+use super::metrics::{cores, insert_components, insert_summary, process_cpu_time, process_cycles, thread_cpu_time, thread_cycles, Metrics};
 use super::report::{RunOutcome, TickRecord};
 use super::spec::{OfflineRun, StreamSpec};
 use super::vc_rt::VcTick;
@@ -54,6 +55,8 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
     let block_ms = s.block_ms();
     let priority = WorkerPriority::from_str_lossy(&s.worker_priority);
     rt_thread::set_worker_priority(priority, p.engine.info.gpu());
+    // P3B-A: the worker's priority and EcoQoS state as the run measures it.
+    let worker_state = super::gpu_state::thread_state();
     p.engine.set_simulated(false);
 
     let times = Arc::new(Mutex::new(ModelTimes::default()));
@@ -82,6 +85,8 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
     let mut errors = 0u64;
     let mut first_error: Option<String> = None;
     let mut compute_total = 0.0f64;
+    let mut joins = JoinStats::with_capacity(total);
+    let cycles0 = (process_cycles(), thread_cycles());
     let cpu0 = process_cpu_time();
     let wcpu0 = thread_cpu_time();
     let wall0 = Instant::now();
@@ -109,6 +114,9 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
                 })
                 .unwrap_or((0.0, 0));
             debug_assert_eq!(out.audio.len(), out.owed_frames * ch_out);
+            if calls > 0 {
+                joins.record(tick.harness.last_join());
+            }
             let failed = out.error.is_some();
             if let Some(e) = out.error {
                 errors += 1;
@@ -133,6 +141,7 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
         }
     }
     let wall = wall0.elapsed();
+    let cycles1 = (process_cycles(), thread_cycles());
     if cancelled {
         return Err("cancelled".into());
     }
@@ -150,11 +159,13 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
     insert_summary(&mut m, "block_ms", &compute);
     insert_summary(&mut m, "rtf", &rtf);
     insert_summary(&mut m, "call_ms", &super::metrics::call_compute(&timeline));
-    let (model_ms, warmup_ms, model_errors, skipped) = {
+    let (model_ms, warmup_ms, model_errors, skipped, attribution, p95) = {
         let t = times.lock().map_err(|_| "model timings poisoned")?;
         insert_components(&mut m, &t.components);
-        (t.convert_ms.clone(), t.warmup_ms, t.errors, t.skipped)
+        let a = insert_call_metrics(&mut m, &timeline, &t.calls, p.engine.info.gpu());
+        (t.convert_ms.clone(), t.warmup_ms, t.errors, t.skipped, a, p95_shares(&t.calls))
     };
+    let join_details = joins.insert(&mut m, p.engine.info.output_rate);
     insert_summary(&mut m, "model_ms", &model_ms);
     m.insert("blocks".into(), timeline.len() as f64);
     m.insert(
@@ -170,11 +181,17 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
         m.insert("throughput_x".into(), audio_s / (compute_total / 1000.0));
     }
     if let (Some(a), Some(b)) = (cpu0, process_cpu_time()) {
-        m.insert("cpu_cores".into(), cores(b.saturating_sub(a), wall));
+        let cpu = b.saturating_sub(a);
+        m.insert("cpu_cores".into(), cores(cpu, wall));
+        // P3B-A: core-seconds per audio-second (the T6 CPU row's unit).
+        if audio_s > 0.0 {
+            m.insert("core_s_per_audio_s".into(), cpu.as_secs_f64() / audio_s);
+        }
     }
     if let (Some(a), Some(b)) = (wcpu0, thread_cpu_time()) {
         m.insert("worker_cpu_cores".into(), cores(b.saturating_sub(a), wall));
     }
+    let cycles = super::metrics::cycle_details(cycles0, cycles1, attribution.calls);
     let details = serde_json::json!({
         "blocks_per_pass": blocks_per_pass,
         "passes": p.run.repeat,
@@ -188,6 +205,11 @@ fn offline_worker(p: &OfflineInput<'_>) -> Result<RunOutcome, String> {
         "algorithmic_latency": p.probe,
         "worker_priority": priority.as_str(),
         "silent_ticks": skipped,
+        "worker_thread": worker_state,
+        "cycles": cycles,
+        "attribution": attribution,
+        "p95_shares": p95,
+        "joins": join_details,
     });
     Ok(RunOutcome {
         metrics: m,

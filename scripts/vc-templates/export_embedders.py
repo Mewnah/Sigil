@@ -34,7 +34,11 @@ speech (the dev-cache transcribe samples), gated on relative L2: fp32 <= 1e-4, f
 frame cosine >= 0.9995 (the accuracy class of upstream RVC's own half-precision HuBERT), int8 <= 7e-2
 with cosine >= 0.997. ``--ep dml`` measures the GPU class. Results go to reports/embedders*.json, and
 each entry folder gets an ``embedder.json`` (contract, parity per variant and device class, and the
-recommended variant per class) that the engine reads.
+variant the export gate recommends per class). The engine reads the contract (``io``) of the content
+encoder; the order it tries the variants in is ``content::variant_order`` (fp16 first on GPUs, int8
+first on VNNI CPUs), which follows the downstream fidelity measurements of P3B-D (ADR 0011), not the
+export gate's ``recommended``: fp16 misses this script's feature gate at some stream lengths yet
+moves the converted voice by less than 0.001 speaker cosine.
 
 Usage (repo root):
 
@@ -42,6 +46,9 @@ Usage (repo root):
     python scripts/vc-templates/export_embedders.py --only contentvec --only contentvec-256
     python scripts/vc-templates/export_embedders.py --ep dml   (parity of existing exports on DirectML,
                                                                 in an onnxruntime-directml environment)
+    python scripts/vc-templates/export_embedders.py --stream --only contentvec
+        (P3B-D: the opt-in ``stream`` variants ``model.stream.fp32/fp16.onnx`` that take the first
+        GroupNorm's statistics as inputs, plus ``conv0.f32.bin``; reports/embedders_stream.json)
 
 Outputs land in ``--out`` (default ``%LOCALAPPDATA%/sigil-dev-cache/vc-assets``) as
 ``<id>/model.<variant>.onnx``: the SIGIL_LOCAL_ASSETS layout the model store installs from.
@@ -172,6 +179,132 @@ class Embedder(nn.Module):
         if self.proj is not None:
             x = self.proj(x)
         return x.float()
+
+
+class StreamEmbedder(Embedder):
+    """The ``stream`` variant (P3B-D, the ``content_norm`` lever): ``audio`` [1, N] f32 plus the first
+    convolution's GroupNorm statistics ``gn_mean`` / ``gn_inv_std`` [1, 512, 1] f32 -> ``feats``
+    [1, T, C] f32. The stock graph normalises every window by its own statistics (``GroupNorm(512,
+    512)`` over the window); this one takes them as inputs, so the engine can hand it running
+    statistics of the stream (training-slice-like, independent of the window). With the window's
+    own statistics (``mean`` and ``1 / sqrt(var + 1e-5)`` of the first conv's output over the
+    window, biased variance) it computes exactly the stock graph (checked by ``check_stream``)."""
+
+    def forward(self, audio, gn_mean, gn_inv_std):
+        h = self.hubert
+        layers = h.feature_extractor.conv_layers
+        first = layers[0]
+        x = first.conv(audio.float()[:, None])
+        x = (x - gn_mean) * gn_inv_std * first.layer_norm.weight[None, :, None] + first.layer_norm.bias[None, :, None]
+        x = first.activation(x)
+        for layer in layers[1:]:
+            x = layer(x)
+        x = x.transpose(1, 2)
+        if self.half_:
+            x = x.half()
+        x = h.feature_projection(x)
+        x = h.encoder(x).last_hidden_state
+        if self.proj is not None:
+            x = self.proj(x)
+        return x.float()
+
+
+def window_stats(hubert, audio):
+    """(gn_mean, gn_inv_std) [1, 512, 1] of the first conv's output over ``audio`` [1, N]."""
+    with torch.no_grad():
+        x = hubert.feature_extractor.conv_layers[0].conv(audio.float()[:, None])
+        mean = x.mean(dim=2, keepdim=True)
+        var = x.var(dim=2, unbiased=False, keepdim=True)
+    return mean, 1.0 / torch.sqrt(var + 1e-5)
+
+
+def export_stream(module, path, example, hubert):
+    import io
+
+    import onnx
+
+    mean, inv = window_stats(hubert, example)  # on the module's device
+    buf = io.BytesIO()
+    with torch.no_grad():
+        torch.onnx.export(
+            module, (example, mean, inv), buf, input_names=["audio", "gn_mean", "gn_inv_std"], output_names=["feats"],
+            dynamic_axes={"audio": {1: "N"}, "feats": {1: "T"}}, opset_version=OPSET, do_constant_folding=True,
+        )
+    model = onnx.load_from_string(buf.getvalue())
+    model.producer_name = "sigil-vc-assets"
+    del model.metadata_props[:]
+    for k, v in (("sigil.format", "sigil-vc-embedder-stream"),
+                 ("sigil.io", "audio [1,N] f32 16 kHz, gn_mean / gn_inv_std [1,512,1] f32 -> feats [1,T,C] f32, T = (N - 400) // 320 + 1")):
+        p = model.metadata_props.add()
+        p.key, p.value = k, v
+    onnx.save_model(model, path)
+
+
+def write_conv0(hubert, path):
+    """The first convolution's weights (``conv0.f32.bin``: 512 x 1 x 10 f32, little-endian; no bias)
+    for the engine's running statistics, which it computes from the stream's audio itself."""
+    conv = hubert.feature_extractor.conv_layers[0].conv
+    if conv.bias is not None or tuple(conv.weight.shape) != (512, 1, 10) or conv.stride[0] != 5:
+        raise SystemExit(f"unexpected first convolution: {tuple(conv.weight.shape)}, stride {conv.stride}, bias {conv.bias is not None}")
+    conv.weight.detach().float().numpy().astype("<f4").tofile(path)
+
+
+def export_stream_variants(name, out_root, src_root):
+    """``model.stream.fp32.onnx``, ``model.stream.fp16.onnx`` and ``conv0.f32.bin`` (opt-in: ``--stream``)."""
+    folder_name, layers, final_proj = EMBEDDERS[name]
+    folder = os.path.join(src_root, folder_name)
+    out = os.path.join(out_root, catalog_id(name))
+    os.makedirs(out, exist_ok=True)
+    example = torch.randn(1, 16000, generator=torch.Generator().manual_seed(1))
+    hubert, proj, _ = load_hubert(folder)
+    export_stream(StreamEmbedder(hubert, layers, proj if final_proj else None), os.path.join(out, "model.stream.fp32.onnx"), example, hubert)
+    write_conv0(hubert, os.path.join(out, "conv0.f32.bin"))
+    hubert, proj, _ = load_hubert(folder)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    m16 = StreamEmbedder(hubert, layers, proj if final_proj else None, half=True).to(device)
+    export_stream(m16, os.path.join(out, "model.stream.fp16.onnx"), example.to(device), hubert)
+    print(f"[{name}] stream variants -> {out}")
+
+
+def check_stream(name, out_root, src_root, ep="cpu"):
+    """The stream variants with the window's own statistics against the stock fp32 graph in PyTorch
+    (same gates as the stock variants), and with frozen statistics against a PyTorch reference."""
+    folder_name, layers, final_proj = EMBEDDERS[name]
+    hubert, proj, _ = load_hubert(os.path.join(src_root, folder_name))
+    proj = proj if final_proj else None
+    out = os.path.join(out_root, catalog_id(name))
+    rows, status = [], {}
+    ref_model = StreamEmbedder(hubert, layers, proj)
+    for variant in ("fp32", "fp16"):
+        path = os.path.join(out, f"model.stream.{variant}.onnx")
+        if not os.path.isfile(path):
+            status[variant] = "absent"
+            continue
+        status[variant] = "pass"
+        sess = session(path, ep)
+        for label, audio in speech_inputs():
+            for n in (16000 + 123, 7040):
+                x = torch.from_numpy(audio[:n][None].copy())
+                want = reference(hubert, layers, proj, x)
+                mean, inv = window_stats(hubert, x)
+                (got,) = sess.run(None, {"audio": x.numpy(), "gn_mean": mean.numpy(), "gn_inv_std": inv.numpy()})
+                # Statistics of another window (the stream's running case) against PyTorch.
+                other = torch.from_numpy(audio[-n:][None].copy())
+                m2, i2 = window_stats(hubert, other)
+                with torch.no_grad():
+                    want2 = ref_model(x, m2, i2).numpy()
+                (got2,) = sess.run(None, {"audio": x.numpy(), "gn_mean": m2.numpy(), "gn_inv_std": i2.numpy()})
+                gate = GATES[variant]
+                for kind, g, w in (("window", got, want), ("foreign", got2, want2)):
+                    d = g.astype(np.float64) - w
+                    rel = float(np.linalg.norm(d) / np.linalg.norm(w))
+                    cos = float(np.mean(np.sum(g * w, -1) / (np.linalg.norm(g, axis=-1) * np.linalg.norm(w, axis=-1) + 1e-12)))
+                    good = rel <= gate["rel_l2"] and cos >= gate.get("cosine", -1)
+                    if not good:
+                        status[variant] = "fail"
+                    rows.append({"variant": f"stream.{variant}", "stats": kind, "input": f"{label}[:{n}]", "rel_l2": rel, "cosine": cos, "ok": good})
+                    print(f"  {'PASS' if good else 'FAIL'}  {name:<15} stream.{variant} {ep:<4} {kind:<7} {label}[:{n}] rel_l2 {rel:.2e} cos {cos:.5f}")
+    return {"id": catalog_id(name), "ep": ep, "variants": status, "rows": rows}
 
 
 def reference(hubert, layers, proj, audio):
@@ -368,6 +501,7 @@ def write_manifest(name, out_root):
         "final_proj": bool(final_proj),
         "variants": variants,
         "recommended": rec,
+        "recommended_note": "recommended is the export gate's pick per device class (feature parity vs PyTorch fp32); the engine's own variant order is content::variant_order (fp16 first on GPUs, int8 first on VNNI CPUs), decided on downstream fidelity (ADR 0011)",
         "int8_note": "int8 is an opt-in CPU speed lever for VNNI CPUs (int8_gate); shipped only where it passes its gate",
         "gates": GATES,
     }
@@ -382,8 +516,22 @@ def main():
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--no-export", action="store_true", help="only check existing exports")
     ap.add_argument("--ep", default="cpu", choices=("cpu", "dml"))
+    ap.add_argument("--stream", action="store_true",
+                    help="only the 'stream' variants (P3B-D content_norm: GroupNorm statistics as inputs) and conv0.f32.bin, with their parity")
     args = ap.parse_args()
     names = args.only or list(EMBEDDERS)
+    if args.stream:
+        path = os.path.join(REPORTS, f"embedders_stream{'' if args.ep == 'cpu' else '_' + args.ep}.json")
+        rep = {}
+        for name in names:
+            if not args.no_export and args.ep == "cpu":
+                export_stream_variants(name, args.out, args.src)
+            rep[name] = check_stream(name, args.out, args.src, args.ep)
+        os.makedirs(REPORTS, exist_ok=True)
+        sl.write_json(path, {"gates": GATES, "source_revision": APPLIO_HF_REVISION, "embedders": rep})
+        bad = [n for n in names if "fail" in rep[n]["variants"].values()]
+        print("STREAM VARIANTS OK" if not bad else f"STREAM VARIANTS FAILED: {', '.join(bad)}")
+        raise SystemExit(1 if bad else 0)
     report_path = os.path.join(REPORTS, f"embedders{'' if args.ep == 'cpu' else '_' + args.ep}.json")
     report = {}
     if os.path.isfile(report_path):

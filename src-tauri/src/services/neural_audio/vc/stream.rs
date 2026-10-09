@@ -37,13 +37,34 @@
 //! the warm-up; [`VcStreamHarness::set_reference`] / [`VcStreamHarness::set_singing`] change them
 //! between ticks. [`VcStreamHarness::new`] is `with_context` with the neutral context (no
 //! reference, speech), so every RVC path is unchanged.
+//!
+//! **P3B-S0 (frozen; additive):** [`sola_tail_in_16k`] is the harness's SOLA-tail formula as a pub
+//! fn (the engine's `plan::sola_tail_16k` delegates to it; P3B-H owns the formula), and
+//! [`VcStreamHarness::model_time_anchored`] / [`VcStreamHarness::model_telemetry`] forward the
+//! model's `time_anchored` and `telemetry` (the benchmark reads the fed F0 through them).
+//!
+//! **SOLA geometry (P3B-H).** The join's overlap, search window and the tail the model returns
+//! beyond its block are computed in one place ([`sola_geometry`]), so the factory can plan the
+//! engine's final shapes from the same numbers the harness uses (`SigilRvcRequest::stream`):
+//! - **search** (`sola_search_ms`, [`HarnessOptions::sola_search_ms`]): the width of the alignment
+//!   window, automatic = half the overlap (10 ms at a 20 ms crossfade); a smaller window narrows the
+//!   alignment for models whose overlapping ticks already agree ([`VcStreamHarness::model_time_anchored`]);
+//!   `SIGIL_VC_SOLA_SEARCH_MS` sets it for one process (benchmarks), the centre pull
+//!   (`SIGIL_VC_SOLA_BIAS`, default [`SOLA_CENTER_BIAS`]) keeps offsets near the nominal point;
+//! - **tail on the frame grid** ([`SolaSlack`], `SIGIL_VC_SOLA_SLACK=legacy|aligned`): the legacy tail
+//!   adds two model samples of slack, which pushes a 40 / 32 / 48 kHz stream with a 20 ms crossfade
+//!   (480 samples needed) to 481 and so costs one more decoded frame per tick. The aligned tail adds
+//!   the slack only where it does not cross a 10 ms frame boundary (it is never needed for the
+//!   window: the ceiling already covers the search) and is exactly 480 there. Default
+//!   [`SOLA_SLACK_DEFAULT`] (legacy: P3B-I0 kept it, the aligned tail lowers cosine v2 by 0.014,
+//!   CI excludes 0; a flip would move it together with `engine::plan::DEFAULT_SOLA_TAIL_16K`).
 
 use std::sync::Arc;
 
 use rubato::{calculate_cutoff, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
 use super::engine::governor::QualityLevel;
-use super::traits::{ConversionCtx, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, VoiceConversionModel};
+use super::traits::{ConversionCtx, ModelTelemetry, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, VoiceConversionModel};
 
 /// Frames per output-side resampler call, at the model output rate.
 const OUT_RESAMPLE_CHUNK: usize = 64;
@@ -62,8 +83,127 @@ const RESAMPLER_JITTER_16K: usize = 2;
 const HOLD_BACK_SIM_TICKS: u64 = 200_000;
 /// Score penalty (per unit of distance from the window centre, relative to half the window) that
 /// keeps SOLA offsets from drifting to an edge of the search window.
-const SOLA_CENTER_BIAS: f32 = 0.05;
+pub const SOLA_CENTER_BIAS: f32 = 0.05;
 const RESAMPLER_SINC_LEN: usize = 128;
+/// 16 kHz samples per 10 ms frame, the decode granularity of the RVC-class models the aligned tail
+/// is for.
+const FRAME_16K: usize = 160;
+
+/// `SIGIL_VC_SOLA_SLACK=legacy|aligned`: how the SOLA tail's slack is chosen ([`SolaSlack`]).
+pub const SOLA_SLACK_ENV: &str = "SIGIL_VC_SOLA_SLACK";
+/// `SIGIL_VC_SOLA_SEARCH_MS=<ms>`: the SOLA search window of every harness built without an explicit
+/// one (a benchmark / development override; the voice changer's `sola_search_ms` wins).
+pub const SOLA_SEARCH_ENV: &str = "SIGIL_VC_SOLA_SEARCH_MS";
+/// `SIGIL_VC_SOLA_BIAS=<f>`: the centre pull of the alignment score (default [`SOLA_CENTER_BIAS`]).
+pub const SOLA_BIAS_ENV: &str = "SIGIL_VC_SOLA_BIAS";
+/// The slack mode when [`SOLA_SLACK_ENV`] is unset. Legacy: P3B-I0 kept it after the
+/// interleaved fidelity A/B (one fewer decoded frame per tick against cosine v2 -0.0141 [-0.0247,
+/// -0.0052], DNSMOS +0.017); a flip moves `engine::plan::DEFAULT_SOLA_TAIL_16K` and its tests with it.
+pub const SOLA_SLACK_DEFAULT: SolaSlack = SolaSlack::Legacy;
+
+/// How the tail a model returns beyond its block (overlap + search, at 16 kHz) is rounded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SolaSlack {
+    /// Two model-rate samples of slack on top of the window, rounded up (P3's formula: 481 samples at
+    /// 32 / 40 / 48 kHz with a 20 ms crossfade, one sample over a frame boundary).
+    Legacy,
+    /// The window rounded up, with the slack only where it adds no decoded frame (480 at 32 / 40 /
+    /// 48 kHz with a 20 ms crossfade: the frame grid).
+    Aligned,
+}
+
+impl SolaSlack {
+    /// `legacy` / `aligned` (case-insensitive); anything else `None`.
+    pub fn parse(s: &str) -> Option<SolaSlack> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "legacy" | "slack" => Some(SolaSlack::Legacy),
+            "aligned" | "grid" | "frame" => Some(SolaSlack::Aligned),
+            _ => None,
+        }
+    }
+}
+
+/// The slack mode of this process: [`SOLA_SLACK_ENV`], else [`SOLA_SLACK_DEFAULT`]. Reads the
+/// environment: call it when a voice loads, not per tick.
+pub fn sola_slack_mode() -> SolaSlack {
+    std::env::var(SOLA_SLACK_ENV)
+        .ok()
+        .and_then(|v| SolaSlack::parse(&v))
+        .unwrap_or(SOLA_SLACK_DEFAULT)
+}
+
+/// Harness options beyond the model and the device format (P3B-H; every default is P5's
+/// behaviour). [`HarnessOptions::from_env`] adds the development overrides.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HarnessOptions {
+    /// SOLA search window (ms); `None` = automatic (half the overlap).
+    pub sola_search_ms: Option<f64>,
+    /// Centre pull of the SOLA score; `None` = [`SOLA_CENTER_BIAS`].
+    pub sola_center_bias: Option<f32>,
+    /// Tail rounding; `None` = [`sola_slack_mode`].
+    pub sola_slack: Option<SolaSlack>,
+}
+
+impl HarnessOptions {
+    /// These options with every `None` filled from the environment
+    /// ([`SOLA_SEARCH_ENV`], [`SOLA_BIAS_ENV`], [`SOLA_SLACK_ENV`]).
+    pub fn with_env(mut self) -> HarnessOptions {
+        if self.sola_search_ms.is_none() {
+            self.sola_search_ms = std::env::var(SOLA_SEARCH_ENV)
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|ms| ms.is_finite() && *ms >= 0.0);
+        }
+        if self.sola_center_bias.is_none() {
+            self.sola_center_bias = std::env::var(SOLA_BIAS_ENV)
+                .ok()
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .filter(|b| b.is_finite() && *b >= 0.0);
+        }
+        if self.sola_slack.is_none() {
+            self.sola_slack = Some(sola_slack_mode());
+        }
+        self
+    }
+
+    /// The defaults with the environment's overrides.
+    pub fn from_env() -> HarnessOptions {
+        HarnessOptions::default().with_env()
+    }
+}
+
+/// The geometry of one SOLA join, in model-rate samples (`overlap`, `search`) and the tail the
+/// model returns beyond its block in model-input samples (`tail_in`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SolaGeometry {
+    pub overlap: usize,
+    pub search: usize,
+    pub tail_in: usize,
+}
+
+/// The overlap, search window and tail of a harness with a `crossfade_samples` crossfade (model-rate
+/// samples) and an optional explicit search window `search_ms`, whose overlap may not exceed
+/// `max_overlap` (one emitted block). The harness and the factory (which plans the engine's final
+/// shapes from the same numbers) both call this.
+pub fn sola_geometry(
+    crossfade_samples: usize,
+    search_ms: Option<f64>,
+    max_overlap: usize,
+    model_in_sr: u32,
+    model_out_sr: u32,
+    slack: SolaSlack,
+) -> SolaGeometry {
+    let overlap = crossfade_samples.max(64).min(max_overlap.max(1)).max(1);
+    let search = match search_ms {
+        Some(ms) if ms.is_finite() => ((ms.max(0.0) / 1000.0) * f64::from(model_out_sr.max(1))).round() as usize,
+        _ => overlap / 2,
+    };
+    SolaGeometry {
+        overlap,
+        search,
+        tail_in: sola_tail_with(overlap, search, model_in_sr, model_out_sr, slack),
+    }
+}
 
 /// Crossfade join with normalized-cross-correlation alignment (SOLA).
 ///
@@ -74,7 +214,12 @@ const RESAMPLER_SINC_LEN: usize = 128;
 /// for the following join, and the remaining margin is discarded (it is re-synthesised next tick).
 struct SolaStitcher {
     overlap: usize,
+    /// The configured search window (model samples): what the model is asked for beyond the overlap;
+    /// the window of a join is whatever the returned chunk leaves (tests read this).
+    #[cfg_attr(not(test), allow(dead_code))]
     search: usize,
+    /// Score penalty per unit of distance from the window centre (see [`SOLA_CENTER_BIAS`]).
+    center_bias: f32,
     prev_tail: Vec<f32>,
     /// The last join: `(offset - centre, normalized cross-correlation of the tail and the aligned
     /// chunk)`, `None` when the tail was silent or too short (seam telemetry for benchmarks).
@@ -82,11 +227,18 @@ struct SolaStitcher {
 }
 
 impl SolaStitcher {
+    #[cfg(test)]
     fn new(overlap: usize) -> Self {
         let overlap = overlap.max(1);
+        Self::with_search(overlap, overlap / 2, SOLA_CENTER_BIAS)
+    }
+
+    /// A stitcher with an explicit search window (model samples) and centre pull.
+    fn with_search(overlap: usize, search: usize, center_bias: f32) -> Self {
         Self {
-            overlap,
-            search: overlap / 2,
+            overlap: overlap.max(1),
+            search,
+            center_bias,
             prev_tail: Vec::new(),
             last_join: None,
         }
@@ -105,6 +257,7 @@ impl SolaStitcher {
     }
 
     /// Alignment search window requested from the model beyond `block + overlap`.
+    #[cfg(test)]
     fn search(&self) -> usize {
         self.search
     }
@@ -142,7 +295,7 @@ impl SolaStitcher {
             } else {
                 0.0
             };
-            let score = ncc - SOLA_CENTER_BIAS * (off.abs_diff(center) as f32 / half);
+            let score = ncc - self.center_bias * (off.abs_diff(center) as f32 / half);
             if score > best_score {
                 best_score = score;
                 best = off;
@@ -342,6 +495,10 @@ pub struct VcStreamHarness {
     reference: Option<Arc<ReferenceEmbedding>>,
     /// The voice's singing flags (P5-S0; `ConversionCtx::singing`).
     singing: SingingFlags,
+    /// Why the warm-up at the live shape failed (P3B-H), if it did. It is logged and does not fail
+    /// the build (the model may still run), so a caller that must know checks
+    /// [`Self::warmup_failure`] (`voice_changer::factory` refuses a template voice whose warm-up failed).
+    warmup_failure: Option<String>,
 }
 
 /// What the harness passes to every model call besides the audio and the per-tick controls (P5-S0,
@@ -496,9 +653,38 @@ impl VcStreamHarness {
     }
 
     /// Build the harness around `model` and warm it at the live shape; `context` (the voice's
-    /// reference and singing flags) is passed to the warm-up and to every later call.
+    /// reference and singing flags) is passed to the warm-up and to every later call. The SOLA
+    /// options are the environment's overrides over the defaults ([`HarnessOptions::from_env`]).
     #[allow(clippy::too_many_arguments)]
     pub fn with_context(
+        model: Box<dyn VoiceConversionModel>,
+        device_in_sr: u32,
+        device_out_sr: u32,
+        ch_in: usize,
+        ch_out: usize,
+        extra_samples: usize,
+        crossfade_samples: usize,
+        process_frames: usize,
+        context: HarnessContext,
+    ) -> Result<Self, String> {
+        Self::with_options(
+            model,
+            device_in_sr,
+            device_out_sr,
+            ch_in,
+            ch_out,
+            extra_samples,
+            crossfade_samples,
+            process_frames,
+            context,
+            HarnessOptions::from_env(),
+        )
+    }
+
+    /// [`Self::with_context`] with explicit options (P3B-H: the SOLA search window, the centre pull
+    /// and the tail rounding; each `None` in `options` is the default, not the environment's).
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_options(
         mut model: Box<dyn VoiceConversionModel>,
         device_in_sr: u32,
         device_out_sr: u32,
@@ -508,6 +694,7 @@ impl VcStreamHarness {
         crossfade_samples: usize,
         process_frames: usize,
         context: HarnessContext,
+        options: HarnessOptions,
     ) -> Result<Self, String> {
         let device_in_sr = device_in_sr.max(1);
         let device_out_sr = device_out_sr.max(1);
@@ -524,17 +711,21 @@ impl VcStreamHarness {
             Some(block) => ((block as u64 * u64::from(model_out_sr)) / u64::from(model_in_sr)).max(1) as usize,
             None => ((process_frames as u64 * u64::from(model_out_sr)) / u64::from(device_in_sr)).max(1) as usize,
         };
-        let overlap = crossfade_samples.max(64).min(block_expected);
-        let sola = SolaStitcher::new(overlap);
-        // +2 output samples of slack so rounding never shrinks the search window below `search`.
-        let sola_tail_in = div_ceil_u64(
-            (sola.overlap + sola.search() + 2) as u64 * u64::from(model_in_sr),
-            u64::from(model_out_sr),
-        ) as usize;
+        // The tail's frame-grid rounding is for fixed-block (frame-based) models; the legacy feed
+        // keeps P3's tail whatever the mode says.
+        let slack = if fixed_block.is_some() {
+            options.sola_slack.unwrap_or_else(sola_slack_mode)
+        } else {
+            SolaSlack::Legacy
+        };
+        let SolaGeometry { overlap, search, tail_in: sola_tail_in } =
+            sola_geometry(crossfade_samples, options.sola_search_ms, block_expected, model_in_sr, model_out_sr, slack);
+        let sola = SolaStitcher::with_search(overlap, search, options.sola_center_bias.unwrap_or(SOLA_CENTER_BIAS));
 
         let exact_new = process_frames as u64 * u64::from(model_in_sr);
         let new_hi = div_ceil_u64(exact_new, u64::from(device_in_sr)) as usize;
         let new_lo = (exact_new / u64::from(device_in_sr)) as usize;
+        let mut warmup_failure: Option<String> = None;
         let (ring_prefill, fixed) = match fixed_block {
             Some(block) => {
                 // One shape for the whole stream: the model sizes its context for this block and
@@ -559,6 +750,7 @@ impl VcStreamHarness {
                 };
                 if let Err(e) = model.warmup_at(&warm_ctx) {
                     tracing::warn!("voice changer: warm-up at the fixed shape ({context_len} samples) failed: {e}");
+                    warmup_failure.get_or_insert(e);
                 }
                 let mut acc = Vec::with_capacity(block + new_hi + FIXED_LEAD_16K + 16);
                 acc.resize(FIXED_LEAD_16K, 0.0);
@@ -608,6 +800,7 @@ impl VcStreamHarness {
                     };
                     if let Err(e) = model.warmup_at(&warm_ctx) {
                         tracing::warn!("voice changer: warm-up at the live shape ({steady_ring} samples) failed: {e}");
+                        warmup_failure.get_or_insert(e);
                     }
                 }
                 // Start the ring as if silence had already been flowing: after the first block is
@@ -694,6 +887,7 @@ impl VcStreamHarness {
             fixed,
             reference: context.reference,
             singing: context.singing,
+            warmup_failure,
         })
     }
 
@@ -727,11 +921,30 @@ impl VcStreamHarness {
         self.fixed.as_ref().map_or(0, |f| f.hold_back)
     }
 
+    /// Why the warm-up at the live shape failed, when it did (the build goes on: it is logged). A
+    /// template voice's warm-up runs both its F0 paths (whole window and incremental), so a failure
+    /// here means its live ticks would fail too.
+    pub fn warmup_failure(&self) -> Option<&str> {
+        self.warmup_failure.as_deref()
+    }
+
     /// The model's outcomes, levers and warnings after this harness configured its stream
     /// ([`VoiceConversionModel::stream_report`]; `None` when the model reports nothing new). Read by
     /// `voice_changer::factory` (`LoadedVoice::load_cancellable`) to refresh what a voice reports.
     pub fn model_report(&self) -> Option<StreamReport> {
         self.model.stream_report()
+    }
+
+    /// The model's [`VoiceConversionModel::time_anchored`] (P3B-S0).
+    #[allow(dead_code)] // P3B-S0 frozen API; P3B-B / P3B-H read it.
+    pub fn model_time_anchored(&self) -> bool {
+        self.model.time_anchored()
+    }
+
+    /// The model's [`VoiceConversionModel::telemetry`] (P3B-S0; benchmarks).
+    #[allow(dead_code)] // P3B-S0 frozen API; P3B-B / P3B-H read it.
+    pub fn model_telemetry(&self) -> Option<&dyn ModelTelemetry> {
+        self.model.telemetry()
     }
 
     pub fn set_controls(&mut self, pitch_shift: f32, index_rate: f32, protect: f32, speaker_id: i64) {
@@ -968,6 +1181,64 @@ fn scale_with_carry(frames: usize, to: u32, from: u32, carry: u64) -> (usize, u6
 /// Ceiling division with a zero divisor treated as 1.
 fn div_ceil_u64(a: u64, b: u64) -> u64 {
     a.div_ceil(b.max(1))
+}
+
+/// Model-input samples each call returns beyond its new block for SOLA: the overlap and the search
+/// window at the model's output rate (`legacy`: plus 2 output samples of slack, so rounding never
+/// shrinks the search window below `search`), converted to input samples (rounded up).
+///
+/// The rounded-up window always covers `search` by itself (the model returns the rounded sample
+/// count of a value that is at least the window), so the slack is belt and braces. [`SolaSlack::Aligned`]
+/// keeps it only where it adds no decoded 10 ms frame: where `(overlap + search) * in / out` is an
+/// integer (480 at 32 / 40 / 48 kHz with a 20 ms crossfade) the tail is exactly the window.
+fn sola_tail_with(overlap: usize, search: usize, model_in_sr: u32, model_out_sr: u32, slack: SolaSlack) -> usize {
+    let (inr, out) = (u64::from(model_in_sr), u64::from(model_out_sr));
+    let legacy = div_ceil_u64((overlap + search + 2) as u64 * inr, out) as usize;
+    match slack {
+        SolaSlack::Legacy => legacy,
+        SolaSlack::Aligned => {
+            let window = (overlap + search) as u64 * inr;
+            let exact = div_ceil_u64(window, out) as usize;
+            if window.is_multiple_of(out.max(1)) || exact.div_ceil(FRAME_16K) != legacy.div_ceil(FRAME_16K) {
+                exact
+            } else {
+                legacy
+            }
+        }
+    }
+}
+
+/// Model-rate samples of a `crossfade_ms` crossfade, rounded as the factory does.
+fn crossfade_samples_of(crossfade_ms: f64, out_sr: u32) -> usize {
+    if crossfade_ms.is_finite() {
+        ((crossfade_ms / 1000.0) * f64::from(out_sr)).round().max(0.0) as usize
+    } else {
+        0
+    }
+}
+
+/// The SOLA tail (16 kHz samples) of a harness with a `crossfade_ms` crossfade in front of a model
+/// that outputs `out_sr` Hz (P3B-S0: the harness's formula as a pub fn, without the clamp of the
+/// overlap to one emitted block the harness also applies, and with the automatic search window).
+/// 481 at 32 / 40 / 48 kHz with 20 ms in P3's rounding (`engine::plan::DEFAULT_SOLA_TAIL_16K`),
+/// 480 aligned ([`sola_slack_mode`]).
+pub fn sola_tail_in_16k(crossfade_ms: f64, out_sr: u32) -> usize {
+    let out_sr = out_sr.max(1);
+    // The factory's rounding of the crossfade (`build_harness_with`) and the harness's 64-sample
+    // floor; the search window is half the overlap (`SolaStitcher::new`).
+    let overlap = crossfade_samples_of(crossfade_ms, out_sr).max(64).max(1);
+    sola_tail_with(overlap, overlap / 2, 16_000, out_sr, sola_slack_mode())
+}
+
+/// Samples a template voice's tick returns (`ConversionCtx::new_frames`: the engine block plus the
+/// SOLA tail) for a harness with this crossfade and search window, 16 kHz in, `out_sr` out, exactly
+/// as `VcStreamHarness` computes it for a fixed-block model of `block_16k` samples (the overlap is
+/// clamped to one emitted block). The factory plans the engine's final shapes from it.
+pub fn sola_want_16k(block_16k: usize, crossfade_ms: f64, out_sr: u32, options: HarnessOptions) -> usize {
+    let out_sr = out_sr.max(1);
+    let block_expected = ((block_16k as u64 * u64::from(out_sr)) / 16_000).max(1) as usize;
+    let slack = options.sola_slack.unwrap_or_else(sola_slack_mode);
+    block_16k + sola_geometry(crossfade_samples_of(crossfade_ms, out_sr), options.sola_search_ms, block_expected, 16_000, out_sr, slack).tail_in
 }
 
 #[cfg(test)]
@@ -1691,6 +1962,51 @@ mod tests {
         }
     }
 
+    /// A fixed-block model whose warm-up at the live shape fails (its incremental F0 path, say).
+    struct FailingWarmup(Box<FixedStub>);
+
+    impl VoiceConversionModel for FailingWarmup {
+        fn convert(&mut self, ctx: &ConversionCtx<'_>) -> Result<Vec<f32>, String> {
+            self.0.convert(ctx)
+        }
+        fn input_sample_rate(&self) -> u32 {
+            self.0.input_sample_rate()
+        }
+        fn output_sample_rate(&self) -> u32 {
+            self.0.output_sample_rate()
+        }
+        fn min_context_samples(&self) -> usize {
+            self.0.min_context_samples()
+        }
+        fn warmup_at(&mut self, _ctx: &ConversionCtx<'_>) -> Result<(), String> {
+            Err("incremental F0 call failed".into())
+        }
+        fn fixed_block(&self) -> Option<usize> {
+            self.0.fixed_block()
+        }
+        fn configure_stream(&mut self, block: usize, want: usize, extra: usize) -> Result<usize, String> {
+            self.0.configure_stream(block, want, extra)
+        }
+    }
+
+    /// A failed warm-up does not fail the build (the model may still run, and the legacy feed warns
+    /// only), but the harness says so: `voice_changer::factory` refuses a template voice whose warm-up
+    /// failed, because its live ticks would fail the same way (P3B-H: the load's own second
+    /// validation pass moved into this warm-up).
+    #[test]
+    fn a_failed_warmup_is_reported_not_swallowed() {
+        let (ok, _) = FixedStub::boxed(640, 40_000, false, Vec::new());
+        let h = VcStreamHarness::new(ok, 48_000, 48_000, 1, 1, 1_600, 320, 512).unwrap();
+        assert_eq!(h.warmup_failure(), None);
+        let (inner, _) = FixedStub::boxed(640, 40_000, false, Vec::new());
+        let h = VcStreamHarness::new(Box::new(FailingWarmup(inner)), 48_000, 48_000, 1, 1, 1_600, 320, 512).unwrap();
+        assert_eq!(h.warmup_failure(), Some("incremental F0 call failed"));
+        // A model without a failing warm-up on the legacy per-device-block feed reports none either.
+        let (legacy, _) = stub(40_000, Vec::new());
+        let h = VcStreamHarness::new(legacy, 48_000, 48_000, 1, 1, 1_600, 320, 512).unwrap();
+        assert_eq!(h.warmup_failure(), None);
+    }
+
     /// Every call has the model's block, context and want; positions advance by exactly one block
     /// on the model's grid; the long-run length is exact; after priming there is never an underrun
     /// (the output never dips to silence); errors keep the accounting of an error-free run.
@@ -1951,5 +2267,159 @@ mod tests {
             let plain = VcStreamHarness::new(Box::new(Probe(Arc::new(Mutex::new(Vec::new())), fixed)), 48_000, 48_000, 1, 1, 0, 320, 960).unwrap();
             assert!(plain.reference().is_none());
         }
+    }
+
+    // ---- SOLA geometry (P3B-H) -----------------------------------------------------------------
+
+    /// The slack names parse (case-insensitive), the default is P3's rounding, and the options fill
+    /// only what is unset.
+    #[test]
+    fn sola_options_parse_and_default() {
+        assert_eq!(SolaSlack::parse(" Aligned "), Some(SolaSlack::Aligned));
+        assert_eq!(SolaSlack::parse("LEGACY"), Some(SolaSlack::Legacy));
+        assert_eq!(SolaSlack::parse("nope"), None);
+        assert_eq!(SOLA_SLACK_DEFAULT, SolaSlack::Legacy, "a flip moves the default together with plan::DEFAULT_SOLA_TAIL_16K");
+        let set = HarnessOptions {
+            sola_search_ms: Some(2.0),
+            sola_center_bias: Some(0.2),
+            sola_slack: Some(SolaSlack::Aligned),
+        };
+        assert_eq!(set.with_env(), set, "explicit options are never overridden by the environment");
+        assert_eq!(HarnessOptions::default(), HarnessOptions { sola_search_ms: None, sola_center_bias: None, sola_slack: None });
+    }
+
+    /// 20 ms of crossfade puts a 40 / 32 / 48 kHz stream's tail on a frame boundary only when the
+    /// slack is dropped: 481 -> 480 samples, one decoded 10 ms frame less per tick. A window that is
+    /// not a whole number of input samples keeps the slack unless it would add a frame.
+    #[test]
+    fn the_aligned_tail_is_on_the_frame_grid() {
+        for sr in [32_000u32, 40_000, 48_000] {
+            let overlap = crossfade_samples_of(20.0, sr);
+            let legacy = sola_tail_with(overlap, overlap / 2, 16_000, sr, SolaSlack::Legacy);
+            let aligned = sola_tail_with(overlap, overlap / 2, 16_000, sr, SolaSlack::Aligned);
+            assert_eq!((legacy, aligned), (481, 480), "{sr} Hz");
+            let block = 640;
+            assert_eq!((block + legacy).div_ceil(160), 8, "{sr}: legacy decodes 8 frames");
+            assert_eq!((block + aligned).div_ceil(160), 7, "{sr}: aligned decodes 7");
+        }
+        // Other crossfades at 40 kHz: exact windows lose their slack.
+        for (ms, want_aligned) in [(10.0, 240usize), (15.0, 360), (5.0, 120), (30.0, 720)] {
+            let overlap = crossfade_samples_of(ms, 40_000);
+            let tail = sola_tail_with(overlap, overlap / 2, 16_000, 40_000, SolaSlack::Aligned);
+            assert_eq!(tail, want_aligned, "{ms} ms");
+            assert!(tail < sola_tail_with(overlap, overlap / 2, 16_000, 40_000, SolaSlack::Legacy), "{ms} ms drops the slack");
+        }
+        // Not exact (240.4 input samples): the slack stays while it adds no frame ...
+        assert_eq!(sola_tail_with(401, 200, 16_000, 40_000, SolaSlack::Aligned), 242);
+        assert_eq!(sola_tail_with(401, 200, 16_000, 40_000, SolaSlack::Legacy), 242);
+        // ... and goes when it would (159.6 -> 160 needed, 161 with the slack).
+        assert_eq!(sola_tail_with(399, 0, 16_000, 40_000, SolaSlack::Aligned), 160);
+        assert_eq!(sola_tail_with(399, 0, 16_000, 40_000, SolaSlack::Legacy), 161);
+        // The window always covers the search at the model's rounding, aligned or not.
+        for (ov, search, out) in [(800usize, 400usize, 40_000u32), (640, 320, 32_000), (960, 480, 48_000), (399, 0, 40_000), (401, 200, 40_000), (801, 7, 48_000)] {
+            for slack in [SolaSlack::Legacy, SolaSlack::Aligned] {
+                let tail = sola_tail_with(ov, search, 16_000, out, slack);
+                let returned = (tail as u64 * u64::from(out) + 8_000) / 16_000;
+                assert!(
+                    returned as usize >= ov + search,
+                    "{ov}+{search} @ {out} {slack:?}: the model returns {returned} samples for the tail {tail}"
+                );
+            }
+        }
+    }
+
+    /// The factory plans the engine's shapes from `sola_want_16k`; it equals what the harness asks
+    /// a fixed-block model for, in every slack mode, for any crossfade and search window (the
+    /// overlap clamped to one emitted block included).
+    #[test]
+    fn the_planned_want_is_the_harness_want() {
+        for slack in [SolaSlack::Legacy, SolaSlack::Aligned] {
+            for (block, out_sr, xfade_ms, search_ms) in [
+                (640usize, 40_000u32, 20.0f64, None),
+                (640, 40_000, 10.0, None),
+                (640, 48_000, 20.0, Some(2.0)),
+                (640, 32_000, 20.0, Some(0.0)),
+                (320, 40_000, 40.0, None), // the crossfade exceeds one 20 ms block: clamped
+                (1_280, 48_000, 5.0, Some(10.0)),
+                (640, 40_000, 20.0, Some(10.0)),
+            ] {
+                let options = HarnessOptions {
+                    sola_search_ms: search_ms,
+                    sola_center_bias: None,
+                    sola_slack: Some(slack),
+                };
+                let planned = sola_want_16k(block, xfade_ms, out_sr, options);
+                let (stub, _) = FixedStub::boxed(block, out_sr, false, Vec::new());
+                let warm = stub.warm.clone();
+                let crossfade_samples = crossfade_samples_of(xfade_ms, out_sr);
+                let h = VcStreamHarness::with_options(stub, 48_000, 48_000, 1, 1, 1_600, crossfade_samples, 480, HarnessContext::default(), options).unwrap();
+                let (b, context) = h.fixed_shape().unwrap();
+                assert_eq!(b, block);
+                let seen = warm.lock().unwrap().clone();
+                assert_eq!(seen, vec![(context, planned)], "block {block} @ {out_sr} Hz, {xfade_ms} ms, search {search_ms:?}, {slack:?}");
+            }
+        }
+    }
+
+    /// A narrower search window shrinks the tail the model must return and the alignment still finds
+    /// a shifted copy inside it (and not outside it); an explicit centre pull is used.
+    #[test]
+    fn a_narrow_search_window_aligns_inside_it() {
+        let mut seed = 0x1234_5678u32;
+        let x: Vec<f32> = (0..6000)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+            })
+            .collect();
+        let (ov, block, search) = (64usize, 200usize, 16usize);
+        let len = block + ov + search;
+        let center = search / 2;
+        let mut narrow = SolaStitcher::with_search(ov, search, SOLA_CENTER_BIAS);
+        assert_eq!(narrow.search(), 16);
+        narrow.process(&x[..len], block);
+        // The next tick's audio sits 5 samples before the nominal point: inside the window.
+        let s = block + 5;
+        let out = narrow.process(&x[s..s + len], block);
+        let off = center - 5;
+        for (i, (&o, &e)) in out.iter().zip(x[s + off..].iter()).enumerate() {
+            assert!((o - e).abs() < 1e-5, "sample {i}: {o} vs {e}");
+        }
+        assert_eq!(narrow.last_join.map(|j| j.0), Some(-5));
+        // 12 samples early is outside the +-8 window: the join stays inside the window.
+        let mut narrow = SolaStitcher::with_search(ov, search, SOLA_CENTER_BIAS);
+        narrow.process(&x[..len], block);
+        let s = block + 12;
+        narrow.process(&x[s..s + len], block);
+        assert!(narrow.last_join.is_some_and(|(off, _)| off.abs() <= (search / 2) as isize), "{:?}", narrow.last_join);
+        // The centre pull breaks a tie toward the nominal point.
+        let tail: Vec<f32> = (0..32).map(|k| ((k as f32) * 0.7).sin()).collect();
+        let mut chunk = vec![0.0f32; 32 + 16];
+        chunk[4..36].copy_from_slice(&tail);
+        let window = 16;
+        let mut weak = SolaStitcher::with_search(32, 16, 0.0);
+        weak.prev_tail = tail.clone();
+        assert_eq!(weak.best_offset(&chunk, 32, window, 8), 4);
+        let mut strong = SolaStitcher::with_search(32, 16, 50.0);
+        strong.prev_tail = tail;
+        assert_eq!(strong.best_offset(&chunk, 32, window, 8), 8, "a strong pull wins over the match");
+    }
+
+    /// An explicit search window of zero disables the alignment (the nominal rejoin point) and asks
+    /// the model for no extra search samples.
+    #[test]
+    fn a_zero_search_window_joins_at_the_nominal_point() {
+        let options = HarnessOptions {
+            sola_search_ms: Some(0.0),
+            sola_center_bias: None,
+            sola_slack: Some(SolaSlack::Aligned),
+        };
+        // 20 ms @ 40 kHz: 800 samples of overlap = 320 input samples; no search.
+        assert_eq!(sola_want_16k(640, 20.0, 40_000, options), 640 + 320);
+        let mut sola = SolaStitcher::with_search(800, 0, SOLA_CENTER_BIAS);
+        let chunk: Vec<f32> = (0..1600 + 800).map(|k| (k as f32 * 0.01).sin()).collect();
+        let out = sola.process(&chunk, 1600);
+        assert_eq!(out.len(), 1600);
+        assert_eq!(sola.last_join, None, "no history on the first tick");
     }
 }

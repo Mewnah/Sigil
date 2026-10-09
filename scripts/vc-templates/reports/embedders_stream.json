@@ -1,0 +1,156 @@
+{
+  "gates": {
+    "fp32": {
+      "rel_l2": 0.0001
+    },
+    "fp16": {
+      "rel_l2": 0.01,
+      "cosine": 0.9995
+    },
+    "int8": {
+      "rel_l2": 0.07,
+      "cosine": 0.997
+    }
+  },
+  "source_revision": "70ed563897504c756ec94067c12c902c4fd42025",
+  "embedders": {
+    "contentvec": {
+      "id": "vc/embedder-contentvec",
+      "ep": "cpu",
+      "variants": {
+        "fp32": "pass",
+        "fp16": "pass"
+      },
+      "rows": [
+        {
+          "variant": "stream.fp32",
+          "stats": "window",
+          "input": "jfk.wav[:16123]",
+          "rel_l2": 2.011504578570527e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "foreign",
+          "input": "jfk.wav[:16123]",
+          "rel_l2": 1.2228294058298556e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "window",
+          "input": "jfk.wav[:7040]",
+          "rel_l2": 1.7616193835985712e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "foreign",
+          "input": "jfk.wav[:7040]",
+          "rel_l2": 2.2216462144938225e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "window",
+          "input": "ja-short.wav[:16123]",
+          "rel_l2": 5.2510433010389996e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "foreign",
+          "input": "ja-short.wav[:16123]",
+          "rel_l2": 2.591217704219045e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "window",
+          "input": "ja-short.wav[:7040]",
+          "rel_l2": 4.787132949051146e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp32",
+          "stats": "foreign",
+          "input": "ja-short.wav[:7040]",
+          "rel_l2": 2.552337903367301e-06,
+          "cosine": 1.0,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "window",
+          "input": "jfk.wav[:16123]",
+          "rel_l2": 0.0006792227827396936,
+          "cosine": 0.9999998211860657,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "foreign",
+          "input": "jfk.wav[:16123]",
+          "rel_l2": 0.0006795842615977729,
+          "cosine": 0.9999998211860657,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "window",
+          "input": "jfk.wav[:7040]",
+          "rel_l2": 0.0012116207043438867,
+          "cosine": 0.9999991655349731,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "foreign",
+          "input": "jfk.wav[:7040]",
+          "rel_l2": 0.0014693264414562884,
+          "cosine": 0.999998927116394,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "window",
+          "input": "ja-short.wav[:16123]",
+          "rel_l2": 0.0026019278983610353,
+          "cosine": 0.9999964833259583,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "foreign",
+          "input": "ja-short.wav[:16123]",
+          "rel_l2": 0.0011944724034875674,
+          "cosine": 0.9999992847442627,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "window",
+          "input": "ja-short.wav[:7040]",
+          "rel_l2": 0.006692099665687635,
+          "cosine": 0.9999778270721436,
+          "ok": true
+        },
+        {
+          "variant": "stream.fp16",
+          "stats": "foreign",
+          "input": "ja-short.wav[:7040]",
+          "rel_l2": 0.005079864954464019,
+          "cosine": 0.9999871850013733,
+          "ok": true
+        }
+      ]
+    }
+  }
+}

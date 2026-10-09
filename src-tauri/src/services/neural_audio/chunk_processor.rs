@@ -35,6 +35,47 @@ pub fn clamp_chunk_frames(v: u32) -> usize {
     }
 }
 
+/// The engine block (in 10 ms frames) a block of `block_ms` plans to: rounded up to whole 10 ms
+/// frames, then to a whole number of 20 ms (`engine::plan::block_frames`), at least two.
+fn plan_block_frames(block_ms: f64) -> usize {
+    ((block_ms / 10.0 - 1e-9).ceil().max(1.0) as usize).div_ceil(2) * 2
+}
+
+/// The device block of a template voice under `device_block = model_divisor` (P3B-H): a divisor of
+/// the engine block, so every `block / chunk`-th device block completes a model block exactly when its
+/// audio is due and the harness holds back only `block - chunk` instead of the burst cushion an
+/// unrelated size needs (512 frames against a 40 ms block at 48 kHz cost 7.4 ms more). It is 10 ms at
+/// the device rate when that is a whole number of frames (480 at 48 kHz, 441 at 44.1 kHz; the engine
+/// block is always a whole number of 20 ms, so 10 ms divides it), else the default 512. `None` when the
+/// engine block is derived from the device block (`block_ms` 0: see [`model_divisor_chunk_auto`]) or the
+/// rate has no whole-frame 10 ms. (The capture hub does not report the WASAPI period, so no
+/// device-reported period is considered.)
+pub fn model_divisor_chunk(block_ms: f64, rate: u32) -> Option<usize> {
+    if !(block_ms.is_finite() && block_ms > 0.0) || rate == 0 {
+        return None;
+    }
+    let ten_ms = rate.is_multiple_of(100).then_some((rate / 100) as usize)?;
+    let block = (plan_block_frames(block_ms) * ten_ms).max(1);
+    let divides = |p: usize| p >= 160 && p <= block && block.is_multiple_of(p);
+    Some(if divides(ten_ms) { ten_ms } else { DEFAULT_CHUNK_FRAMES })
+}
+
+/// [`model_divisor_chunk`] with the engine block on automatic (`block_ms` 0). The engine then derives
+/// its block from the device block (`presets::engine_preset`: `chunk_frames` at `rate`, capped at the
+/// longest block, planned to whole 20 ms), so a 512-frame chunk at 48 kHz (10.7 ms) runs 20 ms blocks
+/// that 512 does not divide, while 480 does. The divisor is taken only when the smaller device block
+/// derives the SAME engine block (a 1024-frame chunk runs 40 ms blocks; 10 ms chunks would shrink them
+/// to 20 ms, which changes the block, not the alignment): otherwise `None` and the chunk stays.
+pub fn model_divisor_chunk_auto(chunk_frames: usize, rate: u32) -> Option<usize> {
+    use super::vc::engine::presets::MAX_DERIVED_BLOCK_MS;
+    if chunk_frames == 0 || rate == 0 {
+        return None;
+    }
+    let derived = |frames: usize| plan_block_frames((frames as f64 * 1000.0 / f64::from(rate)).min(MAX_DERIVED_BLOCK_MS));
+    let chunk = model_divisor_chunk(derived(chunk_frames) as f64 * 10.0, rate)?;
+    (derived(chunk) == derived(chunk_frames)).then_some(chunk)
+}
+
 const PITCH_EPSILON: f32 = 0.01;
 
 /// One-pole lowpass state per channel (simple formant / brightness tilt).
@@ -441,6 +482,63 @@ mod tests {
         let before = x.clone();
         apply_formant_interleaved(&mut x, 1, rvc_output_tilt(0.5, 2.0), &mut [FormantLpState::default()], 48_000.0);
         assert_eq!(x, before);
+    }
+
+    #[test]
+    fn the_model_divisor_block_divides_the_engine_block() {
+        // 40 ms blocks: 10 ms at the device rate, whole frames at 48 / 44.1 / 32 / 16 kHz.
+        assert_eq!(model_divisor_chunk(40.0, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk(40.0, 44_100), Some(441));
+        assert_eq!(model_divisor_chunk(40.0, 32_000), Some(320));
+        assert_eq!(model_divisor_chunk(40.0, 16_000), Some(160));
+        // Odd 10 ms counts round up to a whole 20 ms like the engine's plan: 30 ms is 40 ms.
+        assert_eq!(model_divisor_chunk(30.0, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk(20.0, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk(200.0, 48_000), Some(480));
+        // A rate without a whole-frame 10 ms has no divisor.
+        assert_eq!(model_divisor_chunk(40.0, 22_050), None);
+        // A derived block (block_ms 0) is the automatic case's.
+        assert_eq!(model_divisor_chunk(0.0, 48_000), None);
+        assert_eq!(model_divisor_chunk(f64::NAN, 48_000), None);
+        for rate in [16_000u32, 32_000, 44_100, 48_000, 96_000] {
+            for ms in [20.0, 40.0, 60.0, 80.0, 100.0, 120.0] {
+                let chunk = model_divisor_chunk(ms, rate).unwrap();
+                let block = (ms / 20.0).ceil() as usize * 2 * (rate / 100) as usize;
+                assert!(chunk >= 160 && block.is_multiple_of(chunk), "{ms} ms @ {rate}: chunk {chunk} of {block}");
+            }
+        }
+    }
+
+    /// The default setup (block on automatic, 512-frame chunk) used to ignore `model_divisor` silently:
+    /// the engine derives its block from the chunk, so the divisor of "the" block was never looked up.
+    #[test]
+    fn the_automatic_engine_block_gets_a_divisor_too() {
+        // 512 @ 48 kHz (10.7 ms) plans 20 ms blocks; 480 divides them, and 10 ms chunks derive the same
+        // 20 ms block.
+        assert_eq!(model_divisor_chunk_auto(512, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk_auto(512, 44_100), Some(441));
+        assert_eq!(model_divisor_chunk_auto(480, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk_auto(960, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk_auto(160, 48_000), Some(480));
+        assert_eq!(model_divisor_chunk_auto(320, 32_000), Some(320));
+        // Chunks of 20 ms and more derive longer engine blocks; 10 ms chunks would change the block.
+        assert_eq!(model_divisor_chunk_auto(1_024, 48_000), None);
+        assert_eq!(model_divisor_chunk_auto(2_048, 48_000), None);
+        assert_eq!(model_divisor_chunk_auto(12_288, 48_000), None, "past the 200 ms cap too");
+        // No whole-frame 10 ms, or nothing to derive from.
+        assert_eq!(model_divisor_chunk_auto(512, 22_050), None);
+        assert_eq!(model_divisor_chunk_auto(0, 48_000), None);
+        assert_eq!(model_divisor_chunk_auto(512, 0), None);
+        // Whatever it returns derives the engine block of the chunk it replaces (the plan's rounding).
+        use crate::services::neural_audio::vc::engine::{plan::block_frames, presets::MAX_DERIVED_BLOCK_MS};
+        for rate in [16_000u32, 32_000, 44_100, 48_000, 96_000] {
+            for chunk in ALLOWED_CHUNK_FRAMES.iter().map(|&c| c as usize) {
+                let Some(divisor) = model_divisor_chunk_auto(chunk, rate) else { continue };
+                let block = |frames: usize| block_frames((frames as f64 * 1000.0 / f64::from(rate)).min(MAX_DERIVED_BLOCK_MS)).unwrap();
+                assert_eq!(block(divisor), block(chunk), "{chunk} @ {rate} -> {divisor}");
+                assert!((block(chunk) * 10 * rate as usize / 1000).is_multiple_of(divisor), "{chunk} @ {rate} -> {divisor} divides the block");
+            }
+        }
     }
 
     #[test]

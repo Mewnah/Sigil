@@ -4,12 +4,15 @@ import { zSafe } from "@/utils";
 
 import { normalizeChunkFramesValue } from "./chunkFrames";
 import {
+    AUTO_MS,
     AUX_MIC_GATES,
     DENOISERS,
+    DEVICE_BLOCKS,
     EXECUTION_PROVIDERS,
     F0_RANGES,
     LATENCY_PRESETS,
     LEVER_MODES,
+    OUTPUT_CUSHIONS,
     PITCH_EXTRACTORS,
     PRECISIONS,
     RVC_EXECUTION_PROVIDERS,
@@ -53,6 +56,10 @@ export const F0RangeSchema = z.enum(F0_RANGES);
 export const WorkerPrioritySchema = z.enum(WORKER_PRIORITIES);
 
 export const AuxMicGateSchema = z.enum(AUX_MIC_GATES);
+
+export const OutputCushionSchema = z.enum(OUTPUT_CUSHIONS);
+
+export const DeviceBlockSchema = z.enum(DEVICE_BLOCKS);
 
 const R = VC_NUMBER_RANGES;
 
@@ -175,6 +182,26 @@ export const VoiceChangerStateSchema = z.object({
     // ---- P5: voice families (P5-S0; Rust name `reference_voice_id`) ----
     /** Voice-library id of a zero-shot voice's reference (`""` = none). Per voice; switch. */
     referenceVoiceId: zSafe(z.string(), ""),
+
+    // ---- P3B: voice-engine optimization (P3B-S0; Rust names in `params.ts`; no UI until P3B-H) ----
+    /** Window-independent content normalisation lever (P3B-D). Restart. */
+    contentNorm: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    /** Cross-tick F0 decoding lever (P3B-F). Restart. */
+    f0Decode: zSafe(LeverModeSchema, VC_ENUM_DEFAULTS.leverMode),
+    /** `fixed` prefill or `adaptive` cushion (P3B-H). Restart. */
+    outputCushion: zSafe(OutputCushionSchema, VC_ENUM_DEFAULTS.outputCushion),
+    /** SOLA search window (ms); `AUTO_MS` (-1) = automatic (P3B-H). Restart. */
+    solaSearchMs: zSafe(
+        z.number().refine((n) => n === AUTO_MS || (n >= R.sola_search_ms.min && n <= R.sola_search_ms.max)),
+        R.sola_search_ms.default,
+    ),
+    /** `fixed` device block or `model_divisor` (template voices; P3B-H). Restart. */
+    deviceBlock: zSafe(DeviceBlockSchema, VC_ENUM_DEFAULTS.deviceBlock),
+    /** Content-encoder left context (ms); `AUTO_MS` (-1) = the preset's (P3B-D). Restart. */
+    contentContextMs: zSafe(
+        z.number().refine((n) => n === AUTO_MS || (n >= R.content_context_ms.min && n <= R.content_context_ms.max)),
+        R.content_context_ms.default,
+    ),
 });
 
 export type VoiceChangerState = z.infer<typeof VoiceChangerStateSchema>;

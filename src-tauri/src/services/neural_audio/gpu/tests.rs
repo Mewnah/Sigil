@@ -438,6 +438,59 @@ fn directml_plan_on_the_high_priority_queue() {
     check_host_read_inputs("dml", &opts);
 }
 
+/// P3B-G (Windows, hardware GPU): sessions asked for the shared normal-priority DirectML device and
+/// queue run on one queue per adapter (the same object for every session while a holder keeps it,
+/// normal priority; the cache is weak, so the queue goes with its last holder), and compute what a
+/// session on its own queue computes.
+#[cfg(windows)]
+#[test]
+fn directml_sessions_share_one_normal_priority_queue() {
+    use crate::services::diagnostics::gpu_mem;
+    use crate::services::neural_audio::ort_session::{build_session_ext, GpuExtras};
+    let Some(adapter) = gpu_mem::adapters().into_iter().find(|a| !a.software) else {
+        eprintln!("no hardware GPU; skipped");
+        return;
+    };
+    if !dml_queue::available() {
+        eprintln!("DirectML entry points not present next to the test binary; skipped");
+        return;
+    }
+    let bytes = affine_model();
+    let opts = VcSessionOptions { cuda_device_index: adapter.index as i32, ..VcSessionOptions::default() };
+    let dims = |b: ort::session::builder::SessionBuilder, _: &str| b.with_dimension_override("N", N as i64).map_err(|e| e.to_string());
+    let shared = GpuExtras { dml_shared: true, ..GpuExtras::default() };
+    let mut queues = Vec::new();
+    for extras in [&shared, &shared, &GpuExtras::default()] {
+        let built = build_session_ext(Some("test.gpu.dml_shared"), "dml", &opts, ModelSource::Memory(&bytes), extras, &dims).unwrap();
+        if built.outcome.active != "dml" {
+            eprintln!("DirectML unavailable here ({:?}); skipped", built.outcome);
+            return;
+        }
+        let mut session = built.session;
+        let x: Vec<f32> = (0..N).map(|i| i as f32 * 0.5 - 1.0).collect();
+        let k: Vec<i64> = vec![1; N];
+        let out = session
+            .run(ort::inputs![
+                "x" => ort::value::Tensor::from_array(([1usize, N], x.clone())).unwrap(),
+                "k" => ort::value::Tensor::from_array(([1usize, N], k.clone())).unwrap()
+            ])
+            .unwrap();
+        let (_, y) = out["y"].try_extract_tensor::<f32>().unwrap();
+        assert_eq!(y, expected_affine(&x, &k).as_slice());
+        drop(out);
+        queues.push(built.applied.dml_shared.clone());
+        assert!(built.applied.dml_queue.is_none(), "never the high-priority queue");
+    }
+    let (a, b) = (queues[0].as_ref().expect("shared queue"), queues[1].as_ref().expect("shared queue"));
+    assert!(std::sync::Arc::ptr_eq(a, b), "one queue per adapter");
+    assert_eq!(a.priority(), 0, "normal priority");
+    a.check_not_removed().unwrap();
+    assert!(queues[2].is_none(), "a session that did not ask keeps its own queue");
+    // While a holder lives, a later hand-out returns the same queue.
+    let again = dml_queue::DmlQueue::shared_normal(adapter.index).unwrap();
+    assert!(std::sync::Arc::ptr_eq(a, &again));
+}
+
 /// Whether CUDA sessions can run in this test process (provider next to the executable and the
 /// NVIDIA runtime found): a CUDA plan that lands on CUDA.
 fn cuda_ready(opts: &VcSessionOptions) -> bool {
@@ -750,7 +803,7 @@ fn gpu_lever_bench() {
         let load = gpu_load.map(|duty| {
             use crate::services::bench::spec::{GpuLoadSpec, LoadSpec};
             let spec = LoadSpec {
-                gpu: Some(GpuLoadSpec { duty, period_ms: 20.0, execution_provider: ep.clone(), device_index: 0, size: 2048, depth: 4 }),
+                gpu: Some(GpuLoadSpec { duty, period_ms: 20.0, execution_provider: ep.clone(), device_index: 0, size: 2048, depth: 4, out_of_process: false }),
                 cpu: None,
             };
             let handle = crate::services::bench::load_sim::LoadHandle::start(&spec).expect("GPU load starts");
@@ -1083,4 +1136,304 @@ fn shared_cuda_arena_serves_several_sessions() {
         let (_, y) = out["y"].try_extract_tensor::<f32>().unwrap();
         assert_eq!(y, expected_affine(&x, &k).as_slice());
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// P3B-G: asynchronous runs and the event chain, the CUDA waits, the arena shrink before capture
+// ---------------------------------------------------------------------------------------------
+
+/// `out = x * scale + bias + 0 * sum(chain(x))` at `[1, rows, cols]`, where `chain` is `k` chained
+/// `[rows, cols] @ I[cols, cols]` MatMuls: an exact affine map whose graph replays long enough (the
+/// chain's launches) that work enqueued behind it on another stream really has to wait for it.
+fn slow_affine_model(input: &str, output: &str, rows: usize, cols: usize, k: usize, scale: f32, bias: f32) -> Vec<u8> {
+    let mut g = Graph::new();
+    let eye: Vec<f32> = (0..cols * cols).map(|i| if i / cols == i % cols { 1.0 } else { 0.0 }).collect();
+    g.input(input, FLOAT, &[Dim::Fixed(1), Dim::Fixed(rows as u64), Dim::Fixed(cols as u64)])
+        .init_f32("eye", &[cols as u64, cols as u64], &eye)
+        .init_i64("shape2", &[2], &[rows as i64, cols as i64])
+        .init_f32("scale", &[1], &[scale])
+        .init_f32("bias", &[1], &[bias])
+        .init_f32("zero", &[1], &[0.0])
+        .node("Reshape", &[input, "shape2"], &["h0"], &[]);
+    for i in 0..k {
+        let (a, b) = (format!("h{i}"), format!("h{}", i + 1));
+        g.node("MatMul", &[a.as_str(), "eye"], &[b.as_str()], &[]);
+    }
+    let last = format!("h{k}");
+    g.node("ReduceSum", &[last.as_str()], &["s"], &[Attr::Int("keepdims", 1)])
+        .node("Mul", &["s", "zero"], &["z"], &[])
+        .node("Mul", &[input, "scale"], &["xs"], &[])
+        .node("Add", &["xs", "bias"], &["xb"], &[])
+        .node("Add", &["xb", "z"], &[output], &[])
+        .output(output, FLOAT, &[Dim::Fixed(1), Dim::Fixed(rows as u64), Dim::Fixed(cols as u64)]);
+    g.model_bytes(17)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_of(bytes: &[u8], component: &str, ep: &str, input: &str, output: &str, shape: &[usize], levers: GpuLevers, tuning: CudaTuning) -> SessionPlan {
+    let opts = VcSessionOptions::default();
+    SessionPlan::build_with(
+        &PlanSpec {
+            component,
+            ep,
+            opts: &opts,
+            model: ModelSource::Memory(bytes),
+            weights: None,
+            dims: &[],
+            inputs: &[TensorSpec::f32(input, shape)],
+            outputs: &[TensorSpec::f32(output, shape)],
+            levers,
+        },
+        tuning,
+    )
+    .unwrap()
+}
+
+use super::plan::CudaTuning;
+
+/// Off the CUDA device path `run_async` is a synchronous run and `wait` / `poll` are no-ops: the
+/// generator's device chain degrades to the host path with the same results (CPU here).
+#[test]
+fn async_runs_are_synchronous_off_the_device_path() {
+    let opts = VcSessionOptions::default();
+    for levers in [GpuLevers::default(), io_binding()] {
+        let (mut enc, mut dec) = enc_dec("cpu", levers, &opts);
+        assert_eq!(enc.wait_mode(), None, "no CUDA wait off the device path");
+        let x: Vec<f32> = (0..30).map(|i| i as f32 * 0.25).collect();
+        enc.input_f32("x").unwrap().copy_from_slice(&x);
+        enc.run_async().unwrap();
+        assert!(enc.poll().unwrap(), "nothing pending after a synchronous run");
+        enc.wait().unwrap();
+        let copy = RowCopy { rows: 3, row_len: 4, src_stride: 10, src_offset: 5, dst_stride: 4 };
+        enc.copy_rows_to("m", &mut dec, "w", copy).unwrap();
+        dec.run_async().unwrap();
+        dec.wait().unwrap();
+        let want: Vec<f32> = (0..3).flat_map(|c| (0..4).map(move |j| 3.0 * (c * 10 + 5 + j) as f32 * 0.25 + 1.0)).collect();
+        assert_eq!(dec.output("o").unwrap(), want.as_slice());
+    }
+}
+
+#[test]
+fn cuda_tuning_parses_the_wait_spin_and_shrink_keys() {
+    let t = CudaTuning::parse("wait=hybrid, spinus=120,shrink=1,maxws=0");
+    assert_eq!(t.wait_mode(), super::cuda_wait::WaitMode::Hybrid);
+    assert_eq!(t.spin_us, Some(120.0));
+    assert!(t.shrink_before_capture());
+    assert_eq!(t.max_workspace, Some(false));
+    let t = CudaTuning::parse("wait=sometimes,spinus=-3,shrink=0");
+    assert_eq!(t.wait, None, "an unknown wait keeps the default");
+    assert_eq!(t.spin_us, None, "a negative budget is ignored");
+    assert!(!t.shrink_before_capture());
+    assert_eq!(CudaTuning::DEFAULT.wait_mode(), super::cuda_wait::WaitMode::DEFAULT);
+    assert_eq!(CudaTuning::DEFAULT.shrink_before_capture(), super::plan::SHRINK_BEFORE_CAPTURE);
+    assert_eq!(CudaTuning::parse("wait=block").wait_mode(), super::cuda_wait::WaitMode::Block);
+}
+
+/// The event chain (dev rig, CUDA, graphs on both plans): the producer only enqueues its run, the
+/// consumer's stream copies the producer's output window after it (RAW, the producer's `done`
+/// event), and the producer's next run, enqueued while the consumer's stream is still busy with an
+/// earlier run, waits on the device for that copy before it overwrites its output (WAR, the
+/// `read_done` event). Every one of 120 ticks must see exactly its own window: a missing event in
+/// either direction shows up as a stale or a future window. No heap allocation per tick.
+#[test]
+#[ignore = "needs an NVIDIA GPU, the CUDA provider next to the test executable and the NVIDIA runtime (SIGIL_APP_DATA_DIR or SIGIL_TEST_CUDA_BIN)"]
+fn event_chain_orders_device_copies_without_host_waits() {
+    let opts = VcSessionOptions::default();
+    if !cuda_ready(&opts) {
+        return;
+    }
+    let (rows, t, f, start) = (64usize, 64usize, 32usize, 9usize);
+    let graphs = GpuLevers { io_binding: true, cuda_graphs: true, ..GpuLevers::default() };
+    for wait in [super::cuda_wait::WaitMode::Spin, super::cuda_wait::WaitMode::Block, super::cuda_wait::WaitMode::Hybrid] {
+        let tuning = CudaTuning { wait: Some(wait), ..CudaTuning::DEFAULT };
+        let enc_bytes = slow_affine_model("x", "m", rows, t, 400, 3.0, 0.0);
+        let dec_bytes = slow_affine_model("w", "o", rows, f, 400, 1.0, 1.0);
+        let mut enc = plan_of(&enc_bytes, "test.gpu.chain_enc", "cuda", "x", "m", &[1, rows, t], graphs, tuning);
+        let mut dec = plan_of(&dec_bytes, "test.gpu.chain_dec", "cuda", "w", "o", &[1, rows, f], graphs, tuning);
+        assert_eq!((enc.residency(), dec.residency()), (Residency::Device, Residency::Device), "{:?} {:?}", enc.notes(), dec.notes());
+        assert!(enc.levers().cuda_graphs && dec.levers().cuda_graphs, "{:?} {:?}", enc.notes(), dec.notes());
+        assert_eq!(enc.wait_mode(), Some(wait));
+        enc.set_output_download("m", false).unwrap();
+        let copy = RowCopy { rows, row_len: f, src_stride: t, src_offset: start, dst_stride: f };
+        let x_of = |i: usize| -> Vec<f32> { (0..rows * t).map(|j| ((i * 7919 + j * 31) % 2001) as f32 / 1000.0 - 1.0).collect() };
+        let want_of = |x: &[f32]| -> Vec<f32> {
+            (0..rows).flat_map(|r| (0..f).map(move |c| (r, c))).map(|(r, c)| 3.0 * x[r * t + start + c] + 1.0).collect()
+        };
+        const TICKS: usize = 120;
+        let xs: Vec<Vec<f32>> = (0..=TICKS).map(x_of).collect();
+        let wants: Vec<Vec<f32>> = xs.iter().map(|x| want_of(x)).collect();
+        enc.input_f32("x").unwrap().copy_from_slice(&xs[0]);
+        enc.run_async().unwrap();
+        let ((), allocs) = allocations_during(|| {
+            for i in 0..TICKS {
+                // The consumer's stream is busy with a run on its previous input when the copy is
+                // enqueued behind it, so the copy executes late.
+                dec.run_async().unwrap();
+                enc.copy_rows_to("m", &mut dec, "w", copy).unwrap();
+                // The producer's next run is enqueued at once: it must not overwrite `m` before the
+                // copy above has read it.
+                enc.input_f32("x").unwrap().copy_from_slice(&xs[i + 1]);
+                enc.run_async().unwrap();
+                dec.run().unwrap();
+                let got = dec.output("o").unwrap();
+                let bad = got.iter().zip(&wants[i]).filter(|(a, b)| (*a - *b).abs() > 1e-4).count();
+                assert_eq!(bad, 0, "{wait:?} tick {i}: {bad} values from another tick's window");
+            }
+        });
+        assert_eq!(allocs, 0, "{wait:?}: the chained device path allocated");
+        enc.wait().unwrap();
+        eprintln!("event chain with {wait:?} waits: 120 ticks exact");
+    }
+}
+
+/// Blocking waits do not burn the waiting thread (dev rig, CUDA, a graph that replays for a few
+/// milliseconds): the thread's CPU cycles over the waits, against the cycles a busy loop spends in
+/// the same wall time, are near 1 for the legacy spin under the driver's default scheduling and
+/// small for `block` and `hybrid` (whose spin budget is far below the run's length); every mode
+/// computes the same outputs.
+#[test]
+#[ignore = "needs an NVIDIA GPU, the CUDA provider next to the test executable and the NVIDIA runtime (SIGIL_APP_DATA_DIR or SIGIL_TEST_CUDA_BIN)"]
+fn blocking_waits_do_not_spin() {
+    use crate::services::bench::metrics::thread_cycles;
+    use super::cuda_wait::WaitMode;
+    let opts = VcSessionOptions::default();
+    if !cuda_ready(&opts) || thread_cycles().is_none() {
+        return;
+    }
+    let (rows, cols) = (64usize, 64usize);
+    let bytes = slow_affine_model("x", "y", rows, cols, 1500, 2.0, 0.5);
+    let graphs = GpuLevers { io_binding: true, cuda_graphs: true, ..GpuLevers::default() };
+    let x: Vec<f32> = (0..rows * cols).map(|j| (j % 17) as f32 * 0.125 - 1.0).collect();
+    let want: Vec<f32> = x.iter().map(|v| v * 2.0 + 0.5).collect();
+    // Cycles a busy thread spends per millisecond of wall time.
+    let busy_per_ms = {
+        let (c0, t0) = (thread_cycles().unwrap(), std::time::Instant::now());
+        while t0.elapsed().as_millis() < 50 {
+            std::hint::spin_loop();
+        }
+        (thread_cycles().unwrap() - c0) as f64 / (t0.elapsed().as_secs_f64() * 1000.0)
+    };
+    let mut ratios = Vec::new();
+    for wait in [WaitMode::Spin, WaitMode::Block, WaitMode::Hybrid] {
+        let tuning = CudaTuning { wait: Some(wait), ..CudaTuning::DEFAULT };
+        let mut plan = plan_of(&bytes, "test.gpu.wait", "cuda", "x", "y", &[1, rows, cols], graphs, tuning);
+        assert!(plan.levers().cuda_graphs, "{:?}", plan.notes());
+        plan.input_f32("x").unwrap().copy_from_slice(&x);
+        plan.warm_up(3).unwrap();
+        let (mut wait_cycles, mut wait_ms) = (0u64, 0f64);
+        for _ in 0..30 {
+            plan.input_f32("x").unwrap().copy_from_slice(&x);
+            plan.run_async().unwrap();
+            let (c0, t0) = (thread_cycles().unwrap(), std::time::Instant::now());
+            plan.wait().unwrap();
+            wait_ms += t0.elapsed().as_secs_f64() * 1000.0;
+            wait_cycles += thread_cycles().unwrap() - c0;
+            let got = plan.output("y").unwrap();
+            assert!(got.iter().zip(&want).all(|(a, b)| (a - b).abs() <= 1e-5), "{wait:?}: wrong output");
+        }
+        let ratio = wait_cycles as f64 / (busy_per_ms * wait_ms.max(1e-6));
+        eprintln!("{wait:?}: {:.2} ms per wait, CPU while waiting {:.0} % of a busy thread", wait_ms / 30.0, 100.0 * ratio);
+        assert!(wait_ms / 30.0 > 0.5, "the graph is too short to tell waits apart ({:.3} ms)", wait_ms / 30.0);
+        ratios.push(ratio);
+    }
+    assert!(ratios[1] < 0.3, "block waits spun: {:.0} %", 100.0 * ratios[1]);
+    assert!(ratios[2] < 0.4, "hybrid waits spun: {:.0} %", 100.0 * ratios[2]);
+    assert!(ratios[1] < ratios[0], "block {:.2} vs spin {:.2}", ratios[1], ratios[0]);
+}
+
+/// `[1, 64, 1024]` through three 1-D convolutions (k 7, 5 dilated 3, 3) with ReLUs: cuDNN searches
+/// an algorithm (and its workspace) for each.
+fn conv_model() -> Vec<u8> {
+    let (c, t) = (64u64, 1024u64);
+    let w = |k: u64, seed: u32| -> Vec<f32> {
+        (0..c * c * k)
+            .map(|j| ((j as u32).wrapping_mul(2654435761).wrapping_add(seed) >> 9) as f32 / (1u32 << 23) as f32 * 0.04 - 0.02)
+            .collect()
+    };
+    let mut g = Graph::new();
+    g.input("x", FLOAT, &[Dim::Fixed(1), Dim::Fixed(c), Dim::Fixed(t)])
+        .init_f32("w1", &[c, c, 7], &w(7, 1))
+        .init_f32("w2", &[c, c, 5], &w(5, 2))
+        .init_f32("w3", &[c, c, 3], &w(3, 3))
+        .node("Conv", &["x", "w1"], &["c1"], &[Attr::Ints("pads", vec![3, 3])])
+        .node("Relu", &["c1"], &["r1"], &[])
+        .node("Conv", &["r1", "w2"], &["c2"], &[Attr::Ints("pads", vec![6, 6]), Attr::Ints("dilations", vec![3])])
+        .node("Relu", &["c2"], &["r2"], &[])
+        .node("Conv", &["r2", "w3"], &["y"], &[Attr::Ints("pads", vec![1, 1])])
+        .output("y", FLOAT, &[Dim::Fixed(1), Dim::Fixed(c), Dim::Fixed(t)]);
+    g.model_bytes(17)
+}
+
+/// The arena shrink before the capture (dev rig, CUDA): the plan built with it still captures and
+/// checks its graph, its replays reproduce the plan built without it, and its session's CUDA arena
+/// reserves no more (the first warm-up's search workspace went back to the driver before the
+/// second warm-up and the capture).
+#[test]
+#[ignore = "needs an NVIDIA GPU, the CUDA provider next to the test executable and the NVIDIA runtime (SIGIL_APP_DATA_DIR or SIGIL_TEST_CUDA_BIN)"]
+fn shrink_before_capture_keeps_graphs() {
+    let opts = VcSessionOptions::default();
+    if !cuda_ready(&opts) {
+        return;
+    }
+    let bytes = conv_model();
+    let graphs = GpuLevers { io_binding: true, cuda_graphs: true, ..GpuLevers::default() };
+    let shape = [1usize, 64, 1024];
+    let x: Vec<f32> = (0..64 * 1024).map(|j| ((j * 37) % 101) as f32 / 50.0 - 1.0).collect();
+    let mut results = Vec::new();
+    for shrink in [false, true] {
+        let tuning = CudaTuning { shrink: Some(shrink), ..CudaTuning::DEFAULT };
+        let mut plan = plan_of(&bytes, "test.gpu.shrink", "cuda", "x", "y", &shape, graphs, tuning);
+        assert!(plan.levers().cuda_graphs, "shrink {shrink}: {:?}", plan.notes());
+        let arena = plan.arena_stats().and_then(|s| s.get("TotalAllocated").and_then(|v| v.parse::<f64>().ok())).map(|b| b / 1048576.0);
+        let shrinks = plan.arena_stats().and_then(|s| s.get("NumArenaShrinkages").cloned());
+        let mut outs = Vec::new();
+        for _ in 0..3 {
+            plan.input_f32("x").unwrap().copy_from_slice(&x);
+            plan.run().unwrap();
+            outs.push(plan.output("y").unwrap().to_vec());
+        }
+        assert!(outs.windows(2).all(|w| w[0] == w[1]), "shrink {shrink}: replays differ");
+        eprintln!("shrink {shrink}: arena reserved {arena:?} MiB (shrinkages {shrinks:?}), plan VRAM {:?} MB", plan.vram_mb());
+        results.push((outs.pop().unwrap(), arena));
+    }
+    let peak = results[0].0.iter().fold(1f32, |m, v| m.max(v.abs()));
+    let diff = results[0].0.iter().zip(&results[1].0).fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(diff <= 1e-3 * peak, "the shrunk plan computes something else: {diff} (peak {peak})");
+    if let (Some(before), Some(after)) = (results[0].1, results[1].1) {
+        assert!(after <= before + 0.5, "the shrink grew the arena: {before:.1} -> {after:.1} MiB");
+    }
+}
+
+/// P3B-G (review fix; dev rig, CUDA): ONNX Runtime refuses a shrink request for a device whose
+/// arena it does not hold (what a plugin EP's allocator looks like to it). The capture then repeats
+/// the first warm-up without the shrink, keeps its graph, replays correctly and records a note,
+/// instead of failing the capture and leaving the plan on bound host tensors.
+#[test]
+#[ignore = "needs an NVIDIA GPU, the CUDA provider next to the test executable and the NVIDIA runtime (SIGIL_APP_DATA_DIR or SIGIL_TEST_CUDA_BIN)"]
+fn a_refused_arena_shrink_keeps_the_graph() {
+    let opts = VcSessionOptions::default();
+    if !cuda_ready(&opts) {
+        return;
+    }
+    let bytes = conv_model();
+    let graphs = GpuLevers { io_binding: true, cuda_graphs: true, ..GpuLevers::default() };
+    let shape = [1usize, 64, 1024];
+    let x: Vec<f32> = (0..64 * 1024).map(|j| ((j * 37) % 101) as f32 / 50.0 - 1.0).collect();
+    let tuning = CudaTuning { shrink: Some(true), ..CudaTuning::DEFAULT };
+    // The reference: the plan without any shrink.
+    let mut plain = plan_of(&bytes, "test.gpu.shrink_ref", "cuda", "x", "y", &shape, graphs, CudaTuning { shrink: Some(false), ..CudaTuning::DEFAULT });
+    assert!(plain.levers().cuda_graphs, "{:?}", plain.notes());
+    plain.input_f32("x").unwrap().copy_from_slice(&x);
+    plain.run().unwrap();
+    let want = plain.output("y").unwrap().to_vec();
+    // A shrink request for CUDA device 7: no such arena on any rig.
+    super::plan::test_hooks::set_shrink_device(Some(7));
+    let mut plan = plan_of(&bytes, "test.gpu.shrink_refused", "cuda", "x", "y", &shape, graphs, tuning);
+    super::plan::test_hooks::set_shrink_device(None);
+    eprintln!("notes: {:?}", plan.notes());
+    assert!(plan.levers().cuda_graphs, "the refused shrink cost the plan its graph: {:?}", plan.notes());
+    assert!(plan.notes().iter().any(|n| n.starts_with("arena shrink:")), "no note that the shrink was dropped: {:?}", plan.notes());
+    plan.input_f32("x").unwrap().copy_from_slice(&x);
+    plan.run().unwrap();
+    assert_eq!(plan.output("y").unwrap(), want.as_slice(), "the replay differs from the plain plan's");
 }

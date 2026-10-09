@@ -1,0 +1,29 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-H pacing spec: the Sigil Voice Engine on ${EP} (reference config: 40 ms engine blocks, ${PITCH} F0, the Low-latency preset) behind a ${BLOCK_FRAMES}-frame device block, ${CROSSFADE_MS} ms crossfade, output cushion ${OUTPUT_CUSHION}, prefill ${PREFILL_MS_JSON} ms. RUNS_JSON picks the runs (paced, the load simulators, the soak). Compare the cushion (-CompareVars OUTPUT_CUSHION=adaptive), the device block (-CompareVars BLOCK_FRAMES=480) and the SOLA search (-CompareEnv SIGIL_VC_SOLA_SEARCH_MS=2; SIGIL_VC_SOLA_SLACK=aligned) in one exe with run-perf-gate.ps1.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": {
+    "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2,
+    "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS}, "crossfade_ms": ${CROSSFADE_MS},
+    "output_prefill_ms": ${PREFILL_MS_JSON}, "output_max_queue_ms": ${MAX_QUEUE_MS_JSON},
+    "output_cushion": "${OUTPUT_CUSHION}", "device_block": "${DEVICE_BLOCK}", "sola_search_ms": ${SOLA_SEARCH_JSON}
+  },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "block_ms": ${BLOCK_MS},
+    "lookahead_ms": ${LOOKAHEAD_MS},
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": ${RUNS_JSON},
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": ${WRITE_AUDIO_JSON} }
+}

@@ -23,12 +23,35 @@
 //! # Added by P3-C1
 //! [`SpeakerTable::from_rows`], [`SpeakerTable::dim`], [`SplitGenerator::flowdec_precision`],
 //! [`SplitGenerator::notes`], [`SplitGenerator::plan_levers`], [`SplitGenerator::template_has_f0`].
+//!
+//! # Device-resident generator (P3B-G)
+//! When both plans keep their I/O on the GPU (CUDA with IOBinding and graphs), `enc`'s `m_p` and
+//! `logs_p` never leave the device: [`encode`](SplitGenerator::encode) only enqueues `enc`
+//! (`SessionPlan::run_async`), and [`decode_window`](SplitGenerator::decode_window) copies the
+//! window's columns into `flowdec`'s inputs with a strided device-to-device copy that `flowdec`'s
+//! stream orders after `enc` (a CUDA event), then runs `flowdec` and waits once. One host wait per
+//! generator call instead of two, no 2 x latent x T download and re-upload, and the CPU prepares the
+//! window's noise and phase while `enc` runs. Bit-identical to the host path (the same values are
+//! copied). `SIGIL_VC_DEVICE_CHAIN=0` keeps the host path ([`DEVICE_CHAIN_ENV`]).
+//! [`SplitGenerator::device_chain`] reports which path runs. The stage spans then time `enc` as
+//! its enqueue only and `flowdec` as both GPU runs; the benchmark's per-plan GPU times
+//! (`SIGIL_BENCH_GPU_TIMING=1`) split them, and its `vc.enc_flowdec_gap` time is the device gap
+//! between `enc`'s end and `flowdec`'s start (`SessionPlan::gpu_gap_ms_to`), on either path.
+//!
+//! # Concurrent builds (P3B-G, T9)
+//! `enc` and `flowdec` build on two threads ([`PARALLEL_LOAD_DEFAULT`] on, `SIGIL_VC_PARALLEL_LOAD=0`
+//! turns it off; the helper thread takes the loading thread's priority and EcoQoS state, so a
+//! background load stays a background load, and the engine load passes `false` for one). Their VRAM
+//! is measured over both builds together and split between the two plans in proportion to what each
+//! saw. The same switch drives the engine load's parallel cold start (`load.rs`).
 
 use std::path::Path;
 
 use crate::services::diagnostics::EpOutcome;
-use crate::services::neural_audio::gpu::{ExternalWeights, GpuLevers, PlanSpec, SessionPlan, TensorSpec};
-use crate::services::neural_audio::ort_session::{normalize_ep, ModelSource, VcSessionOptions};
+use crate::services::neural_audio::gpu::arena::{self, VramProbe};
+use crate::services::neural_audio::gpu::{ExternalWeights, GpuLevers, PlanSpec, Residency, RowCopy, SessionPlan, TensorSpec};
+use crate::services::neural_audio::ort_session::{device_for, normalize_ep, ModelSource, VcSessionOptions};
+use crate::services::neural_audio::telemetry::{self, LoadStage};
 use crate::services::neural_audio::vc::import::layout::{Parity, Template};
 use crate::services::neural_audio::vc::import::session::WeightImages;
 
@@ -118,6 +141,34 @@ impl SpeakerTable {
     }
 }
 
+/// `SIGIL_VC_DEVICE_CHAIN=0` keeps `enc`'s outputs on the host path (P3B-G's kill switch; see the
+/// module docs).
+pub const DEVICE_CHAIN_ENV: &str = "SIGIL_VC_DEVICE_CHAIN";
+
+/// `SIGIL_VC_PARALLEL_LOAD=0|1` builds `enc` and `flowdec` concurrently or one after the other (P3B-G;
+/// see the module docs).
+pub const PARALLEL_LOAD_ENV: &str = "SIGIL_VC_PARALLEL_LOAD";
+
+/// Whether `enc` and `flowdec` build concurrently when [`PARALLEL_LOAD_ENV`] is unset: on (P3B-I0,
+/// from P3B-G's interleaved load gates: DirectML Hodges-Lehmann -209 ms (95 % CI -451..-107, 7
+/// pairs), CUDA -114 ms over 16 pairs (CI -621..-64), VRAM equal; the engine load's own parallel
+/// cold start, `load::PARALLEL_LOAD_DEFAULT`, measured both together). `SIGIL_VC_PARALLEL_LOAD=0`
+/// turns both off. The engine load passes `false` for a background hot-switch load, which builds
+/// one session at a time beside the playing voice ([`SplitGenerator::load_branch`]).
+pub const PARALLEL_LOAD_DEFAULT: bool = true;
+
+fn device_chain_enabled() -> bool {
+    !matches!(std::env::var(DEVICE_CHAIN_ENV).as_deref().map(str::trim), Ok("0" | "off" | "false"))
+}
+
+fn parallel_load_enabled() -> bool {
+    match std::env::var(PARALLEL_LOAD_ENV).as_deref().map(str::trim) {
+        Ok("1" | "on" | "true") => true,
+        Ok("0" | "off" | "false") => false,
+        _ => PARALLEL_LOAD_DEFAULT,
+    }
+}
+
 /// Device class of the first rung of `ep`'s ladder (`cpu` / `gpu`).
 fn device_class(ep: &str) -> &'static str {
     if normalize_ep(ep) == "cpu" {
@@ -178,6 +229,8 @@ pub struct SplitGenerator {
     flow_frames: usize,
     samples: usize,
     flowdec_precision: &'static str,
+    /// `enc`'s outputs reach `flowdec` on the device (see the module docs).
+    chain: bool,
 }
 
 impl SplitGenerator {
@@ -190,6 +243,37 @@ impl SplitGenerator {
         ep: &str,
         opts: &VcSessionOptions,
         levers: &EffectiveLevers,
+    ) -> Result<SplitGenerator, String> {
+        Self::load_branch(template, weights, plan, ep, opts, levers, true)
+    }
+
+    /// [`load`](Self::load) as the engine's load runs it: `allow_parallel` false builds `enc` and
+    /// `flowdec` one after the other whatever [`PARALLEL_LOAD_ENV`] / [`PARALLEL_LOAD_DEFAULT`] say
+    /// (a background hot-switch load beside a playing voice, or the engine load's own switch off).
+    pub fn load_branch(
+        template: &Template,
+        weights: &WeightImages<'_>,
+        plan: &ShapePlan,
+        ep: &str,
+        opts: &VcSessionOptions,
+        levers: &EffectiveLevers,
+        allow_parallel: bool,
+    ) -> Result<SplitGenerator, String> {
+        Self::load_ext(template, weights, plan, ep, opts, levers, device_chain_enabled(), allow_parallel && parallel_load_enabled())
+    }
+
+    /// [`load`](Self::load) with the device chain allowed or not and the builds concurrent or not
+    /// (the environment switches' values; tests compare both paths in one process).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_ext(
+        template: &Template,
+        weights: &WeightImages<'_>,
+        plan: &ShapePlan,
+        ep: &str,
+        opts: &VcSessionOptions,
+        levers: &EffectiveLevers,
+        allow_chain: bool,
+        parallel: bool,
     ) -> Result<SplitGenerator, String> {
         let layout = &template.layout;
         let arch = &layout.arch;
@@ -213,19 +297,6 @@ impl SplitGenerator {
             enc_inputs.push(TensorSpec::i64("pitch", &[1, t]));
         }
         let enc_outputs = [TensorSpec::f32("m_p", &[1, latent, t]), TensorSpec::f32("logs_p", &[1, latent, t])];
-        let enc = build_plan(
-            template,
-            "enc",
-            "fp32",
-            weights,
-            ep,
-            opts,
-            &[("T", t as i64)],
-            &enc_inputs,
-            &enc_outputs,
-            gpu_levers,
-            "vc.enc",
-        )?;
 
         let class = device_class(ep);
         let (variant, note) = flowdec_variant(template, levers.precision, class, weights.f16.is_some());
@@ -244,24 +315,26 @@ impl SplitGenerator {
         }
         let fd_outputs = [TensorSpec::f32("audio", &[1, plan.decode_frames * upp])];
         let dims = [("F", f as i64), ("S", samples as i64)];
-        let mut flowdec = build_plan(
-            template,
-            "flowdec",
-            variant,
-            weights,
-            ep,
-            opts,
-            &dims,
-            &fd_inputs,
-            &fd_outputs,
-            gpu_levers,
-            "vc.flowdec",
-        )?;
+        let build_enc = || {
+            let _span = telemetry::load_span(LoadStage::EncSessionInit);
+            build_plan(template, "enc", "fp32", weights, ep, opts, &[("T", t as i64)], &enc_inputs, &enc_outputs, gpu_levers, "vc.enc")
+        };
+        let build_flowdec = || {
+            let _span = telemetry::load_span(LoadStage::FlowdecSessionInit);
+            build_plan(template, "flowdec", variant, weights, ep, opts, &dims, &fd_inputs, &fd_outputs, gpu_levers, "vc.flowdec")
+        };
+        let (enc, mut flowdec) = if parallel {
+            build_concurrently(ep, opts, build_enc, build_flowdec)?
+        } else {
+            let enc = build_enc()?;
+            (enc, build_flowdec()?)
+        };
         let mut flowdec_precision = variant;
         let mut flowdec_outcome = flowdec.outcome().clone();
         if variant == "fp16" && levers.precision == PrecisionMode::Auto && flowdec_outcome.active == "cpu" {
             // The ladder fell back to the CPU, where the recommendation is fp32 (the CPU fp16
             // path is emulated and slow). The outcome keeps the original request and reason.
+            let _span = telemetry::load_span(LoadStage::FlowdecSessionInit);
             flowdec = build_plan(
                 template,
                 "flowdec",
@@ -288,6 +361,13 @@ impl SplitGenerator {
             flowdec_outcome = flowdec.outcome().clone();
         }
         let outcomes = vec![("vc.enc".to_string(), enc.outcome().clone()), ("vc.flowdec".to_string(), flowdec_outcome)];
+        let mut enc = enc;
+        let chain = allow_chain && enc.residency() == Residency::Device && flowdec.residency() == Residency::Device;
+        if chain {
+            // m_p / logs_p are read only by the device copy into flowdec.
+            enc.set_output_download("m_p", false)?;
+            enc.set_output_download("logs_p", false)?;
+        }
         Ok(SplitGenerator {
             enc,
             flowdec,
@@ -300,6 +380,7 @@ impl SplitGenerator {
             flow_frames: f,
             samples,
             flowdec_precision,
+            chain,
         })
     }
 
@@ -318,7 +399,12 @@ impl SplitGenerator {
             }
             dst.copy_from_slice(pitch);
         }
-        self.enc.run().map_err(|e| format!("enc: {e}"))
+        if self.chain {
+            // Enqueued only: flowdec's stream waits for it on the device (`decode_window`).
+            self.enc.run_async().map_err(|e| format!("enc: {e}"))
+        } else {
+            self.enc.run().map_err(|e| format!("enc: {e}"))
+        }
     }
 
     /// Run `flowdec` over the window starting at frame `window_start` of the last `encode`,
@@ -338,11 +424,22 @@ impl SplitGenerator {
         if window_start + f > t {
             return Err(format!("flowdec window {window_start}+{f} runs past the {t}-frame context"));
         }
-        for name in ["m_p", "logs_p"] {
-            let src = self.enc.output(name)?;
-            let dst = self.flowdec.input_f32(name)?;
-            for ch in 0..c {
-                dst[ch * f..(ch + 1) * f].copy_from_slice(&src[ch * t + window_start..ch * t + window_start + f]);
+        if self.chain {
+            // The window's columns of every channel, device to device on flowdec's stream after
+            // enc's run.
+            let copy = RowCopy { rows: c, row_len: f, src_stride: t, src_offset: window_start, dst_stride: f };
+            for name in ["m_p", "logs_p"] {
+                self.enc
+                    .copy_rows_to(name, &mut self.flowdec, name, copy)
+                    .map_err(|e| format!("enc → flowdec: {e}"))?;
+            }
+        } else {
+            for name in ["m_p", "logs_p"] {
+                let src = self.enc.output(name)?;
+                let dst = self.flowdec.input_f32(name)?;
+                for ch in 0..c {
+                    dst[ch * f..(ch + 1) * f].copy_from_slice(&src[ch * t + window_start..ch * t + window_start + f]);
+                }
             }
         }
         copy_exact(self.flowdec.input_f32("z_noise")?, z_noise, "z_noise")?;
@@ -353,6 +450,16 @@ impl SplitGenerator {
             copy_exact(self.flowdec.input_f32("src_noise")?, src_noise, "src_noise")?;
         }
         self.flowdec.run().map_err(|e| format!("flowdec: {e}"))?;
+        if self.chain {
+            // flowdec ran after enc on the device: enc has completed; settle it without a wait.
+            self.enc.poll().map_err(|e| format!("enc: {e}"))?;
+        }
+        if telemetry::gpu_timing_enabled() {
+            // The benchmark's T2 probe: the device gap between enc's end and flowdec's start.
+            if let Some(ms) = self.enc.gpu_gap_ms_to(&self.flowdec) {
+                telemetry::record_gpu_time("vc.enc_flowdec_gap", ms);
+            }
+        }
         let audio = self.flowdec.output("audio")?;
         if audio.len() != out.len() {
             return Err(format!("flowdec returned {} samples, expected {}", audio.len(), out.len()));
@@ -381,6 +488,11 @@ impl SplitGenerator {
         (self.enc.levers(), self.flowdec.levers())
     }
 
+    /// Whether `enc`'s outputs reach `flowdec` on the device (P3B-G; see the module docs).
+    pub fn device_chain(&self) -> bool {
+        self.chain
+    }
+
     pub fn template_has_f0(&self) -> bool {
         self.f0
     }
@@ -394,6 +506,109 @@ impl SplitGenerator {
     pub fn window_samples(&self) -> usize {
         self.samples
     }
+}
+
+/// Build `enc` and `flowdec` on two threads (see the module docs): `enc` on a scoped helper thread
+/// that takes this thread's scheduling policy, `flowdec` here. The two plans' VRAM is measured over
+/// both builds and split in proportion to what each build saw on its own (each saw the other's
+/// allocations too).
+fn build_concurrently(
+    ep: &str,
+    opts: &VcSessionOptions,
+    build_enc: impl FnOnce() -> Result<SessionPlan, String> + Send,
+    build_flowdec: impl FnOnce() -> Result<SessionPlan, String>,
+) -> Result<(SessionPlan, SessionPlan), String> {
+    let base = normalize_ep(ep);
+    let probe = arena::dxgi_adapter_for(base, device_for(base, base, opts)).and_then(VramProbe::start);
+    let policy = ThreadPolicy::of_current();
+    let (enc, flowdec) = std::thread::scope(|scope| {
+        let helper = std::thread::Builder::new()
+            .name("sigil-vc-load".into())
+            .spawn_scoped(scope, move || {
+                policy.apply_to_current();
+                build_enc()
+            });
+        let flowdec = build_flowdec();
+        let enc = match helper {
+            Ok(h) => h.join().unwrap_or_else(|_| Err("the enc build panicked".to_string())),
+            Err(e) => Err(format!("the enc build thread could not start: {e}")),
+        };
+        (enc, flowdec)
+    });
+    let (enc, flowdec) = (enc?, flowdec?);
+    if let (Some(joint), Some(e), Some(d)) = (probe.and_then(|p| p.delta_mb()), enc.vram_mb(), flowdec.vram_mb()) {
+        if e + d > 0.0 {
+            enc.set_vram_mb(joint * e / (e + d));
+            flowdec.set_vram_mb(joint * d / (e + d));
+        }
+    }
+    Ok((enc, flowdec))
+}
+
+/// The loading thread's priority and EcoQoS state, copied onto the concurrent build's helper thread
+/// (a background hot-voice load stays background on both threads).
+#[derive(Clone, Copy, Debug, Default)]
+struct ThreadPolicy {
+    #[cfg(windows)]
+    priority: Option<i32>,
+    #[cfg(windows)]
+    throttling: Option<(u32, u32)>,
+}
+
+#[cfg(windows)]
+impl ThreadPolicy {
+    fn of_current() -> ThreadPolicy {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, GetThreadInformation, GetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            THREAD_POWER_THROTTLING_STATE,
+        };
+        let mut state = THREAD_POWER_THROTTLING_STATE { Version: THREAD_POWER_THROTTLING_CURRENT_VERSION, ControlMask: 0, StateMask: 0 };
+        // SAFETY: the pseudo-handle of the calling thread; pointer and size describe `state`.
+        unsafe {
+            let priority = GetThreadPriority(GetCurrentThread());
+            let throttling = GetThreadInformation(
+                GetCurrentThread(),
+                ThreadPowerThrottling,
+                &mut state as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+            )
+            .ok()
+            .map(|_| (state.ControlMask, state.StateMask));
+            // THREAD_PRIORITY_ERROR_RETURN (MAXLONG) when the call failed.
+            ThreadPolicy { priority: (priority != i32::MAX).then_some(priority), throttling }
+        }
+    }
+
+    fn apply_to_current(&self) {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, SetThreadInformation, SetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY,
+        };
+        // SAFETY: the pseudo-handle of the calling thread; pointer and size describe `state`.
+        unsafe {
+            if let Some(p) = self.priority {
+                let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY(p));
+            }
+            if let Some((control, state)) = self.throttling {
+                let state = THREAD_POWER_THROTTLING_STATE { Version: THREAD_POWER_THROTTLING_CURRENT_VERSION, ControlMask: control, StateMask: state };
+                let _ = SetThreadInformation(
+                    GetCurrentThread(),
+                    ThreadPowerThrottling,
+                    &state as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl ThreadPolicy {
+    fn of_current() -> ThreadPolicy {
+        ThreadPolicy::default()
+    }
+
+    fn apply_to_current(&self) {}
 }
 
 /// The diagnostics row of `component` for sessions built with `opts` (`build_session_with`
@@ -757,5 +972,102 @@ pub(crate) mod tests {
         );
         assert!(legacy_interior > 0.05 * peak, "legacy interior {legacy_interior} (peak {peak})");
         assert!(shared.len() > interior_len, "the edge region is part of the overlap");
+    }
+
+    /// Run `ticks` generator ticks (consecutive windows of one stream) and return every tick's
+    /// audio: the same deterministic inputs for every generator it is given.
+    fn render_ticks(gen: &mut SplitGenerator, voice: &ImportedVoice, plan: &ShapePlan, ticks: usize) -> Vec<Vec<f32>> {
+        let arch = &voice.template.layout.arch;
+        let (emb, c, upp) = (arch.emb_channels as usize, arch.inter_channels as usize, arch.upp as usize);
+        let noise = AnchoredNoise::new(23);
+        let speakers = SpeakerTable::from_rows(voice.weights.speakers.clone(), voice.weights.speaker_dim).unwrap();
+        let g = speakers.vector(0).to_vec();
+        let (t, f) = (plan.enc_frames, plan.flow_frames);
+        (0..ticks)
+            .map(|i| {
+                let abs0 = (i * 4) as u64;
+                let (phone, pitch, f0) = inputs_at(abs0, t, emb);
+                gen.encode(&phone, &pitch).unwrap();
+                let ws = plan.window_start;
+                let mut z = vec![0.0; c * f];
+                NoiseFrames::new(noise, NoiseStream::Flow, c, f).copy_window(abs0 + ws as u64, f, 0.66666, true, &mut z);
+                let mut src = vec![0.0; f * upp];
+                NoiseFrames::new(noise, NoiseStream::Source, upp, f).copy_window(abs0 + ws as u64, f, 1.0, false, &mut src);
+                let mut out = vec![0.0; plan.decode_frames * upp];
+                gen.decode_window(ws, &z, &g, &f0[ws..ws + f], 0.25, &src, &mut out).unwrap();
+                out
+            })
+            .collect()
+    }
+
+    /// P3B-G: building `enc` and `flowdec` concurrently changes nothing but the load's wall time
+    /// (CPU here: bit-identical audio over consecutive ticks), and the device chain never engages
+    /// off the CUDA device path.
+    #[test]
+    fn concurrent_builds_render_the_same_audio() {
+        let voice = tiny_voice();
+        let images = WeightImages { f32: &voice.weights.f32_image, f16: None };
+        let opts = VcSessionOptions::default();
+        let levers = EffectiveLevers { precision: PrecisionMode::Fp32, ..EffectiveLevers::default() };
+        let plan = streaming_plan(&voice, 640, 640 + 481, 1_024, true);
+        let mut serial = SplitGenerator::load_ext(&voice.template, &images, &plan, "cpu", &opts, &levers, true, false).unwrap();
+        let mut parallel = SplitGenerator::load_ext(&voice.template, &images, &plan, "cpu", &opts, &levers, true, true).unwrap();
+        assert!(!serial.device_chain() && !parallel.device_chain(), "no device chain on the CPU");
+        assert_eq!(serial.ep_outcomes().len(), parallel.ep_outcomes().len());
+        let a = render_ticks(&mut serial, &voice, &plan, 6);
+        let b = render_ticks(&mut parallel, &voice, &plan, 6);
+        assert_eq!(a, b, "concurrently built plans render other audio");
+        assert!(a.iter().flatten().any(|v| v.abs() > 1e-5), "near-silent render");
+    }
+
+    /// P3B-G on CUDA (dev rig): with IOBinding and graphs both plans are device-resident, so the
+    /// device chain engages; it renders bit-identical audio to the host path tick after tick (the
+    /// same values are copied, on the device instead of through the host), also when the plans were
+    /// built concurrently.
+    #[test]
+    #[ignore = "needs an NVIDIA GPU, the CUDA provider next to the test executable and the NVIDIA runtime (SIGIL_APP_DATA_DIR or SIGIL_TEST_CUDA_BIN)"]
+    fn device_chain_matches_the_host_path_on_cuda() {
+        use super::super::options::Lever;
+        crate::services::neural_audio::ort_session::preload_test_cuda_runtime_quiet();
+        let voice = tiny_voice();
+        let images = WeightImages { f32: &voice.weights.f32_image, f16: None };
+        let opts = VcSessionOptions::default();
+        let mut levers = EffectiveLevers { precision: PrecisionMode::Fp32, ..EffectiveLevers::default() };
+        levers.levers.set(Lever::IoBinding, true);
+        levers.levers.set(Lever::CudaGraphs, true);
+        let plan = streaming_plan(&voice, 640, 640 + 481, 1_024, true);
+        let mut host = SplitGenerator::load_ext(&voice.template, &images, &plan, "cuda", &opts, &levers, false, false).unwrap();
+        if host.ep_outcomes()[0].1.active != "cuda" {
+            eprintln!("CUDA is not usable here ({:?}); skipped", host.ep_outcomes());
+            return;
+        }
+        let mut chained = SplitGenerator::load_ext(&voice.template, &images, &plan, "cuda", &opts, &levers, true, false).unwrap();
+        let mut both = SplitGenerator::load_ext(&voice.template, &images, &plan, "cuda", &opts, &levers, true, true).unwrap();
+        assert!(!host.device_chain());
+        assert!(chained.device_chain() && both.device_chain(), "levers {:?}", chained.plan_levers());
+        let a = render_ticks(&mut host, &voice, &plan, 12);
+        let b = render_ticks(&mut chained, &voice, &plan, 12);
+        let c = render_ticks(&mut both, &voice, &plan, 12);
+        assert_eq!(a, b, "the device chain changed the audio");
+        assert_eq!(a, c, "the concurrently built chain changed the audio");
+        // The device gap between enc's end and flowdec's start (GPU timing on): the host round trip
+        // (download, host copy, re-upload) is gone with the chain.
+        let _recording = telemetry::start_recording();
+        telemetry::set_gpu_timing(true);
+        let gap = |gen: &mut SplitGenerator| -> f64 {
+            let mut v: Vec<f64> = (0..16)
+                .filter_map(|_| {
+                    render_ticks(gen, &voice, &plan, 1);
+                    gen.enc.gpu_gap_ms_to(&gen.flowdec)
+                })
+                .collect();
+            v.sort_by(f64::total_cmp);
+            v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+        };
+        let (host_gap, chain_gap) = (gap(&mut host), gap(&mut chained));
+        telemetry::set_gpu_timing(false);
+        eprintln!("enc -> flowdec device gap (median): host path {host_gap:.3} ms, device chain {chain_gap:.3} ms");
+        assert!(chain_gap.is_finite() && host_gap.is_finite(), "no gap measured");
+        assert!(chain_gap < host_gap, "the chain did not shorten the gap: {chain_gap} vs {host_gap}");
     }
 }

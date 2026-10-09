@@ -386,10 +386,19 @@ fn to_grid(pitch: &[f32], conf: &[f32], voiced: &[bool], n: usize, offset: usize
 
 impl PitchExtractor for SwiftF0PitchExtractor {
     fn f0(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
+        let mut f0 = Vec::with_capacity(mono_16k.len() / GRID_HOP + 1);
+        self.f0_into(mono_16k, &mut f0)?;
+        Ok(f0)
+    }
+
+    /// P3B-E: straight into the caller's buffer (no contour allocation; the ONNX Runtime call
+    /// itself still allocates its inputs and outputs).
+    fn f0_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+        out.clear();
         let n = mono_16k.len();
         if n == 0 {
             self.confidence.clear();
-            return Ok(Vec::new());
+            return Ok(());
         }
         // SwiftF0 returns `N / 256` frames centred on `256 i`, so the newest frame sits `256 + N % 256`
         // samples before the end of the input. Front padding to a multiple of 256 puts it 256
@@ -413,16 +422,7 @@ impl PitchExtractor for SwiftF0PitchExtractor {
         }
         self.run(offset + n)?;
         frame_voicing(&self.raw_pitch, &self.raw_conf, self.voicing_threshold, &mut self.raw_voiced);
-        let mut f0 = Vec::with_capacity(n / GRID_HOP + 1);
-        to_grid(
-            &self.raw_pitch,
-            &self.raw_conf,
-            &self.raw_voiced,
-            n,
-            offset,
-            &mut f0,
-            &mut self.confidence,
-        );
+        to_grid(&self.raw_pitch, &self.raw_conf, &self.raw_voiced, n, offset, out, &mut self.confidence);
         self.all_frames.clear();
         self.all_frames
             .extend(self.raw_pitch.iter().map(|&p| p.is_finite() && p > 0.0));
@@ -435,8 +435,8 @@ impl PitchExtractor for SwiftF0PitchExtractor {
             &mut self.candidates,
             &mut self.scratch_conf,
         );
-        self.post.process(&mut f0, &self.post_cfg);
-        Ok(f0)
+        self.post.process(out, &self.post_cfg);
+        Ok(())
     }
 
     /// Network context ±10 SwiftF0 frames, of which ±3-4 matter above 1 cent; plus the grid

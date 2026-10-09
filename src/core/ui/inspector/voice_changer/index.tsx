@@ -6,7 +6,7 @@
 // building blocks are in common.tsx. What this build runs comes from `voice_changer_get_capabilities`
 // (src/core/services/voice_changer/ipc.ts), refreshed when the panel opens and when voice-changer models install.
 import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
-import { crossfadeMaxMs as crossfadeMaxMsFor } from "@/core/services/voice_changer/chunkFrames";
+import { crossfadeEngineBlockMs, crossfadeMaxMsForEngine } from "@/core/services/voice_changer/chunkFrames";
 import { epStatus } from "@/core/services/voice_changer/metrics";
 import type { VoiceChangerState } from "@/core/services/voice_changer/schema";
 import classNames from "classnames";
@@ -21,6 +21,7 @@ import { InputSelect } from "../components/input";
 import { InspectorInfoButton, patchVcStructural } from "./common";
 import { ConsentDialog } from "./ConsentDialog";
 import { DevicesSection } from "./Devices";
+import { useSelectedVoice, useVoiceFamily } from "./hooks";
 import { LevelsSection } from "./LevelsSection";
 import { VcEpStatus, VcMetricsPanel, VcTrtProgressPanel } from "./Metrics";
 import { OnnxSection, SidecarSection } from "./ModeSections";
@@ -63,7 +64,12 @@ export const Inspector_VoiceChanger: FC = () => {
      * larger chunk size is picked); the controls show what is in effect. While running, the chunk length uses
      * the real capture rate (`metrics.chunk_ms`); when stopped the rate is unknown and 48 kHz is assumed.
      */
-    const crossfadeMaxMs = crossfadeMaxMsFor(voiceChanger.chunkFrames, isRunning ? metrics?.chunk_ms : null);
+    // A template voice's overlap is clamped to its engine block (not the device chunk): offer up to that. A family
+    // voice's is clamped to the family's own block, so it keeps the chunk cap.
+    const selectedVoice = useSelectedVoice();
+    const { kind: voiceKind } = useVoiceFamily(selectedVoice);
+    const engineBlock = crossfadeEngineBlockMs(voiceKind, isRvc, voiceChanger.blockMs);
+    const crossfadeMaxMs = crossfadeMaxMsForEngine(voiceChanger.chunkFrames, isRunning ? metrics?.chunk_ms : null, engineBlock);
     const crossfadeShownMs = Math.min(voiceChanger.crossfadeMs, crossfadeMaxMs);
     const installedVcModels = useInstalledVcModelsKey();
 
@@ -72,6 +78,14 @@ export const Inspector_VoiceChanger: FC = () => {
         if (!isTauri()) return;
         void vcApi.refreshCapabilities();
     }, [vcApi, installedVcModels]);
+
+    // Opening the panel while stopped reads the metrics once: when the opt-in prewarm is on
+    // (SIGIL_VC_PREWARM=1, off by default) the backend takes that as the cue to warm the GPU path the saved
+    // settings point at (P3B-H; once per process, idle priority); otherwise it changes nothing.
+    useEffect(() => {
+        if (!isTauri() || window.ApiServer.voiceChanger.state.isRunning) return;
+        void vcApi.getMetrics();
+    }, [vcApi]);
 
     useEffect(() => {
         setSamples({ cur: null, prev: null });
@@ -180,7 +194,7 @@ export const Inspector_VoiceChanger: FC = () => {
                 <DevicesSection />
                 <SoundSection />
                 <LevelsSection />
-                <TimingSection />
+                <TimingSection metrics={metrics} />
             </Inspector.Content>
 
             <ConsentDialog />

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import contract from "../../../../../src-tauri/src/services/voice_changer/params_contract.json";
 import { normalizeChunkFramesValue, VOICE_CHANGER_CHUNK_FRAMES } from "../chunkFrames";
 import {
+    AUTO_MS,
     AUX_MIC_GATES,
     BASELINE_DENOISERS,
     BASELINE_PITCH_EXTRACTORS,
@@ -16,6 +17,7 @@ import {
     clampLatencyBudgetMs,
     clampOutputBufferMs,
     DENOISERS,
+    DEVICE_BLOCKS,
     effectivePitchExtractor,
     effectiveRvcEp,
     EXECUTION_PROVIDER_ALIASES,
@@ -27,12 +29,14 @@ import {
     LEVER_MODES,
     normalizeAuxMicGate,
     normalizeDenoiser,
+    normalizeDeviceBlock,
     normalizeExecutionProvider,
     normalizeF0Range,
     normalizeLatencyPreset,
     normalizeLeverMode,
     normalizeMode,
     normalizeOnnxExecutionProvider,
+    normalizeOutputCushion,
     normalizePitchExtractor,
     normalizePrecision,
     normalizeRvcProfile,
@@ -45,6 +49,7 @@ import {
     rvcBaseEp,
     VC_LEVERS,
     OUTPUT_BUFFER_LOW_LATENCY,
+    OUTPUT_CUSHIONS,
     OUTPUT_BUFFER_STABLE,
     OUTPUT_MAX_QUEUE_MS,
     PITCH_EXTRACTOR_CPU_FALLBACK,
@@ -70,10 +75,12 @@ import {
 import {
     AuxMicGateSchema,
     DenoiserSchema,
+    DeviceBlockSchema,
     ExecutionProviderSchema,
     F0RangeSchema,
     LatencyPresetSchema,
     LeverModeSchema,
+    OutputCushionSchema,
     PitchExtractorSchema,
     PrecisionSchema,
     RvcExecutionProviderSchema,
@@ -574,5 +581,52 @@ describe("P5 params (P5-S0)", () => {
         const old = { ...sent } as Partial<VoiceChangerParamsRust>;
         delete old.reference_voice_id;
         expect(applyRustParams({ ...defaults(), referenceVoiceId: "bob" }, old as VoiceChangerParamsRust).referenceVoiceId).toBe("bob");
+    });
+});
+
+describe("P3B params (P3B-S0)", () => {
+    it("the P3B enums, levers and optional numbers are the contract's", () => {
+        checkStringEnum("output_cushion", OUTPUT_CUSHIONS, normalizeOutputCushion, OutputCushionSchema.options);
+        checkStringEnum("device_block", DEVICE_BLOCKS, normalizeDeviceBlock, DeviceBlockSchema.options);
+        for (const key of ["sola_search_ms", "content_context_ms"] as const) {
+            expect(numbers[key].auto, `${key}.auto`).toBe(AUTO_MS);
+            expect(VC_NUMBER_RANGES[key].default, `${key}.default`).toBe(AUTO_MS);
+        }
+        expect(VC_LEVERS.slice(-2)).toEqual(["content_norm", "f0_decode"]);
+    });
+
+    it("every P3B params field is sent and hydrated under its contract name", () => {
+        const sent = toRustParams(defaults());
+        for (const key of Object.keys(contract.params_p3b_new_fields)) {
+            expect(RUST_PARAM_KEYS, `key list has ${key}`).toContain(key);
+            expect(sent[key as keyof VoiceChangerParamsRust], `sent ${key}`).not.toBeUndefined();
+        }
+        expect(sent.output_cushion).toBe(enums.output_cushion.default);
+        expect(sent.device_block).toBe(enums.device_block.default);
+        expect(sent.sola_search_ms).toBe(AUTO_MS);
+        expect(sent.content_context_ms).toBe(AUTO_MS);
+        expect(sent.content_norm).toBe(enums.lever_mode.default);
+        expect(sent.f0_decode).toBe(enums.lever_mode.default);
+        const got = applyRustParams(defaults(), {
+            ...sent,
+            output_cushion: "ADAPTIVE",
+            device_block: "model_divisor",
+            sola_search_ms: 25,
+            content_context_ms: 1500,
+            content_norm: "on",
+            f0_decode: "off",
+        });
+        expect(got.outputCushion).toBe("adaptive");
+        expect(got.deviceBlock).toBe("model_divisor");
+        expect(got.solaSearchMs).toBe(10);
+        expect(got.contentContextMs).toBe(1500);
+        expect(got.contentNorm).toBe("on");
+        expect(got.f0Decode).toBe("off");
+        // Negative = automatic; absent (an older backend) keeps the current value.
+        expect(applyRustParams(got, { ...sent, sola_search_ms: -7 }).solaSearchMs).toBe(AUTO_MS);
+        const old = { ...sent } as Partial<VoiceChangerParamsRust>;
+        for (const key of Object.keys(contract.params_p3b_new_fields)) delete old[key as keyof VoiceChangerParamsRust];
+        const kept = applyRustParams(got, old as VoiceChangerParamsRust);
+        expect([kept.outputCushion, kept.solaSearchMs, kept.contentNorm]).toEqual(["adaptive", 10, "on"]);
     });
 });

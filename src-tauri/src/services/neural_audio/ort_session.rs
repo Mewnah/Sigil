@@ -76,6 +76,15 @@
 //!   CPU), attempted only after the CUDA rung's preflight and canary pass. Its outcome is
 //!   `requested: "tensorrt_rtx"`, so a TensorRT failure reads as a fallback to CUDA with its reason.
 //!
+//! # Voice-engine CPU switches and tooling (P3B-G)
+//! - [`vc_cpu_arena_default`] (`SIGIL_VC_CPU_ARENA=0|1`), `SIGIL_VC_DENORMAL_ZERO=0|1`
+//!   (`session.set_denormal_as_zero`) and [`vc_dynamic_block_base_default`]
+//!   (`SIGIL_VC_DYNAMIC_BLOCK_BASE=<n>`) apply to the voice engine's CPU sessions (components `vc`,
+//!   `vc.*`, `<prefix>.vc.*`); P3B-I0 turned the arena on (RTF -5.9 %) and kept denormals-as-zero off
+//!   (+3.6 % RTF p99) and `dynamic_block_base` unset (-0.9 %, NEUTRAL) from P3B-G's interleaved numbers.
+//! - `SIGIL_ORT_OPTIMIZED_DIR=<dir>` writes every matching session's optimized graph (filtered by
+//!   `SIGIL_ORT_PROFILE_FILTER`, like `SIGIL_ORT_PROFILE`).
+//!
 //! # API
 //! - [`build_session`]: explicit component + model source → `(Session, EpOutcome)`.
 //! - [`build_session_with`]: the same ladder with a per-rung builder hook ([`SessionConfigure`]:
@@ -296,6 +305,140 @@ pub struct VcSessionOptions {
     /// yet (Kokoro TTS: RTF 0.29-0.40 on new sentence lengths vs 0.23-0.24 with the arena). Opt-in:
     /// the voice changer keeps its benchmarked configuration until P3 measures the change.
     pub cpu_arena: bool,
+    /// P3B-S0: ONNX Runtime's `session.dynamic_block_base` (intra-op work split; `None` = ORT's
+    /// default). Applied to every session built with these options when set; P3B-G measures it.
+    pub dynamic_block_base: Option<i32>,
+}
+
+/// The CPU-arena setting of the voice engine's sessions for a preset. The voice changer worker and
+/// the benchmark both read it, so they keep building identical sessions. [`VC_CPU_ARENA_DEFAULT`]
+/// unless `SIGIL_VC_CPU_ARENA=0|1` ([`VC_CPU_ARENA_ENV`], P3B-G's switch) says otherwise.
+///
+/// The voice engine's CPU sessions are fixed-shape (session plans pin every free dimension), so the
+/// arena's known cost (a dynamic-shape graph keeps a high-water block per new shape) does not apply;
+/// with it off every run allocates its memory-pattern block afresh and page-faults it in.
+pub fn vc_cpu_arena_default(_profile: crate::services::neural_audio::RvcPresetProfile) -> bool {
+    env_switch(VC_CPU_ARENA_ENV).unwrap_or(VC_CPU_ARENA_DEFAULT)
+}
+
+/// `SIGIL_VC_CPU_ARENA=0|1`: the voice engine's CPU sessions with or without ONNX Runtime's CPU
+/// arena (P3B-G; [`vc_cpu_arena_default`]).
+pub const VC_CPU_ARENA_ENV: &str = "SIGIL_VC_CPU_ARENA";
+
+/// The voice engine's CPU arena when [`VC_CPU_ARENA_ENV`] is unset: on (P3B-I0, from P3B-G's
+/// interleaved gate on the Streamer shape, 5 ABBA pairs: RTF p50 -5.9 %, paced call p99 -9.4 %,
+/// average cores -4.6 %, IMPROVED; `scripts/bench/specs/p3b/g/README.md`). The output is the same
+/// audio; `SIGIL_VC_CPU_ARENA=0` restores the rc.13 configuration without an arena.
+pub const VC_CPU_ARENA_DEFAULT: bool = true;
+
+/// `session.dynamic_block_base` of the voice engine's sessions for a preset when the caller has no
+/// explicit value (`None` = ONNX Runtime's default). `SIGIL_VC_DYNAMIC_BLOCK_BASE=<n>` (P3B-G's
+/// switch, 1-1024) overrides it. The worker and the benchmark pass it as
+/// [`VcSessionOptions::dynamic_block_base`].
+pub fn vc_dynamic_block_base_default(_profile: crate::services::neural_audio::RvcPresetProfile) -> Option<i32> {
+    std::env::var(VC_DYNAMIC_BLOCK_BASE_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|n| (1..=1024).contains(n))
+}
+
+/// `SIGIL_VC_DYNAMIC_BLOCK_BASE=<n>` ([`vc_dynamic_block_base_default`]).
+pub const VC_DYNAMIC_BLOCK_BASE_ENV: &str = "SIGIL_VC_DYNAMIC_BLOCK_BASE";
+
+/// `SIGIL_VC_DENORMAL_ZERO=0|1`: ONNX Runtime's `session.set_denormal_as_zero` (flush-to-zero and
+/// denormals-are-zero on the session's threads) for the voice engine's CPU sessions (P3B-G).
+/// Denormal floats are rare in conditioned speech, so the default is decided by measurement:
+/// [`VC_DENORMAL_ZERO_DEFAULT`].
+pub const VC_DENORMAL_ZERO_ENV: &str = "SIGIL_VC_DENORMAL_ZERO";
+
+/// The voice engine's denormal handling when [`VC_DENORMAL_ZERO_ENV`] is unset (off: IEEE
+/// denormals, the P3 behaviour). P3B-G's A/B (9 pairs, 120 ms Streamer shape) read +3.6 % RTF p99, NEUTRAL,
+/// so P3B-I0 kept it off.
+pub const VC_DENORMAL_ZERO_DEFAULT: bool = false;
+
+/// `SIGIL_VC_DML_SHARED=0|1`: voice-engine DirectML sessions (without the high-priority queue) on
+/// one normal-priority device and queue per adapter, shared while a plan holds it (`gpu::dml_queue`, P3B-G).
+pub const VC_DML_SHARED_ENV: &str = "SIGIL_VC_DML_SHARED";
+
+/// The shared DirectML queue when [`VC_DML_SHARED_ENV`] is unset: **off** (opt-in with
+/// `SIGIL_VC_DML_SHARED=1`). P3B-G's gates did not clear the acceptance rules (R3, T9): the cold-load
+/// gain is real but small (8 ABBA pairs, Hodges-Lehmann -93 ms, 95 % CI -269..-37, so the CI bound
+/// is under the 0.05 s the plan asks for; the integrated build did not reproduce it: 1246 against
+/// 1254 ms), the worker CPU was higher on the shared queue (+0.03 cores), and the content stage's
+/// p95 REGRESSED on the one queue (+6.1 % [1.13, 7.26] paced, +21.9 % [19.46, 28.94] under the 70 %
+/// GPU load, where a game shares the GPU: content queues behind the other stages). The call-level
+/// numbers (paced p95 -7.1 %) do not waive a regressed stage under load. The default also reaches
+/// sessions the gates never ran (kNN, the legacy `vc` bridge, P5's families). The switch stays for
+/// a re-measurement on a quiet rig (P7-B).
+pub const VC_DML_SHARED_DEFAULT: bool = false;
+
+fn vc_dml_shared_enabled() -> bool {
+    env_switch(VC_DML_SHARED_ENV).unwrap_or(VC_DML_SHARED_DEFAULT)
+}
+
+/// A `0|1` / `on|off` / `true|false` environment switch (`None` when unset or unrecognised).
+fn env_switch(name: &str) -> Option<bool> {
+    match std::env::var(name).ok()?.trim().to_ascii_lowercase().as_str() {
+        "1" | "on" | "true" | "yes" => Some(true),
+        "0" | "off" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether `component` (a diagnostics key, maybe prefixed: `vc.flowdec`, `bench.vc.content`) is a
+/// voice-engine session.
+fn is_vc_component(component: Option<&str>) -> bool {
+    component.is_some_and(|c| c == "vc" || c.starts_with("vc.") || c.contains(".vc.") || c.ends_with(".vc"))
+}
+
+/// `SIGIL_ORT_OPTIMIZED_DIR=<dir>` (P3B-G; tooling, like `SIGIL_ORT_PROFILE`): every matching
+/// session also writes the graph ONNX Runtime optimised for its rung to
+/// `<dir>/<component>-<ep>.optimized.onnx` (which fusions applied, e.g. the kNN graph's
+/// `FusedMatMul`, and the CPU layout transforms). `SIGIL_ORT_PROFILE_FILTER` limits it like the
+/// profiler. Never on in a normal run (writing the model slows the session build).
+fn ort_optimized_path(component: Option<&str>, ep: &str) -> Option<PathBuf> {
+    let dir = std::env::var_os("SIGIL_ORT_OPTIMIZED_DIR").filter(|d| !d.is_empty())?;
+    let component = component.unwrap_or("session");
+    let filter = std::env::var("SIGIL_ORT_PROFILE_FILTER").unwrap_or_default();
+    let filter = filter.trim();
+    if !filter.is_empty() && !component.starts_with(filter) {
+        return None;
+    }
+    let dir = PathBuf::from(dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(target: "sigil::ort", "SIGIL_ORT_OPTIMIZED_DIR: cannot create {}: {e}", dir.display());
+        return None;
+    }
+    let safe: String = component
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    Some(dir.join(format!("{safe}-{ep}.optimized.onnx")))
+}
+
+/// ORT profiling for matching sessions (P3B-S0; tooling only, never on in a normal run):
+/// `SIGIL_ORT_PROFILE=<dir>` turns on ONNX Runtime's per-node profiler for the sessions whose
+/// diagnostics component (`vc.enc`, `bench.vc.content`, ...) starts with
+/// `SIGIL_ORT_PROFILE_FILTER` (empty or unset = every session). Each session writes
+/// `<dir>/<component>-<ep>_<timestamp>.json` when it is dropped (ONNX Runtime ends the profile then).
+fn ort_profile_prefix(component: Option<&str>, ep: &str) -> Option<PathBuf> {
+    let dir = std::env::var_os("SIGIL_ORT_PROFILE").filter(|d| !d.is_empty())?;
+    let component = component.unwrap_or("session");
+    let filter = std::env::var("SIGIL_ORT_PROFILE_FILTER").unwrap_or_default();
+    let filter = filter.trim();
+    if !filter.is_empty() && !component.starts_with(filter) {
+        return None;
+    }
+    let dir = PathBuf::from(dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(target: "sigil::ort", "SIGIL_ORT_PROFILE: cannot create {}: {e}", dir.display());
+        return None;
+    }
+    let safe: String = component
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    Some(dir.join(format!("{safe}-{ep}")))
 }
 
 /// Canonical EP id for a UI / persisted hint (`gpu` is the legacy spelling of `cuda`).
@@ -504,6 +647,12 @@ impl ort::environment::ThreadManager for PriorityThreads {
 
 /// Thread count and pool-thread priority from `opts` (see [`VcSessionOptions`]).
 fn apply_thread_options(builder: SessionBuilder, ep: &str, opts: &VcSessionOptions) -> Result<SessionBuilder, String> {
+    let builder = match opts.dynamic_block_base {
+        Some(base) => builder
+            .with_config_entry("session.dynamic_block_base", base.to_string())
+            .map_err(|e| format!("ONNX dynamic block base: {}", e))?,
+        None => builder,
+    };
     let builder = if opts.streamer_profile {
         apply_streamer_thread_caps(builder)?
     } else if let Some(n) = opts.intra_threads {
@@ -713,6 +862,30 @@ fn builder_for_rung(
             } else {
                 None
             };
+            // P3B-G: the shared normal-priority device and queue (voice-engine sessions; opt-in).
+            if high_priority.is_none() && extras.dml_shared && !extras.dml_high_priority {
+                match DmlQueue::shared_normal(device_id.max(0) as u32) {
+                    Ok(queue) => {
+                        let mut builder = builder;
+                        match queue.append_to(&mut builder) {
+                            Ok(()) => {
+                                applied.dml_shared = Some(queue);
+                                return Ok(builder);
+                            }
+                            Err(why) => {
+                                applied.notes.push(format!("shared DirectML queue: refused ({why}); this session creates its own"));
+                                return builder
+                                    .with_execution_providers([ort::ep::DirectML::default()
+                                        .with_device_id(device_id.max(0))
+                                        .build()
+                                        .error_on_failure()])
+                                    .map_err(|e| explain_ep_error(ep, &e.to_string()));
+                            }
+                        }
+                    }
+                    Err(why) => applied.notes.push(format!("shared DirectML queue: {why}; this session creates its own")),
+                }
+            }
             match high_priority {
                 Some(queue) => {
                     let mut builder = builder;
@@ -770,8 +943,16 @@ pub(crate) struct GpuExtras {
     pub cuda_env_arena: bool,
     /// DirectML rung: run on the shared high-priority queue of the adapter.
     pub dml_high_priority: bool,
+    /// DirectML rung: run on the shared normal-priority device and queue of the adapter
+    /// (P3B-G, `SIGIL_VC_DML_SHARED`; ignored when `dml_high_priority` asks for the other queue).
+    pub dml_shared: bool,
     /// Try TensorRT-RTX before CUDA (a CUDA request only).
     pub tensorrt_rtx: Option<Arc<trt::TrtRequest>>,
+    /// Do not record the EP outcome under the component key when the session is built (the caller
+    /// records it with [`record_ep_outcome`](crate::services::diagnostics::record_ep_outcome) once it
+    /// accepts the session: a GPU kNN that landed on the CPU rung is refused, and its diagnostics
+    /// row must not say a session exists).
+    pub skip_outcome_record: bool,
 }
 
 /// cuDNN convolution algorithm search (`cudnn_conv_algo_search`).
@@ -801,6 +982,8 @@ pub(crate) struct GpuApplied {
     pub env_arena: bool,
     /// The high-priority DirectML queue the session runs on.
     pub dml_queue: Option<Arc<DmlQueue>>,
+    /// The shared normal-priority DirectML device and queue the session runs on (P3B-G).
+    pub dml_shared: Option<Arc<DmlQueue>>,
     /// The session runs on TensorRT-RTX.
     pub tensorrt_rtx: bool,
     /// Why a requested extra is not in use.
@@ -994,6 +1177,7 @@ pub fn provider_dir() -> Option<PathBuf> {
 
 /// Checks before a GPU rung is attempted; `Err` is the user-facing reason to skip it.
 fn gpu_preflight(ep: &str, device_id: i32) -> Result<(), String> {
+    let _span = super::telemetry::load_span(super::telemetry::LoadStage::PreloadCanary);
     if ep == EP_CUDA {
         if let Some(dir) = provider_dir() {
             // Without the bridge ORT fails with a bare "error 126", which reads like the NVIDIA
@@ -1133,6 +1317,48 @@ pub(crate) fn build_session_ext(
     });
     let component = component.as_deref();
     let requested = normalize_ep(ep_hint);
+    // `SIGIL_ORT_PROFILE` (tooling, P3B-S0): ORT's profiler on the matching sessions of every rung.
+    // P3B-G: `SIGIL_ORT_OPTIMIZED_DIR` (tooling) and the voice engine's CPU switches
+    // (`SIGIL_VC_DENORMAL_ZERO`, `SIGIL_VC_DYNAMIC_BLOCK_BASE` when the caller set no value).
+    let vc = is_vc_component(component);
+    let profiled = |builder: SessionBuilder, ep: &str| -> Result<SessionBuilder, String> {
+        let mut builder = configure(builder, ep)?;
+        if vc && ep == EP_CPU {
+            if env_switch(VC_DENORMAL_ZERO_ENV).unwrap_or(VC_DENORMAL_ZERO_DEFAULT) {
+                builder = builder
+                    .with_config_entry("session.set_denormal_as_zero", "1")
+                    .map_err(|e| format!("ONNX denormals as zero: {e}"))?;
+            }
+            if opts.dynamic_block_base.is_none() {
+                if let Some(base) = vc_dynamic_block_base_default(crate::services::neural_audio::RvcPresetProfile::LowLatency) {
+                    builder = builder
+                        .with_config_entry("session.dynamic_block_base", base.to_string())
+                        .map_err(|e| format!("ONNX dynamic block base: {e}"))?;
+                }
+            }
+        }
+        if let Some(path) = ort_optimized_path(component, ep) {
+            builder = builder
+                .with_optimized_model_path(&path)
+                .map_err(|e| format!("ONNX optimized model ({}): {e}", path.display()))?;
+        }
+        match ort_profile_prefix(component, ep) {
+            Some(prefix) => builder
+                .with_profiling(&prefix)
+                .map_err(|e| format!("ONNX profiling ({}): {e}", prefix.display())),
+            None => Ok(builder),
+        }
+    };
+    let configure: &SessionConfigure<'_> = &profiled;
+    // P3B-G: voice-engine DirectML sessions share one normal-priority device and queue when
+    // `SIGIL_VC_DML_SHARED` (or its default) says so.
+    let shared_extras;
+    let extras = if vc && !extras.dml_high_priority && !extras.dml_shared && vc_dml_shared_enabled() {
+        shared_extras = GpuExtras { dml_shared: true, ..extras.clone() };
+        &shared_extras
+    } else {
+        extras
+    };
     let trt_request = extras.tensorrt_rtx.as_ref().filter(|_| requested == EP_CUDA);
     // What the outcome says was asked for: the accelerator when it is tried.
     let requested_label = if trt_request.is_some() { EP_TRT_RTX } else { requested };
@@ -1149,7 +1375,7 @@ pub(crate) fn build_session_ext(
             if ep == EP_CPU { String::new() } else { format!(" (device {device})") },
             started.elapsed().as_millis()
         );
-        if let Some(c) = component {
+        if let Some(c) = component.filter(|_| !extras.skip_outcome_record) {
             record_ep_outcome(c, outcome.clone());
         }
         BuiltSession { session, outcome, applied, device }
@@ -1534,6 +1760,20 @@ mod tests {
         assert_eq!(infer_vc_component(Path::new("models/alice/model.onnx")), "vc");
     }
 
+    /// P3B-G: the voice-engine CPU switches apply to voice-engine components only (with or without
+    /// a benchmark prefix); an unset switch leaves the default.
+    #[test]
+    fn voice_engine_switches_reach_voice_engine_components_only() {
+        for c in ["vc", "vc.flowdec", "vc.content", "bench.vc.enc", "bench.vc"] {
+            assert!(is_vc_component(Some(c)), "{c}");
+        }
+        for c in ["stt.silero", "tts.kitten", "vcx", "diag.canary"] {
+            assert!(!is_vc_component(Some(c)), "{c}");
+        }
+        assert!(!is_vc_component(None));
+        assert!(env_switch("SIGIL_TEST_UNSET_SWITCH_P3B_G").is_none());
+    }
+
     #[test]
     fn explanations_are_actionable_and_bounded() {
         let e = explain_ep_error("cuda", "LoadLibrary failed with error 126 \"\" when trying to load onnxruntime_providers_cuda.dll");
@@ -1646,6 +1886,22 @@ mod tests {
         )
         .expect("CPU session");
         assert_eq!(ep_outcome("test.ort_session.empty_prefix"), Some(EpOutcome::granted("cpu")));
+    }
+
+    /// P3B-G (review fix): a build with `skip_outcome_record` leaves the diagnostics row alone (the
+    /// caller records it once it accepts the session), and an ordinary build still records it.
+    #[test]
+    fn skip_outcome_record_leaves_the_diagnostics_row_alone() {
+        let key = "test.ort_session.skip_record";
+        let bytes = canary::model_bytes();
+        let skip = GpuExtras { skip_outcome_record: true, ..GpuExtras::default() };
+        let built = build_session_ext(Some(key), "cpu", &VcSessionOptions::default(), ModelSource::Memory(bytes), &skip, &|b, _| Ok(b))
+            .expect("CPU session");
+        assert_eq!(built.outcome, EpOutcome::granted("cpu"));
+        assert_eq!(ep_outcome(key), None, "nothing is recorded until the caller accepts the session");
+        let recorded = build_session_ext(Some(key), "cpu", &VcSessionOptions::default(), ModelSource::Memory(bytes), &GpuExtras::default(), &|b, _| Ok(b))
+            .expect("CPU session");
+        assert_eq!(ep_outcome(key), Some(recorded.outcome));
     }
 
     #[test]

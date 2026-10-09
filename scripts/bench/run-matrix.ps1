@@ -12,7 +12,10 @@
   <OutRoot>/matrix.csv and <OutRoot>/matrix.md with, per cell: the EP it asked for and the one it
   ran on, compute p50 / p95 / p99, p99 RTF (over the engine block), the paced latency p50 / p99,
   over-budget ratio, process VRAM delta, CPU, cold load time and the per-component compute of
-  template voices built directly (`-Build direct`). A cell that fails to load keeps its error.
+  template voices built directly (`-Build direct`), plus (P3B-A) glue and harness time, host waits
+  on the GPU per call and the run's SM clock. A cell that fails to load keeps its error.
+  One cell per configuration is a single sample: before/after claims use run-perf-gate.ps1's
+  interleaved mode.
 
   The template's variables: NAME, SLOT, CLIP, CONTENT_ENCODER, EP, PITCH, BLOCK_MS, BLOCK_FRAMES,
   EXTRA_MS, PRECISION, PRESET, BUILD, LEVERS (text) and LEVERS_JSON (inserted as JSON; variables
@@ -27,6 +30,12 @@
 
 .PARAMETER Exe
   Sigil executable (default as in run-perf-gate.ps1).
+
+.PARAMETER NoGpuLock
+  Do not take the GPU timing lock (scripts/bench/gpu-lock.ps1, P3B rule R2) around each cell.
+
+.PARAMETER GpuLockWait
+  Minutes to wait for the GPU timing lock before failing (default 180).
 #>
 [CmdletBinding()]
 param(
@@ -45,12 +54,32 @@ param(
     [string[]]$Levers = @(),
     [string]$Build = 'auto',
     [string]$Template,
-    [string]$OutRoot
+    [string]$OutRoot,
+    [switch]$NoGpuLock,
+    [double]$GpuLockWait = 180,
+    [string]$GpuLockTag = 'run-matrix'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+
+# ---- GPU timing lock (P3B rule R2; scripts/bench/gpu-lock.ps1) ----------------------------------
+$lockScript = Join-Path $PSScriptRoot 'gpu-lock.ps1'
+function Invoke-Timed {
+    # Run `Body` (one timed harness run) while holding the dev rig's GPU timing lock; returns what
+    # `Body` returns. -NoGpuLock (stub specs) runs it unlocked.
+    param([string]$Label, [scriptblock]$Body)
+    if ($NoGpuLock) { return & $Body }
+    $tag = "$GpuLockTag $Label"
+    & $lockScript -Acquire $tag -Wait $GpuLockWait -ExpectedMinutes 15 -OwnerPid $PID | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "the GPU timing lock was not acquired within $GpuLockWait min ($tag)" }
+    try {
+        return & $Body
+    } finally {
+        & $lockScript -Release $tag | Out-Host
+    }
+}
 
 function Split-List {
     param([string[]]$Items)
@@ -121,13 +150,18 @@ foreach ($ep in (Split-List $Eps)) {
                     Write-Host "== $name"
                     $prev = $ErrorActionPreference
                     $ErrorActionPreference = 'Continue'
-                    & $Exe --headless bench $specPath --out $out 2>&1 | ForEach-Object { Write-Host "$_" }
+                    Invoke-Timed -Label $name -Body {
+                        & $Exe --headless bench $specPath --out $out 2>&1 | ForEach-Object { Write-Host "$_" }
+                    } | Out-Null
                     $ErrorActionPreference = $prev
                     $row = [ordered]@{
                         cell = $name; ep = $ep; pitch = $f0; block_ms = $block; device_frames = $frames; precision = $prec; extra_ms = $extra; levers = $leversText
                         ep_active = ''; build = ''; load_ms = ''; compute_p50 = ''; compute_p95 = ''; compute_p99 = ''; rtf_p99 = ''
                         latency_p50 = ''; latency_p99 = ''; over_budget = ''; vram_mb = ''; cpu_cores = ''
-                        content_p50 = ''; f0_p50 = ''; enc_p50 = ''; flowdec_p50 = ''; error = ''
+                        content_p50 = ''; f0_p50 = ''; enc_p50 = ''; flowdec_p50 = ''
+                        # P3B-A attribution: the model call minus its stages, the worker tick minus the
+                        # model, host waits on the GPU per call, the run's SM clock.
+                        glue_p50 = ''; harness_p50 = ''; syncs_p50 = ''; sm_clock_mhz = ''; error = ''
                     }
                     $reportPath = Join-Path $out 'report.json'
                     if (Test-Path -LiteralPath $reportPath) {
@@ -156,6 +190,10 @@ foreach ($ep in (Split-List $Eps)) {
                         $row.f0_p50 = & $g $off 'f0_ms_p50'
                         $row.enc_p50 = & $g $off 'enc_ms_p50'
                         $row.flowdec_p50 = & $g $off 'flowdec_ms_p50'
+                        $row.glue_p50 = & $g $off 'glue_ms_p50'
+                        $row.harness_p50 = & $g $off 'harness_ms_p50'
+                        $row.syncs_p50 = & $g $off 'syncs_per_call_p50'
+                        $row.sm_clock_mhz = & $g $off 'state_sm_clock_mhz'
                         $row.latency_p50 = & $g $pac 'latency_ms_p50'
                         $row.latency_p99 = & $g $pac 'latency_ms_p99'
                         $row.over_budget = & $g $pac 'over_budget_ratio'
@@ -178,12 +216,13 @@ $md = New-Object System.Text.StringBuilder
 [void]$md.AppendLine('')
 [void]$md.AppendLine("Executable: ``$Exe``; clip: ``$Clip``; preset ``$Preset``; build ``$Build``.")
 [void]$md.AppendLine('')
-[void]$md.AppendLine('| EP (active) | F0 | Block ms | Device frames | Precision | Context ms | Levers | Load ms | Compute p50 / p95 / p99 ms | RTF p99 | Latency p50 / p99 ms | Over budget | VRAM MB | CPU cores | content / f0 / enc / flowdec p50 ms | Error |')
-[void]$md.AppendLine('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
+[void]$md.AppendLine('| EP (active) | F0 | Block ms | Device frames | Precision | Context ms | Levers | Load ms | Compute p50 / p95 / p99 ms | RTF p99 | Latency p50 / p99 ms | Over budget | VRAM MB | CPU cores | content / f0 / enc / flowdec p50 ms | glue / harness p50 ms | syncs / call | SM MHz | Error |')
+[void]$md.AppendLine('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
 foreach ($r in $rows) {
-    [void]$md.AppendLine(("| {0} ({1}) | {2} | {3} | {4} | {5} | {6} | {22} | {7} | {8} / {9} / {10} | {11} | {12} / {13} | {14} | {15} | {16} | {17} / {18} / {19} / {20} | {21} |" -f `
+    [void]$md.AppendLine(("| {0} ({1}) | {2} | {3} | {4} | {5} | {6} | {22} | {7} | {8} / {9} / {10} | {11} | {12} / {13} | {14} | {15} | {16} | {17} / {18} / {19} / {20} | {23} / {24} | {25} | {26} | {21} |" -f `
         $r.ep, $r.ep_active, $r.pitch, $r.block_ms, $r.device_frames, $r.precision, $r.extra_ms, $r.load_ms, $r.compute_p50, $r.compute_p95, $r.compute_p99,
-        $r.rtf_p99, $r.latency_p50, $r.latency_p99, $r.over_budget, $r.vram_mb, $r.cpu_cores, $r.content_p50, $r.f0_p50, $r.enc_p50, $r.flowdec_p50, $r.error, $r.levers))
+        $r.rtf_p99, $r.latency_p50, $r.latency_p99, $r.over_budget, $r.vram_mb, $r.cpu_cores, $r.content_p50, $r.f0_p50, $r.enc_p50, $r.flowdec_p50, $r.error, $r.levers,
+        $r.glue_p50, $r.harness_p50, $r.syncs_p50, $r.sm_clock_mhz))
 }
 if (@($rows | Where-Object { "$($_.device_frames)" -like '*benchmark only*' }).Count -gt 0) {
     [void]$md.AppendLine('')

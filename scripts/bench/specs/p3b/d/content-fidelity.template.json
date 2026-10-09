@@ -1,0 +1,33 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-D fidelity: the Sigil Voice Engine on ${EP} (direct build) converting ${CLIP} with the voice in ${SLOT}, ${PITCH} F0, 40 ms blocks, the Low-latency preset with LEVERS_JSON, scored against the offline ceiling (${CEILING_MODE}) at the lead offsets ${OFFSETS_JSON} s with the ${ANALYZER} scorer (v1 metrics reported next to it). Used for (a) the content plan against the plain session (SIGIL_VC_CONTENT_PLAN off vs on: must stay within A/A noise), (b) the content context and content_norm A/B (SIGIL_VC_CONTENT_CONTEXT_MS, LEVERS_JSON {\"content_norm\": \"on\"}), (c) the content-encoder precision checks (CONTENT_VARIANT pins the ceiling's encoder; SIGIL_VC_INT8 the stream's). write_audio keeps the renditions for rescoring against one fixed ceiling.",
+  "seed": 20261001,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 1, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS}, "crossfade_ms": ${CROSSFADE_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "block_ms": ${BLOCK_MS},
+    "lookahead_ms": ${LOOKAHEAD_MS},
+    "levers": ${LEVERS_JSON},
+    "content_variant": "${CONTENT_VARIANT}",
+    "build": "direct"
+  },
+  "runs": [
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1,
+      "ceiling": { "mode": "${CEILING_MODE}" },
+      "fidelity": { "offsets_s": ${OFFSETS_JSON} },
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu", "analyzer": "${ANALYZER}" }
+    }
+  ],
+  "thresholds": {},
+  "output": { "write_timeline": false, "write_audio": true }
+}

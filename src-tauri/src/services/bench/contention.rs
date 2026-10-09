@@ -13,11 +13,17 @@
 //! | `h3_cpu_game` | - | 4 threads at 60 % (VRChat on a 6-core CPU) | - |
 //! | `stall` | - | - | 3 s at 40 % of the run |
 //! | `custom` | `load` only | | `stalls` only |
+//! | `h2_load70_dml` (P3B-A) | the conv hammer at 70 % on DirectML in this process, whatever the engine's EP (a D3D12 load beside a CUDA engine) | - | - |
+//! | `h2_load70_oop` (P3B-A) | the conv hammer at 70 % on DirectML in a separate `Sigil.exe --headless gpu-load` process (a game's own process and queue) | - | - |
 //!
 //! `load` / `stalls` in the run replace the profile's. The GPU load runs on the engine's own GPU
-//! EP (DirectML when the engine runs on the CPU) unless `gpu_execution_provider` names one. A run
-//! too short for its stall (the stall must start 1 s after the warm-up and end 1 s before the
-//! end) drops it.
+//! EP (DirectML when the engine runs on the CPU) unless `gpu_execution_provider` names one (the
+//! `_dml` / `_oop` profiles run on DirectML unless it names one). A run too short for its stall
+//! (the stall must start 1 s after the warm-up and end 1 s before the end) drops it.
+//!
+//! The in-process same-EP hammer (`h2_load70` on a CUDA engine) shares the engine's CUDA context
+//! and SMs: the advisory worst case. The out-of-process load is what a game is to the engine; its
+//! report carries the load's achieved duty and frame times (`load.gpu`).
 //!
 //! # Frozen by P3-S0
 //! [`available`] (the spec schema of the mode is P3-F's, in `spec.rs`).
@@ -36,7 +42,7 @@ pub fn available() -> bool {
 }
 
 /// The profiles, in documentation order.
-pub const PROFILES: [&str; 5] = ["h1_vrchat_obs", "h2_load70", "h3_cpu_game", "stall", "custom"];
+pub const PROFILES: [&str; 7] = ["h1_vrchat_obs", "h2_load70", "h3_cpu_game", "stall", "custom", "h2_load70_dml", "h2_load70_oop"];
 
 /// One frame at 60 fps.
 const FRAME_MS: f64 = 1000.0 / 60.0;
@@ -51,6 +57,7 @@ fn conv_hammer(duty: f64, ep: &str) -> GpuLoadSpec {
         device_index: 0,
         size: 256,
         depth: 8,
+        out_of_process: false,
     }
 }
 
@@ -92,6 +99,14 @@ fn parts_on(c: &ContentionRun, gpu_ep: &str) -> (LoadSpec, Vec<StallSpec>) {
             profile_stall(c),
         ),
         "h2_load70" => (h2_load(gpu_ep), Vec::new()),
+        "h2_load70_dml" => (h2_load(gpu_ep), Vec::new()),
+        "h2_load70_oop" => {
+            let mut load = h2_load(gpu_ep);
+            if let Some(g) = load.gpu.as_mut() {
+                g.out_of_process = true;
+            }
+            (load, Vec::new())
+        }
         "h3_cpu_game" => (
             LoadSpec {
                 gpu: None,
@@ -159,6 +174,8 @@ pub(super) fn run(
     progress: &(dyn Fn(f64, &str) + Sync),
 ) -> Result<RunOutcome, String> {
     let gpu_ep = match c.gpu_execution_provider.trim().to_ascii_lowercase().as_str() {
+        // A game renders through D3D12 whatever the engine runs on (P3B-A profiles).
+        "" if matches!(c.profile.trim(), "h2_load70_dml" | "h2_load70_oop") => "dml".to_string(),
         "" => load_ep_for(p.engine.info.execution_provider_active.as_deref()).to_string(),
         other => other.to_string(),
     };
@@ -215,6 +232,21 @@ mod tests {
         assert!(validate(&run_spec(serde_json::json!({"name": "c", "profile": "nope"}))).is_err());
         assert!(validate(&run_spec(serde_json::json!({"name": "c", "profile": "custom"}))).is_err());
         assert!(available());
+    }
+
+    /// P3B-A: the DirectML and out-of-process rows expand to the 70 % hammer, the latter flagged for
+    /// the `--headless gpu-load` child; both validate.
+    #[test]
+    fn the_realistic_load_profiles_expand() {
+        for (profile, oop) in [("h2_load70_dml", false), ("h2_load70_oop", true)] {
+            let c = run_spec(serde_json::json!({"name": "c", "profile": profile, "seconds": 20}));
+            assert!(validate(&c).is_ok(), "{profile}");
+            let p = expand(&c, "dml");
+            let g = p.load.gpu.as_ref().unwrap();
+            assert_eq!((g.duty, g.execution_provider.as_str(), g.out_of_process), (0.7, "dml", oop), "{profile}");
+            assert!(p.stalls.is_empty() && p.load.cpu.is_none());
+        }
+        assert!(!expand(&run_spec(serde_json::json!({"name": "c", "profile": "h2_load70"})), "cuda").load.gpu.unwrap().out_of_process);
     }
 
     /// The load shares the engine's GPU: a TensorRT engine runs on the CUDA rung.

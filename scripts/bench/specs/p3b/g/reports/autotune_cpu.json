@@ -1,0 +1,229 @@
+{
+ "schema": "p3b-g-autotune-cpu/1",
+ "exe": "exe-g3 (P3B-G tree of 2026-10-03)",
+ "clip": "en-jfk.wav",
+ "request": {
+  "execution_providers": [
+   "cpu"
+  ],
+  "pitch_extractors": [
+   "swiftf0"
+  ],
+  "preset": "low_latency",
+  "rtf_limit": 0.6,
+  "verify_fidelity": true
+ },
+ "seconds": 225.5167496,
+ "result": {
+  "params": {
+   "block_ms": 200.0,
+   "extra_context_ms": 64.0,
+   "pitch_extractor": "swiftf0",
+   "precision": "auto",
+   "rvc_execution_provider": "cpu",
+   "rvc_preset": "low_latency",
+   "worker_priority": "protect_voice"
+  },
+  "rtf_p99": 0.6236292000000001,
+  "block_ms_p95": 123.76816,
+  "latency_ms_p50": 357.9246319369842,
+  "latency_ms_p99": 370.5912986036508,
+  "fidelity": 0.9711843211973027
+ },
+ "notes": [
+  "CPU threads: 6@normal measured best (3.82 cores per audio second), but the voice changer's params cannot set that thread count yet; using pool@normal (4.54 cores)",
+  "fidelity: below T5 at every block tried (shortfall 200 ms: 10.31 +- 0.00); kept the 200 ms block (a larger one must cut the shortfall by a quarter and by more than its spread over the offsets to be worth its latency)",
+  "no configuration met p99 RTF <= 0.6 on this PC; this is the fastest one found"
+ ],
+ "candidates": [
+  {
+   "stage": "pitch",
+   "block_ms": 0.0,
+   "threads": "",
+   "rtf_p99": null,
+   "cpu_cores": null,
+   "ok": true,
+   "latency_ms_p50": null
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "1@below_normal",
+   "rtf_p99": 3.428729425,
+   "cpu_cores": 0.9795484547705235,
+   "ok": false,
+   "latency_ms_p50": 650.5912986036875
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "2@below_normal",
+   "rtf_p99": 2.88316215,
+   "cpu_cores": 1.8203571896945163,
+   "ok": false,
+   "latency_ms_p50": 550.5912986036883
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "3@below_normal",
+   "rtf_p99": 2.20540365,
+   "cpu_cores": 2.3204539585802495,
+   "ok": false,
+   "latency_ms_p50": 460.5912986036884
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "4@below_normal",
+   "rtf_p99": 1.8212998875,
+   "cpu_cores": 3.173937243863652,
+   "ok": false,
+   "latency_ms_p50": 455.2579652703545
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "6@below_normal",
+   "rtf_p99": 1.4433853125,
+   "cpu_cores": 4.2741912267536675,
+   "ok": false,
+   "latency_ms_p50": 400.59129860368745
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "pool@below_normal",
+   "rtf_p99": 1.256386975,
+   "cpu_cores": 5.169775169452555,
+   "ok": false,
+   "latency_ms_p50": 370.5912986036877
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "1@normal",
+   "rtf_p99": 3.2317675374999997,
+   "cpu_cores": 0.9863777295212881,
+   "ok": false,
+   "latency_ms_p50": 620.5912986036875
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "2@normal",
+   "rtf_p99": 1.9162913,
+   "cpu_cores": 1.8132992731440418,
+   "ok": false,
+   "latency_ms_p50": 455.25796527035436
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "3@normal",
+   "rtf_p99": 1.4172576875,
+   "cpu_cores": 2.498430551380664,
+   "ok": false,
+   "latency_ms_p50": 395.2579652703543
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "4@normal",
+   "rtf_p99": 1.29980065,
+   "cpu_cores": 3.0236241036197047,
+   "ok": false,
+   "latency_ms_p50": 370.5912986036879
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "6@normal",
+   "rtf_p99": 1.1327548,
+   "cpu_cores": 3.8221226624508806,
+   "ok": false,
+   "latency_ms_p50": 215.25796527035456
+  },
+  {
+   "stage": "threads",
+   "block_ms": 80.0,
+   "threads": "pool@normal",
+   "rtf_p99": 1.1389182375,
+   "cpu_cores": 4.541757125784692,
+   "ok": false,
+   "latency_ms_p50": 290.5912986036885
+  },
+  {
+   "stage": "pitch",
+   "block_ms": 80.0,
+   "threads": "pool@normal",
+   "rtf_p99": 1.2941902499999995,
+   "cpu_cores": 3.7605401147568247,
+   "ok": false,
+   "latency_ms_p50": 365.25796527035425
+  },
+  {
+   "stage": "block",
+   "block_ms": 20.0,
+   "threads": "pool@normal",
+   "rtf_p99": 4.175145199999999,
+   "cpu_cores": 4.474534827264245,
+   "ok": false,
+   "latency_ms_p50": 430.049631936992
+  },
+  {
+   "stage": "block",
+   "block_ms": 40.0,
+   "threads": "pool@normal",
+   "rtf_p99": 2.310890874999999,
+   "cpu_cores": 4.49390734325418,
+   "ok": false,
+   "latency_ms_p50": 373.25796527034873
+  },
+  {
+   "stage": "block",
+   "block_ms": 60.0,
+   "threads": "pool@normal",
+   "rtf_p99": 1.6154426000000002,
+   "cpu_cores": 4.539041552398182,
+   "ok": false,
+   "latency_ms_p50": 364.71629860367693
+  },
+  {
+   "stage": "block",
+   "block_ms": 100.0,
+   "threads": "pool@normal",
+   "rtf_p99": 1.06570586,
+   "cpu_cores": 4.38815752215891,
+   "ok": false,
+   "latency_ms_p50": 248.71629860361844
+  },
+  {
+   "stage": "block",
+   "block_ms": 120.0,
+   "threads": "pool@normal",
+   "rtf_p99": 0.9478886666666663,
+   "cpu_cores": 3.9646725138333334,
+   "ok": false,
+   "latency_ms_p50": 267.92463193699035
+  },
+  {
+   "stage": "block",
+   "block_ms": 160.0,
+   "threads": "pool@normal",
+   "rtf_p99": 0.7293933749999999,
+   "cpu_cores": 3.3056058061549503,
+   "ok": false,
+   "latency_ms_p50": 305.2579652703211
+  },
+  {
+   "stage": "block",
+   "block_ms": 200.0,
+   "threads": "pool@normal",
+   "rtf_p99": 0.6236292000000001,
+   "cpu_cores": 2.8219292368333337,
+   "ok": false,
+   "latency_ms_p50": 357.9246319369842
+  }
+ ]
+}

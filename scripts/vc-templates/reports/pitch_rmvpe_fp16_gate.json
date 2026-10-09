@@ -1,0 +1,163 @@
+{
+  "cuda": {
+    "clips": 34,
+    "default_fp16_ok": true,
+    "default_fp16_vs_fp32": {
+      "cents_max": 1884.1551513671875,
+      "cents_p99": 0.11783849447965622,
+      "confidence_delta_max": 0.012278497219085693,
+      "confidence_delta_p99": 0.0016762018203735352,
+      "voiced_both": 10591,
+      "vuv_flips_pct": 0.026946914578280787
+    },
+    "frames": 14844,
+    "outcome": "cuda",
+    "real_clips": 7,
+    "saver_fp16_ok": true,
+    "saver_fp16_vs_t32": {
+      "cents_max": 1202.1866455078125,
+      "cents_p99": 0.11474302411079407,
+      "confidence_delta_max": 0.008826673030853271,
+      "confidence_delta_p99": 0.0017026066780090332,
+      "voiced_both": 10456,
+      "vuv_flips_pct": 0.02021018593371059
+    },
+    "saver_t32_ok": true,
+    "saver_t32_vs_full": {
+      "cents_max": 1.0173567533493042,
+      "cents_p99": 0.0109381303191185,
+      "confidence_delta_max": 0.0007879137992858887,
+      "confidence_delta_p99": 0.0001652240753173828,
+      "voiced_both": 10458,
+      "vuv_flips_pct": 0.0
+    },
+    "saver_vs_default": {
+      "cents_max": 3723.427001953125,
+      "cents_p99": 1892.78466796875,
+      "confidence_delta_max": 0.5342937707901001,
+      "confidence_delta_p99": 0.2081475853919983,
+      "voiced_both": 10406,
+      "vuv_flips_pct": 1.610078146052277
+    },
+    "synthetic_clips": 27,
+    "synthetic_truth": {
+      "32_full": {
+        "fpe_cents": 7.240956488536752,
+        "frames": 9686,
+        "gpe_pct": 8.217641284532323,
+        "voiced_both": 7131,
+        "vuv_error_pct": 9.611810861036547
+      },
+      "32_t32": {
+        "fpe_cents": 7.240756726259244,
+        "frames": 9686,
+        "gpe_pct": 8.217641284532323,
+        "voiced_both": 7131,
+        "vuv_error_pct": 9.611810861036547
+      },
+      "32_t32_fp16": {
+        "fpe_cents": 7.241738002755836,
+        "frames": 9686,
+        "gpe_pct": 8.23166456317487,
+        "voiced_both": 7131,
+        "vuv_error_pct": 9.611810861036547
+      },
+      "64_full": {
+        "fpe_cents": 7.303030826742172,
+        "frames": 9686,
+        "gpe_pct": 4.907032014539354,
+        "voiced_both": 7153,
+        "vuv_error_pct": 9.63245921949205
+      },
+      "64_full_fp16": {
+        "fpe_cents": 7.304083800527423,
+        "frames": 9686,
+        "gpe_pct": 4.879071718160213,
+        "voiced_both": 7153,
+        "vuv_error_pct": 9.642783398719802
+      }
+    }
+  },
+  "dml": {
+    "clips": 34,
+    "default_fp16_ok": false,
+    "default_fp16_vs_fp32": {
+      "cents_max": 1905.086669921875,
+      "cents_p99": 0.15477746725082397,
+      "confidence_delta_max": 0.007666230201721191,
+      "confidence_delta_p99": 0.002063363790512085,
+      "voiced_both": 10589,
+      "vuv_flips_pct": 0.026946914578280787
+    },
+    "frames": 14844,
+    "outcome": "dml",
+    "real_clips": 7,
+    "saver_fp16_ok": true,
+    "saver_fp16_vs_t32": {
+      "cents_max": 27.56707000732422,
+      "cents_p99": 0.14838027954101562,
+      "confidence_delta_max": 0.009263455867767334,
+      "confidence_delta_p99": 0.002113819122314453,
+      "voiced_both": 10456,
+      "vuv_flips_pct": 0.026946914578280787
+    },
+    "saver_t32_ok": true,
+    "saver_t32_vs_full": {
+      "cents_max": 0.002889306051656604,
+      "cents_p99": 0.0016510325949639082,
+      "confidence_delta_max": 5.066394805908203e-7,
+      "confidence_delta_p99": 1.7881393432617188e-7,
+      "voiced_both": 10458,
+      "vuv_flips_pct": 0.0
+    },
+    "saver_vs_default": {
+      "cents_max": 3723.43115234375,
+      "cents_p99": 1896.9630126953125,
+      "confidence_delta_max": 0.5345713496208191,
+      "confidence_delta_p99": 0.20825479924678802,
+      "voiced_both": 10406,
+      "vuv_flips_pct": 1.610078146052277
+    },
+    "synthetic_clips": 27,
+    "synthetic_truth": {
+      "32_full": {
+        "fpe_cents": 7.2420855782259945,
+        "frames": 9686,
+        "gpe_pct": 8.23166456317487,
+        "voiced_both": 7131,
+        "vuv_error_pct": 9.611810861036547
+      },
+      "32_t32": {
+        "fpe_cents": 7.24209273424783,
+        "frames": 9686,
+        "gpe_pct": 8.23166456317487,
+        "voiced_both": 7131,
+        "vuv_error_pct": 9.611810861036547
+      },
+      "32_t32_fp16": {
+        "fpe_cents": 7.241359944949308,
+        "frames": 9686,
+        "gpe_pct": 8.244531688166012,
+        "voiced_both": 7132,
+        "vuv_error_pct": 9.601486681808796
+      },
+      "64_full": {
+        "fpe_cents": 7.301983784102043,
+        "frames": 9686,
+        "gpe_pct": 4.893051866349784,
+        "voiced_both": 7153,
+        "vuv_error_pct": 9.63245921949205
+      },
+      "64_full_fp16": {
+        "fpe_cents": 7.303301981629777,
+        "frames": 9686,
+        "gpe_pct": 4.949664429530201,
+        "voiced_both": 7152,
+        "vuv_error_pct": 9.63245921949205
+      }
+    }
+  },
+  "fp16_gate_passed_default_plan": false,
+  "fp16_gate_passed_saver": true,
+  "gate": "stream path (F0 cache, 40 ms blocks, 44-frame window): fp16 vs fp32 voiced cents p99 <= 5, V/UV flips <= 0.2 pt, GPE vs the synthetic truth not worse (+0.05 pt), confidence delta p99 <= 0.01; t32 vs full (32 frames): cents p99 <= 1, flips <= 0.05 pt"
+}

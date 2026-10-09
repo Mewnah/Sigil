@@ -69,6 +69,16 @@
 //! [`PitchBankRequest`], [`PitchBank`], [`create_pitch_extractor`],
 //! [`create_pitch_extractor_with`] (the voice's GPU levers), [`pitch_model_id`],
 //! [`resolve_pitch_model`], [`ab`] (with [`ab::report`], the benchmark's pitch A/B entry point).
+//!
+//! # Added by P3B-F
+//! - **Parallel fusion**: on a GPU rung the fused extractor runs SwiftF0 (CPU) on a persistent lane
+//!   thread while RMVPE (GPU) runs on the calling thread ([`FusedPitchExtractor::with_parallel`],
+//!   bit-identical to the serial path; kill switch `SIGIL_VC_FUSION_PARALLEL=0`,
+//!   [`FUSION_PARALLEL_ENV`]); both extractors run through their allocation-free `f0_into`.
+//! - The fused extractor reports the tighter `max_call_frames` of its two extractors (the F0
+//!   cache primes cold starts within RMVPE's plan) and implements `f0_into`.
+//! - The bank loads RMVPE (alone or in the fusion) with P3B-E's `RmvpeLoad::from_bank`: the
+//!   request's plan geometry and precision reach it, and its load notes reach [`PitchBank::notes`].
 
 use std::path::{Path, PathBuf};
 
@@ -79,11 +89,11 @@ use crate::services::neural_audio::ort_session::VcSessionOptions;
 use super::assets;
 use super::bases::base_models_dir;
 use super::crepe::CrepePitchExtractor;
-use super::engine::options::F0Range;
+use super::engine::options::{F0Range, PrecisionMode};
 use super::f0_post::{cents, F0Post, F0PostConfig};
 use super::fcpe::FcpePitchExtractor;
 use super::pesto::PestoPitchExtractor;
-use super::rmvpe::RmvpePitchExtractor;
+use super::rmvpe::{RmvpeLoad, RmvpePitchExtractor};
 use super::swiftf0::SwiftF0PitchExtractor;
 use super::traits::PitchExtractor;
 use super::world::DioPitchExtractor;
@@ -254,18 +264,19 @@ enum Source {
 
 impl Source {
     /// Run the extractor: F0 into `f0`, confidence (1 / 0 for plain extractors) into `conf`, the
-    /// pre-voicing candidates (a copy of `f0` when the extractor has none) into `cand`.
+    /// pre-voicing candidates (a copy of `f0` when the extractor has none) into `cand`. Through
+    /// `f0_into` (P3B-F): no allocation of its own once the buffers have their capacity.
     fn run(&mut self, mono_16k: &[f32], f0: &mut Vec<f32>, conf: &mut Vec<f32>, cand: &mut Vec<f32>) -> Result<(), String> {
         conf.clear();
         cand.clear();
         match self {
             Source::Plain(e) => {
-                *f0 = e.f0(mono_16k)?;
+                e.f0_into(mono_16k, f0)?;
                 conf.extend(f0.iter().map(|&v| if v > 0.0 { 1.0 } else { 0.0 }));
                 cand.extend_from_slice(f0);
             }
             Source::Confident(e) => {
-                *f0 = e.f0(mono_16k)?;
+                e.f0_into(mono_16k, f0)?;
                 let c = e.last_confidence();
                 conf.extend((0..f0.len()).map(|i| {
                     c.get(i)
@@ -287,11 +298,496 @@ impl Source {
             Source::Confident(e) => e.receptive_frames(),
         }
     }
+
+    fn max_call_frames(&self) -> Option<usize> {
+        match self {
+            Source::Plain(e) => e.max_call_frames(),
+            Source::Confident(e) => e.max_call_frames(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Parallel fusion (P3B-F)
+// ---------------------------------------------------------------------------------------------
+
+/// Kill switch of the parallel fusion (P3B-F): `SIGIL_VC_FUSION_PARALLEL=0` (`off` / `false` /
+/// `no`) runs the voicing and the pitch extractor one after the other on the calling thread (P3),
+/// for A/B runs from one executable. Read when the fused extractor is built.
+pub const FUSION_PARALLEL_ENV: &str = "SIGIL_VC_FUSION_PARALLEL";
+
+/// Whether fused extractors on a GPU rung run their two extractors concurrently
+/// ([`FUSION_PARALLEL_ENV`]; on unless switched off). Reads the environment: load time only.
+pub fn fusion_parallel_switch() -> bool {
+    match std::env::var(FUSION_PARALLEL_ENV) {
+        Ok(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "no"),
+        Err(_) => true,
+    }
+}
+
+/// Spins of the joining thread before it parks (the voicing extractor, SwiftF0 on the CPU, usually
+/// ends before RMVPE does).
+const LANE_JOIN_SPINS: u32 = 2_000;
+const LANE_IDLE: u8 = 0;
+/// A call is posted; the joining thread has not announced a park (it is spinning or has not
+/// started to wait).
+const LANE_READY: u8 = 1;
+const LANE_DONE: u8 = 2;
+const LANE_SHUTDOWN: u8 = 3;
+/// A call is posted and the joining thread announced that it parks (or is about to) until DONE.
+/// The announcement lives in the state word itself (READY -> PARKED by the joiner, READY | PARKED
+/// -> DONE by the lane, both compare-exchanges on the one atomic), so it belongs to exactly one
+/// call: a lane thread that is slow to finish its wake-up of call N can never take or clear the
+/// announcement of call N + 1.
+const LANE_PARKED: u8 = 4;
+
+/// The voicing extractor's side of a fused call. Owned by the calling thread while the state is
+/// IDLE or DONE, by the lane's thread while it is READY or PARKED.
+struct LaneSlot {
+    /// The voicing extractor (placed once the thread runs).
+    source: Option<Source>,
+    /// A copy of the call's input (capacity kept from call to call).
+    mono: Vec<f32>,
+    f0: Vec<f32>,
+    conf: Vec<f32>,
+    cand: Vec<f32>,
+    error: Option<String>,
+    waker: Option<std::thread::Thread>,
+    policy: LanePolicy,
+}
+
+/// A test hook of the lane thread ([`LaneShared::after_done`]).
+#[cfg(test)]
+type LaneHook = std::sync::Arc<dyn Fn(u64) + Send + Sync>;
+
+struct LaneShared {
+    state: std::sync::atomic::AtomicU8,
+    slot: std::cell::UnsafeCell<LaneSlot>,
+    /// Tests: runs on the lane thread right after a call's hand-over to DONE and before the
+    /// wake-up that hand-over may owe the joiner (argument: the calls handed over before it), to
+    /// replay the interleavings of a lane thread that is descheduled there.
+    #[cfg(test)]
+    after_done: std::sync::Mutex<Option<LaneHook>>,
+    #[cfg(test)]
+    handed_over: std::sync::atomic::AtomicU64,
+}
+
+// SAFETY: the slot is touched only by the side that owns it in the state protocol above (IDLE /
+// DONE: the calling thread; READY / PARKED: the lane), with Release stores and Acquire loads of
+// `state` ordering every hand-over; everything in it is owned data and the extractor is `Send`.
+unsafe impl Send for LaneShared {}
+// SAFETY: as above.
+unsafe impl Sync for LaneShared {}
+
+#[cfg(test)]
+impl LaneShared {
+    /// Run the test hook for the call just handed over (outside the lock: the hook may block).
+    fn run_after_done_hook(&self) {
+        use std::sync::atomic::Ordering;
+        let n = self.handed_over.fetch_add(1, Ordering::SeqCst);
+        let hook = self.after_done.lock().ok().and_then(|g| g.clone());
+        if let Some(hook) = hook {
+            hook(n);
+        }
+    }
+}
+
+/// A persistent thread that runs the voicing extractor of a fused call while the calling thread
+/// runs the pitch extractor (module docs). Every call posts and joins within
+/// [`FusedPitchExtractor::f0_into`]; dropping the lane stops its thread.
+struct VoicingLane {
+    shared: std::sync::Arc<LaneShared>,
+    thread: std::thread::Thread,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl VoicingLane {
+    /// Start the lane with `source`; on failure the source comes back with the reason.
+    fn spawn(source: Source) -> Result<VoicingLane, (Source, String)> {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        let shared = std::sync::Arc::new(LaneShared {
+            state: AtomicU8::new(LANE_IDLE),
+            slot: std::cell::UnsafeCell::new(LaneSlot {
+                source: None,
+                mono: Vec::new(),
+                f0: Vec::new(),
+                conf: Vec::new(),
+                cand: Vec::new(),
+                error: None,
+                waker: None,
+                policy: LanePolicy::default(),
+            }),
+            #[cfg(test)]
+            after_done: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            handed_over: std::sync::atomic::AtomicU64::new(0),
+        });
+        let theirs = std::sync::Arc::clone(&shared);
+        match std::thread::Builder::new()
+            .name("sigil-vc-f0-voicing".into())
+            .spawn(move || lane_loop(&theirs))
+        {
+            Ok(handle) => {
+                debug_assert_eq!(shared.state.load(Ordering::Acquire), LANE_IDLE);
+                // SAFETY: state IDLE (nothing was posted yet): this thread owns the slot.
+                unsafe { (*shared.slot.get()).source = Some(source) };
+                Ok(VoicingLane {
+                    thread: handle.thread().clone(),
+                    shared,
+                    handle: Some(handle),
+                })
+            }
+            Err(e) => Err((source, e.to_string())),
+        }
+    }
+
+    /// The voicing extractor between calls (IDLE: the calling thread owns the slot).
+    fn source(&self) -> Option<&Source> {
+        use std::sync::atomic::Ordering;
+        if self.shared.state.load(Ordering::Acquire) != LANE_IDLE {
+            return None;
+        }
+        // SAFETY: state IDLE: this (calling) thread owns the slot.
+        unsafe { (*self.shared.slot.get()).source.as_ref() }
+    }
+
+    /// Hand the call's input to the lane (allocation-free once the input buffer has its capacity).
+    fn post(&self, mono_16k: &[f32]) {
+        use std::sync::atomic::Ordering;
+        debug_assert_eq!(self.shared.state.load(Ordering::Acquire), LANE_IDLE);
+        // SAFETY: state IDLE: this thread owns the slot until it stores READY.
+        let slot = unsafe { &mut *self.shared.slot.get() };
+        slot.mono.clear();
+        slot.mono.extend_from_slice(mono_16k);
+        slot.error = None;
+        slot.waker = Some(std::thread::current());
+        slot.policy = LanePolicy::of_current();
+        self.shared.state.store(LANE_READY, Ordering::Release);
+        self.thread.unpark();
+    }
+
+    /// Wait until the posted call is DONE (the slot is the calling thread's again). Spins first
+    /// (the voicing extractor, SwiftF0 on the CPU, usually ends before RMVPE does), then parks.
+    ///
+    /// The park is announced by moving the call's own state word READY -> PARKED. The lane hands
+    /// the slot over with one compare-exchange READY | PARKED -> DONE and unparks the joiner iff
+    /// that exchange found PARKED. Both sides modify the one atomic, so exactly one of them wins:
+    /// either the lane's exchange came first (the joiner's fails with DONE and it does not park) or
+    /// the joiner's did (the lane sees PARKED and unparks). There is no second flag that could
+    /// outlive its call, so a lane thread that is late with its wake-up of call N cannot touch call
+    /// N + 1 (an earlier `waiting` flag cleared with `swap(false)` after the exchange could: the
+    /// delayed swap took the next call's announcement and its joiner parked for ever). Unparks that
+    /// arrive late are spurious wake-ups of a loop that re-checks the state.
+    fn wait_done(&self) {
+        use std::sync::atomic::Ordering;
+        let state = &self.shared.state;
+        let mut spins = 0u32;
+        while state.load(Ordering::Acquire) != LANE_DONE {
+            if spins < LANE_JOIN_SPINS {
+                spins += 1;
+                std::hint::spin_loop();
+                continue;
+            }
+            match state.compare_exchange(LANE_READY, LANE_PARKED, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => {
+                    while state.load(Ordering::Acquire) == LANE_PARKED {
+                        std::thread::park();
+                    }
+                }
+                // The lane finished first: the loop condition sees DONE.
+                Err(now) => debug_assert_eq!(now, LANE_DONE, "a join without a posted call"),
+            }
+        }
+    }
+
+    /// Wait for the posted call and swap its contour, confidence and candidates into the caller's
+    /// buffers (the slot keeps the caller's old buffers for the next call: no copy, no allocation).
+    fn join(&self, f0: &mut Vec<f32>, conf: &mut Vec<f32>, cand: &mut Vec<f32>) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        self.wait_done();
+        let shared = &self.shared;
+        // SAFETY: state DONE: the lane has finished with the slot; this thread owns it.
+        let slot = unsafe { &mut *shared.slot.get() };
+        std::mem::swap(f0, &mut slot.f0);
+        std::mem::swap(conf, &mut slot.conf);
+        std::mem::swap(cand, &mut slot.cand);
+        let error = slot.error.take();
+        shared.state.store(LANE_IDLE, Ordering::Release);
+        match error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Wait for the posted call and throw its result away: the slot goes back to IDLE with the
+    /// caller's buffers untouched (the unwinding path of [`LaneCall`]).
+    fn discard(&self) {
+        use std::sync::atomic::Ordering;
+        self.wait_done();
+        // SAFETY: state DONE: the lane has finished with the slot; this thread owns it.
+        unsafe { (*self.shared.slot.get()).error = None };
+        self.shared.state.store(LANE_IDLE, Ordering::Release);
+    }
+}
+
+/// A call posted to the lane, joined on every way out of the caller's scope. The lane owns the
+/// slot (reads the input copy, writes the output buffers) from `post` until it is DONE, so a
+/// caller that unwinds in between, say on a panic in the pitch extractor that the engine's
+/// `run_job` catches before it keeps using this extractor, must not leave the lane READY or DONE:
+/// the next `post` would rewrite the slot under a running lane, and the lane's hand-over would
+/// finish the old job as the new call's result. Dropping an unjoined call waits for the lane and
+/// returns the slot to IDLE.
+struct LaneCall<'a> {
+    lane: &'a VoicingLane,
+    joined: bool,
+}
+
+impl<'a> LaneCall<'a> {
+    fn post(lane: &'a VoicingLane, mono_16k: &[f32]) -> LaneCall<'a> {
+        lane.post(mono_16k);
+        LaneCall { lane, joined: false }
+    }
+
+    /// [`VoicingLane::join`] of this call.
+    fn join(mut self, f0: &mut Vec<f32>, conf: &mut Vec<f32>, cand: &mut Vec<f32>) -> Result<(), String> {
+        self.joined = true;
+        self.lane.join(f0, conf, cand)
+    }
+}
+
+impl Drop for LaneCall<'_> {
+    fn drop(&mut self) {
+        if !self.joined {
+            self.lane.discard();
+        }
+    }
+}
+
+impl VoicingLane {
+    /// Stop the lane's thread (idempotent). No call is in flight between calls (each post is joined
+    /// within its call).
+    fn stop(&mut self) {
+        use std::sync::atomic::Ordering;
+        if let Some(h) = self.handle.take() {
+            self.shared.state.store(LANE_SHUTDOWN, Ordering::SeqCst);
+            self.thread.unpark();
+            let _ = h.join();
+        }
+    }
+
+    /// Stop the lane and hand its extractor back.
+    fn into_source(mut self) -> Source {
+        self.stop();
+        // SAFETY: the lane's thread has exited; nothing else touches the slot.
+        let source = unsafe { (*self.shared.slot.get()).source.take() };
+        source.expect("a lane holds its extractor from its start to its stop")
+    }
+}
+
+impl Drop for VoicingLane {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn lane_loop(shared: &LaneShared) {
+    use std::sync::atomic::Ordering;
+    let mut applied = LanePolicy::default();
+    loop {
+        match shared.state.load(Ordering::Acquire) {
+            // PARKED: the joiner announced its park before this thread even woke; the call is the
+            // same.
+            LANE_READY | LANE_PARKED => {
+                // SAFETY: state READY or PARKED: the calling thread handed the slot over and waits
+                // for DONE.
+                let slot = unsafe { &mut *shared.slot.get() };
+                if slot.policy != applied {
+                    slot.policy.apply_to_current();
+                    applied = slot.policy;
+                }
+                let LaneSlot {
+                    source,
+                    mono,
+                    f0,
+                    conf,
+                    cand,
+                    error,
+                    ..
+                } = slot;
+                let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match source.as_mut() {
+                    Some(s) => s.run(mono, f0, conf, cand),
+                    None => Err("the fusion's voicing lane has no extractor".to_string()),
+                }));
+                match run {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => *error = Some(e),
+                    Err(_) => *error = Some("the fusion's voicing extractor panicked".into()),
+                }
+                let waker = slot.waker.take();
+                // Hand the slot back. The exchange decides, atomically with the hand-over, whether
+                // the joiner announced a park (`wait_done`); nothing of this call is looked at
+                // again afterwards, so a delay between here and the unpark only delays this call's
+                // own joiner.
+                let mut seen = shared.state.load(Ordering::Acquire);
+                let joiner_parked = loop {
+                    match seen {
+                        LANE_READY | LANE_PARKED => {
+                            match shared
+                                .state
+                                .compare_exchange(seen, LANE_DONE, Ordering::SeqCst, Ordering::SeqCst)
+                            {
+                                Ok(_) => break seen == LANE_PARKED,
+                                Err(now) => seen = now,
+                            }
+                        }
+                        // Shut down while the call ran.
+                        _ => return,
+                    }
+                };
+                #[cfg(test)]
+                shared.run_after_done_hook();
+                if joiner_parked {
+                    if let Some(w) = waker {
+                        w.unpark();
+                    }
+                }
+            }
+            LANE_SHUTDOWN => return,
+            _ => std::thread::park(),
+        }
+    }
+}
+
+/// The calling thread's scheduling (priority and EcoQoS opt-out), mirrored by the lane before each
+/// call so a live worker-priority switch reaches it (never MMCSS: an inference thread).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LanePolicy {
+    priority: Option<i32>,
+    high_qos: bool,
+}
+
+#[cfg(windows)]
+impl LanePolicy {
+    fn of_current() -> LanePolicy {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, GetThreadInformation, GetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_STATE,
+        };
+        // SAFETY: the pseudo-handle of the calling thread; pointer and size describe `state`.
+        unsafe {
+            let priority = GetThreadPriority(GetCurrentThread());
+            let mut state = THREAD_POWER_THROTTLING_STATE {
+                Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: 0,
+                StateMask: 0,
+            };
+            let high_qos = GetThreadInformation(
+                GetCurrentThread(),
+                ThreadPowerThrottling,
+                &mut state as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+            )
+            .is_ok()
+                && state.ControlMask & THREAD_POWER_THROTTLING_EXECUTION_SPEED != 0
+                && state.StateMask & THREAD_POWER_THROTTLING_EXECUTION_SPEED == 0;
+            LanePolicy {
+                // THREAD_PRIORITY_ERROR_RETURN (MAXLONG) when the call failed.
+                priority: (priority != i32::MAX).then_some(priority),
+                high_qos,
+            }
+        }
+    }
+
+    fn apply_to_current(&self) {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, SetThreadInformation, SetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY,
+        };
+        if let Some(p) = self.priority {
+            // SAFETY: the pseudo-handle of the calling thread.
+            let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY(p)) };
+        }
+        if self.high_qos {
+            let _ = crate::services::rt_thread::opt_out_power_throttling();
+        } else {
+            // Hand the thread's EcoQoS state back to the system (best effort).
+            let state = THREAD_POWER_THROTTLING_STATE {
+                Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: 0,
+                StateMask: 0,
+            };
+            // SAFETY: the pseudo-handle of the calling thread; pointer and size describe `state`.
+            let _ = unsafe {
+                SetThreadInformation(
+                    GetCurrentThread(),
+                    ThreadPowerThrottling,
+                    &state as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+                )
+            };
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl LanePolicy {
+    fn of_current() -> LanePolicy {
+        LanePolicy::default()
+    }
+
+    fn apply_to_current(&self) {}
+}
+
+/// Where a fused extractor runs its voicing extractor.
+enum Voicing {
+    /// On the calling thread, before the pitch extractor (P3; the CPU rung, the kill switch).
+    Here(Source),
+    /// On its own thread, concurrently with the pitch extractor (P3B-F).
+    Lane(VoicingLane),
+}
+
+impl Voicing {
+    fn source(&self) -> Option<&Source> {
+        match self {
+            Voicing::Here(s) => Some(s),
+            Voicing::Lane(l) => l.source(),
+        }
+    }
 }
 
 /// Voicing from `voicing`, pitch from `pitch`.
+///
+/// # Parallel fusion (P3B-F)
+/// [`FusedPitchExtractor::with_parallel`] (the pitch bank turns it on for the GPU fusion, SwiftF0 on
+/// the CPU beside RMVPE on the GPU) runs the voicing extractor on a persistent lane thread while
+/// the calling thread runs the pitch extractor, then fuses: the call costs the longer of the two
+/// instead of their sum. Each extractor sees exactly the serial path's input, so the contour is
+/// bit-identical (`tests::parallel_fusion_is_bit_identical_to_serial`); the hand-over copies the
+/// input and swaps the output buffers (no allocation once warm). The lane takes the calling thread's
+/// priority and EcoQoS opt-out before each call; a panic in the voicing extractor is that call's
+/// error, and a panic in the pitch extractor unwinds out of `f0_into` only after the lane has
+/// finished the call (`LaneCall`), so the extractor stays usable for the engine's next tick. Kill
+/// switch `SIGIL_VC_FUSION_PARALLEL=0` ([`FUSION_PARALLEL_ENV`]).
+///
+/// Measured (release engine, Low latency, 40 ms blocks, offline, 6 ABBA pairs of one exe with the
+/// switch, `scripts/bench/specs/p3b/f/f0.profile.json`): the F0 stage p50 4.15 -> 3.94 ms on
+/// DirectML (-5 %; RMVPE, which shares the DirectML queue with the content encoder, dominates) and
+/// 4.66 -> 3.12 ms on CUDA (-33 %); the whole call p50 -2 % (DirectML, within noise) and -20 %
+/// (CUDA), p99 -8.5 % / -20 %. CPU cores per wall second rise (+9 % / +38 %): two threads work at once
+/// and the offline run goes faster.
+/// On P3B-E's 32-frame plan (`SIGIL_RMVPE_PLAN_FRAMES=32`) the parallel fusion's F0 stage is a further
+/// 18.7 % faster on DirectML (7.00 -> 5.70 ms, CI -19.0 .. -18.3 %, in a session with the GPU at half
+/// its clocks, so only the ratio carries) and neutral on CUDA (+4 %, inside its noise).
+///
+/// # The F0 cache's geometry
+/// [`PitchExtractor::max_call_frames`] is the tighter of the two extractors' (RMVPE's plan bound),
+/// so the cache primes cold starts within it. [`PitchExtractor::preferred_input_frames`] is not
+/// forwarded: filling RMVPE's plan with real audio would hand SwiftF0 (CPU) the same 2.6x longer
+/// calls, and the fused contour is not a decode of RMVPE's salience, so
+/// [`PitchExtractor::last_salience`] is not forwarded either (the cross-tick decoder runs on RMVPE
+/// alone).
 pub struct FusedPitchExtractor {
-    voicing: Source,
+    voicing: Voicing,
     pitch: Source,
     config: FusionConfig,
     post: F0Post,
@@ -326,7 +822,7 @@ impl FusedPitchExtractor {
     fn build(voicing: Source, pitch: Source, config: FusionConfig) -> FusedPitchExtractor {
         let post_cfg = fusion_post_config(&config);
         FusedPitchExtractor {
-            voicing,
+            voicing: Voicing::Here(voicing),
             pitch,
             config,
             post: F0Post::new(),
@@ -342,6 +838,63 @@ impl FusedPitchExtractor {
         }
     }
 
+    /// Run the voicing extractor on its own lane thread, concurrently with the pitch extractor
+    /// (`true`; P3B-F, see the type's docs), or on the calling thread before it (`false`, P3). The
+    /// pitch bank turns it on for the GPU fusion unless [`FUSION_PARALLEL_ENV`] switches it off. A
+    /// lane that cannot start leaves the fusion serial (with a warning in the log).
+    pub fn with_parallel(self, parallel: bool) -> FusedPitchExtractor {
+        let FusedPitchExtractor {
+            voicing,
+            pitch,
+            config,
+            post,
+            post_cfg,
+            v,
+            vc,
+            vk,
+            p,
+            pc,
+            pk,
+            scratch,
+            confidence,
+        } = self;
+        let voicing = match (voicing, parallel) {
+            (Voicing::Here(source), true) => match VoicingLane::spawn(source) {
+                Ok(lane) => Voicing::Lane(lane),
+                Err((source, why)) => {
+                    tracing::warn!(target: "sigil::vc", "F0 fusion: the voicing lane could not start ({why}); the two extractors run one after the other");
+                    Voicing::Here(source)
+                }
+            },
+            // Stop the lane and take its extractor back (between calls the slot is ours).
+            (Voicing::Lane(lane), false) => Voicing::Here(lane.into_source()),
+            (voicing, _) => voicing,
+        };
+        FusedPitchExtractor {
+            voicing,
+            pitch,
+            config,
+            post,
+            post_cfg,
+            v,
+            vc,
+            vk,
+            p,
+            pc,
+            pk,
+            scratch,
+            confidence,
+        }
+    }
+
+    /// Whether the voicing extractor runs on its own lane thread (see [`with_parallel`]).
+    ///
+    /// [`with_parallel`]: Self::with_parallel
+    #[allow(dead_code)] // Diagnostics accessor (tests, the benchmark).
+    pub fn parallel(&self) -> bool {
+        matches!(self.voicing, Voicing::Lane(_))
+    }
+
     /// Fused confidence per frame of the last contour (the voicing extractor's).
     #[allow(dead_code)] // Diagnostics accessor (tests; the governor may weigh it later).
     pub fn last_confidence(&self) -> &[f32] {
@@ -351,33 +904,65 @@ impl FusedPitchExtractor {
 
 impl PitchExtractor for FusedPitchExtractor {
     fn f0(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
-        self.voicing
-            .run(mono_16k, &mut self.v, &mut self.vc, &mut self.vk)?;
-        self.pitch
-            .run(mono_16k, &mut self.p, &mut self.pc, &mut self.pk)?;
+        let mut out = Vec::with_capacity(1 + mono_16k.len() / 160);
+        self.f0_into(mono_16k, &mut out)?;
+        Ok(out)
+    }
+
+    /// Both extractors (concurrently on a parallel fusion), then the fusion rule and the
+    /// post-processing into `out`; no allocation of its own once the buffers have grown.
+    fn f0_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+        out.clear();
+        match &mut self.voicing {
+            Voicing::Here(source) => {
+                source.run(mono_16k, &mut self.v, &mut self.vc, &mut self.vk)?;
+                self.pitch
+                    .run(mono_16k, &mut self.p, &mut self.pc, &mut self.pk)?;
+            }
+            Voicing::Lane(lane) => {
+                // The lane owns the slot until it is joined. The guard joins it on every way out:
+                // when the pitch extractor returns an error (joined below) and when it unwinds
+                // (dropped unjoined: waits for the lane, drops its result, back to IDLE).
+                let call = LaneCall::post(lane, mono_16k);
+                let pitch = self
+                    .pitch
+                    .run(mono_16k, &mut self.p, &mut self.pc, &mut self.pk);
+                let voicing = call.join(&mut self.v, &mut self.vc, &mut self.vk);
+                voicing?;
+                pitch?;
+            }
+        }
         // Both extractors put frame j at sample 160 j; fuse the frames both returned.
         let n = self.v.len().min(self.p.len());
-        let mut out = Vec::with_capacity(n);
         fuse(
             &self.v[..n],
             &self.vc[..n],
             &self.vk[..n],
             &self.p[..n],
             &self.pc[..n],
-            &mut out,
+            out,
             &mut self.scratch,
             &self.config.params,
         );
         self.confidence.clear();
         self.confidence.extend_from_slice(&self.vc[..n]);
-        self.post.process(&mut out, &self.post_cfg);
-        Ok(out)
+        self.post.process(out, &self.post_cfg);
+        Ok(())
     }
 
     fn receptive_frames(&self) -> Option<(usize, usize)> {
-        let a = self.voicing.receptive_frames()?;
+        let a = self.voicing.source()?.receptive_frames()?;
         let b = self.pitch.receptive_frames()?;
         Some((a.0.max(b.0) + 1, a.1.max(b.1) + 1))
+    }
+
+    /// The tighter bound of the two extractors (RMVPE's plan; P3B-F: the F0 cache primes within it).
+    fn max_call_frames(&self) -> Option<usize> {
+        let v = self.voicing.source().and_then(Source::max_call_frames);
+        match (v, self.pitch.max_call_frames()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 }
 
@@ -586,6 +1171,15 @@ pub struct PitchBankRequest<'a> {
     /// Run the small CPU-friendly extractors (SwiftF0, PESTO) on the CPU with one thread whatever
     /// the rung (frees the GPU; default true).
     pub small_models_on_cpu: bool,
+    // ---- P3B-S0 (frozen; neutral values reproduce P5; RMVPE reads them, `RmvpeLoad::from_bank`) ----
+    /// The voice's precision request (`auto` = today's fp32 pitch graphs; P3B-E's gated fp16 RMVPE
+    /// runs only where this allows it).
+    pub precision: PrecisionMode,
+    /// Audio frames of the incremental calls the F0 cache will make (`None` = unknown), so an
+    /// extractor can size its fixed shape once at load (P3B-E: RMVPE's 32-frame plan).
+    pub expected_call_frames: Option<usize>,
+    /// The longest context (16 kHz samples) a whole-window call may carry (`None` = unknown).
+    pub max_context_16k: Option<usize>,
 }
 
 /// A built extractor.
@@ -703,13 +1297,26 @@ fn stand_in_on(method: &str, ep: &str) -> &'static str {
     }
 }
 
+/// RMVPE for the bank (alone or as the fusion's pitch extractor), with the request's plan geometry,
+/// precision and sharing (P3B-E's `RmvpeLoad::from_bank`; wired by P3B-F); its load notes (a plan
+/// or graph that fell back) go to the bank's notes.
+fn load_rmvpe(req: &PitchBankRequest<'_>, levers: GpuLevers, notes: &mut Vec<String>) -> Result<RmvpePitchExtractor, String> {
+    let e = RmvpePitchExtractor::load_for(&need("rmvpe", req, req.rmvpe_path)?, req.ep, req.opts, levers, &RmvpeLoad::from_bank(req))?;
+    for n in e.load_notes() {
+        if !notes.contains(n) {
+            notes.push(n.clone());
+        }
+    }
+    Ok(e)
+}
+
 fn build_bank(req: &PitchBankRequest<'_>, levers: GpuLevers) -> Result<PitchBank, String> {
     let mut notes = Vec::new();
     let mut outcomes = Vec::new();
     let (extractor, method): (Box<dyn PitchExtractor>, &'static str) = match req.method.trim() {
         "dio" => (Box::new(DioPitchExtractor::new().with_range(req.range)), "dio"),
         "rmvpe" => {
-            let e = RmvpePitchExtractor::load_with_levers(&need("rmvpe", req, req.rmvpe_path)?, req.ep, req.opts, levers)?;
+            let e = load_rmvpe(req, levers, &mut notes)?;
             outcomes.push(("vc.pitch".to_string(), e.outcome().clone()));
             (Box::new(e), "rmvpe")
         }
@@ -746,9 +1353,10 @@ fn build_bank(req: &PitchBankRequest<'_>, levers: GpuLevers) -> Result<PitchBank
                 outcomes.push(("vc.pitch".to_string(), pitch.outcome().clone()));
                 FusedPitchExtractor::with_voicing_confidence(Box::new(voicing), Box::new(pitch), FusionConfig::cpu(req.range))
             } else {
-                let pitch = RmvpePitchExtractor::load_with_levers(&need("rmvpe", req, req.rmvpe_path)?, req.ep, req.opts, levers)?;
+                let pitch = load_rmvpe(req, levers, &mut notes)?;
                 outcomes.push(("vc.pitch".to_string(), pitch.outcome().clone()));
-                FusedPitchExtractor::with_confidence(Box::new(voicing), Box::new(pitch), config)
+                // SwiftF0 (CPU) beside RMVPE (GPU): the two run concurrently (P3B-F).
+                FusedPitchExtractor::with_confidence(Box::new(voicing), Box::new(pitch), config).with_parallel(fusion_parallel_switch())
             };
             (Box::new(fused), "fusion")
         }
@@ -1492,6 +2100,9 @@ pub mod ab {
                     rmvpe_path: None,
                     app_data: req.app_data,
                     small_models_on_cpu: true,
+                    precision: crate::services::neural_audio::vc::engine::PrecisionMode::Auto,
+                    expected_call_frames: None,
+                    max_context_16k: None,
                 })
             };
             let mut bank = match build() {
@@ -1750,6 +2361,404 @@ mod tests {
         assert_eq!(f.last_confidence().len(), 8);
     }
 
+    /// A deterministic confident stand-in: frame j's F0 and confidence follow the input's level
+    /// around sample 160 j (so the two extractors disagree, agree and leave frames unvoiced in
+    /// input-dependent ways), with candidates, a declared bound, and an optional delay (so the lane's
+    /// join waits). Allocation-free `f0_into`.
+    struct Confident {
+        base: f32,
+        delay_us: u64,
+        conf: Vec<f32>,
+        cand: Vec<f32>,
+        max: Option<usize>,
+        panic_on: Option<usize>,
+    }
+
+    impl Confident {
+        fn new(base: f32, delay_us: u64, max: Option<usize>) -> Confident {
+            Confident {
+                base,
+                delay_us,
+                conf: Vec::with_capacity(512),
+                cand: Vec::with_capacity(512),
+                max,
+                panic_on: None,
+            }
+        }
+    }
+
+    impl PitchExtractor for Confident {
+        fn f0(&mut self, x: &[f32]) -> Result<Vec<f32>, String> {
+            let mut out = Vec::new();
+            self.f0_into(x, &mut out)?;
+            Ok(out)
+        }
+        fn f0_into(&mut self, x: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+            if self.delay_us > 0 {
+                let t0 = std::time::Instant::now();
+                while t0.elapsed() < std::time::Duration::from_micros(self.delay_us) {
+                    std::hint::spin_loop();
+                }
+            }
+            // After the delay: a panic that comes late, while the other extractor has long finished.
+            if self.panic_on == Some(x.len()) {
+                panic!("stand-in panic");
+            }
+            out.clear();
+            self.conf.clear();
+            self.cand.clear();
+            for j in 0..=x.len() / 160 {
+                let a = x[(j * 160).min(x.len() - 1)].abs();
+                let hz = self.base * (1.0 + a);
+                let c = (a * 3.0).min(1.0);
+                out.push(if c > 0.3 { hz } else { 0.0 });
+                self.conf.push(c);
+                self.cand.push(hz);
+            }
+            Ok(())
+        }
+        fn max_call_frames(&self) -> Option<usize> {
+            self.max
+        }
+    }
+
+    impl ConfidentPitch for Confident {
+        fn last_confidence(&self) -> &[f32] {
+            &self.conf
+        }
+        fn last_candidates(&self) -> Option<&[f32]> {
+            Some(&self.cand)
+        }
+    }
+
+    fn fusion_input(len: usize, seed: u32) -> Vec<f32> {
+        (0..len)
+            .map(|i| {
+                let t = i as f32 + seed as f32 * 97.0;
+                0.5 * (t * 0.0131).sin() * (t * 0.00071).cos() + 0.05 * (t * 0.37).sin()
+            })
+            .collect()
+    }
+
+    /// Parallel fusion (P3B-F): the voicing extractor on its lane gives exactly the serial contour
+    /// and confidence, call after call (the lane both finishing first and last), the bound is the
+    /// tighter one, a panic in the voicing extractor is that call's error and the lane keeps
+    /// serving, and the lane can be switched back to serial with its extractor.
+    #[test]
+    fn parallel_fusion_is_bit_identical_to_serial() {
+        let build = |delay_us: u64| {
+            FusedPitchExtractor::with_confidence(
+                Box::new(Confident::new(150.0, delay_us, None)),
+                Box::new(Confident::new(151.0, 0, Some(63))),
+                FusionConfig::default(),
+            )
+        };
+        for delay_us in [0u64, 2_000] {
+            let mut serial = build(delay_us);
+            let mut parallel = build(delay_us).with_parallel(true);
+            assert!(parallel.parallel() && !serial.parallel());
+            assert_eq!(parallel.max_call_frames(), Some(63));
+            let mut a = Vec::new();
+            let mut b = Vec::new();
+            for call in 0..40u32 {
+                let x = fusion_input(160 * (24 + (call as usize % 40)), call);
+                serial.f0_into(&x, &mut a).unwrap();
+                parallel.f0_into(&x, &mut b).unwrap();
+                assert_eq!(a, b, "call {call}");
+                assert_eq!(serial.last_confidence(), parallel.last_confidence());
+            }
+            let serial_again = parallel.with_parallel(false);
+            assert!(!serial_again.parallel());
+        }
+        // A panicking voicing extractor: the call fails, the next one works.
+        let mut v = Confident::new(150.0, 0, None);
+        v.panic_on = Some(3_200);
+        let mut f =
+            FusedPitchExtractor::with_confidence(Box::new(v), Box::new(Confident::new(151.0, 0, None)), FusionConfig::default()).with_parallel(true);
+        let err = f.f0(&fusion_input(3_200, 1)).unwrap_err();
+        assert!(err.contains("panicked"), "{err}");
+        assert_eq!(f.f0(&fusion_input(3_840, 2)).unwrap().len(), 25);
+    }
+
+    /// The parallel fusion's calling thread allocates nothing per call once warm (input copy and
+    /// output swap included).
+    #[test]
+    fn parallel_fusion_is_allocation_free_once_warm() {
+        use crate::services::neural_audio::gpu::alloc_probe::allocations_during;
+        let mut f = FusedPitchExtractor::with_confidence(
+            Box::new(Confident::new(150.0, 0, None)),
+            Box::new(Confident::new(151.0, 300, None)),
+            FusionConfig::default(),
+        )
+        .with_parallel(true);
+        let inputs: Vec<Vec<f32>> = (0..4).map(|k| fusion_input(160 * 63, k)).collect();
+        let mut out = Vec::with_capacity(128);
+        for k in 0..8 {
+            f.f0_into(&inputs[k % 4], &mut out).unwrap();
+        }
+        let ((), allocs) = allocations_during(|| {
+            for k in 0..40 {
+                f.f0_into(&inputs[k % 4], &mut out).unwrap();
+            }
+        });
+        assert_eq!(allocs, 0, "the parallel fusion allocated {allocs} times in 40 calls");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The voicing lane's hand-over protocol (P3B-F fix: lost wake-up, unwinding caller)
+    // -----------------------------------------------------------------------------------------
+
+    fn spin_for(us: u64) {
+        if us > 0 {
+            let t0 = std::time::Instant::now();
+            while t0.elapsed() < std::time::Duration::from_micros(us) {
+                std::hint::spin_loop();
+            }
+        }
+    }
+
+    /// A cheap, well-spread hash of a call number (deterministic jitter for the stress test).
+    fn mix(n: u64) -> u64 {
+        let x = n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        (x ^ (x >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 17
+    }
+
+    /// A plain stand-in whose call takes `slow_ms` when the input is `slow_len` samples long (the
+    /// call the test wants still running at a given moment) and returns at once otherwise.
+    struct Paced {
+        slow_len: usize,
+        slow_ms: u64,
+    }
+
+    impl PitchExtractor for Paced {
+        fn f0(&mut self, x: &[f32]) -> Result<Vec<f32>, String> {
+            if x.len() == self.slow_len {
+                std::thread::sleep(std::time::Duration::from_millis(self.slow_ms));
+            }
+            Ok(vec![x.len() as f32 / 160.0 + 1.0; x.len() / 160 + 1])
+        }
+    }
+
+    /// A plain stand-in whose call time jitters from call to call (the joiner sometimes ends its
+    /// spin first and sometimes parks); its contour is the input's length in frames plus one, so a
+    /// join that returned another call's result shows.
+    struct Jittery {
+        calls: u64,
+    }
+
+    impl PitchExtractor for Jittery {
+        fn f0(&mut self, x: &[f32]) -> Result<Vec<f32>, String> {
+            self.calls += 1;
+            spin_for([0, 0, 40, 150, 400, 0, 80, 250][(mix(self.calls) % 8) as usize]);
+            Ok(vec![x.len() as f32 / 160.0 + 1.0; x.len() / 160 + 1])
+        }
+    }
+
+    fn spawn_lane(source: Source) -> VoicingLane {
+        match VoicingLane::spawn(source) {
+            Ok(lane) => lane,
+            Err((_, why)) => panic!("the voicing lane did not start: {why}"),
+        }
+    }
+
+    /// The lane of a parallel fusion.
+    fn lane_of(f: &FusedPitchExtractor) -> &VoicingLane {
+        match &f.voicing {
+            Voicing::Lane(lane) => lane,
+            Voicing::Here(_) => panic!("not a parallel fusion"),
+        }
+    }
+
+    /// The lost wake-up (review finding): the lane thread is descheduled between handing call 1
+    /// over (state DONE) and its wake-up code. The caller, which saw DONE while spinning and never
+    /// announced a park, runs on, posts call 2, spins its 2,000 rounds and parks. When the lane thread
+    /// resumes, its stale wake-up of call 1 must not eat call 2's announcement: with a shared
+    /// `waiting` flag cleared by `swap(false)` it did (the swap returned true, the spurious unpark
+    /// woke the joiner, which re-parked without re-announcing, and call 2's hand-over then saw no
+    /// announcement) and call 2's joiner parked for ever. The test replays exactly that order with
+    /// the lane held in the `after_done` hook, and fails (instead of hanging) after 5 s.
+    #[test]
+    fn a_late_wake_up_of_one_call_cannot_strand_the_next_joiner() {
+        use std::sync::atomic::Ordering;
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::time::Duration;
+        let lane = spawn_lane(Source::Plain(Box::new(Paced { slow_len: 3_200, slow_ms: 30 })));
+        let (reached_tx, reached_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (reached_tx, release_rx) = (Mutex::new(reached_tx), Mutex::new(release_rx));
+        *lane.shared.after_done.lock().unwrap() = Some(Arc::new(move |n| {
+            if n == 0 {
+                reached_tx.lock().unwrap().send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv_timeout(Duration::from_secs(20));
+            }
+        }));
+        let (x1, x2) = (fusion_input(1_600, 1), fusion_input(3_200, 2));
+        let (result_tx, result_rx) = mpsc::channel::<Result<(), String>>();
+        let mut stranded = false;
+        std::thread::scope(|scope| {
+            let caller = scope.spawn(|| {
+                let (mut f0, mut conf, mut cand) = (Vec::new(), Vec::new(), Vec::new());
+                // Call 1: join only once the lane has handed it over, so the join never parks.
+                lane.post(&x1);
+                while lane.shared.state.load(Ordering::Acquire) != LANE_DONE {
+                    std::hint::spin_loop();
+                }
+                lane.join(&mut f0, &mut conf, &mut cand).unwrap();
+                assert_eq!(f0.len(), 11);
+                // Call 2, posted while the lane thread is still inside call 1's hand-over tail.
+                lane.post(&x2);
+                let r = lane.join(&mut f0, &mut conf, &mut cand);
+                assert_eq!(f0.len(), 21);
+                result_tx.send(r).unwrap();
+            });
+            reached_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the lane never handed call 1 over");
+            // The caller is now posting call 2 and parking in its join (a few microseconds of
+            // spinning); give it far longer than that, then let the lane thread resume.
+            std::thread::sleep(Duration::from_millis(150));
+            release_tx.send(()).unwrap();
+            match result_rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(r) => r.unwrap(),
+                Err(_) => {
+                    stranded = true;
+                    // Free the stuck caller so the scope can end (the state is DONE by now).
+                    caller.thread().unpark();
+                }
+            }
+        });
+        assert!(
+            !stranded,
+            "call 2's join was never woken: the late wake-up of call 1 took its park announcement"
+        );
+        assert_eq!(lane.shared.handed_over.load(Ordering::SeqCst), 2);
+    }
+
+    /// Stress version of the above: thousands of calls with a jittering lane (job time, and a
+    /// random stall between the hand-over and the wake-up) against a caller with a jittering gap
+    /// between calls, joins that sometimes spin out and park, and every seventh call abandoned
+    /// unjoined (the unwinding path). Every join must return its own call's contour, and the whole
+    /// run must finish (a watchdog fails it after 120 s instead of hanging).
+    #[test]
+    fn the_lane_hand_over_survives_random_stalls_and_abandoned_calls() {
+        use std::sync::atomic::Ordering;
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        const CALLS: u64 = 3_000;
+        let lane = spawn_lane(Source::Plain(Box::new(Jittery { calls: 0 })));
+        *lane.shared.after_done.lock().unwrap() = Some(Arc::new(|n| spin_for([0, 0, 20, 100, 300, 1_000, 50, 0][(mix(n + 17) % 8) as usize])));
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let mut hung = false;
+        std::thread::scope(|scope| {
+            let caller = scope.spawn(|| {
+                let (mut f0, mut conf, mut cand) = (Vec::new(), Vec::new(), Vec::new());
+                for call in 0..CALLS {
+                    let frames = 8 + (mix(call + 3) % 40) as usize;
+                    let x = vec![0.1f32; frames * 160];
+                    if call % 7 == 6 {
+                        // Abandoned, as by an unwinding pitch extractor.
+                        drop(LaneCall::post(&lane, &x));
+                        assert_eq!(lane.shared.state.load(Ordering::Acquire), LANE_IDLE);
+                    } else {
+                        let c = LaneCall::post(&lane, &x);
+                        spin_for([0, 0, 5, 30, 120, 0, 600, 60][(mix(call + 9) % 8) as usize]);
+                        c.join(&mut f0, &mut conf, &mut cand).unwrap();
+                        assert_eq!(f0.len(), frames + 1, "call {call}");
+                        assert!(f0.iter().all(|&v| v == frames as f32 + 1.0), "call {call}: another call's contour");
+                    }
+                    // The gap before the next call: shorter and longer than the lane's stall.
+                    for _ in 0..[0u32, 1, 40, 400, 3_000, 0, 150, 12][(mix(call + 5) % 8) as usize] {
+                        std::hint::spin_loop();
+                    }
+                }
+                done_tx.send(()).unwrap();
+            });
+            if done_rx.recv_timeout(Duration::from_secs(120)).is_err() {
+                hung = true;
+                // The caller is parked in a join whose wake-up was lost; free it so the scope ends.
+                for _ in 0..50 {
+                    caller.thread().unpark();
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        });
+        assert!(!hung, "a join was never woken (lost wake-up)");
+        assert_eq!(lane.shared.handed_over.load(Ordering::SeqCst), CALLS);
+        assert_eq!(lane.shared.state.load(Ordering::Acquire), LANE_IDLE);
+    }
+
+    /// The pitch extractor of a parallel fusion unwinds after the lane was handed the call (the
+    /// engine's `run_job` catches such a panic and keeps using the extractor). By the time the
+    /// unwinding leaves `f0_into` the lane must be finished and idle (it writes the fusion's shared
+    /// buffers and reads its input copy until then), and the next call must work and give exactly
+    /// what an extractor that never panicked gives. Both orders: the lane still running when the
+    /// pitch extractor panics, and the lane long done.
+    #[test]
+    fn a_panicking_pitch_extractor_does_not_leave_the_lane_in_flight() {
+        use std::sync::atomic::Ordering;
+        for (voicing_us, pitch_us) in [(40_000u64, 0u64), (0, 40_000)] {
+            let build = |panic_on: Option<usize>| {
+                let mut pitch = Confident::new(151.0, pitch_us, None);
+                pitch.panic_on = panic_on;
+                FusedPitchExtractor::with_confidence(
+                    Box::new(Confident::new(150.0, voicing_us, None)),
+                    Box::new(pitch),
+                    FusionConfig::default(),
+                )
+            };
+            let mut subject = build(Some(3_200)).with_parallel(true);
+            let mut reference = build(None);
+            assert!(subject.parallel());
+            let (mut got, mut want) = (Vec::new(), Vec::new());
+            let (a, b, c) = (fusion_input(1_600, 1), fusion_input(3_200, 2), fusion_input(2_400, 3));
+            subject.f0_into(&a, &mut got).unwrap();
+            reference.f0_into(&a, &mut want).unwrap();
+            assert_eq!(got, want);
+            // The panicking call.
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subject.f0_into(&b, &mut got)));
+            assert!(caught.is_err(), "the pitch extractor was meant to panic");
+            assert_eq!(
+                lane_of(&subject).shared.state.load(Ordering::SeqCst),
+                LANE_IDLE,
+                "voicing {voicing_us} us, pitch {pitch_us} us: the lane was left in flight by the unwinding call"
+            );
+            // The same extractor serves the next calls, bit for bit like one that never panicked.
+            for (k, x) in [&c, &a, &c].into_iter().enumerate() {
+                subject.f0_into(x, &mut got).unwrap();
+                reference.f0_into(x, &mut want).unwrap();
+                assert_eq!(got, want, "call {k} after the panic");
+                assert_eq!(subject.last_confidence(), reference.last_confidence());
+            }
+            // And it can still switch back to serial with its extractor.
+            assert!(!subject.with_parallel(false).parallel());
+        }
+    }
+
+    /// A pitch extractor that returns an error joins the lane too (the ordinary path), and an
+    /// error of both sides reports the voicing extractor's first.
+    #[test]
+    fn a_failing_pitch_extractor_still_joins_the_lane() {
+        use std::sync::atomic::Ordering;
+        struct Failing;
+        impl PitchExtractor for Failing {
+            fn f0(&mut self, _: &[f32]) -> Result<Vec<f32>, String> {
+                Err("pitch failed".into())
+            }
+        }
+        let mut f = FusedPitchExtractor::new(
+            Box::new(Paced { slow_len: 1_600, slow_ms: 20 }),
+            Box::new(Failing),
+            FusionConfig::default(),
+        )
+        .with_parallel(true);
+        let mut out = Vec::new();
+        let err = f.f0_into(&fusion_input(1_600, 1), &mut out).unwrap_err();
+        assert_eq!(err, "pitch failed");
+        assert_eq!(lane_of(&f).shared.state.load(Ordering::SeqCst), LANE_IDLE);
+        let err = f.f0_into(&fusion_input(2_400, 1), &mut out).unwrap_err();
+        assert_eq!(err, "pitch failed");
+    }
+
     #[test]
     fn model_ids_and_candidates() {
         assert_eq!(pitch_model_id("swiftf0"), Some(assets::PITCH_SWIFTF0));
@@ -1767,6 +2776,9 @@ mod tests {
             rmvpe_path: None,
             app_data: None,
             small_models_on_cpu: true,
+            precision: PrecisionMode::Auto,
+            expected_call_frames: None,
+            max_context_16k: None,
         };
         let bank = create_pitch_extractor(&req).unwrap();
         assert_eq!(bank.method, "dio");
@@ -1881,6 +2893,9 @@ mod tests {
                 rmvpe_path: None,
                 app_data: None,
                 small_models_on_cpu: true,
+                precision: PrecisionMode::Auto,
+                expected_call_frames: None,
+                max_context_16k: None,
             };
             let installed = match method {
                 "fusion" => resolve_pitch_model("swiftf0", None).is_some(),
@@ -1913,6 +2928,9 @@ mod tests {
             rmvpe_path: None,
             app_data: None,
             small_models_on_cpu: true,
+            precision: PrecisionMode::Auto,
+            expected_call_frames: None,
+            max_context_16k: None,
         };
         let err = create_pitch_extractor_with(&req, GpuLevers::default()).err().unwrap();
         assert!(err.contains("definitely-missing-fcpe.onnx"), "{err}");

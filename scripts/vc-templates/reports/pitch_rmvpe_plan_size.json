@@ -1,0 +1,159 @@
+{
+  "32_lead12": {
+    "fpe_cents": 7.24209273424783,
+    "frames": 9686,
+    "gpe_pct": 8.23166456317487,
+    "gpe_pct_by_condition": {
+      "clean": 0.09624639076034648,
+      "creak": 17.185554171855543,
+      "music-20": 0.17969451931716082,
+      "no-f1": 27.804878048780488,
+      "snr10": 3.125,
+      "snr20": 0.4716981132075472,
+      "snr5": 12.163509471585245
+    },
+    "plan_runs": 3403,
+    "real_vs_p3": {
+      "cents_max": 1228.1048583984375,
+      "cents_p99": 122.73653411865234,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2354,
+      "vuv_flips_pct": 1.5825914935707222
+    },
+    "split_calls": 34,
+    "voiced_both": 7131,
+    "vuv_error_pct": 9.611810861036547
+  },
+  "32_lead12_w64": {
+    "fpe_cents": 7.341064952896402,
+    "frames": 9686,
+    "gpe_pct": 7.956924917738558,
+    "gpe_pct_by_condition": {
+      "clean": 0.10277492291880781,
+      "creak": 17.131474103585656,
+      "music-20": 0.1936108422071636,
+      "no-f1": 27.19751809720786,
+      "snr10": 2.7777777777777777,
+      "snr20": 0.4985044865403789,
+      "snr5": 10.95890410958904
+    },
+    "plan_runs": 3301,
+    "real_vs_p3": {
+      "cents_max": 1228.1048583984375,
+      "cents_p99": 151.66650390625,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2331,
+      "vuv_flips_pct": 2.1513353115727
+    },
+    "split_calls": 34,
+    "voiced_both": 6686,
+    "vuv_error_pct": 14.123477183563907
+  },
+  "32_lead19_fill": {
+    "fpe_cents": 7.383028586328033,
+    "frames": 9686,
+    "gpe_pct": 5.666666666666667,
+    "gpe_pct_by_condition": {
+      "clean": 0.09624639076034648,
+      "creak": 7.22291407222914,
+      "music-20": 0.08984725965858041,
+      "no-f1": 28.22502424830262,
+      "snr10": 2.7347310847766635,
+      "snr20": 0.1865671641791045,
+      "snr5": 2.3923444976076556
+    },
+    "plan_runs": 3403,
+    "real_vs_p3": {
+      "cents_max": 1209.2510986328125,
+      "cents_p99": 152.76905822753906,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2333,
+      "vuv_flips_pct": 2.1513353115727
+    },
+    "split_calls": 34,
+    "voiced_both": 7200,
+    "vuv_error_pct": 9.931860417096841
+  },
+  "64_lead12_w64": {
+    "fpe_cents": 7.393291322202095,
+    "frames": 9686,
+    "gpe_pct": 4.888955134893426,
+    "gpe_pct_by_condition": {
+      "clean": 0.0,
+      "creak": 7.702523240371846,
+      "music-20": 0.0968054211035818,
+      "no-f1": 21.090534979423868,
+      "snr10": 1.691542288557214,
+      "snr20": 0.29732408325074333,
+      "snr5": 4.564315352697095
+    },
+    "plan_runs": 3233,
+    "real_vs_p3": {
+      "cents_max": 0.9951367974281311,
+      "cents_p99": 0.0,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2387,
+      "vuv_flips_pct": 0.5687438180019783
+    },
+    "split_calls": 34,
+    "voiced_both": 6709,
+    "vuv_error_pct": 14.185422258930416
+  },
+  "64_lead51_fill": {
+    "fpe_cents": 7.496262714473798,
+    "frames": 9686,
+    "gpe_pct": 4.689123015284167,
+    "gpe_pct_by_condition": {
+      "clean": 0.0,
+      "creak": 5.577689243027889,
+      "music-20": 0.0968054211035818,
+      "no-f1": 24.024640657084188,
+      "snr10": 2.263779527559055,
+      "snr20": 0.19860973187686196,
+      "snr5": 1.4242115971515767
+    },
+    "plan_runs": 3233,
+    "real_vs_p3": {
+      "cents_max": 1209.2515869140625,
+      "cents_p99": 122.06993103027344,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2329,
+      "vuv_flips_pct": 2.645895153313551
+    },
+    "split_calls": 34,
+    "voiced_both": 6739,
+    "vuv_error_pct": 14.856493908734256
+  },
+  "ep": "dml",
+  "p3_64_lead12": {
+    "fpe_cents": 7.301983784102043,
+    "frames": 9686,
+    "gpe_pct": 4.893051866349784,
+    "gpe_pct_by_condition": {
+      "clean": 0.0,
+      "creak": 7.22291407222914,
+      "music-20": 0.08984725965858041,
+      "no-f1": 21.067961165048544,
+      "snr10": 1.8433179723502304,
+      "snr20": 0.28142589118198874,
+      "snr5": 5.014749262536873
+    },
+    "plan_runs": 3369,
+    "real_vs_p3": {
+      "cents_max": 0.0,
+      "cents_p99": 0.0,
+      "confidence_delta_max": 0.0,
+      "confidence_delta_p99": 0.0,
+      "voiced_both": 2410,
+      "vuv_flips_pct": 0.0
+    },
+    "split_calls": 0,
+    "voiced_both": 7153,
+    "vuv_error_pct": 9.63245921949205
+  }
+}

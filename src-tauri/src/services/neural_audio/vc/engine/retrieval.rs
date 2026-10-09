@@ -25,6 +25,26 @@
 //! [`Retrieval::prepare`] (warm the GPU graph at the plan's frame count), [`Retrieval::outcome`],
 //! [`Retrieval::threads`], [`Retrieval::vram_mb`], [`knn_graph`], [`MIN_INDEX_ROWS`],
 //! [`MIN_REAL_ROWS`], [`PARALLEL_MIN_MACS`].
+//!
+//! # GPU footprint (P3B-G, T3-W6)
+//! The GPU kNN's VRAM is **measured** when it can be: the process's VRAM on the session's adapter
+//! (DXGI) from before the session is built to after the index is bound, held in the
+//! `gpu::arena` ledger under `vc.knn` while the index lives and reported to the benchmark's ledger
+//! (`telemetry::vram_mark`). The delta is process-wide, so it is trusted only when no other probe's
+//! window overlapped it (`gpu::arena::VramDelta::exclusive`; the engine's default parallel cold
+//! start builds the pitch bank, the content encoder and the generator beside the kNN, whose
+//! allocations would otherwise be booked as `vc.knn`). An overlapped load holds the computed size
+//! instead: the index and norms plus the session's measured fixed cost ([`knn_footprint`]);
+//! [`Retrieval::vram_measured`] says which. `SIGIL_VC_PARALLEL_LOAD=0` (the benchmark's kNN probe
+//! rows) loads the branches one after another, so the measurement is exclusive. [`Retrieval::vram_mb`]
+//! returns the held value. On CUDA the session's arena grows only by what is requested
+//! (`arena_extend_strategy = kSameAsRequested`, [`KNN_EXACT_ARENA_DEFAULT`];
+//! `SIGIL_VC_KNN_ARENA=pow2` restores ONNX Runtime's power-of-two growth), so the index copy the
+//! binding makes on the device does not land in a power-of-two region. The session is built under
+//! the `vc.knn` component, so `SIGIL_ORT_PROFILE` / `SIGIL_ORT_OPTIMIZED_DIR` reach it. ONNX
+//! Runtime fuses the graph's `Transpose(index) -> MatMul` into one `FusedMatMul` on every EP at the
+//! Level3 optimisation Sigil uses, so no transposed copy of the index exists (checked with
+//! `SIGIL_ORT_OPTIMIZED_DIR`; see `scripts/bench/specs/p3b/g/README.md`).
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -37,8 +57,10 @@ use ort::value::{DynValue, Tensor};
 use sha2::{Digest, Sha256};
 
 use crate::services::diagnostics::{record_ep_outcome, EpOutcome};
+use crate::services::neural_audio::gpu::arena::{self, VramDelta, VramHold, VramProbe};
 use crate::services::neural_audio::gpu::io_binding;
-use crate::services::neural_audio::ort_session::{build_session_with, ModelSource, VcSessionOptions};
+use crate::services::neural_audio::ort_session::{build_session_ext, device_for, normalize_ep, GpuExtras, ModelSource, VcSessionOptions};
+use crate::services::neural_audio::telemetry::{self, LoadStage, SyncKind};
 use crate::services::neural_audio::vc::faiss::{BlendScratch, FaissIndex};
 use crate::services::neural_audio::vc::import;
 use crate::services::rt_thread;
@@ -55,6 +77,22 @@ pub const PARALLEL_MIN_MACS: usize = 1_500_000;
 const MAX_SEARCH_THREADS: usize = 4;
 /// Value of the padding rows: far from any content feature, so they never rank among the 8.
 const PAD_VALUE: f32 = 1.0e4;
+
+/// `SIGIL_VC_KNN_ARENA=exact|pow2`: the GPU kNN session's CUDA arena growth (P3B-G's switch; see the
+/// module docs).
+pub const KNN_ARENA_ENV: &str = "SIGIL_VC_KNN_ARENA";
+
+/// Whether the GPU kNN's CUDA arena grows only by what is requested when [`KNN_ARENA_ENV`] is unset
+/// (exact, zero numeric change; the plans use the same strategy).
+pub const KNN_EXACT_ARENA_DEFAULT: bool = true;
+
+fn knn_exact_arena() -> bool {
+    match std::env::var(KNN_ARENA_ENV).as_deref().map(str::trim) {
+        Ok("pow2" | "default" | "0") => false,
+        Ok("exact" | "1") => true,
+        _ => KNN_EXACT_ARENA_DEFAULT,
+    }
+}
 
 /// Whether the exact GPU kNN backend runs in this build (the `gpu_knn` lever): the bundled
 /// templates carry the graph.
@@ -369,7 +407,52 @@ struct GpuKnn {
     frames: usize,
     rate: Bound,
     rate_value: f32,
-    vram_mb: f64,
+    /// The index and norms' bytes (MiB), the fallback when the footprint cannot be measured.
+    index_mb: f64,
+    /// The footprint held in the VRAM ledger while the index lives (P3B-G): measured, or computed
+    /// when the measurement was not exclusive.
+    measured: Option<VramHold>,
+    /// Whether `measured` is a DXGI measurement (an exclusive one) rather than the computed size.
+    vram_measured: bool,
+}
+
+/// The diagnostics and VRAM-ledger key of the kNN session: `[<prefix>.]vc.knn`.
+fn knn_component(opts: &VcSessionOptions) -> String {
+    match opts.component_prefix {
+        Some(p) if !p.is_empty() => format!("{p}.vc.knn"),
+        _ => "vc.knn".to_string(),
+    }
+}
+
+/// VRAM the kNN session takes beyond its index and norms (MiB), measured with the kNN loading alone
+/// (`scripts/bench/specs/p3b/g/README.md`: a 30 000-row 768-wide index took 106 MB on CUDA fp32
+/// (88 MiB of index), 62 MB on CUDA fp16 (44 MiB) and 68 MB on DirectML fp16 (44 MiB); an 8 000-row
+/// index 42 MB against 23.5 MiB, fp16 30 MB against 11.7 MiB): the same ~18 MB on CUDA at any size
+/// and storage (context buffers and the session's arena granularity), ~24 MB on DirectML.
+fn knn_session_overhead_mb(active_ep: &str) -> f64 {
+    match active_ep {
+        "cuda" => 18.0,
+        "dml" => 24.0,
+        _ => 0.0,
+    }
+}
+
+/// What the kNN holds in the VRAM ledger.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct KnnFootprint {
+    mb: f64,
+    /// A DXGI measurement nothing else contributed to (else the computed size).
+    measured: bool,
+}
+
+/// The kNN's footprint: the DXGI delta when its measurement window was exclusive, else (another
+/// load's allocations are in the delta, or DXGI could not tell) the index and norms plus the
+/// session's fixed cost on the active EP.
+fn knn_footprint(index_mb: f64, active_ep: &str, delta: Option<VramDelta>) -> KnnFootprint {
+    match delta {
+        Some(d) if d.exclusive => KnnFootprint { mb: d.mb, measured: true },
+        _ => KnnFootprint { mb: index_mb + knn_session_overhead_mb(active_ep), measured: false },
+    }
 }
 
 impl GpuKnn {
@@ -383,8 +466,19 @@ impl GpuKnn {
             return Err(format!("the index has {real} rows (at least {MIN_REAL_ROWS} are needed)"));
         }
         let dim = index.dim();
-        let (session, outcome) = build_session_with(None, ep, opts, ModelSource::File(graph), &|b, _| Ok(b))?;
+        // The footprint is measured on the requested EP's adapter from before the session exists.
+        let base = normalize_ep(ep);
+        let probe = arena::dxgi_adapter_for(base, device_for(base, base, opts)).and_then(VramProbe::start);
+        // The outcome is recorded below, once the session is accepted (a GPU kNN that landed on the
+        // CPU rung is refused and must leave no `vc.knn` row).
+        let extras = GpuExtras { cuda_same_as_requested: knn_exact_arena(), skip_outcome_record: true, ..GpuExtras::default() };
+        let (session, outcome) = {
+            let _span = telemetry::load_span(LoadStage::KnnSessionInit);
+            let built = build_session_ext(Some("vc.knn"), ep, opts, ModelSource::File(graph), &extras, &|b, _| Ok(b))?;
+            (built.session, built.outcome)
+        };
         if outcome.active == "cpu" && !allow_cpu {
+            let _ = probe.and_then(|p| p.delta_mb()); // ends the measurement window
             return Err(match &outcome.reason {
                 Some(r) => format!("the kNN graph would run on the CPU ({r})"),
                 None => "the kNN graph would run on the CPU".to_string(),
@@ -417,6 +511,35 @@ impl GpuKnn {
             io_binding::bind_input(&mut binding, &b.name, &b.value).map_err(|e| format!("kNN bind: {e}"))?;
         }
         let bytes = rows * dim * if fp16 { 2 } else { 4 } + rows * 4;
+        let index_mb = bytes as f64 / (1024.0 * 1024.0);
+        // The binding copied the index to the device: what the session and its index hold now (on
+        // the adapter it was measured on: a CUDA request that fell back to DirectML is not
+        // measured, and neither is a load another probe's window overlapped).
+        // (Read in every case, which also ends the probe's window for the others' overlap check.)
+        let delta = probe.and_then(|p| p.delta()).filter(|_| outcome.active == base);
+        let footprint = knn_footprint(index_mb, &outcome.active, delta);
+        let measured = (outcome.active != "cpu").then(|| {
+            if footprint.measured {
+                telemetry::vram_mark("vc.knn", footprint.mb);
+            }
+            tracing::info!(
+                target: "sigil::vc",
+                "GPU kNN on {}: {:.0} MB VRAM {} ({index_mb:.0} MB of index and norms, {rows} rows x {dim}, {})",
+                outcome.active,
+                footprint.mb,
+                match delta {
+                    Some(d) if !d.exclusive => "computed (another load measured at the same time)",
+                    _ if footprint.measured => "measured",
+                    _ => "computed",
+                },
+                if fp16 { "fp16" } else { "fp32" }
+            );
+            arena::ledger().hold(&knn_component(opts), footprint.mb)
+        });
+        let vram_measured = footprint.measured;
+        // The session is accepted: its outcome is the `vc.knn` diagnostics row (`Retrieval::load`
+        // recorded it at this point before the session carried a component).
+        record_ep_outcome(&knn_component(opts), outcome.clone());
         Ok(GpuKnn {
             binding,
             session,
@@ -430,7 +553,9 @@ impl GpuKnn {
             frames: 0,
             rate,
             rate_value: 0.0,
-            vram_mb: bytes as f64 / (1024.0 * 1024.0),
+            index_mb,
+            measured,
+            vram_measured,
         })
     }
 
@@ -460,6 +585,8 @@ impl GpuKnn {
         feats.data_mut()?.copy_from_slice(&features[..n]);
         io_binding::bind_input(&mut self.binding, &feats.name, &feats.value).map_err(|e| format!("kNN bind: {e}"))?;
         io_binding::run(&mut self.session, &self.binding).map_err(|e| format!("kNN run: {e}"))?;
+        // A bound run without a plan (P3B-S0 telemetry: one GPU wait).
+        telemetry::record_sync(SyncKind::EagerRun);
         let out = self.out.as_ref().ok_or("kNN output missing")?;
         features[..n].copy_from_slice(out.data()?);
         Ok(())
@@ -485,15 +612,35 @@ pub struct Retrieval {
 pub const KNN_FP16_ABOVE_BYTES: usize = 256 << 20;
 
 /// Index storage of the GPU kNN: an explicit precision request wins; under `auto`, fp16 on
-/// DirectML (measured 5.3 vs 6.4 ms per tick at 30 000 rows) and fp32 on CUDA (1.1 vs 5.0 ms),
-/// unless the fp32 index would exceed [`KNN_FP16_ABOVE_BYTES`]. Either way the re-rank is fp32.
+/// DirectML (measured 5.3 vs 6.4 ms per tick at 30 000 rows) and, on CUDA, fp32 (P3: 1.1 vs 5.0 ms;
+/// P3B-G measured fp16 no slower on ORT 1.28 and 44 MB smaller at 30 000 rows, with a blend rounding of
+/// 2.7e-4; P3B-I0 kept [`KNN_FP16_ON_CUDA_DEFAULT`] off so the blend stays exact) unless the fp32 index would exceed [`KNN_FP16_ABOVE_BYTES`]. Either way the re-rank is
+/// fp32. `SIGIL_VC_KNN_STORAGE=fp16|fp32` ([`KNN_STORAGE_ENV`]) overrides `auto` (P3B-G's switch).
 fn knn_fp16(precision: PrecisionMode, ep: &str, fp32_bytes: usize) -> bool {
+    knn_fp16_with(precision, ep, fp32_bytes, std::env::var(KNN_STORAGE_ENV).ok().as_deref())
+}
+
+fn knn_fp16_with(precision: PrecisionMode, ep: &str, fp32_bytes: usize, storage: Option<&str>) -> bool {
     match precision {
         PrecisionMode::Fp32 => false,
         PrecisionMode::Fp16 => true,
-        PrecisionMode::Auto => crate::services::neural_audio::ort_session::normalize_ep(ep) == "dml" || fp32_bytes > KNN_FP16_ABOVE_BYTES,
+        PrecisionMode::Auto => match storage.map(str::trim) {
+            Some("fp16") => true,
+            Some("fp32") => false,
+            _ => {
+                let ep = crate::services::neural_audio::ort_session::normalize_ep(ep);
+                ep == "dml" || (ep == "cuda" && KNN_FP16_ON_CUDA_DEFAULT) || fp32_bytes > KNN_FP16_ABOVE_BYTES
+            }
+        },
     }
 }
+
+/// `SIGIL_VC_KNN_STORAGE=fp16|fp32`: the GPU kNN index storage under `auto` precision (P3B-G).
+pub const KNN_STORAGE_ENV: &str = "SIGIL_VC_KNN_STORAGE";
+
+/// Whether `auto` stores a CUDA kNN index in fp16 below [`KNN_FP16_ABOVE_BYTES`] (half the index's
+/// VRAM; the fp32 re-rank keeps the neighbours exact, the blend carries the rows' fp16 rounding).
+pub const KNN_FP16_ON_CUDA_DEFAULT: bool = false;
 
 /// CPU search threads for a session's options: 1 for the Streamer preset, else the intra-op
 /// thread count (default half the cores), at most [`MAX_SEARCH_THREADS`].
@@ -553,12 +700,8 @@ impl Retrieval {
                     Some(g) => g.to_path_buf(),
                     None => knn_graph(dim, fp16)?,
                 };
+                // `GpuKnn::load` records the accepted session's outcome under `[<prefix>.]vc.knn`.
                 let gpu = GpuKnn::load(&faiss, &graph, ep, opts, fp16, allow_cpu)?;
-                let component = match opts.component_prefix {
-                    Some(p) if !p.is_empty() => format!("{p}.vc.knn"),
-                    _ => "vc.knn".to_string(),
-                };
-                record_ep_outcome(&component, gpu.outcome.clone());
                 Ok(Retrieval {
                     backend,
                     cpu: None,
@@ -600,9 +743,23 @@ impl Retrieval {
         }
     }
 
-    /// Device memory the GPU index takes (index plus norms; 0 on the CPU).
+    /// Device memory the GPU kNN takes (MiB; 0 on the CPU): measured at load (session, index and
+    /// norms; P3B-G), else the index and norms' bytes.
     pub fn vram_mb(&self) -> f64 {
-        self.gpu.as_ref().map_or(0.0, |g| g.vram_mb)
+        self.gpu
+            .as_ref()
+            .map_or(0.0, |g| g.measured.as_ref().map_or(g.index_mb, VramHold::mb))
+    }
+
+    /// The index and norms' bytes on the device (MiB; 0 on the CPU).
+    pub fn index_mb(&self) -> f64 {
+        self.gpu.as_ref().map_or(0.0, |g| g.index_mb)
+    }
+
+    /// Whether [`vram_mb`](Self::vram_mb) was measured (DXGI, with no other load measuring at the
+    /// same time) rather than computed.
+    pub fn vram_measured(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| g.vram_measured)
     }
 
     /// Warm the GPU graph at the plan's frame count (sizes its bound buffers, picks the kernels), so
@@ -694,11 +851,17 @@ mod tests {
 
     #[test]
     fn knn_index_precision_follows_the_request_rung_and_size() {
-        assert!(!knn_fp16(PrecisionMode::Fp32, "dml", 1 << 30));
-        assert!(knn_fp16(PrecisionMode::Fp16, "cuda", 1));
-        assert!(knn_fp16(PrecisionMode::Auto, "dml", 1));
-        assert!(!knn_fp16(PrecisionMode::Auto, "cuda", 100 << 20));
-        assert!(knn_fp16(PrecisionMode::Auto, "cuda", 300 << 20));
+        let f = |p, ep, bytes| knn_fp16_with(p, ep, bytes, None);
+        assert!(!f(PrecisionMode::Fp32, "dml", 1 << 30));
+        assert!(f(PrecisionMode::Fp16, "cuda", 1));
+        assert!(f(PrecisionMode::Auto, "dml", 1));
+        assert_eq!(f(PrecisionMode::Auto, "cuda", 100 << 20), KNN_FP16_ON_CUDA_DEFAULT);
+        assert!(f(PrecisionMode::Auto, "cuda", 300 << 20));
+        // P3B-G's switch overrides `auto` only.
+        assert!(knn_fp16_with(PrecisionMode::Auto, "cuda", 1, Some("fp16")));
+        assert!(!knn_fp16_with(PrecisionMode::Auto, "dml", 1, Some("fp32")));
+        assert!(!knn_fp16_with(PrecisionMode::Fp32, "cuda", 1, Some("fp16")), "an explicit request wins");
+        assert!(knn_fp16_with(PrecisionMode::Auto, "dml", 1, Some("bogus")));
     }
 
     #[test]
@@ -802,6 +965,52 @@ mod tests {
         let _ = std::fs::remove_file(&path2);
     }
 
+    /// P3B-G (review fix): a GPU kNN whose session landed on the CPU rung is refused, and a refused
+    /// session leaves no `vc.knn` diagnostics row (the build used to record it before the check, so
+    /// Settings would list a kNN session that does not exist). An accepted one records its outcome
+    /// under the prefixed key, as `Retrieval::load` did before the session carried a component.
+    #[test]
+    fn a_refused_cpu_rung_leaves_no_knn_diagnostics_row() {
+        use crate::services::diagnostics::ep_outcome;
+        let dim = 768;
+        let (centres, data) = clustered(dim, 200, 4, 9);
+        let path = temp_index(&ivf_of(dim, &centres, &data, 1), "cpu-row");
+        let graph = knn_graph_in(&templates(), dim, false).unwrap();
+        let opts = VcSessionOptions { component_prefix: Some("test.retrieval.cpu_rung"), ..VcSessionOptions::default() };
+        let key = "test.retrieval.cpu_rung.vc.knn";
+        assert_eq!(knn_component(&opts), key);
+        assert_eq!(knn_component(&VcSessionOptions::default()), "vc.knn");
+        assert_eq!(knn_component(&VcSessionOptions { component_prefix: Some(""), ..VcSessionOptions::default() }), "vc.knn");
+        let refused = Retrieval::load_ext(&path, RetrievalBackend::GpuKnn, "cpu", &opts, PrecisionMode::Fp32, Some(&graph), false).err();
+        assert!(refused.is_some_and(|e| e.contains("CPU")));
+        assert_eq!(ep_outcome(key), None, "a refused session has no diagnostics row");
+        let r = Retrieval::load_ext(&path, RetrievalBackend::GpuKnn, "cpu", &opts, PrecisionMode::Fp32, Some(&graph), true).unwrap();
+        assert_eq!(ep_outcome(key).map(|o| o.active), Some("cpu".to_string()), "an accepted session records its outcome");
+        assert_eq!(r.outcome().map(|o| o.active.clone()), Some("cpu".to_string()));
+        assert!(!r.vram_measured(), "nothing is measured on the CPU rung");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P3B-G (review fix): the kNN books the DXGI delta only when its measurement was exclusive;
+    /// an overlapped one (the parallel cold start builds the other branches beside it) or an
+    /// unmeasurable one holds the computed size, index and norms plus the session's fixed cost.
+    #[test]
+    fn knn_footprint_is_measured_only_when_exclusive() {
+        let exclusive = Some(VramDelta { mb: 106.0, exclusive: true });
+        let overlapped = Some(VramDelta { mb: 640.0, exclusive: false });
+        assert_eq!(knn_footprint(88.0, "cuda", exclusive), KnnFootprint { mb: 106.0, measured: true });
+        // 640 MB of a neighbour's allocations are not the kNN's.
+        assert_eq!(knn_footprint(88.0, "cuda", overlapped), KnnFootprint { mb: 106.0, measured: false });
+        assert_eq!(knn_footprint(44.0, "dml", overlapped), KnnFootprint { mb: 68.0, measured: false });
+        assert_eq!(knn_footprint(44.0, "cuda", None), KnnFootprint { mb: 62.0, measured: false });
+        assert_eq!(knn_footprint(23.5, "cpu", None), KnnFootprint { mb: 23.5, measured: false });
+        // The computed size reproduces the lone measurements it was calibrated on (README: 106 / 62 / 68 MB).
+        for (index_mb, ep, measured_mb) in [(88.0, "cuda", 106.0), (44.0, "cuda", 62.0), (44.0, "dml", 68.0), (23.5, "cuda", 42.0), (11.7, "cuda", 30.0)] {
+            let computed = knn_footprint(index_mb, ep, None).mb;
+            assert!((computed - measured_mb).abs() < 1.0, "{ep} {index_mb}: {computed} vs {measured_mb}");
+        }
+    }
+
     /// Plan verification: the pooled parallel CPU search equals the serial one, bit for bit.
     #[test]
     fn cpu_pool_matches_serial_search() {
@@ -848,6 +1057,8 @@ mod tests {
         let (centres, data) = clustered(dim, 30_000, 769, 3);
         let path = temp_index(&ivf_of(dim, &centres, &data, 1), "gpu");
         let (_, queries) = clustered(dim, 6, 769, 44);
+        // The exact blends, once (a debug-build brute force over 30k rows is slow).
+        let wants: Vec<Vec<f64>> = queries.iter().map(|q| brute_force(&data, q, 0.75).0).collect();
         for precision in [PrecisionMode::Fp32, PrecisionMode::Fp16] {
             let graph = knn_graph_in(&templates(), dim, precision == PrecisionMode::Fp16).unwrap();
             let mut r = match Retrieval::load_ext(
@@ -873,8 +1084,7 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 r.blend(&mut feats, 6, 0.75).unwrap();
                 times.push(t0.elapsed().as_secs_f64() * 1000.0);
-                for (t, q) in queries.iter().enumerate() {
-                    let (want, _) = brute_force(&data, q, 0.75);
+                for (t, want) in wants.iter().enumerate() {
                     for (c, w) in want.iter().enumerate() {
                         worst = worst.max((f64::from(feats[t * dim + c]) - w).abs());
                     }
@@ -882,11 +1092,13 @@ mod tests {
             }
             times.sort_by(f64::total_cmp);
             println!(
-                "gpu kNN {ep} {precision:?} ({:?}): N 30000, T 6, max |err| {worst:.2e}, p50 {:.3} ms, p95 {:.3} ms, index {:.1} MB",
+                "gpu kNN {ep} {precision:?} ({:?}): N 30000, T 6, max |err| {worst:.2e}, p50 {:.3} ms, p95 {:.3} ms, VRAM {:.1} MB ({}), index {:.1} MB",
                 r.outcome().map(|o| o.active.clone()),
                 times[25],
                 times[47],
-                r.vram_mb()
+                r.vram_mb(),
+                if r.vram_measured() { "measured" } else { "computed" },
+                r.index_mb()
             );
         }
         for threads in [1usize, 2, 4] {
@@ -906,6 +1118,48 @@ mod tests {
             println!("cpu IVF nprobe 1, {threads} thread(s): p50 {:.3} ms, p95 {:.3} ms", times[25], times[47]);
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// P3B-G (dev rig, a GPU): fp16 index storage keeps the exact blend. On 8 000 clustered rows the
+    /// fp16 coarse top-64 holds every true top-8 neighbour (re-ranked in fp32), so the fp16 blend
+    /// differs from the exact f64 one only by the stored rows' fp16 rounding (well under 1e-2 of the
+    /// features' scale), never by a neighbour swap (an error of the order of the features
+    /// themselves); fp32 storage is exact to float rounding.
+    /// `SIGIL_AB_EP=dml` checks DirectML instead of CUDA.
+    #[test]
+    #[ignore = "dev rig: needs a GPU"]
+    fn gpu_knn_fp16_storage_keeps_the_exact_blend() {
+        let ep = std::env::var("SIGIL_AB_EP").unwrap_or_else(|_| "cuda".to_string());
+        let dim = 768;
+        let (centres, data) = clustered(dim, 8_000, 769, 5);
+        let path = temp_index(&ivf_of(dim, &centres, &data, 1), "gpu-fp16");
+        let (_, queries) = clustered(dim, 6, 769, 46);
+        let wants: Vec<Vec<f64>> = queries.iter().map(|q| brute_force(&data, q, 0.75).0).collect();
+        let scale = data.iter().flatten().fold(0f64, |m, v| m.max(f64::from(v.abs())));
+        let mut worst = Vec::new();
+        for precision in [PrecisionMode::Fp32, PrecisionMode::Fp16] {
+            let graph = knn_graph_in(&templates(), dim, precision == PrecisionMode::Fp16).unwrap();
+            let mut r = match Retrieval::load_ext(&path, RetrievalBackend::GpuKnn, &ep, &VcSessionOptions::default(), precision, Some(&graph), false) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{ep} {precision:?}: {e}; skipped");
+                    let _ = std::fs::remove_file(&path);
+                    return;
+                }
+            };
+            let mut feats: Vec<f32> = queries.concat();
+            r.blend(&mut feats, 6, 0.75).unwrap();
+            let w = wants
+                .iter()
+                .enumerate()
+                .flat_map(|(t, want)| want.iter().enumerate().map(move |(c, w)| (t, c, *w)))
+                .fold(0f64, |m, (t, c, w)| m.max((f64::from(feats[t * dim + c]) - w).abs()));
+            eprintln!("{ep} {precision:?}: max |blend - exact| {w:.3e} (feature scale {scale:.2}, VRAM {:.1} MB, index {:.1} MB)", r.vram_mb(), r.index_mb());
+            worst.push(w);
+        }
+        let _ = std::fs::remove_file(&path);
+        assert!(worst[0] <= 1e-4 * scale.max(1.0), "fp32 storage is not exact: {:.3e}", worst[0]);
+        assert!(worst[1] <= 1e-2 * scale.max(1.0), "fp16 storage changed the blend beyond its rounding: {:.3e}", worst[1]);
     }
 
     /// The CPU search allocates nothing per tick on the voice worker's thread, serial or pooled.

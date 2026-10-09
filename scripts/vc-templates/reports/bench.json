@@ -146,5 +146,222 @@
       "bytes": 297186,
       "sha256": "a5a974abbddcb77329fa7488bae6736bd773d83884f0280b7ab728786f566131"
     }
+  },
+  "campplus-exact": {
+    "rows": [
+      {
+        "clip": "jfk[0:400f]",
+        "frames": 400,
+        "whole_segments": true,
+        "exact_snr_db": 106.51522379883303,
+        "exact_cosine_to_upstream": 0.999999999988884,
+        "legacy_snr_db": 106.51522379883303,
+        "legacy_cosine_to_upstream": 0.999999999988884
+      },
+      {
+        "clip": "jfk[0:600f]",
+        "frames": 600,
+        "whole_segments": true,
+        "exact_snr_db": 109.62913554289977,
+        "exact_cosine_to_upstream": 0.9999999999945615,
+        "legacy_snr_db": 109.62913554289977,
+        "legacy_cosine_to_upstream": 0.9999999999945615
+      },
+      {
+        "clip": "jfk[0:1000f]",
+        "frames": 1000,
+        "whole_segments": true,
+        "exact_snr_db": 117.42181037153273,
+        "exact_cosine_to_upstream": 0.9999999999990958,
+        "legacy_snr_db": 117.42181037153273,
+        "legacy_cosine_to_upstream": 0.9999999999990958
+      },
+      {
+        "clip": "jfk[0:237f]",
+        "frames": 237,
+        "whole_segments": false,
+        "exact_snr_db": 106.32864690277897,
+        "exact_cosine_to_upstream": 0.9999999999883562,
+        "legacy_snr_db": 12.393184913020905,
+        "legacy_cosine_to_upstream": 0.9760020451162804
+      },
+      {
+        "clip": "jfk[0:381f]",
+        "frames": 381,
+        "whole_segments": false,
+        "exact_snr_db": 115.12249802610282,
+        "exact_cosine_to_upstream": 0.9999999999984828,
+        "legacy_snr_db": 25.473571767622992,
+        "legacy_cosine_to_upstream": 0.9991728834950069
+      },
+      {
+        "clip": "jfk[0:512f]",
+        "frames": 512,
+        "whole_segments": false,
+        "exact_snr_db": 115.32139555221528,
+        "exact_cosine_to_upstream": 0.9999999999985512,
+        "legacy_snr_db": 16.432705234175973,
+        "legacy_cosine_to_upstream": 0.9911244553426497
+      },
+      {
+        "clip": "jfk[0:777f]",
+        "frames": 777,
+        "whole_segments": false,
+        "exact_snr_db": 114.40318964563855,
+        "exact_cosine_to_upstream": 0.9999999999981952,
+        "legacy_snr_db": 24.647221650163424,
+        "legacy_cosine_to_upstream": 0.9991942033679071
+      },
+      {
+        "clip": "jfk[0:1043f]",
+        "frames": 1043,
+        "whole_segments": false,
+        "exact_snr_db": 113.05303851475963,
+        "exact_cosine_to_upstream": 0.9999999999975253,
+        "legacy_snr_db": 21.168317697482955,
+        "legacy_cosine_to_upstream": 0.9966480148676353
+      },
+      {
+        "clip": "ja-long[0:400f]",
+        "frames": 400,
+        "whole_segments": true,
+        "exact_snr_db": 113.23106403145704,
+        "exact_cosine_to_upstream": 0.9999999999976343,
+        "legacy_snr_db": 113.23106403145704,
+        "legacy_cosine_to_upstream": 0.9999999999976343
+      },
+      {
+        "clip": "ja-long[0:600f]",
+        "frames": 600,
+        "whole_segments": true,
+        "exact_snr_db": 114.60241808234483,
+        "exact_cosine_to_upstream": 0.999999999998268,
+        "legacy_snr_db": 114.60241808234483,
+        "legacy_cosine_to_upstream": 0.999999999998268
+      },
+      {
+        "clip": "ja-long[0:1000f]",
+        "frames": 1000,
+        "whole_segments": true,
+        "exact_snr_db": 114.53157587394941,
+        "exact_cosine_to_upstream": 0.9999999999982756,
+        "legacy_snr_db": 114.53157587394941,
+        "legacy_cosine_to_upstream": 0.9999999999982756
+      },
+      {
+        "clip": "ja-long[0:237f]",
+        "frames": 237,
+        "whole_segments": false,
+        "exact_snr_db": 113.43667622573614,
+        "exact_cosine_to_upstream": 0.9999999999977651,
+        "legacy_snr_db": 6.540704638617339,
+        "legacy_cosine_to_upstream": 0.908308297567678
+      },
+      {
+        "clip": "ja-long[0:381f]",
+        "frames": 381,
+        "whole_segments": false,
+        "exact_snr_db": 111.15112496563194,
+        "exact_cosine_to_upstream": 0.9999999999961664,
+        "legacy_snr_db": 19.59249167052868,
+        "legacy_cosine_to_upstream": 0.9959148204599299
+      },
+      {
+        "clip": "ja-long[0:512f]",
+        "frames": 512,
+        "whole_segments": false,
+        "exact_snr_db": 104.5444995243951,
+        "exact_cosine_to_upstream": 0.9999999999824557,
+        "legacy_snr_db": 11.158558244186382,
+        "legacy_cosine_to_upstream": 0.9757809503816486
+      },
+      {
+        "clip": "ja-long[0:777f]",
+        "frames": 777,
+        "whole_segments": false,
+        "exact_snr_db": 114.43679292646308,
+        "exact_cosine_to_upstream": 0.9999999999982004,
+        "legacy_snr_db": 24.971060192871516,
+        "legacy_cosine_to_upstream": 0.998960711137708
+      },
+      {
+        "clip": "ja-long[0:1043f]",
+        "frames": 1043,
+        "whole_segments": false,
+        "exact_snr_db": 113.76905462565679,
+        "exact_cosine_to_upstream": 0.9999999999979661,
+        "legacy_snr_db": 18.243130948939417,
+        "legacy_cosine_to_upstream": 0.9932764928183657
+      }
+    ],
+    "exact_min_snr_db": 104.5444995243951,
+    "gate_db": 100.0,
+    "deterministic": true,
+    "calibration": {
+      "exact": {
+        "same_speaker_halves": 0.7911050969932016,
+        "same_speaker_matched_3_8s_en": 0.7782566802180423,
+        "same_speaker_matched_3_8s_ja": 0.6539113462384303,
+        "different_speakers": {
+          "ja-short.wav": 0.12331506517885847,
+          "ko-short.wav": 0.02101409524401271,
+          "ru-short.wav": 0.2623290337851011
+        },
+        "margin": 0.3915823124533292
+      },
+      "legacy": {
+        "same_speaker_halves": 0.7814294954519718,
+        "same_speaker_matched_3_8s_en": 0.77655552996609,
+        "same_speaker_matched_3_8s_ja": 0.6729565633608003,
+        "different_speakers": {
+          "ja-short.wav": 0.12292257080092336,
+          "ko-short.wav": 0.014270084037711753,
+          "ru-short.wav": 0.26014584615819625
+        },
+        "margin": 0.4128107172026041
+      }
+    },
+    "legacy_min_snr_db_whole_segments": 106.51522379883303,
+    "legacy_min_snr_db_ragged": 6.540704638617339,
+    "legacy_mean_snr_db_ragged": 18.062094695760955,
+    "legacy_same_checkpoint": true,
+    "initializers": {
+      "float_initializers": 617,
+      "bit_identical_in_other": 617,
+      "values": 6907680,
+      "values_bit_identical": 6907680
+    },
+    "ok": true,
+    "onnxruntime": "1.28.0",
+    "checkpoint_sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8",
+    "contract": {
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "float32",
+          "shape": [
+            1,
+            "T",
+            80
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "embedding",
+          "dtype": "float32",
+          "shape": [
+            "BatchNormalizationembedding_dim_0",
+            192
+          ]
+        }
+      ],
+      "opset": 17
+    },
+    "file": {
+      "path": "bench/campplus-exact/model.onnx",
+      "bytes": 28206219,
+      "sha256": "3d88451a5d249a0890d29bc5e8380a5b27bc8a4a399ae2c7ad399fd3ba792e0c"
+    }
   }
 }

@@ -8,7 +8,7 @@
 //! |------|------|----------|
 //! | **host** (legacy) | `io_binding` off | host tensors wrap the plan's buffers; outputs are copied out of new ORT values |
 //! | **bound** | `io_binding` on, CPU / DirectML / TensorRT rung, CUDA without a graph | host tensors bound once; ORT reads and writes them in place on the CPU, and uploads only the inputs written since the last run on a GPU |
-//! | **device** | `io_binding` + a captured CUDA graph, CUDA rung, every input read from device memory | device tensors bound once at fixed addresses; the session runs on the plan's stream (ORT's `user_compute_stream`); dirty inputs go up from pinned host mirrors, then the CUDA graph, then the read outputs come down, one `cuStreamSynchronize` |
+//! | **device** | `io_binding` + a captured CUDA graph, CUDA rung, every input read from device memory | device tensors bound once at fixed addresses; the session runs on the plan's stream (ORT's `user_compute_stream`); dirty inputs go up from pinned host mirrors, then the CUDA graph, then the read outputs come down, one host wait (P3B-G: on an event, [`cuda_wait`]; or none with [`SessionPlan::run_async`] until the buffers are touched) |
 //!
 //! The bound and device paths make **no Rust heap allocation per tick** (`run`, `input_f32`,
 //! `input_i64` and `output` are allocation-free there, checked by
@@ -63,8 +63,31 @@
 //! [`SessionPlan::vram_mb`], [`SessionPlan::set_output_download`], [`SessionPlan::copy_rows_to`]
 //! ([`RowCopy`]: an output window straight into another plan's input, device to device when both
 //! plans are device-resident on one GPU, e.g. `enc`'s `m_p` / `logs_p` into `flowdec`).
+//!
+//! # Added by P3B-G
+//! - Asynchronous device runs: [`SessionPlan::run_async`] enqueues uploads, the graph and the
+//!   downloads and records the plan's `done` event (`CU_EVENT_BLOCKING_SYNC`); [`SessionPlan::wait`]
+//!   (and every host access to the plan's buffers: `input_f32`, `input_i64`, `output`, ...) waits
+//!   for it the way [`CudaTuning::wait`] says (`cuda_wait`: spin / block / hybrid);
+//!   [`SessionPlan::poll`] settles a run that already finished. A device-to-device
+//!   [`SessionPlan::copy_rows_to`] makes the destination's stream wait for the source's `done`
+//!   event (no host wait) and records the source's `read_done` event after the copy, which the
+//!   source's next run waits for on its stream before it overwrites its outputs. Both directions of
+//!   that chain are covered by `gpu::tests::event_chain_orders_device_copies_without_host_waits`.
+//! - GPU time per run (CUDA events around the graph replay, `telemetry::record_gpu_time` under the
+//!   plan's component) while `telemetry::gpu_timing_enabled`; host waits are counted only when the
+//!   run had not finished yet (`telemetry::record_sync`), plus the eager waits of host-I/O plans on
+//!   a GPU rung (P3B-A's request).
+//! - [`SHRINK_BEFORE_CAPTURE`] / `SIGIL_CUDA_TUNING=shrink=1`: the capture's first warm-up run gives
+//!   the cuDNN search workspace back to the driver (arena shrinkage) before the second warm-up and
+//!   the capture; never on or after the capture.
+//! - [`SessionPlan::build_with`] (explicit [`CudaTuning`]), [`SessionPlan::set_vram_mb`],
+//!   [`SessionPlan::arena_stats`], [`SessionPlan::wait_mode`]; the plans' arena statistics after
+//!   their first runs (`telemetry::arena_mark_session`), and `SIGIL_GPU_PROCESS_PRIORITY`
+//!   (`sched_priority`) applied at the first plan build.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::ffi::{c_void, CString};
 use std::sync::Arc;
 
@@ -74,8 +97,11 @@ use ort::value::{DynValue, Tensor, TensorElementType, TensorRef};
 use sha2::{Digest, Sha256};
 
 use super::arena::{self, VramHold, VramProbe};
-use super::cuda_driver::{ContextScope, CuDevicePtr, CuStream, CudaDriver, PrimaryContext};
+use super::cuda_driver::{
+    ContextScope, CuDevicePtr, CuStream, CudaDriver, CudaEvent, PrimaryContext, EVENT_BLOCKING_SYNC, EVENT_DEFAULT, EVENT_DISABLE_TIMING,
+};
 use super::cuda_graph::{self, CapturedGraph};
+use super::cuda_wait::{self, WaitMode, Waiter};
 use super::cuda_stream::PriorityStream;
 use super::dml_queue::DmlQueue;
 use super::io_binding;
@@ -86,6 +112,7 @@ use crate::services::neural_audio::ort_session::{
     build_session_ext, check_gpu_ep, device_for, ep_label, ep_ladder, normalize_ep, CudaConvSearch, GpuExtras, ModelSource,
     VcSessionOptions, EP_CPU, EP_CUDA, EP_DML, EP_TRT_CLASSIC, EP_TRT_RTX,
 };
+use crate::services::neural_audio::telemetry::{self, LoadStage, SyncKind};
 use crate::services::neural_audio::vc::engine::options::Accelerator;
 
 /// One input or output: name, element type and the fixed shape of the plan.
@@ -155,8 +182,10 @@ pub struct PlanSpec<'a> {
 /// CUDA-rung session tuning of every plan (the benchmark decides these defaults, see
 /// [`CudaTuning::DEFAULT`]). `SIGIL_CUDA_TUNING` overrides them for development and benchmarking:
 /// comma-separated `tf32=0|1`, `nhwc=0|1`, `nc1d=0|1`, `algo=exhaustive|heuristic|default`,
-/// `maxws=0|1`, `devio=0|1` (unknown keys are ignored).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `maxws=0|1`, `devio=0|1`, and (P3B-G) `wait=spin|block|hybrid`, `spinus=<µs>` (the hybrid
+/// wait's spin budget) and `shrink=0|1` (give the cuDNN search workspace back before the graph
+/// capture); unknown keys are ignored.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CudaTuning {
     /// TF32 math (`use_tf32`) regardless of the levers (`None` = [`GpuLevers::tf32`]).
     pub tf32: Option<bool>,
@@ -171,7 +200,25 @@ pub struct CudaTuning {
     /// Keep device-resident buffers on CUDA when no graph is captured (`None` =
     /// [`DEVICE_IO_WITHOUT_GRAPHS`]).
     pub device_io: Option<bool>,
+    /// How the plan's thread waits for its CUDA work (`None` = [`WaitMode::DEFAULT`]; P3B-G).
+    pub wait: Option<WaitMode>,
+    /// The hybrid wait's spin budget in µs (`None` = [`cuda_wait::HYBRID_SPIN_US`]).
+    pub spin_us: Option<f64>,
+    /// Shrink the session's CUDA arena after the first warm-up run of a graph capture (`None` =
+    /// [`SHRINK_BEFORE_CAPTURE`]; P3B-G, T3).
+    pub shrink: Option<bool>,
 }
+
+/// Whether a CUDA-graph plan gives the arena regions its first warm-up run left free (the cuDNN
+/// algorithm search's workspace) back to the driver before the second warm-up and the capture
+/// (P3B-G, T3). The second warm-up runs with the algorithms the search cached, so the arena grows
+/// back to exactly what the chosen kernels and activations need, and the capture allocates nothing.
+/// Never on or after the capture: replays write into addresses captured from the arena.
+///
+/// On since P3B-I0 (P3B-G, 7 ABBA pairs on the levers row): -40 MB of VRAM on every pair (1380 ->
+/// 1340 MB), call p95 +2.1 % [-8.8, +7.5] NEUTRAL, graphs kept and the replays identical
+/// (`gpu::tests::shrink_before_capture_keeps_graphs`). `SIGIL_CUDA_TUNING=shrink=0` turns it off.
+pub const SHRINK_BEFORE_CAPTURE: bool = true;
 
 /// Whether a CUDA plan without a CUDA graph (the lever off, or a capture that failed its check)
 /// keeps device-resident buffers. Off: such plans bind host tensors (the bound path), because the
@@ -184,8 +231,17 @@ pub const DEVICE_IO_WITHOUT_GRAPHS: bool = false;
 pub const CUDA_TUNING_ENV: &str = "SIGIL_CUDA_TUNING";
 
 impl CudaTuning {
-    pub const DEFAULT: CudaTuning =
-        CudaTuning { tf32: None, prefer_nhwc: None, conv1d_nc1d: None, algo: None, max_workspace: None, device_io: None };
+    pub const DEFAULT: CudaTuning = CudaTuning {
+        tf32: None,
+        prefer_nhwc: None,
+        conv1d_nc1d: None,
+        algo: None,
+        max_workspace: None,
+        device_io: None,
+        wait: None,
+        spin_us: None,
+        shrink: None,
+    };
 
     /// [`CudaTuning::DEFAULT`] with the overrides of `spec` (the `SIGIL_CUDA_TUNING` syntax).
     pub fn parse(spec: &str) -> CudaTuning {
@@ -200,6 +256,9 @@ impl CudaTuning {
                 "nc1d" => t.conv1d_nc1d = Some(on),
                 "maxws" => t.max_workspace = Some(on),
                 "devio" => t.device_io = Some(on),
+                "wait" => t.wait = WaitMode::parse(&v).or(t.wait),
+                "spinus" => t.spin_us = v.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).or(t.spin_us),
+                "shrink" => t.shrink = Some(on),
                 "algo" => {
                     t.algo = match v.as_str() {
                         "exhaustive" => Some(CudaConvSearch::Exhaustive),
@@ -225,6 +284,16 @@ impl CudaTuning {
     /// See [`DEVICE_IO_WITHOUT_GRAPHS`].
     pub fn device_io_without_graphs(&self) -> bool {
         self.device_io.unwrap_or(DEVICE_IO_WITHOUT_GRAPHS)
+    }
+
+    /// The wait of the plans' CUDA work (see [`cuda_wait`]).
+    pub fn wait_mode(&self) -> WaitMode {
+        self.wait.unwrap_or(WaitMode::DEFAULT)
+    }
+
+    /// See [`SHRINK_BEFORE_CAPTURE`].
+    pub fn shrink_before_capture(&self) -> bool {
+        self.shrink.unwrap_or(SHRINK_BEFORE_CAPTURE)
     }
 }
 
@@ -488,7 +557,8 @@ fn check_value(seed: u32, j: usize) -> u32 {
 
 struct DeviceIo {
     // Drop order: the graph (it references the buffers), the binding, the device tensors (freed
-    // through the allocator), the host mirrors (need the context), and the allocator last.
+    // through the allocator), the host mirrors (need the context), the events, and the allocator
+    // last.
     graph: Option<CapturedGraph>,
     binding: IoBinding,
     inputs: Vec<DeviceTensor>,
@@ -496,6 +566,24 @@ struct DeviceIo {
     ctx: Arc<PrimaryContext>,
     /// The plan's stream: ORT's compute stream, the copies' stream and the graph's stream.
     stream: CuStream,
+    /// P3B-G: recorded after each run's last copy (`CU_EVENT_BLOCKING_SYNC | DISABLE_TIMING`): what
+    /// the host waits on ([`Waiter`]) and what a consumer's stream waits on before copying this
+    /// plan's outputs ([`SessionPlan::copy_rows_to`]).
+    done: CudaEvent,
+    /// P3B-G: recorded on a consumer's stream after its device row copy of this plan's outputs;
+    /// this plan's next run waits for it on the device before it overwrites them.
+    read_done: CudaEvent,
+    /// P3B-G: start / end timing events of a run (created when GPU timing is first asked for).
+    timing: Option<(CudaEvent, CudaEvent)>,
+    /// The pending run recorded the timing events.
+    timed: Cell<bool>,
+    /// The last completed run was timed (its timing events hold its start and end).
+    last_timed: Cell<bool>,
+    /// A run is enqueued and not yet waited for ([`run_async`](Self::run_async)).
+    pending: Cell<bool>,
+    waiter: Waiter,
+    /// The plan's diagnostics component (GPU time per run, `telemetry::record_gpu_time`).
+    component: &'static str,
     _allocator: Allocator,
 }
 
@@ -504,7 +592,15 @@ impl DeviceIo {
     /// session reads every input from device memory (`io_binding::inputs_on_device`): ORT copies a
     /// bound value to the device its consumers read it from at bind time, so a host-read input
     /// bound here would keep that bind-time copy forever.
-    fn new(session: &Session, device: i32, inputs: &[TensorSpec], outputs: &[TensorSpec], stream: &PriorityStream) -> Result<DeviceIo, String> {
+    fn new(
+        session: &Session,
+        device: i32,
+        inputs: &[TensorSpec],
+        outputs: &[TensorSpec],
+        stream: &PriorityStream,
+        waiter: Waiter,
+        component: &'static str,
+    ) -> Result<DeviceIo, String> {
         let ctx = Arc::clone(stream.context());
         let info = MemoryInfo::new(AllocationDevice::CUDA, device, AllocatorType::Device, MemoryType::Default)
             .map_err(|e| format!("CUDA memory info: {e}"))?;
@@ -544,7 +640,25 @@ impl DeviceIo {
         for t in &outputs {
             io_binding::bind_output(&mut binding, &t.name, &t.value).map_err(|e| format!("bind output '{}': {e}", t.spec.name))?;
         }
-        Ok(DeviceIo { graph: None, binding, inputs, outputs, ctx, stream: stream.handle(), _allocator: allocator })
+        let done = CudaEvent::new(&ctx, EVENT_BLOCKING_SYNC | EVENT_DISABLE_TIMING)?;
+        let read_done = CudaEvent::new(&ctx, EVENT_DISABLE_TIMING)?;
+        Ok(DeviceIo {
+            graph: None,
+            binding,
+            inputs,
+            outputs,
+            ctx,
+            stream: stream.handle(),
+            done,
+            read_done,
+            timing: None,
+            timed: Cell::new(false),
+            last_timed: Cell::new(false),
+            pending: Cell::new(false),
+            waiter,
+            component,
+            _allocator: allocator,
+        })
     }
 
     fn pinned(&self) -> bool {
@@ -560,7 +674,8 @@ impl DeviceIo {
         let mut any = false;
         for t in self.inputs.iter_mut().filter(|t| t.dirty) {
             // SAFETY: `dptr` is a device tensor of `bytes` this plan owns; the pinned / heap mirror
-            // stays alive and unwritten until the stream is synchronised at the end of the run.
+            // stays alive and unwritten until the run is waited for (every host access to an input
+            // mirror waits first: `input_bytes`, `fill_inputs`).
             let r = unsafe { scope.copy_htod(t.dptr, t.host.ptr.cast::<c_void>(), t.host.bytes, self.stream) };
             if let Err(code) = r {
                 return Err(format!("upload '{}': {}", t.spec.name, self.ctx.driver().describe(code)));
@@ -571,32 +686,76 @@ impl DeviceIo {
         Ok(any)
     }
 
-    /// Enqueue the downloads of the outputs the caller reads, and wait for the stream.
-    fn download_and_sync(&self, scope: &ContextScope<'_>) -> Result<(), String> {
+    /// Enqueue the downloads of the outputs the caller reads (no wait).
+    fn download(&self, scope: &ContextScope<'_>) -> Result<(), String> {
         for t in self.outputs.iter().filter(|t| t.download) {
             // SAFETY: the device output holds `bytes` written by the run on this stream; the mirror
-            // has room for them and is not read before the sync below.
+            // has room for them and is not read before the run is waited for (`output` waits).
             let r = unsafe { scope.copy_dtoh(t.host.ptr.cast::<c_void>(), t.dptr, t.host.bytes, self.stream) };
             if let Err(code) = r {
                 return Err(format!("download '{}': {}", t.spec.name, self.ctx.driver().describe(code)));
             }
         }
-        scope.sync(self.stream).map_err(|code| self.cuda_err("stream sync", code))
+        Ok(())
     }
 
-    /// One tick: uploads, the graph (or an ORT run), downloads, one sync.
+    /// One tick: uploads, the graph (or an ORT run), downloads, then the wait.
     fn run(&mut self, session: &mut Session) -> Result<(), String> {
+        self.run_async(session)?;
+        self.wait()
+    }
+
+    /// [`run`](Self::run) without the wait: the run is enqueued on the plan's stream and
+    /// [`wait`](Self::wait) (or any host access to the plan's buffers) completes it.
+    fn run_async(&mut self, session: &mut Session) -> Result<(), String> {
         let graph = self.graph.take();
-        let r = self.run_with(session, graph.as_ref(), false);
+        let r = self.launch(session, graph.as_ref(), false, None);
         self.graph = graph;
         r
     }
 
-    /// [`run`](Self::run) with `graph` replayed instead of the ORT run when given; `poison` first
-    /// fills the device outputs with [`CHECK_SENTINEL`] (the graph check).
-    fn run_with(&mut self, session: &mut Session, graph: Option<&CapturedGraph>, poison: bool) -> Result<(), String> {
+    /// Enqueue one run: `graph` replayed instead of the ORT run when given; `poison` first fills
+    /// the device outputs with [`CHECK_SENTINEL`] (the graph check); `options` are the ORT run's
+    /// options (the arena shrink of the first capture warm-up). Waits for a previous run first.
+    fn launch(
+        &mut self,
+        session: &mut Session,
+        graph: Option<&CapturedGraph>,
+        poison: bool,
+        options: Option<&ort::session::RunOptions>,
+    ) -> Result<(), String> {
+        self.wait()?;
+        let r = self.enqueue(session, graph, poison, options);
+        if r.is_err() {
+            // Copies enqueued before the failure may still read the host mirrors: let them finish
+            // before the caller touches any buffer again (best effort; the error is what counts).
+            if let Ok(scope) = self.ctx.enter() {
+                let _ = scope.sync(self.stream);
+            }
+        }
+        r
+    }
+
+    /// The body of [`launch`](Self::launch) (no wait for a previous run).
+    fn enqueue(
+        &mut self,
+        session: &mut Session,
+        graph: Option<&CapturedGraph>,
+        poison: bool,
+        options: Option<&ort::session::RunOptions>,
+    ) -> Result<(), String> {
         let ctx = Arc::clone(&self.ctx);
         let scope = ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
+        // A consumer's device copy of the previous outputs comes before this run overwrites them.
+        scope
+            .stream_wait_event(self.stream, self.read_done.raw())
+            .map_err(|code| self.cuda_err("cuStreamWaitEvent", code))?;
+        let timed = graph.is_some() && telemetry::gpu_timing_enabled() && self.ensure_timing();
+        if timed {
+            if let Some((t0, _)) = &self.timing {
+                scope.record_event(t0.raw(), self.stream).map_err(|code| self.cuda_err("cuEventRecord", code))?;
+            }
+        }
         let uploaded = self.upload(&scope)?;
         if poison {
             for t in &self.outputs {
@@ -617,12 +776,94 @@ impl DeviceIo {
                 // `user_compute_stream`; waiting for the uploads keeps the run correct when it did
                 // not (ORT synchronises its own stream at the end of the run).
                 if uploaded {
+                    telemetry::record_sync(SyncKind::UploadWait);
                     scope.sync(self.stream).map_err(|code| self.cuda_err("stream sync", code))?;
                 }
-                io_binding::run(session, &self.binding).map_err(|e| format!("run: {e}"))?
+                match options {
+                    Some(o) => io_binding::run_with(session, &self.binding, o),
+                    None => io_binding::run(session, &self.binding),
+                }
+                .map_err(|e| format!("run: {e}"))?
             }
         }
-        self.download_and_sync(&scope)
+        self.download(&scope)?;
+        if timed {
+            if let Some((_, t1)) = &self.timing {
+                scope.record_event(t1.raw(), self.stream).map_err(|code| self.cuda_err("cuEventRecord", code))?;
+            }
+        }
+        scope.record_event(self.done.raw(), self.stream).map_err(|code| self.cuda_err("cuEventRecord", code))?;
+        self.timed.set(timed);
+        self.pending.set(true);
+        self.waiter.launched();
+        Ok(())
+    }
+
+    /// The timing events, created on first use; `false` when the driver refused them.
+    fn ensure_timing(&mut self) -> bool {
+        if self.timing.is_none() {
+            match (CudaEvent::new(&self.ctx, EVENT_DEFAULT), CudaEvent::new(&self.ctx, EVENT_DEFAULT)) {
+                (Ok(a), Ok(b)) => self.timing = Some((a, b)),
+                (Err(why), _) | (_, Err(why)) => {
+                    tracing::debug!(target: "sigil::gpu", "plan [{}]: no GPU timing events ({why})", self.component);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Complete the pending run, if any: wait for it ([`Waiter`]: spin, block or hybrid), count
+    /// the host wait (`kind`) when the run had not finished yet, and report its GPU time when it
+    /// was timed. Allocation-free.
+    fn wait_as(&self, kind: SyncKind) -> Result<(), String> {
+        if !self.pending.get() {
+            return Ok(());
+        }
+        let scope = self.ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
+        let waited = self
+            .waiter
+            .wait(&scope, self.stream, self.done.raw())
+            .map_err(|code| self.cuda_err("plan wait", code))?;
+        if waited {
+            telemetry::record_sync(kind);
+        }
+        self.pending.set(false);
+        self.finish_timing(&scope);
+        Ok(())
+    }
+
+    /// [`wait_as`](Self::wait_as) for a run's end.
+    fn wait(&self) -> Result<(), String> {
+        self.wait_as(SyncKind::RunEnd)
+    }
+
+    /// Complete the pending run without waiting when it has already finished (its GPU time is
+    /// reported then); `true` when no run is pending afterwards. Allocation-free.
+    fn poll(&self) -> Result<bool, String> {
+        if !self.pending.get() {
+            return Ok(true);
+        }
+        let scope = self.ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
+        if !scope.query_event(self.done.raw()).map_err(|code| self.cuda_err("cuEventQuery", code))? {
+            return Ok(false);
+        }
+        self.pending.set(false);
+        self.finish_timing(&scope);
+        Ok(true)
+    }
+
+    fn finish_timing(&self, scope: &ContextScope<'_>) {
+        let timed = self.timed.replace(false);
+        self.last_timed.set(timed);
+        if !timed {
+            return;
+        }
+        if let Some((t0, t1)) = &self.timing {
+            if let Ok(ms) = scope.elapsed_ms(t0.raw(), t1.raw()) {
+                telemetry::record_gpu_time(self.component, f64::from(ms));
+            }
+        }
     }
 
     /// Make input `i`'s host mirror current after a device row copy, so the caller can read or
@@ -634,6 +875,7 @@ impl DeviceIo {
         let ctx = Arc::clone(&self.ctx);
         let scope = ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
         let t = &mut self.inputs[i];
+        telemetry::record_sync(SyncKind::MirrorRefresh);
         // SAFETY: the device tensor holds `bytes`; the mirror has room for them and is not touched
         // before the sync below.
         let r = unsafe { scope.copy_dtoh(t.host.ptr.cast::<c_void>(), t.dptr, t.host.bytes, self.stream) }
@@ -645,28 +887,37 @@ impl DeviceIo {
         Ok(())
     }
 
-    /// Strided device-to-device copy of `copy`'s rows from `src` (device memory of this context)
-    /// into input `i`, on this plan's stream. Host writes made to that input since the last run go
-    /// up first, so the rows overwrite only their own part. Allocation-free.
-    fn copy_rows_from(&mut self, src: CuDevicePtr, copy: &RowCopy, i: usize) -> Result<(), String> {
+    /// Strided device-to-device copy of `copy`'s rows from `src`'s output `src_index` into input
+    /// `i`, on this plan's stream, ordered after `src`'s last run on the device (its `done` event)
+    /// and marked for `src`'s next run (its `read_done` event): neither plan's host thread waits.
+    /// Host writes made to that input since the last run go up first, so the rows overwrite only
+    /// their own part. Allocation-free.
+    fn copy_rows_from(&mut self, src: &DeviceIo, src_index: usize, copy: &RowCopy, i: usize) -> Result<(), String> {
+        // A pending run of this plan read the input before: the copy follows it on the same
+        // stream, so the host does not wait for it.
         let ctx = Arc::clone(&self.ctx);
         let scope = ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
         let stream = self.stream;
         let t = &mut self.inputs[i];
         if t.dirty {
-            // SAFETY: as in `upload`; the mirror is not written again before the stream is
-            // synchronised (`refresh_mirror` synchronises before any host access).
+            // SAFETY: as in `upload`; the mirror is not written again before the next wait
+            // (`refresh_mirror` synchronises before any host access).
             if let Err(code) = unsafe { scope.copy_htod(t.dptr, t.host.ptr.cast::<c_void>(), t.host.bytes, stream) } {
                 return Err(format!("upload '{}': {}", t.spec.name, ctx.driver().describe(code)));
             }
             t.dirty = false;
         }
+        // RAW: after the source's run (a no-op when it already completed or never ran).
+        scope
+            .stream_wait_event(stream, src.done.raw())
+            .map_err(|code| ctx.driver().describe(code))?;
+        let from = src.outputs[src_index].dptr;
         // SAFETY: the caller checked both ranges against the two device tensors' lengths.
         let r = unsafe {
             scope.copy_2d_dtod(
                 t.dptr,
                 copy.dst_stride * 4,
-                src + (copy.src_offset * 4) as u64,
+                from + (copy.src_offset * 4) as u64,
                 copy.src_stride * 4,
                 copy.row_len * 4,
                 copy.rows,
@@ -676,35 +927,47 @@ impl DeviceIo {
         if let Err(code) = r {
             return Err(ctx.driver().describe(code));
         }
+        // WAR: the source's next run waits for this copy before it overwrites its outputs.
+        scope
+            .record_event(src.read_done.raw(), stream)
+            .map_err(|code| ctx.driver().describe(code))?;
         t.device_newer = true;
         Ok(())
     }
 
     /// Strided device-to-host copy of `copy`'s rows of output `src` (not downloaded by the run) into
-    /// `dst` (another plan's host input buffer, checked by the caller); synchronous. Allocation-free.
+    /// `dst` (another plan's host input buffer, checked by the caller); synchronous, ordered after
+    /// this plan's last run on its stream. Allocation-free.
     fn read_rows(&self, src: &DeviceTensor, copy: &RowCopy, dst: *mut f32) -> Result<(), String> {
-        let scope = self.ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
-        // SAFETY: the source range lies in the device output (checked by the caller), `dst` has
-        // room for every destination row and is not touched before the sync below. The output was
-        // written by this plan's last run, which ended with a stream synchronisation.
-        let r = unsafe {
-            scope.copy_2d_dtoh(
-                dst.cast::<c_void>(),
-                copy.dst_stride * 4,
-                src.dptr + (copy.src_offset * 4) as u64,
-                copy.src_stride * 4,
-                copy.row_len * 4,
-                copy.rows,
-                self.stream,
-            )
+        {
+            let scope = self.ctx.enter().map_err(|r| self.cuda_err("cuCtxPushCurrent", r))?;
+            // SAFETY: the source range lies in the device output (checked by the caller), `dst` has
+            // room for every destination row and is not touched before the wait below. The copy
+            // follows this plan's last run on its stream.
+            unsafe {
+                scope.copy_2d_dtoh(
+                    dst.cast::<c_void>(),
+                    copy.dst_stride * 4,
+                    src.dptr + (copy.src_offset * 4) as u64,
+                    copy.src_stride * 4,
+                    copy.row_len * 4,
+                    copy.rows,
+                    self.stream,
+                )
+            }
+            .and_then(|()| scope.record_event(self.done.raw(), self.stream))
+            .map_err(|code| self.ctx.driver().describe(code))?;
+            if !self.pending.replace(true) {
+                self.waiter.launched();
+            }
         }
-        .and_then(|()| scope.sync(self.stream));
-        r.map_err(|code| self.ctx.driver().describe(code))
+        self.wait_as(SyncKind::RowRead)
     }
 
     /// Fill the input mirrors with check pattern `seed` (0 = the zeros a plan starts with) and mark
     /// them for upload.
-    fn fill_inputs(&mut self, seed: u32) {
+    fn fill_inputs(&mut self, seed: u32) -> Result<(), String> {
+        self.wait()?;
         for t in &mut self.inputs {
             let n = t.spec.len();
             if t.spec.dtype == TensorElementType::Int64 {
@@ -723,23 +986,40 @@ impl DeviceIo {
             t.dirty = true;
             t.device_newer = false;
         }
+        Ok(())
     }
 
     /// The outputs of the last run (downloaded, f32).
-    fn snapshot_outputs(&self) -> Vec<Vec<f32>> {
-        // SAFETY: f32 outputs downloaded and synchronised by the last run.
-        self.outputs.iter().map(|t| unsafe { t.mirror_f32() }.to_vec()).collect()
+    fn snapshot_outputs(&self) -> Result<Vec<Vec<f32>>, String> {
+        self.wait()?;
+        // SAFETY: f32 outputs downloaded by the last run, which the wait above completed.
+        Ok(self.outputs.iter().map(|t| unsafe { t.mirror_f32() }.to_vec()).collect())
     }
 
     /// Record the session's run into a CUDA graph (see `cuda_graph`): warm-up runs, the recorded
     /// run, then [`check_graph`](Self::check_graph). The inputs are zeros again afterwards (what a
-    /// plan starts with). On `Err` no graph is kept.
-    fn capture(&mut self, session: &mut Session) -> Result<(), String> {
+    /// plan starts with). On `Err` no graph is kept. With `shrink` (P3B-G, the CUDA device) the first
+    /// warm-up run shrinks the session's arena when it ends (the cuDNN search's workspace goes back
+    /// to the driver); the second runs with the cached algorithms, so the arena grows back to what
+    /// the chosen kernels need before the capture, which then allocates nothing. ONNX Runtime
+    /// validates the shrink request against the session's arena allocator and refuses a session
+    /// that has none (a plugin EP's allocator, the registered provider pack): that run is repeated
+    /// without the shrink instead of costing the plan its graph for 40 MB, and `Ok` carries a note
+    /// saying so.
+    fn capture(&mut self, session: &mut Session, shrink: Option<i32>) -> Result<Option<String>, String> {
         for t in &mut self.outputs {
             t.download = true;
         }
-        for _ in 0..cuda_graph::WARMUP_RUNS {
-            self.run(session)?;
+        let mut note = None;
+        for k in 0..cuda_graph::WARMUP_RUNS {
+            if k == 0 {
+                note = first_warmup(shrink, |device| match device {
+                    Some(device) => self.shrinking_run(session, device),
+                    None => self.run(session),
+                })?;
+            } else {
+                self.run(session)?;
+            }
         }
         let mut options = ort::session::RunOptions::new().map_err(|e| format!("run options: {e}"))?;
         options.disable_device_sync().map_err(|e| format!("run options: {e}"))?;
@@ -748,10 +1028,20 @@ impl DeviceIo {
             CapturedGraph::capture(&self.ctx, self.stream, || io_binding::run_with(session, binding, &options))?
         };
         let checked = self.check_graph(session, &graph);
-        self.fill_inputs(0);
+        self.fill_inputs(0)?;
         checked?;
         self.graph = Some(graph);
-        Ok(())
+        Ok(note)
+    }
+
+    /// One regular run that shrinks the session's device arena (`gpu:<device>`) when it ends.
+    fn shrinking_run(&mut self, session: &mut Session, device: i32) -> Result<(), String> {
+        let mut options = ort::session::RunOptions::new().map_err(|e| format!("run options: {e}"))?;
+        options
+            .set("memory.enable_memory_arena_shrinkage", format!("gpu:{device}"))
+            .map_err(|e| format!("run options: {e}"))?;
+        self.launch(session, None, false, Some(&options))?;
+        self.wait()
     }
 
     /// Whether `graph` replays the whole run for any inputs: two regular runs on two non-zero check
@@ -764,9 +1054,11 @@ impl DeviceIo {
     fn check_graph(&mut self, session: &mut Session, graph: &CapturedGraph) -> Result<(), String> {
         let mut references = Vec::with_capacity(2);
         for seed in [1, 2] {
-            self.fill_inputs(seed);
-            self.run_with(session, None, false).map_err(|e| format!("the check run failed: {e}"))?;
-            references.push(self.snapshot_outputs());
+            self.fill_inputs(seed)?;
+            self.launch(session, None, false, None)
+                .and_then(|()| self.wait())
+                .map_err(|e| format!("the check run failed: {e}"))?;
+            references.push(self.snapshot_outputs()?);
         }
         // Every output must be checkable: a replay that leaves the sentinel is told apart only where
         // the reference is finite.
@@ -776,10 +1068,12 @@ impl DeviceIo {
             }
         }
         for (seed, reference) in [1u32, 2].into_iter().zip(&references) {
-            self.fill_inputs(seed);
-            self.run_with(session, Some(graph), true).map_err(|e| format!("the graph replay failed: {e}"))?;
+            self.fill_inputs(seed)?;
+            self.launch(session, Some(graph), true, None)
+                .and_then(|()| self.wait())
+                .map_err(|e| format!("the graph replay failed: {e}"))?;
             let same = self.outputs.iter().zip(reference).all(|(t, r)| {
-                // SAFETY: f32 outputs downloaded and synchronised by the replay.
+                // SAFETY: f32 outputs downloaded by the replay, which the wait above completed.
                 cuda_graph::outputs_match(r, unsafe { t.mirror_f32() })
             });
             if !same {
@@ -792,10 +1086,13 @@ impl DeviceIo {
 
 impl Drop for DeviceIo {
     fn drop(&mut self) {
-        // Copies enqueued by `copy_rows_to` may still be in flight when a plan is dropped without
-        // another run: wait for them before the buffers go (the stream outlives this object).
+        // A run or copies enqueued by `copy_rows_to` may still be in flight when a plan is dropped
+        // without another wait: wait for them before the buffers go (the stream outlives this
+        // object). A consumer's device copy of this plan's outputs runs on the consumer's stream:
+        // wait for it too (`read_done`; an event never recorded is complete).
         if let Ok(scope) = self.ctx.enter() {
             let _ = scope.sync(self.stream);
+            let _ = scope.sync_event(self.read_done.raw());
         }
     }
 }
@@ -807,12 +1104,30 @@ enum Io {
 }
 
 impl Io {
-    fn run(&mut self, session: &mut Session) -> Result<(), String> {
+    /// One run. `gpu_rung`: the session runs on a GPU EP, where ORT's run ends in a host wait for
+    /// the device (counted like the device path's waits, `telemetry::SyncKind::RunEnd`).
+    fn run(&mut self, session: &mut Session, gpu_rung: bool) -> Result<(), String> {
         match self {
-            Io::Host(h) => h.run(session),
-            Io::Bound(b) => b.run(session),
+            Io::Host(h) => h.run(session).map(|()| count_eager_wait(gpu_rung)),
+            Io::Bound(b) => b.run(session).map(|()| count_eager_wait(gpu_rung)),
             Io::Device(d) => d.run(session),
         }
+    }
+
+    /// [`run`](Self::run) without the device path's final wait (the other paths are synchronous).
+    fn run_async(&mut self, session: &mut Session, gpu_rung: bool) -> Result<(), String> {
+        match self {
+            Io::Device(d) => d.run_async(session),
+            other => other.run(session, gpu_rung),
+        }
+    }
+}
+
+/// A host-I/O plan run on a GPU rung waited for the device inside ONNX Runtime (P3B-A's sync count).
+#[inline]
+fn count_eager_wait(gpu_rung: bool) {
+    if gpu_rung {
+        telemetry::record_sync(SyncKind::RunEnd);
     }
 }
 
@@ -828,6 +1143,8 @@ pub struct SessionPlan {
     levers: GpuLevers,
     notes: Vec<String>,
     vram: Option<VramHold>,
+    /// Device index of the rung the session runs on (CUDA ordinal, DXGI adapter, 0 on the CPU).
+    device: i32,
 }
 
 // SAFETY: the raw pointers in the I/O paths point into buffers the plan owns (host tensors, pinned
@@ -841,6 +1158,14 @@ impl SessionPlan {
     /// when this returns (zero inputs; the graph check's runs on the device path), so its VRAM hold
     /// includes the first run's activations, workspaces and arena peak.
     pub fn build(spec: &PlanSpec<'_>) -> Result<SessionPlan, String> {
+        Self::build_with(spec, CudaTuning::current())
+    }
+
+    /// [`build`](Self::build) with explicit CUDA tuning instead of `SIGIL_CUDA_TUNING` (tests and
+    /// benchmarks compare tunings in one process).
+    pub(crate) fn build_with(spec: &PlanSpec<'_>, tuning: CudaTuning) -> Result<SessionPlan, String> {
+        // P3B-G: `SIGIL_GPU_PROCESS_PRIORITY` (an experiment; once per process).
+        super::sched_priority::apply_from_env_once();
         let wants = spec.levers;
         for out in spec.outputs {
             if out.dtype != TensorElementType::Float32 {
@@ -856,7 +1181,6 @@ impl SessionPlan {
         let cuda_on_ladder = ep_ladder(base).contains(&EP_CUDA);
         let cuda_device = spec.opts.cuda_device_index.max(0);
         let mut notes: Vec<String> = Vec::new();
-        let tuning = CudaTuning::current();
 
         // What the plan adds on its adapter is measured from before anything is created for it:
         // the plan's stream and the CUDA context it retains count, and a stream dropped after a
@@ -922,7 +1246,10 @@ impl SessionPlan {
             cuda_conv_algo_search: tuning.algo,
             cuda_env_arena: false,
             dml_high_priority: wants.priority || wants.accelerator == Accelerator::DmlHighPriority,
+            // P3B-G: decided per session by `build_session_ext` (`SIGIL_VC_DML_SHARED`).
+            dml_shared: false,
             tensorrt_rtx: trt_request,
+            skip_outcome_record: false,
         };
         let configure = |mut builder: ort::session::builder::SessionBuilder, _ep: &str| {
             if let Some(w) = spec.weights {
@@ -988,7 +1315,15 @@ impl SessionPlan {
             };
         let mut io = match &stream {
             _ if !wants.io_binding => Io::Host(HostIo::new(spec.inputs, spec.outputs)?),
-            Some(s) if device_io => match DeviceIo::new(&session, built.device, spec.inputs, spec.outputs, s) {
+            Some(s) if device_io => match DeviceIo::new(
+                &session,
+                built.device,
+                spec.inputs,
+                spec.outputs,
+                s,
+                Waiter::new(tuning.wait_mode(), tuning.spin_us.unwrap_or(cuda_wait::HYBRID_SPIN_US)),
+                telemetry::intern_component(spec.component),
+            ) {
                 Ok(io) => Io::Device(io),
                 Err(why) => {
                     notes.push(format!("io_binding: device buffers could not be set up ({why}); host buffers are bound instead"));
@@ -999,11 +1334,19 @@ impl SessionPlan {
         };
         let mut graphs_on = false;
         let mut keep_device = true;
+        // P3B-S0 telemetry: the first runs and the graph capture of this plan.
+        let first_runs_span = telemetry::load_span(LoadStage::FirstRunsCapture);
         match &mut io {
             Io::Device(d) => {
                 if wants.cuda_graphs {
-                    match d.capture(&mut session) {
-                        Ok(()) => graphs_on = true,
+                    let shrink = tuning.shrink_before_capture().then_some(built.device);
+                    #[cfg(test)]
+                    let shrink = shrink.map(|device| test_hooks::shrink_device().unwrap_or(device));
+                    match d.capture(&mut session, shrink) {
+                        Ok(note) => {
+                            graphs_on = true;
+                            notes.extend(note);
+                        }
                         Err(why) => notes.push(format!("cuda_graphs: graph capture failed ({why}); running without CUDA graphs")),
                     }
                 }
@@ -1022,9 +1365,15 @@ impl SessionPlan {
         // One run on a GPU rung before the VRAM measurement (the graph check already ran the
         // session): the first run allocates activations, workspaces and the arena peak.
         if active != EP_CPU && !graphs_on {
-            if let Err(why) = io.run(&mut session) {
+            if let Err(why) = io.run(&mut session, true) {
                 tracing::warn!(target: "sigil::gpu", "plan [{}]: the warm-up run on zero inputs failed ({why})", spec.component);
             }
+        }
+        drop(first_runs_span);
+        // P3B-A's arena statistics (a no-op unless a benchmark records): what the session's CUDA
+        // arena holds after its first runs or graph capture.
+        if on_cuda {
+            telemetry::arena_mark_session(spec.component, &session, built.device);
         }
         let priority =
             (wants.priority && (on_cuda || on_trt) && stream.is_some() && built.applied.cuda_stream) || built.applied.dml_queue.is_some();
@@ -1056,11 +1405,13 @@ impl SessionPlan {
             io,
             session,
             stream,
-            _dml_queue: built.applied.dml_queue.clone(),
+            // The high-priority queue (or P3B-G's shared normal one) outlives the session.
+            _dml_queue: built.applied.dml_queue.clone().or_else(|| built.applied.dml_shared.clone()),
             outcome: built.outcome.clone(),
             levers,
             notes,
             vram,
+            device: built.device,
         };
         tracing::info!(
             target: "sigil::gpu",
@@ -1105,6 +1456,23 @@ impl SessionPlan {
         self.vram.as_ref().map(VramHold::mb)
     }
 
+    /// Replace the measured VRAM hold (MiB; P3B-G: plans built concurrently each measured the
+    /// other's allocations too, and their builder splits a joint measurement). A no-op without a
+    /// hold.
+    pub fn set_vram_mb(&self, mb: f64) {
+        if let Some(h) = &self.vram {
+            h.update(mb);
+        }
+    }
+
+    /// The session's CUDA arena statistics (`AllocatorGetStats`: `TotalAllocated`, `InUse`,
+    /// `NumArenaShrinkages`, ... in bytes or counts; `None` off CUDA). Diagnostics and tests.
+    pub fn arena_stats(&self) -> Option<std::collections::BTreeMap<String, String>> {
+        (self.outcome.active == EP_CUDA)
+            .then(|| telemetry::session_arena_stats(&self.session, self.device))
+            .flatten()
+    }
+
     /// Whether the device path's host mirrors are page-locked (diagnostics and tests).
     pub fn pinned_host_buffers(&self) -> bool {
         matches!(&self.io, Io::Device(d) if d.pinned())
@@ -1146,6 +1514,8 @@ impl SessionPlan {
             },
             Io::Device(d) => match d.inputs.iter().position(|t| t.spec.name == name) {
                 Some(i) => {
+                    // A pending run may still be uploading this mirror: complete it first.
+                    d.wait()?;
                     if d.inputs[i].spec.dtype == want {
                         // After a device row copy the mirror is stale: bring it up to date before
                         // the caller reads or writes it (the next upload sends all of it).
@@ -1168,7 +1538,62 @@ impl SessionPlan {
     /// [`output`](Self::output). No Rust heap allocation on the bound and device paths (ONNX
     /// Runtime still allocates on its own heap inside a run, except on a CUDA graph replay).
     pub fn run(&mut self) -> Result<(), String> {
-        self.io.run(&mut self.session)
+        let gpu = self.outcome.active != EP_CPU;
+        self.io.run(&mut self.session, gpu)
+    }
+
+    /// [`run`](Self::run) without the final host wait on the device path (P3B-G): the run is
+    /// enqueued on the plan's CUDA stream and completes before any host access to this plan's
+    /// buffers ([`input_f32`](Self::input_f32), [`output`](Self::output), ...), [`wait`](Self::wait),
+    /// or, on the device, before another device-resident plan's [`copy_rows_to`](Self::copy_rows_to)
+    /// copy of its outputs. The other paths run synchronously. Allocation-free like `run`.
+    pub fn run_async(&mut self) -> Result<(), String> {
+        let gpu = self.outcome.active != EP_CPU;
+        self.io.run_async(&mut self.session, gpu)
+    }
+
+    /// Wait for a run started by [`run_async`](Self::run_async) (a no-op otherwise), the way the
+    /// plan's [`WaitMode`] says (`SIGIL_CUDA_TUNING=wait=...`). Allocation-free.
+    pub fn wait(&self) -> Result<(), String> {
+        match &self.io {
+            Io::Device(d) => d.wait(),
+            _ => Ok(()),
+        }
+    }
+
+    /// Settle a run started by [`run_async`](Self::run_async) that has already completed, without
+    /// waiting (its GPU time is reported then); `true` when no run is pending afterwards.
+    pub fn poll(&self) -> Result<bool, String> {
+        match &self.io {
+            Io::Device(d) => d.poll(),
+            _ => Ok(true),
+        }
+    }
+
+    /// Device time (ms) from the end of this plan's last run to the start of `next`'s last run, when
+    /// both are device-path plans on one CUDA context whose last runs completed with GPU timing on
+    /// (`telemetry::gpu_timing_enabled`): the gap between two chained plans on the GPU (P3B-G's T2
+    /// probe: with the device chain it holds only the device copy; with the host path also the
+    /// download, the host's wake-up, its copy and the re-upload). Negative values (the runs
+    /// overlapped) read 0. Allocation-free.
+    pub fn gpu_gap_ms_to(&self, next: &SessionPlan) -> Option<f64> {
+        let (Io::Device(a), Io::Device(b)) = (&self.io, &next.io) else {
+            return None;
+        };
+        if a.pending.get() || b.pending.get() || !a.last_timed.get() || !b.last_timed.get() || a.ctx.ordinal() != b.ctx.ordinal() {
+            return None;
+        }
+        let ((_, end), (start, _)) = (a.timing.as_ref()?, b.timing.as_ref()?);
+        let scope = a.ctx.enter().ok()?;
+        scope.elapsed_ms(end.raw(), start.raw()).ok().map(|ms| f64::from(ms).max(0.0))
+    }
+
+    /// The wait the plan's CUDA work uses (`None` off the device path).
+    pub fn wait_mode(&self) -> Option<WaitMode> {
+        match &self.io {
+            Io::Device(d) => Some(d.waiter.mode()),
+            _ => None,
+        }
     }
 
     /// Run `runs` times with the current inputs (e.g. to settle a CPU session's caches). The VRAM
@@ -1194,8 +1619,13 @@ impl SessionPlan {
                 .ok_or_else(|| no_output(name)),
             Io::Device(d) => match d.outputs.iter().find(|t| t.spec.name == name) {
                 Some(t) if !t.download => Err(format!("output '{name}' stays on the device (set_output_download)")),
-                // SAFETY: the mirror holds `len` f32 values (downloaded by the last run).
-                Some(t) => Ok(unsafe { std::slice::from_raw_parts(t.host.ptr.cast::<f32>(), t.spec.len()) }),
+                Some(t) => {
+                    // A pending run's download completes with it.
+                    d.wait()?;
+                    // SAFETY: the mirror holds `len` f32 values, downloaded by the last run (waited
+                    // for above).
+                    Ok(unsafe { std::slice::from_raw_parts(t.host.ptr.cast::<f32>(), t.spec.len()) })
+                }
                 None => Err(no_output(name)),
             },
         }
@@ -1207,6 +1637,8 @@ impl SessionPlan {
     pub fn set_output_download(&mut self, name: &str, download: bool) -> Result<(), String> {
         match &mut self.io {
             Io::Device(d) => {
+                // The flag applies from the next run: settle a pending one under the old flag.
+                d.wait()?;
                 let t = d.outputs.iter_mut().find(|t| t.spec.name == name).ok_or_else(|| no_output(name))?;
                 t.download = download;
                 Ok(())
@@ -1227,7 +1659,8 @@ impl SessionPlan {
     pub fn copy_rows_to(&self, output: &str, dst: &mut SessionPlan, input: &str, copy: RowCopy) -> Result<(), String> {
         if let (Io::Device(s), Io::Device(d)) = (&self.io, &mut dst.io) {
             if s.ctx.ordinal() == d.ctx.ordinal() {
-                let src = s.outputs.iter().find(|t| t.spec.name == output).ok_or_else(|| no_output(output))?;
+                let k = s.outputs.iter().position(|t| t.spec.name == output).ok_or_else(|| no_output(output))?;
+                let src = &s.outputs[k];
                 let i = d.inputs.iter().position(|t| t.spec.name == input).ok_or_else(|| no_input(input))?;
                 if src.spec.dtype != TensorElementType::Float32 || d.inputs[i].spec.dtype != TensorElementType::Float32 {
                     return Err("row copies are f32 only".into());
@@ -1237,7 +1670,7 @@ impl SessionPlan {
                     return Ok(());
                 }
                 return d
-                    .copy_rows_from(src.dptr, &copy, i)
+                    .copy_rows_from(s, k, &copy, i)
                     .map_err(|e| format!("device copy '{output}' → '{input}': {e}"));
             }
         }
@@ -1263,6 +1696,48 @@ impl SessionPlan {
             dst_buf[t..t + copy.row_len].copy_from_slice(&src[s..s + copy.row_len]);
         }
         Ok(())
+    }
+}
+
+/// The first warm-up run of a graph capture: plain, or with the arena shrink request (`shrink` is
+/// the CUDA device; `run(Some(device))` is the shrinking run, `run(None)` the plain one). ONNX
+/// Runtime validates the request against the session's arena allocator and refuses a session
+/// without one for that device, which would fail the run and cost the plan its graph for a 40 MB
+/// saving: a refused shrink run is repeated plain, and `Ok` carries a note saying the shrink was
+/// dropped. A plain run that fails is the capture's error.
+fn first_warmup(shrink: Option<i32>, mut run: impl FnMut(Option<i32>) -> Result<(), String>) -> Result<Option<String>, String> {
+    let Some(device) = shrink else {
+        return run(None).map(|()| None);
+    };
+    match run(Some(device)) {
+        Ok(()) => Ok(None),
+        Err(why) => {
+            tracing::warn!(target: "sigil::gpu", "arena shrink before the graph capture refused ({why}); capturing without it");
+            run(None)?;
+            Ok(Some(format!(
+                "arena shrink: ONNX Runtime refused the shrink request for device {device} ({why}); the graph was captured without it"
+            )))
+        }
+    }
+}
+
+/// Test-only hooks (thread-local, so parallel tests do not see each other's).
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static SHRINK_DEVICE: Cell<Option<i32>> = const { Cell::new(None) };
+    }
+
+    /// The device the capture's shrink request names instead of the plan's own (a device ONNX
+    /// Runtime has no arena for: the shrink run is refused).
+    pub(crate) fn shrink_device() -> Option<i32> {
+        SHRINK_DEVICE.with(Cell::get)
+    }
+
+    pub(crate) fn set_shrink_device(device: Option<i32>) {
+        SHRINK_DEVICE.with(|c| c.set(device));
     }
 }
 
@@ -1332,6 +1807,46 @@ mod tests {
         assert_eq!(CudaTuning::DEFAULT.device_io_without_graphs(), DEVICE_IO_WITHOUT_GRAPHS);
     }
 
+    /// P3B-G (review fix): the capture's first warm-up carries the shrink request only when asked; a
+    /// shrink run ONNX Runtime refuses is repeated plain (and says so), instead of failing the capture
+    /// and leaving the plan without a graph. A plain run that fails is still the capture's error.
+    #[test]
+    fn a_refused_shrink_run_is_repeated_plain() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let ok = |d: Option<i32>| {
+            calls.borrow_mut().push(d);
+            Ok(())
+        };
+        assert_eq!(first_warmup(None, ok), Ok(None));
+        assert_eq!(first_warmup(Some(0), ok), Ok(None));
+        assert_eq!(*calls.borrow(), vec![None, Some(0)], "one run each, the shrink where asked");
+        calls.borrow_mut().clear();
+        // Refused: the same warm-up runs again without the shrink, once, and the note says why.
+        let refuse = |d: Option<i32>| {
+            calls.borrow_mut().push(d);
+            if d.is_some() {
+                Err("Did not find an arena based allocator registered for device-id combination".to_string())
+            } else {
+                Ok(())
+            }
+        };
+        let note = first_warmup(Some(3), refuse).unwrap().expect("a note");
+        assert_eq!(*calls.borrow(), vec![Some(3), None]);
+        assert!(note.contains("arena shrink") && note.contains("device 3") && note.contains("arena based allocator"), "{note}");
+        // The plain retry failing is the capture's error (no graph).
+        calls.borrow_mut().clear();
+        let broken = |d: Option<i32>| {
+            calls.borrow_mut().push(d);
+            Err::<(), _>(format!("run failed (shrink {d:?})"))
+        };
+        assert_eq!(first_warmup(Some(0), broken), Err("run failed (shrink None)".to_string()));
+        assert_eq!(*calls.borrow(), vec![Some(0), None]);
+        // Without a shrink request there is no retry.
+        calls.borrow_mut().clear();
+        assert_eq!(first_warmup(None, broken), Err("run failed (shrink None)".to_string()));
+        assert_eq!(*calls.borrow(), vec![None]);
+    }
+
     /// `y = relu(x * 2 + cast(k))` at `[1, 8]` (the `gpu::tests` affine model).
     fn affine_bytes() -> Vec<u8> {
         let mut g = Graph::new();
@@ -1395,7 +1910,7 @@ mod tests {
         .unwrap();
         let err = d.check_graph(session, &wrong).unwrap_err();
         assert!(err.contains("does not reproduce"), "{err}");
-        d.fill_inputs(0);
+        d.fill_inputs(0).unwrap();
         d.graph = Some(own);
         drop((empty, wrong));
         // The plan still runs its own graph correctly.

@@ -1,0 +1,29 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-G execution-layer spec on silent input (T4 silent row: the engine is enabled but not run): the voice in ${SLOT} on ${EP} with ${PITCH} F0, ${PRESET} preset, ${BLOCK_MS} ms engine blocks on the 512-frame device block, ${EXTRA_MS} ms extra context, the LEVERS_JSON levers, process QoS ${QOS}, worker priority ${WORKER_PRIORITY}, the INTRA_THREADS_JSON / CPU_ARENA_JSON / DYNAMIC_BLOCK_BASE_JSON ONNX Runtime CPU options, retrieval index '${INDEX}' at rate INDEX_RATE_JSON. The runs come from RUNS_JSON (offline compute and VRAM, paced CPU cores and syncs, the 70 % hammer, the out-of-process load and the H1 simulation), so one template serves the CUDA wait, workspace, DirectML queue, kNN and process-priority A/Bs (run-perf-gate.ps1 -Profile scripts/bench/specs/p3b/g/g.profile.json -CompareEnv / -CompareVars).",
+  "seed": 20260930,
+  "input": { "kind": "synthetic", "signal": "silence", "seconds": 8.0 },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": ${EXTRA_MS}, "index_rate": ${INDEX_RATE_JSON}, "worker_priority": "${WORKER_PRIORITY}" },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "precision": "${PRECISION}",
+    "block_ms": ${BLOCK_MS},
+    "index": "${INDEX}",
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "intra_threads": ${INTRA_THREADS_JSON},
+    "cpu_arena": ${CPU_ARENA_JSON},
+    "dynamic_block_base": ${DYNAMIC_BLOCK_BASE_JSON},
+    "qos": "${QOS}"
+  },
+  "vram": { "sample_ms": ${VRAM_SAMPLE_MS_JSON} },
+  "runs": ${RUNS_JSON},
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

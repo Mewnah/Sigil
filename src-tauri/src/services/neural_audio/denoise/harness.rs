@@ -16,7 +16,7 @@
 //! reports.
 
 use crate::services::neural_audio::vc::engine::governor::QualityLevel;
-use crate::services::neural_audio::vc::traits::{ConversionCtx, StreamReport, VoiceControls, VoiceConversionModel};
+use crate::services::neural_audio::vc::traits::{ConversionCtx, ModelTelemetry, StreamReport, VoiceControls, VoiceConversionModel};
 
 use super::Denoiser;
 
@@ -167,6 +167,14 @@ impl VoiceConversionModel for DenoisedModel {
 
     fn stream_report(&self) -> Option<StreamReport> {
         self.inner.stream_report()
+    }
+
+    fn time_anchored(&self) -> bool {
+        self.inner.time_anchored()
+    }
+
+    fn telemetry(&self) -> Option<&dyn ModelTelemetry> {
+        self.inner.telemetry()
     }
 }
 

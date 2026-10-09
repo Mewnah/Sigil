@@ -108,10 +108,10 @@ fn p3_levers_stand_ins_and_bases_match_contract() {
     let c = contract();
     let e = &c["enums"];
     assert_eq!(strs(&c["levers"]), Lever::ALL.map(|l| l.as_str().to_string()));
-    let lever_keys: Vec<String> = c["params_p3_new_fields"]
-        .as_object()
-        .unwrap()
+    // P3 levers, plus the P3B ones (P3B-S0) in their own section.
+    let lever_keys: Vec<String> = ["params_p3_new_fields", "params_p3b_new_fields"]
         .iter()
+        .flat_map(|section| c[*section].as_object().unwrap().iter())
         .filter(|(_, v)| v.as_str().unwrap().contains("enums.lever_mode"))
         .map(|(k, _)| k.clone())
         .collect();
@@ -213,6 +213,53 @@ fn p3_commands_are_listed_for_the_acl() {
         .collect();
     for key in c["commands_p3"].as_object().unwrap().keys().filter(|k| !k.starts_with('$')) {
         assert!(listed.contains(&key.as_str()), "{key} missing from plugin-commands/voice-changer.txt");
+    }
+}
+
+/// P3B (P3B-S0): the new params travel under their contract names with the contract defaults
+/// (automatic as `-1`), the enums normalize as listed, the ranges equal the Rust constants, and the
+/// new levers are offered only when their module says it runs.
+#[test]
+fn p3b_params_match_contract() {
+    use super::params::{
+        auto_or_clamped, DeviceBlockMode, OutputCushion, AUTO_MS, CONTENT_CONTEXT_MS_RANGE, SOLA_SEARCH_MS_RANGE,
+    };
+    let c = contract();
+    let e = &c["enums"];
+    let n = &c["numbers"];
+    let got = serde_json::to_value(VoiceChangerState::new().snapshot_params()).unwrap();
+    for key in c["params_p3b_new_fields"].as_object().unwrap().keys() {
+        assert!(!got[key].is_null(), "params field {key} missing from get_voice_changer_params");
+    }
+    for (name, values) in [
+        ("output_cushion", OutputCushion::ALL.map(|v| v.as_str().to_string()).to_vec()),
+        ("device_block", DeviceBlockMode::ALL.map(|v| v.as_str().to_string()).to_vec()),
+    ] {
+        assert_eq!(strs(&e[name]["values"]), values, "{name}");
+        assert_eq!(got[name], e[name]["default"], "{name} default");
+    }
+    for v in strs(&e["output_cushion"]["values"]) {
+        assert_eq!(OutputCushion::from_str_lossy(&v.to_uppercase()).as_str(), v);
+    }
+    assert_eq!(OutputCushion::from_str_lossy("bogus").as_str(), e["output_cushion"]["fallback"].as_str().unwrap());
+    for v in strs(&e["device_block"]["values"]) {
+        assert_eq!(DeviceBlockMode::from_str_lossy(&v.to_uppercase()).as_str(), v);
+    }
+    assert_eq!(DeviceBlockMode::from_str_lossy("bogus").as_str(), e["device_block"]["fallback"].as_str().unwrap());
+    for (key, range) in [("sola_search_ms", SOLA_SEARCH_MS_RANGE), ("content_context_ms", CONTENT_CONTEXT_MS_RANGE)] {
+        assert_eq!((f(&n[key]["min"]), f(&n[key]["max"])), range, "{key} range");
+        assert_eq!(f(&n[key]["auto"]), AUTO_MS, "{key} auto");
+        assert_eq!(f(&n[key]["default"]), AUTO_MS, "{key} default");
+        assert_eq!(got[key].as_f64(), Some(AUTO_MS), "{key} on the wire");
+        assert_eq!(auto_or_clamped(AUTO_MS, range), None);
+        assert_eq!(auto_or_clamped(range.1 * 2.0, range), Some(range.1));
+    }
+    for (lever, available) in [
+        (Lever::ContentNorm, crate::services::neural_audio::vc::engine::content::running_norm_available()),
+        (Lever::F0Decode, crate::services::neural_audio::vc::f0_decode::available()),
+    ] {
+        assert_eq!(capabilities::lever_available(lever), available, "{}", lever.as_str());
+        assert_eq!(got[lever.as_str()], e["lever_mode"]["default"], "{}", lever.as_str());
     }
 }
 

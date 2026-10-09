@@ -1,0 +1,565 @@
+{
+  "source_sha256": "5370e71ac80af8b4b7c793d27efd51fd8bf962de3a7ede0766dac0befa3660fd",
+  "intermediate_inputs_at_32": [
+    [
+      1,
+      256,
+      1,
+      4
+    ],
+    [
+      1,
+      512,
+      1,
+      4
+    ]
+  ],
+  "intermediate_inputs_at_64": [
+    [
+      1,
+      256,
+      2,
+      4
+    ],
+    [
+      1,
+      512,
+      2,
+      4
+    ]
+  ],
+  "params_removed": 49545216,
+  "templates": {
+    "t32": {
+      "file": "src-tauri/src/services/neural_audio/vc/graphs/rmvpe_t32.graph.onnx",
+      "bytes": 122508,
+      "sha256": "64085f79db6540d7c8832b082cdc0034f18db757b36f42eb6c9616a63c64a1e8",
+      "weights_bytes": 163396704,
+      "cpu_parity": {
+        "mels": 20,
+        "max_abs_salience_diff": 3.2782554626464844e-07,
+        "argmax_diff_rows": 0,
+        "voiced_rows": 341,
+        "max_f0_cents": 0.0007393265553002641,
+        "vuv_flips": 0,
+        "per_mel": [
+          {
+            "kind": "random",
+            "max_abs": 1.4901161193847656e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.4901161193847656e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 31,
+            "max_cents": 0.0002994189793515617,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.7881393432617188e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.7881393432617188e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 5,
+            "max_cents": 7.211422626303738e-05,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.4901161193847656e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 3.2782554626464844e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.00042251194310441155,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.7881393432617188e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 1,
+            "max_cents": 5.6190675549794445e-05,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 2.980232238769531e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.0004482769495165772,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 1.7881393432617188e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 3.2782554626464844e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.0006896026076147141,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.086162567138672e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.0005311116044122581,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 1.4901161193847656e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.00037506684090269884,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.384185791015625e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 30,
+            "max_cents": 0.0007393265553002641,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.086162567138672e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.0004916776588854363,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.086162567138672e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 25,
+            "max_cents": 0.0006072088390141457,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.086162567138672e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.0006213845232912724,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.384185791015625e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 15,
+            "max_cents": 0.0005172643988605944,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.086162567138672e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.00039658290359142334,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.384185791015625e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 14,
+            "max_cents": 0.00046077633756914585,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 2.682209014892578e-07,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.0007373077837593187,
+            "vuv_flips": 0
+          }
+        ],
+        "ok": true
+      }
+    },
+    "t32_fp16": {
+      "file": "src-tauri/src/services/neural_audio/vc/graphs/rmvpe_t32_fp16.graph.onnx",
+      "bytes": 122355,
+      "sha256": "e5e0ee7563de43b4859564c7eae318ee6986056824cb0fed693faa7daf8d12d0",
+      "weights_bytes": 84027808,
+      "cpu_parity": {
+        "mels": 20,
+        "max_abs_salience_diff": 0.0018274188041687012,
+        "argmax_diff_rows": 0,
+        "voiced_rows": 341,
+        "max_f0_cents": 0.08926902243967925,
+        "vuv_flips": 0,
+        "per_mel": [
+          {
+            "kind": "random",
+            "max_abs": 1.5169382095336914e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.00030225515365600586,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 31,
+            "max_cents": 0.03178984602285761,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 6.562471389770508e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.00024318695068359375,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 5,
+            "max_cents": 0.02504559763852695,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 3.832578659057617e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.0006388723850250244,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.03822314578258813,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 8.302927017211914e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 1,
+            "max_cents": 7.101161433795174e-05,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.0005700588226318359,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.027853222671399933,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 8.96751880645752e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.0006062686443328857,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.05879893793522349,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0018274188041687012,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.08926902243967925,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004928410053253174,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.04836993620560455,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.00048151612281799316,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 30,
+            "max_cents": 0.053607288861811396,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0010513067245483398,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.07849053048112957,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0009269118309020996,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 25,
+            "max_cents": 0.07216364577572251,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004718601703643799,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.029037682732345083,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004374980926513672,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 15,
+            "max_cents": 0.04507818324928506,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0005630850791931152,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.030397004160767287,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004583299160003662,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 14,
+            "max_cents": 0.0724140821376112,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0005253851413726807,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.038661954326943616,
+            "vuv_flips": 0
+          }
+        ],
+        "note": "CPU: fp16 weights, fp32 arithmetic (weight rounding only); the gate runs on the GPU"
+      }
+    },
+    "fp16": {
+      "file": "src-tauri/src/services/neural_audio/vc/graphs/rmvpe_fp16.graph.onnx",
+      "bytes": 122466,
+      "sha256": "d8f0c573c7ec78f44be00ecb0a29b16cff5a1f2705e4f115e8bfcf37958b6120",
+      "weights_bytes": 183118240,
+      "cpu_parity": {
+        "mels": 20,
+        "max_abs_salience_diff": 0.0018274784088134766,
+        "argmax_diff_rows": 0,
+        "voiced_rows": 341,
+        "max_f0_cents": 0.08850088664246081,
+        "vuv_flips": 0,
+        "per_mel": [
+          {
+            "kind": "random",
+            "max_abs": 1.5139579772949219e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.00030225515365600586,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 31,
+            "max_cents": 0.031781736632332774,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 6.565451622009277e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.00024309754371643066,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 5,
+            "max_cents": 0.025044694907674154,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 3.826618194580078e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.000638812780380249,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.038455581963676905,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 8.308887481689453e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 1,
+            "max_cents": 9.173603784461429e-07,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.0005700290203094482,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.02784007275652468,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 8.96155834197998e-05,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 0,
+            "max_cents": 0.0,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "random",
+            "max_abs": 0.000606238842010498,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 32,
+            "max_cents": 0.0593685310449422,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0018274784088134766,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.08850088664246081,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.000492781400680542,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.04856447169248681,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.00048151612281799316,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 30,
+            "max_cents": 0.05360387852008483,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0010513067245483398,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.07868094230840306,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0009270310401916504,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 25,
+            "max_cents": 0.07177159331707454,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004718899726867676,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 21,
+            "max_cents": 0.028959556230976777,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0004375576972961426,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 15,
+            "max_cents": 0.04559125077586294,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.0005630850791931152,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 13,
+            "max_cents": 0.03001103666261964,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.00045821070671081543,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 14,
+            "max_cents": 0.07241430865618438,
+            "vuv_flips": 0
+          },
+          {
+            "kind": "speech",
+            "max_abs": 0.000525355339050293,
+            "argmax_diff_rows": 0,
+            "voiced_rows": 28,
+            "max_cents": 0.03880434264596256,
+            "vuv_flips": 0
+          }
+        ],
+        "note": "CPU: fp16 weights, fp32 arithmetic (weight rounding only); the gate runs on the GPU"
+      }
+    }
+  }
+}

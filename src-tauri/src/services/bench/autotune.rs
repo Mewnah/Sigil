@@ -10,11 +10,16 @@
 //!    reason, and so does `tensorrt_rtx` when no generator session runs TensorRT (the CUDA rung is
 //!    tuned as `cuda`; classic TensorRT counts, with a note). A pitch model that falls back drops only
 //!    that F0 method; any other component that falls back is measured as it runs, with a note.
-//! 1b. **CPU threads** (the CPU rung): the reference configuration with one ONNX Runtime thread
-//!    (the Streamer preset), two (`protect_game`) and the default pool; the fewest threads that
-//!    meet the limit win (least load next to a game, T4), else the fastest. The result then carries
-//!    `rvc_preset` / `worker_priority`, the voice changer's own thread policy. An explicit priority
-//!    is kept: `protect_game` never gets the pool, `protect_voice` is never demoted to two threads.
+//! 1b. **CPU threads x priority** (the CPU rung; P3B-G): the reference configuration with 1, 2,
+//!    3, 4 and 6 ONNX Runtime threads and the default pool, each at BELOW_NORMAL (`auto`) and at
+//!    NORMAL priority (`protect_voice`), priority being its own choice. Per priority the counts run
+//!    ascending until one meets the limit; across them the configuration that meets the limit with
+//!    the fewest **core-seconds per audio-second** wins (the least load next to a game, T4), else
+//!    the fastest. The voice changer's params express 1 thread (the Streamer preset), 2 below
+//!    normal (`protect_game`) and the pool; another count needs a thread-count param
+//!    ([`CPU_THREADS_PARAM`]), and until it exists the stage picks among the expressible policies and
+//!    notes the best measured count. An explicit priority is kept: `protect_game` is swept at 1-2
+//!    threads below normal only, `protect_voice` at normal priority only.
 //! 2. **F0 method**: every method the build runs on the rung (after the voice changer's stand-in and
 //!    GPU-only rules), ranked by accuracy (gross pitch error + V/UV error against the synthetic
 //!    voice's exact F0; a user clip only times the engine, it has no F0 truth), then the most
@@ -38,7 +43,15 @@
 //!    every lever keeps when the stage does not run (out of time) or never tried it.
 //! 7. **Fidelity**: the winner is scored against its offline ceiling (the `quality` mode): CAM++
 //!    cosine >= 0.97 (when installed), voiced F0 RMSE <= 15 cents, V/UV error <= 3 %, no clicks at
-//!    the joins; a failing block steps up (twice at most).
+//!    the joins; a failing block steps up (twice at most). P3B-G: with scorer v2 at three lead
+//!    offsets ([`VERIFY_OFFSETS_S`]; different anchored-noise realizations), the verdict uses the
+//!    medians, and how far the configuration falls short of T5 (`fidelity::t5_shortfall_v2`) comes
+//!    with its spread over the offsets; a larger block is kept only when it cuts the shortfall by a
+//!    quarter (or by [`VERIFY_ABSOLUTE_GAIN`], one click's worth: the shortfall of a pitch tracker
+//!    that disagrees with the reference carries a large block-independent part that a relative rule
+//!    would never let a click-free block overcome) **and** by more than that spread
+//!    (`pick_verified`). A quick tune and
+//!    `SIGIL_AUTOTUNE_VERIFY=v1` keep the single-lead v1 check; a v2 failure falls back to it.
 //!
 //! "Meets the limit": p99 RTF (compute over the real-time budget of a block) <= `rtf_limit`
 //! (default 0.5, headroom for a game), at most 0.1 % of blocks over budget, no model errors,
@@ -635,55 +648,119 @@ struct Config {
 /// The GPU levers the lever stage decides.
 const GPU_LEVERS: [Lever; 3] = [Lever::IoBinding, Lever::CudaGraphs, Lever::GpuPriority];
 
-/// ONNX Runtime thread policy of a CPU configuration, through the voice changer's own params: the
-/// Streamer preset caps every session at one thread, `protect_game` at two (below-normal priority),
-/// and the other presets with the `auto` priority keep ONNX Runtime's default pool (one thread per
-/// physical core, below-normal priority on the CPU EP).
+/// The voice changer param that would carry a CPU thread count (P3B-G): `None` while the params
+/// have no such field, so a count other than the expressible policies ([`Threads::expressible`]) is
+/// measured and noted but never applied. The field (suggested name `rvc_cpu_threads`, 0 = the preset's) is
+/// not added yet (P3B-I0 deferred it with the Streamer thread policy); its name goes here when it is.
+pub const CPU_THREADS_PARAM: Option<&str> = None;
+
+/// Thread counts the CPU stage sweeps below the pool (ascending; capped by the logical CPUs).
+const CPU_THREAD_COUNTS: [u8; 5] = [1, 2, 3, 4, 6];
+
+/// ONNX Runtime thread policy of a CPU configuration (P3B-G: count and priority are separate
+/// choices). Through the voice changer's own params: one thread is the Streamer preset, two below
+/// normal is `protect_game`, the pool is any other preset with `auto` (below normal on the CPU EP)
+/// or `protect_voice` (normal, out of EcoQoS); another count needs [`CPU_THREADS_PARAM`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Threads {
     /// The request's preset and priority (GPU rungs, and the CPU before the thread stage).
     #[default]
     AsRequested,
-    One,
-    Two,
-    Pool,
+    /// `n` intra-op threads (the worker plus `n - 1` pool threads) at NORMAL (`normal`) or
+    /// BELOW_NORMAL priority.
+    Count { n: u8, normal: bool },
+    /// ONNX Runtime's default pool (one thread per physical core) at NORMAL or BELOW_NORMAL.
+    Pool { normal: bool },
 }
 
 impl Threads {
-    /// The policies the CPU stage sweeps, fewest threads first, for the voice changer's worker
-    /// priority. An explicit choice is kept: `protect_game` never gets the pool at normal priority,
-    /// and `protect_voice` is never demoted to `protect_game`'s two threads.
-    fn sweep(worker_priority: &str) -> &'static [Threads] {
+    /// The policies the CPU stage sweeps for the voice changer's worker priority, grouped by
+    /// priority (each group in ascending thread count). An explicit choice is kept:
+    /// `protect_game` (two threads below normal at most) is swept at 1-2 threads below normal,
+    /// `protect_voice` at normal priority only; `auto` sweeps both priorities.
+    fn sweep(worker_priority: &str, logical_cpus: usize) -> Vec<Vec<Threads>> {
+        let counts = |normal: bool| -> Vec<Threads> {
+            let mut v: Vec<Threads> = CPU_THREAD_COUNTS
+                .iter()
+                .filter(|&&n| n == 1 || usize::from(n) < logical_cpus.max(1))
+                .map(|&n| Threads::Count { n, normal })
+                .collect();
+            v.push(Threads::Pool { normal });
+            v
+        };
         match worker_priority {
-            "protect_game" => &[Threads::One, Threads::Two],
-            "protect_voice" => &[Threads::One, Threads::Pool],
-            _ => &[Threads::One, Threads::Two, Threads::Pool],
+            "protect_game" => vec![vec![Threads::Count { n: 1, normal: false }, Threads::Count { n: 2, normal: false }]],
+            "protect_voice" => vec![counts(true)],
+            _ => vec![counts(false), counts(true)],
         }
     }
 
-    fn label(self) -> &'static str {
+    /// Whether the voice changer's params can express the policy (see [`CPU_THREADS_PARAM`]).
+    fn expressible(self, threads_param: Option<&str>) -> bool {
         match self {
-            Threads::AsRequested => "",
-            Threads::One => "1",
-            Threads::Two => "2",
-            Threads::Pool => "pool",
+            Threads::AsRequested | Threads::Pool { .. } => true,
+            Threads::Count { n: 1, .. } | Threads::Count { n: 2, normal: false } => true,
+            Threads::Count { .. } => threads_param.is_some(),
         }
     }
 
-    /// `(rvc_preset, worker_priority)` of the policy for a request preset and the voice changer's
-    /// worker priority (`None` = unchanged).
-    fn params(self, preset: &str, worker_priority: &str) -> (Option<String>, Option<&'static str>) {
+    fn label(self) -> String {
+        let prio = |normal: bool| if normal { "normal" } else { "below_normal" };
+        match self {
+            Threads::AsRequested => String::new(),
+            Threads::Count { n, normal } => format!("{n}@{}", prio(normal)),
+            Threads::Pool { normal } => format!("pool@{}", prio(normal)),
+        }
+    }
+
+    /// ONNX Runtime intra-op threads the benchmark builds the voice with (`None`: the preset's).
+    fn intra_threads(self) -> Option<usize> {
+        match self {
+            Threads::Count { n, .. } if n >= 2 => Some(usize::from(n)),
+            _ => None,
+        }
+    }
+
+    /// `(rvc_preset, worker_priority)` of the policy for a request preset (`None` = unchanged).
+    fn params(self, preset: &str) -> (Option<String>, Option<&'static str>) {
         let pooled = || {
             let p = normalize_rvc_preset(preset);
             Some(if p == "streamer" { "low_latency".to_string() } else { p.to_string() })
         };
+        let prio = |normal: bool| if normal { "protect_voice" } else { "auto" };
         match self {
             Threads::AsRequested => (None, None),
-            Threads::One => (Some("streamer".into()), None),
-            Threads::Two => (pooled(), Some("protect_game")),
-            Threads::Pool => (pooled(), Some(if worker_priority == "protect_voice" { "protect_voice" } else { "auto" })),
+            Threads::Count { n: 1, normal } => (Some("streamer".into()), Some(prio(normal))),
+            Threads::Count { n: 2, normal: false } => (pooled(), Some("protect_game")),
+            Threads::Count { normal, .. } | Threads::Pool { normal } => (pooled(), Some(prio(normal))),
         }
     }
+
+    /// The thread count for [`CPU_THREADS_PARAM`] (`None`: the preset / priority express it).
+    fn count_param(self) -> Option<u8> {
+        match self {
+            Threads::Count { n, normal } if n >= 3 || (n == 2 && normal) => Some(n),
+            _ => None,
+        }
+    }
+}
+
+/// The CPU stage's pick among measured thread policies (P3B-G): the one that meets the limit with
+/// the fewest core-seconds per audio-second (`cpu_cores` on the virtual clock), else the fastest.
+/// `allowed` filters what the params can apply. `None` when nothing allowed was measured.
+fn pick_threads(measured: &[(Threads, bool, Option<f64>, f64)], allowed: impl Fn(Threads) -> bool) -> Option<Threads> {
+    let met = measured
+        .iter()
+        .filter(|(t, ok, _, _)| *ok && allowed(*t))
+        .min_by(|a, b| a.2.unwrap_or(f64::INFINITY).total_cmp(&b.2.unwrap_or(f64::INFINITY)).then(a.3.total_cmp(&b.3)));
+    if let Some(m) = met {
+        return Some(m.0);
+    }
+    measured
+        .iter()
+        .filter(|(t, _, _, rtf)| allowed(*t) && rtf.is_finite())
+        .min_by(|a, b| a.3.total_cmp(&b.3))
+        .map(|m| m.0)
 }
 
 impl Config {
@@ -884,12 +961,15 @@ impl Tuner<'_> {
         let mut s = self.stream.clone();
         s.block_frames = cfg.chunk_frames;
         s.extra_context_ms = cfg.extra_ms;
-        let (preset, priority) = cfg.threads.params(&self.base.preset, &self.worker_priority);
+        let (preset, priority) = cfg.threads.params(&self.base.preset);
         if let Some(p) = preset {
             r.preset = p;
         }
         if let Some(p) = priority {
             s.worker_priority = p.to_string();
+        }
+        if let Some(n) = cfg.threads.intra_threads() {
+            r.intra_threads = Some(n);
         }
         (r, s)
     }
@@ -932,7 +1012,7 @@ impl Tuner<'_> {
             extra_context_ms: cfg.extra_ms,
             precision: cfg.precision.clone(),
             levers: cfg.levers_on(),
-            threads: cfg.threads.label().to_string(),
+            threads: cfg.threads.label(),
             under_load: load.is_some(),
             ..Candidate::default()
         };
@@ -1108,6 +1188,9 @@ impl Tuner<'_> {
                 rmvpe_path: (!rmvpe.is_empty()).then(|| Path::new(rmvpe)),
                 app_data: app_data.as_deref(),
                 small_models_on_cpu: true,
+                precision: crate::services::neural_audio::vc::engine::PrecisionMode::Auto,
+                expected_call_frames: None,
+                max_context_16k: None,
             };
             match create_pitch_extractor(&req).and_then(|mut b| b.extractor.f0(&clip16)) {
                 Ok(f0) => {
@@ -1310,31 +1393,43 @@ fn tune_ep(t: &mut Tuner<'_>, ep: &str, req: &AutotuneRequest) -> Result<Option<
     let levers: BTreeMap<String, String> = t.base.levers.clone();
     // 2. F0 method: most accurate first, the first whose engine meets the limit.
     let ranked = t.rank_pitch(ep, &req.pitch_extractors);
-    // 1b. CPU threads: the fewest that meet the limit on the reference configuration (with the most
-    // accurate F0 method), else the fastest policy.
+    // 1b. CPU threads x priority (P3B-G): per priority, ascending counts until one meets the limit
+    // on the reference configuration (with the most accurate F0 method); across them the fewest
+    // core-seconds per audio-second that meet it, else the fastest.
     if rung == "cpu" {
         if let Some(pitch) = ranked.first() {
-            let mut fastest: Option<Measured> = None;
-            let mut met = None;
-            for &policy in Threads::sweep(&t.worker_priority) {
-                if t.out_of_time() {
-                    break;
-                }
-                let m = t.measure("threads", &mk(pitch, ref_ms, ref_chunk, base_extra, "auto", &levers, policy))?;
-                if m.fell_back == Some(FellBack::Ep) {
-                    t.notes.push(format!("{ep}: {}", m.cand.note));
-                    return Ok(None);
-                }
-                if m.cand.ok {
-                    met = Some(policy);
-                    break;
-                }
-                if m.cand.rtf_p99.is_some() && fastest.as_ref().is_none_or(|f| m.rtf() < f.rtf()) {
-                    fastest = Some(m);
+            let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+            let mut seen: Vec<(Threads, bool, Option<f64>, f64)> = Vec::new();
+            'groups: for group in Threads::sweep(&t.worker_priority, logical) {
+                for policy in group {
+                    if t.out_of_time() {
+                        break 'groups;
+                    }
+                    let m = t.measure("threads", &mk(pitch, ref_ms, ref_chunk, base_extra, "auto", &levers, policy))?;
+                    if m.fell_back == Some(FellBack::Ep) {
+                        t.notes.push(format!("{ep}: {}", m.cand.note));
+                        return Ok(None);
+                    }
+                    seen.push((policy, m.cand.ok, m.cand.cpu_cores, m.rtf()));
+                    if m.cand.ok {
+                        // More threads only add core-seconds at this priority.
+                        break;
+                    }
                 }
             }
-            if let Some(policy) = met.or_else(|| fastest.map(|f| f.cfg.threads)) {
+            let applicable = |p: Threads| p.expressible(CPU_THREADS_PARAM);
+            if let Some(policy) = pick_threads(&seen, applicable) {
                 threads = policy;
+            }
+            if let Some(best) = pick_threads(&seen, |_| true).filter(|b| !applicable(*b)) {
+                let cores = |p: Threads| seen.iter().find(|s| s.0 == p).and_then(|s| s.2);
+                t.notes.push(format!(
+                    "CPU threads: {} measured best ({} cores per audio second), but the voice changer's params cannot set that thread count yet; using {} ({} cores)",
+                    best.label(),
+                    cores(best).map_or("?".to_string(), |c| format!("{c:.2}")),
+                    threads.label(),
+                    cores(threads).map_or("?".to_string(), |c| format!("{c:.2}"))
+                ));
             }
         }
     }
@@ -1520,36 +1615,49 @@ fn lever_sets(usable: impl Fn(Lever) -> bool) -> Vec<Vec<Lever>> {
 
 /// A configuration's fidelity against its offline ceiling.
 struct Verdict {
-    /// Every measured T5 check passed.
+    /// Every measured T5 check passed (v2: the T5 shortfall of the medians over the offsets is 0).
     pass: bool,
-    /// CAM++ cosine, when CAM++ is installed.
+    /// CAM++ cosine, when CAM++ is installed (v2: the exact-pooling export's).
     cosine: Option<f64>,
     metrics: BTreeMap<String, f64>,
+    /// How far it falls short of T5 ([`t5_shortfall`]).
+    shortfall: f64,
+    /// The shortfall's spread over the lead offsets ([`shortfall_spread`]; 0 for v1).
+    spread: f64,
 }
 
 /// How far fidelity metrics fall short of T5, each in units of its own limit (0 = every measured
-/// check passes): speaker cosine below 0.97 per 0.03, voiced F0 RMSE above 15 cents per 15 cents,
-/// V/UV error above 3 % per 3 %, one per seam click. Unmeasured metrics count 0.
+/// check passes); the benchmark's definition (`fidelity::t5_shortfall_v2`, P3B-S0).
 fn t5_shortfall(m: &BTreeMap<String, f64>) -> f64 {
-    let get = |k: &str| m.get(k).copied().filter(|v| v.is_finite());
-    get("speaker_cosine").map_or(0.0, |c| ((0.97 - c) / 0.03).max(0.0))
-        + get("f0_rmse_cents").map_or(0.0, |v| ((v - 15.0) / 15.0).max(0.0))
-        + get("vuv_error").map_or(0.0, |v| ((v - 0.03) / 0.03).max(0.0))
-        + get("clicks").map_or(0.0, |v| v.max(0.0))
+    super::fidelity::t5_shortfall_v2(m)
 }
 
 /// One verified configuration, in ascending block order.
 #[derive(Clone, Copy, Debug)]
 struct VerifiedAttempt {
     pass: bool,
+    /// How far it falls short of T5 (the medians over the offsets with scorer v2).
     shortfall: f64,
+    /// The shortfall's spread over the lead offsets (0 for a single-lead v1 check).
+    spread: f64,
     /// It met the RTF limit.
     meets_limit: bool,
 }
 
+/// A larger block is worth its latency, whatever the size of the shortfall it starts from, when it
+/// lowers the shortfall by this much (one click's worth: each seam click adds 1.0, and every other
+/// metric counts in units of its own limit) and the gain is beyond the spread over the offsets.
+/// Without it the quarter rule is relative to the whole shortfall, which for a tracker that
+/// disagrees with the reference (a fed-input V/UV error against RMVPE of 0.34 is a shortfall of ~10
+/// whatever the block) is a part that no block can change: removing the clicks then never reached a
+/// quarter, the larger block was never kept and the autotuner's click protection was off.
+pub const VERIFY_ABSOLUTE_GAIN: f64 = 1.0;
+
 /// Which verified attempt to keep: never one that misses the RTF limit when the first met it; then
 /// the first that passes T5; else the smallest shortfall, where a larger block must cut the kept
-/// one's shortfall by a quarter to be worth its latency.
+/// one's shortfall by a quarter (or by [`VERIFY_ABSOLUTE_GAIN`]) **and** by more than either one's
+/// spread over the offsets (P3B-G: a difference inside the noise of the anchored-noise
+/// realizations is not worth the latency).
 fn pick_verified(attempts: &[VerifiedAttempt]) -> usize {
     let first_ok = attempts.first().is_some_and(|a| a.meets_limit);
     let eligible = |a: &VerifiedAttempt| a.meets_limit || !first_ok;
@@ -1558,15 +1666,73 @@ fn pick_verified(attempts: &[VerifiedAttempt]) -> usize {
     }
     let mut best = 0;
     for (i, a) in attempts.iter().enumerate().skip(1) {
-        if eligible(a) && a.shortfall < attempts[best].shortfall * 0.75 {
+        let kept = &attempts[best];
+        let gain = kept.shortfall - a.shortfall;
+        let worth_it = a.shortfall < kept.shortfall * 0.75 || gain >= VERIFY_ABSOLUTE_GAIN;
+        if eligible(a) && worth_it && gain > a.spread.max(kept.spread) {
             best = i;
         }
     }
     best
 }
 
-/// Fidelity of a configuration against its offline ceiling (T5 checks).
+/// Lead offsets (s) of the verify stage's scorer-v2 check (P3B-G): three anchored-noise
+/// realizations of the same clip, whose spread a block change must beat.
+pub const VERIFY_OFFSETS_S: [f64; 3] = [1.0, 1.25, 1.6];
+
+/// `SIGIL_AUTOTUNE_VERIFY=v1`: the verify stage's single-lead v1 check instead of scorer v2 over
+/// [`VERIFY_OFFSETS_S`] (P3B-G's switch).
+pub const VERIFY_ENV: &str = "SIGIL_AUTOTUNE_VERIFY";
+
+/// The v2 metrics T5's shortfall reads, the reported spread over the offsets that moves each, and
+/// whether a larger value is better.
+const SHORTFALL_SPREADS: [(&str, &str, bool); 7] = [
+    ("speaker_set_sim_delta", "speaker_set_sim_spread", true),
+    ("speaker_cosine_v2", "speaker_cosine_v2_spread", true),
+    ("env_mcd_over_floor_db", "env_mcd_db_spread", false),
+    ("fed_input_fpe_cents", "fed_input_fpe_cents_spread", false),
+    ("f0_fine_rmse_cents", "f0_fine_rmse_cents_spread", false),
+    ("fed_input_vuv_error", "fed_input_vuv_error_spread", false),
+    ("clicks_binomial", "clicks_binomial_spread", false),
+];
+
+/// The spread of [`t5_shortfall`] over the offsets of a v2 run: the shortfall with every metric
+/// half its spread worse, minus the shortfall with every metric half its spread better (the
+/// shortfall grows monotonically with each metric's distance from its limit). 0 without spreads.
+fn shortfall_spread(m: &BTreeMap<String, f64>) -> f64 {
+    let shifted = |sign: f64| -> BTreeMap<String, f64> {
+        let mut out = m.clone();
+        for (metric, spread, higher_better) in SHORTFALL_SPREADS {
+            if let (Some(v), Some(w)) = (m.get(metric).copied(), m.get(spread).copied()) {
+                if v.is_finite() && w.is_finite() {
+                    let worse = if higher_better { -w / 2.0 } else { w / 2.0 };
+                    out.insert(metric.to_string(), v + sign * worse);
+                }
+            }
+        }
+        out
+    };
+    (t5_shortfall(&shifted(1.0)) - t5_shortfall(&shifted(-1.0))).max(0.0)
+}
+
+/// Fidelity of a configuration against its offline ceiling (T5 checks): scorer v2 over
+/// [`VERIFY_OFFSETS_S`] (P3B-G), else (`SIGIL_AUTOTUNE_VERIFY=v1`, or v2 failed) the single-lead v1
+/// check.
 fn verify(t: &mut Tuner<'_>, cfg: &Config) -> Result<Verdict, String> {
+    // A quick tune keeps the cheaper single-lead check (three offsets render three times the
+    // ceilings).
+    let v1_only = t.quick || std::env::var(VERIFY_ENV).is_ok_and(|v| v.trim().eq_ignore_ascii_case("v1"));
+    if !v1_only {
+        match verify_with(t, cfg, true) {
+            Ok(v) => return Ok(v),
+            Err(e) if e == "cancelled" => return Err(e),
+            Err(e) => t.notes.push(format!("fidelity check: scorer v2 failed ({e}); the v1 check ran instead")),
+        }
+    }
+    verify_with(t, cfg, false)
+}
+
+fn verify_with(t: &mut Tuner<'_>, cfg: &Config, v2: bool) -> Result<Verdict, String> {
     t.check()?;
     t.report("verifying", &format!("{} {:.0} ms", cfg.ep, t.block_of(cfg)));
     let (rvc, stream) = t.variant(cfg);
@@ -1581,6 +1747,7 @@ fn verify(t: &mut Tuner<'_>, cfg: &Config) -> Result<Verdict, String> {
         runs: Vec::new(),
         thresholds: Default::default(),
         output: Default::default(),
+        vram: Default::default(),
     };
     let priority = WorkerPriority::from_str_lossy(&stream.worker_priority);
     let engine = build_engine(&spec.engine, &stream, priority, spec.seed)?;
@@ -1591,24 +1758,61 @@ fn verify(t: &mut Tuner<'_>, cfg: &Config) -> Result<Verdict, String> {
         input: to_interleaved(&t.clip, usize::from(stream.input_channels)),
         vram_engine_mb: None,
     };
-    let q = QualityRun {
+    let mut q = QualityRun {
         name: "verify".into(),
         lead_s: 1.0,
         ceiling: Default::default(),
         scoring: ScoringSpec::default(),
         stt: None,
+        fidelity: Default::default(),
         thresholds: Default::default(),
     };
+    if v2 {
+        q.scoring.analyzer = "v2".into();
+        q.fidelity.offsets_s = VERIFY_OFFSETS_S.to_vec();
+    }
     let o = super::fidelity::run_quality(&q, &spec, &prepared, false, t.cancel, &|_, _| {})?;
     let m = o.metrics;
     let get = |k: &str| m.get(k).copied();
-    let cos = get("speaker_cosine");
-    let pass = cos.is_none_or(|c| c >= 0.97)
-        && get("f0_rmse_cents").is_none_or(|v| v <= 15.0)
-        && get("vuv_error").is_none_or(|v| v <= 0.03)
-        && get("clicks").is_none_or(|v| v == 0.0);
-    let keep = ["speaker_cosine", "mcd_db", "f0_rmse_cents", "gross_pitch_error", "vuv_error", "clicks", "artifact_events", "dnsmos_ovrl"];
-    let metrics: BTreeMap<String, f64> = keep.iter().filter_map(|k| get(k).map(|v| (k.to_string(), v))).collect();
+    let cos = get("speaker_cosine_v2").or_else(|| get("speaker_cosine"));
+    let all: BTreeMap<String, f64> = m.iter().filter(|(_, v)| v.is_finite()).map(|(k, v)| (k.clone(), *v)).collect();
+    let (pass, shortfall, spread) = if v2 {
+        let shortfall = t5_shortfall(&all);
+        (shortfall <= 0.0, shortfall, shortfall_spread(&all))
+    } else {
+        let pass = cos.is_none_or(|c| c >= 0.97)
+            && get("f0_rmse_cents").is_none_or(|v| v <= 15.0)
+            && get("vuv_error").is_none_or(|v| v <= 0.03)
+            && get("clicks").is_none_or(|v| v == 0.0);
+        (pass, t5_shortfall(&all), 0.0)
+    };
+    // The v1 metrics always, next to the v2 rows and their spreads (rule R6).
+    let keep = [
+        "speaker_cosine",
+        "mcd_db",
+        "f0_rmse_cents",
+        "gross_pitch_error",
+        "vuv_error",
+        "clicks",
+        "artifact_events",
+        "dnsmos_ovrl",
+        "speaker_cosine_v2",
+        "speaker_set_sim_delta",
+        "env_mcd_over_floor_db",
+        "fed_input_fpe_cents",
+        "fed_input_gpe",
+        "fed_input_vuv_error",
+        "f0_fine_rmse_cents",
+        "clicks_binomial",
+        "clicks_narrow",
+        "speaker_cosine_v2_spread",
+        "env_mcd_db_spread",
+        "fed_input_fpe_cents_spread",
+        "fidelity_offsets",
+    ];
+    let mut metrics: BTreeMap<String, f64> = keep.iter().filter_map(|k| get(k).map(|v| (k.to_string(), v))).collect();
+    metrics.insert("t5_shortfall".into(), shortfall);
+    metrics.insert("t5_shortfall_spread".into(), spread);
     let mut cand = Candidate {
         stage: "verify".into(),
         ep: cfg.ep.clone(),
@@ -1630,20 +1834,25 @@ fn verify(t: &mut Tuner<'_>, cfg: &Config) -> Result<Verdict, String> {
         pass,
         cosine: cos,
         metrics,
+        shortfall,
+        spread,
     })
 }
 
 /// The params patch of a configuration (`preset` / `worker_priority`: the voice changer's, for the
 /// CPU thread policy). GPU levers only when the lever stage measured them (`cfg.tuned`); every other
 /// lever keeps the voice changer's setting, which is what the configuration measured with.
-fn params_of(cfg: &Config, template: bool, preset: &str, worker_priority: &str) -> serde_json::Map<String, serde_json::Value> {
+fn params_of(cfg: &Config, template: bool, preset: &str, threads_param: Option<&str>) -> serde_json::Map<String, serde_json::Value> {
     let mut p = serde_json::Map::new();
-    let (rvc_preset, priority) = cfg.threads.params(preset, worker_priority);
+    let (rvc_preset, priority) = cfg.threads.params(preset);
     if let Some(v) = rvc_preset {
         p.insert("rvc_preset".into(), v.into());
     }
     if let Some(v) = priority {
         p.insert("worker_priority".into(), v.into());
+    }
+    if let (Some(key), Some(n)) = (threads_param, cfg.threads.count_param()) {
+        p.insert(key.into(), n.into());
     }
     p.insert("rvc_execution_provider".into(), cfg.ep.clone().into());
     p.insert("pitch_extractor".into(), cfg.pitch.clone().into());
@@ -1728,7 +1937,8 @@ fn tune(req: &AutotuneRequest, mut base: RvcSpec, mut stream: StreamSpec, cancel
     let budget = req.max_seconds.unwrap_or(if quick { 180.0 } else { 600.0 });
     let per_ep = if template { if quick { 9 } else { 14 } } else if quick { 7 } else { 12 };
     let worker_priority = worker_priority_id(&stream.worker_priority);
-    let cpu_threads = if eps.iter().any(|e| base_ep(e) == "cpu") { Threads::sweep(&worker_priority).len() } else { 0 };
+    let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let cpu_threads = if eps.iter().any(|e| base_ep(e) == "cpu") { Threads::sweep(&worker_priority, logical).iter().map(Vec::len).sum() } else { 0 };
     let mut t = Tuner {
         base,
         stream,
@@ -1819,7 +2029,8 @@ fn tune(req: &AutotuneRequest, mut base: RvcSpec, mut stream: StreamSpec, cancel
                 .iter()
                 .map(|(m, v)| VerifiedAttempt {
                     pass: v.pass,
-                    shortfall: t5_shortfall(&v.metrics),
+                    shortfall: v.shortfall,
+                    spread: v.spread,
                     meets_limit: m.cand.ok,
                 })
                 .collect();
@@ -1828,10 +2039,10 @@ fn tune(req: &AutotuneRequest, mut base: RvcSpec, mut stream: StreamSpec, cancel
                 let tried: Vec<String> = attempts
                     .iter()
                     .zip(&scores)
-                    .map(|((m, _), s)| format!("{:.0} ms: {:.2}", t.block_of(&m.cfg), s.shortfall))
+                    .map(|((m, _), s)| format!("{:.0} ms: {:.2} +- {:.2}", t.block_of(&m.cfg), s.shortfall, s.spread / 2.0))
                     .collect();
                 t.notes.push(format!(
-                    "fidelity: below T5 at every block tried (shortfall {}); kept the {:.0} ms block (a larger one must cut the shortfall by a quarter to be worth its latency)",
+                    "fidelity: below T5 at every block tried (shortfall {}); kept the {:.0} ms block (a larger one must cut the shortfall by a quarter, or by one click's worth, and by more than its spread over the offsets to be worth its latency)",
                     tried.join(", "),
                     t.block_of(&attempts[i].0.cfg)
                 ));
@@ -1864,7 +2075,7 @@ fn tune(req: &AutotuneRequest, mut base: RvcSpec, mut stream: StreamSpec, cancel
         gpu,
         driver,
         created_unix_ms: unix_ms(),
-        params: params_of(&best.cfg, template, &t.base.preset, &t.worker_priority),
+        params: params_of(&best.cfg, template, &t.base.preset, CPU_THREADS_PARAM),
         rtf_p99: best.cand.rtf_p99.unwrap_or(f64::NAN),
         block_ms_p95: best.cand.compute_ms_p95.unwrap_or(f64::NAN),
         latency_ms_p50: best.cand.latency_ms_p50,
@@ -2112,7 +2323,7 @@ mod tests {
     /// when it misses the RTF limit the smaller one met.
     #[test]
     fn verification_keeps_the_smallest_block_worth_its_latency() {
-        let a = |pass, shortfall, meets_limit| VerifiedAttempt { pass, shortfall, meets_limit };
+        let a = |pass, shortfall, meets_limit| VerifiedAttempt { pass, shortfall, spread: 0.0, meets_limit };
         let t5 = |cos: f64, rmse: f64, vuv: f64, clicks: f64| {
             let m: BTreeMap<String, f64> = [("speaker_cosine", cos), ("f0_rmse_cents", rmse), ("vuv_error", vuv), ("clicks", clicks)]
                 .into_iter()
@@ -2135,6 +2346,81 @@ mod tests {
         // When the first missed it too, the limit does not decide.
         assert_eq!(pick_verified(&[a(false, 2.0, false), a(true, 0.0, false)]), 1);
         assert_eq!(pick_verified(&[a(true, 0.0, true)]), 0);
+        // P3B-G: a gain inside the offsets' spread is noise, not worth the latency, however large
+        // in proportion; outside it the quarter rule decides as before.
+        let s = |shortfall, spread| VerifiedAttempt { pass: false, shortfall, spread, meets_limit: true };
+        assert_eq!(pick_verified(&[s(2.0, 0.9), s(1.2, 0.2)]), 0, "a 0.8 gain inside a 0.9 spread");
+        assert_eq!(pick_verified(&[s(2.0, 0.2), s(1.2, 0.9)]), 0, "either attempt's spread counts");
+        assert_eq!(pick_verified(&[s(2.0, 0.3), s(1.2, 0.3)]), 1, "a 0.8 gain beats a 0.3 spread");
+        assert_eq!(pick_verified(&[s(2.0, 0.0), s(1.6, 0.0)]), 0, "the quarter rule still holds");
+    }
+
+    /// P3B-G (review fix): the shortfall of a tracker that disagrees with the reference carries a
+    /// large block-independent part (a fed-input V/UV error of 0.34 reads ~10 whatever the block),
+    /// so the relative quarter rule never let a click-free block overcome two seam clicks: 10.3 ->
+    /// 8.3 is a 19 % cut. A cut of one click's worth, beyond the spread, is kept; smaller cuts and
+    /// cuts inside the noise are not, and small shortfalls keep deciding by the quarter rule.
+    #[test]
+    fn a_large_block_independent_shortfall_does_not_hide_a_click_free_block() {
+        let s = |shortfall, spread| VerifiedAttempt { pass: false, shortfall, spread, meets_limit: true };
+        // Two clicks removed on top of a 8.3 offset.
+        assert_eq!(pick_verified(&[s(10.3, 0.4), s(8.3, 0.4)]), 1, "a 2.0 cut is two clicks");
+        assert_eq!(pick_verified(&[s(10.3, 0.4), s(9.2, 0.4)]), 1, "a click's worth");
+        assert_eq!(pick_verified(&[s(10.3, 0.4), s(9.5, 0.4)]), 0, "less than a click is not worth the latency");
+        // The cut must also beat the spread over the offsets (the realizations' noise).
+        assert_eq!(pick_verified(&[s(10.3, 2.5), s(8.3, 0.4)]), 0, "a 2.0 cut inside a 2.5 spread");
+        assert_eq!(pick_verified(&[s(10.3, 0.4), s(8.3, 2.5)]), 0, "either attempt's spread counts");
+        // The chain compares each step with the best kept so far.
+        assert_eq!(pick_verified(&[s(10.3, 0.3), s(9.6, 0.3), s(8.2, 0.3)]), 2, "each block is judged against the smallest kept one, not the previous step");
+        assert_eq!(pick_verified(&[s(10.3, 0.3), s(8.2, 0.3), s(7.9, 0.3)]), 1, "the third block adds nothing worth its latency");
+        // Small shortfalls still decide by the quarter rule (a 0.5 cut of 3.0 is under a click).
+        assert_eq!(pick_verified(&[s(3.0, 0.0), s(2.5, 0.0)]), 0);
+        assert_eq!(pick_verified(&[s(3.0, 0.0), s(2.2, 0.0)]), 1);
+        // A block that misses the RTF limit is still never kept over one that met it.
+        let late = VerifiedAttempt { pass: false, shortfall: 5.0, spread: 0.1, meets_limit: false };
+        assert_eq!(pick_verified(&[s(10.3, 0.3), late]), 0);
+    }
+
+    /// P3B-G: the shortfall's spread over the offsets: metrics moved half their spread each way.
+    #[test]
+    fn the_shortfall_spread_follows_the_offsets() {
+        let m = |kv: &[(&str, f64)]| kv.iter().map(|(k, v)| (k.to_string(), *v)).collect::<BTreeMap<String, f64>>();
+        // FPE 25 cents (limit 15: two thirds of a limit over) with a 6-cent spread: 22..28 cents,
+        // a shortfall spread of 6 / 15.
+        let one = m(&[("speaker_cosine_v2", 0.99), ("fed_input_fpe_cents", 25.0), ("fed_input_fpe_cents_spread", 6.0)]);
+        assert!((shortfall_spread(&one) - 6.0 / 15.0).abs() < 1e-9, "{}", shortfall_spread(&one));
+        // A metric well inside its limit moves nothing.
+        let inside = m(&[("speaker_cosine_v2", 0.99), ("fed_input_fpe_cents", 5.0), ("fed_input_fpe_cents_spread", 6.0)]);
+        assert_eq!(shortfall_spread(&inside), 0.0);
+        // No spreads (a v1 run): 0.
+        assert_eq!(shortfall_spread(&m(&[("speaker_cosine", 0.9), ("f0_rmse_cents", 40.0)])), 0.0);
+        // A higher-is-better metric moves the other way: a cosine 0.93 with a 0.02 spread.
+        let cos = m(&[("speaker_cosine_v2", 0.93), ("speaker_cosine_v2_spread", 0.02)]);
+        assert!(shortfall_spread(&cos) > 0.0);
+    }
+
+    /// P3B-G: the CPU stage picks the fewest core-seconds that meet the limit, else the fastest;
+    /// a policy the params cannot express is not applied.
+    #[test]
+    fn the_cpu_stage_picks_the_fewest_cores_that_meet_the_limit() {
+        let c = |n: u8, normal: bool| Threads::Count { n, normal };
+        let seen = [
+            (c(1, false), false, Some(1.0), 2.4),
+            (c(2, false), false, Some(1.9), 1.3),
+            (c(3, false), true, Some(2.6), 0.55),
+            (c(1, true), false, Some(1.0), 2.0),
+            (c(2, true), false, Some(1.8), 1.1),
+            (c(3, true), true, Some(2.4), 0.5),
+            (Threads::Pool { normal: true }, true, Some(4.7), 0.3),
+        ];
+        assert_eq!(pick_threads(&seen, |_| true), Some(c(3, true)), "fewest cores among those that met the limit");
+        // Without a thread-count param the stage picks among the expressible policies only.
+        assert_eq!(pick_threads(&seen, |t| t.expressible(None)), Some(Threads::Pool { normal: true }));
+        assert_eq!(pick_threads(&seen, |t| t.expressible(Some("rvc_cpu_threads"))), Some(c(3, true)));
+        // Nothing meets the limit: the fastest.
+        let slow = [(c(1, false), false, Some(1.0), 2.4), (c(2, false), false, Some(1.9), 1.3)];
+        assert_eq!(pick_threads(&slow, |_| true), Some(c(2, false)));
+        assert_eq!(pick_threads(&[], |_| true), None);
     }
 
     /// CUDA tries IOBinding with graphs as a pair (graphs need IOBinding) before IOBinding alone;
@@ -2223,7 +2509,7 @@ mod tests {
             threads: Threads::AsRequested,
             tuned: vec!["io_binding", "cuda_graphs"],
         };
-        let p = params_of(&cfg, true, "low_latency", "auto");
+        let p = params_of(&cfg, true, "low_latency", None);
         for k in ["rvc_execution_provider", "pitch_extractor", "extra_context_ms", "block_ms", "precision", "io_binding", "cuda_graphs"] {
             assert!(p.contains_key(k), "{k}");
         }
@@ -2232,7 +2518,7 @@ mod tests {
         // changer's own setting (what the configuration measured with): not in the patch.
         assert!(!p.contains_key("gpu_priority") && !p.contains_key("partial_decode"), "{p:?}");
         let untuned = Config { tuned: Vec::new(), ..cfg.clone() };
-        let q = params_of(&untuned, true, "low_latency", "auto");
+        let q = params_of(&untuned, true, "low_latency", None);
         assert!(GPU_LEVERS.iter().all(|l| !q.contains_key(l.as_str())), "levers never pinned when not tuned: {q:?}");
         // Every key is a VoiceChangerParams field: the patch round-trips through it.
         let mut full = serde_json::to_value(crate::services::voice_changer::params::VoiceChangerParams::default()).unwrap();
@@ -2241,21 +2527,32 @@ mod tests {
             full[k] = v.clone();
         }
         assert!(serde_json::from_value::<crate::services::voice_changer::params::VoiceChangerParams>(full).is_ok());
-        let legacy = params_of(&cfg, false, "low_latency", "auto");
+        let legacy = params_of(&cfg, false, "low_latency", None);
         assert!(legacy.contains_key("chunk_frames") && !legacy.contains_key("block_ms"));
         assert!(!p.contains_key("rvc_preset") && !p.contains_key("worker_priority"), "GPU: the request's policy");
         // The CPU thread policies, through the voice changer's own params.
         let cpu = |threads: Threads, preset: &str| {
             let c = Config { ep: "cpu".into(), threads, tuned: Vec::new(), ..cfg.clone() };
-            params_of(&c, true, preset, "auto")
+            params_of(&c, true, preset, None)
         };
-        assert_eq!(cpu(Threads::One, "low_latency")["rvc_preset"], "streamer");
-        assert!(!cpu(Threads::One, "low_latency").contains_key("worker_priority"));
-        let two = cpu(Threads::Two, "streamer");
+        let one = cpu(Threads::Count { n: 1, normal: false }, "low_latency");
+        assert_eq!((one["rvc_preset"].as_str(), one["worker_priority"].as_str()), (Some("streamer"), Some("auto")));
+        let one_normal = cpu(Threads::Count { n: 1, normal: true }, "low_latency");
+        assert_eq!(one_normal["worker_priority"], "protect_voice", "priority is its own choice");
+        let two = cpu(Threads::Count { n: 2, normal: false }, "streamer");
         assert_eq!((two["rvc_preset"].as_str(), two["worker_priority"].as_str()), (Some("low_latency"), Some("protect_game")));
-        let pool = cpu(Threads::Pool, "quality");
+        let pool = cpu(Threads::Pool { normal: false }, "quality");
         assert_eq!((pool["rvc_preset"].as_str(), pool["worker_priority"].as_str()), (Some("quality"), Some("auto")));
-        for patch in [cpu(Threads::One, "streamer"), two, pool] {
+        let pool_normal = cpu(Threads::Pool { normal: true }, "quality");
+        assert_eq!(pool_normal["worker_priority"], "protect_voice");
+        // A count the params cannot carry yet adds no key; with the param it does.
+        let four = cpu(Threads::Count { n: 4, normal: true }, "low_latency");
+        assert_eq!((four["rvc_preset"].as_str(), four["worker_priority"].as_str()), (Some("low_latency"), Some("protect_voice")));
+        assert_eq!(four.len(), one.len(), "{four:?}");
+        let c4 = Config { ep: "cpu".into(), threads: Threads::Count { n: 4, normal: true }, tuned: Vec::new(), ..cfg.clone() };
+        assert_eq!(params_of(&c4, true, "low_latency", Some("rvc_cpu_threads"))["rvc_cpu_threads"], 4);
+        assert!(!params_of(&cfg, true, "low_latency", Some("rvc_cpu_threads")).contains_key("rvc_cpu_threads"));
+        for patch in [one, one_normal, two, pool, pool_normal, four] {
             let mut full = serde_json::to_value(crate::services::voice_changer::params::VoiceChangerParams::default()).unwrap();
             for (k, v) in &patch {
                 assert!(full.get(k).is_some(), "{k} is not a params field");
@@ -2266,16 +2563,30 @@ mod tests {
         }
     }
 
-    /// The CPU thread stage keeps an explicit worker priority: `protect_game` never gets the pool,
-    /// `protect_voice` is never demoted to two threads, and its pool keeps `protect_voice`.
+    /// The CPU thread stage (P3B-G) sweeps 1-6 threads and the pool at both priorities for `auto`,
+    /// and keeps an explicit worker priority: `protect_game` stays at 1-2 threads below normal,
+    /// `protect_voice` at normal priority. Counts never exceed the logical CPUs.
     #[test]
     fn the_cpu_thread_stage_keeps_an_explicit_priority() {
-        assert_eq!(Threads::sweep("auto"), &[Threads::One, Threads::Two, Threads::Pool]);
-        assert_eq!(Threads::sweep("protect_game"), &[Threads::One, Threads::Two]);
-        assert_eq!(Threads::sweep("protect_voice"), &[Threads::One, Threads::Pool]);
-        assert_eq!(Threads::Pool.params("quality", "protect_voice").1, Some("protect_voice"));
-        assert_eq!(Threads::Pool.params("quality", "auto").1, Some("auto"));
-        assert_eq!(Threads::One.params("quality", "protect_game"), (Some("streamer".to_string()), None));
+        let c = |n: u8, normal: bool| Threads::Count { n, normal };
+        let auto = Threads::sweep("auto", 16);
+        assert_eq!(auto.len(), 2, "both priorities");
+        assert_eq!(auto[0], vec![c(1, false), c(2, false), c(3, false), c(4, false), c(6, false), Threads::Pool { normal: false }]);
+        assert!(auto[1].iter().all(|t| matches!(t, Threads::Count { normal: true, .. } | Threads::Pool { normal: true })));
+        assert_eq!(Threads::sweep("protect_game", 16), vec![vec![c(1, false), c(2, false)]]);
+        let voice = Threads::sweep("protect_voice", 16);
+        assert_eq!(voice.len(), 1);
+        assert!(voice[0].iter().all(|t| matches!(t, Threads::Count { normal: true, .. } | Threads::Pool { normal: true })));
+        // Four logical CPUs: 1, 2, 3 threads and the pool.
+        assert_eq!(Threads::sweep("auto", 4)[0], vec![c(1, false), c(2, false), c(3, false), Threads::Pool { normal: false }]);
+        assert_eq!(Threads::sweep("auto", 1)[0], vec![c(1, false), Threads::Pool { normal: false }]);
+        // The benchmark builds counts of 2+ with explicit intra-op threads.
+        assert_eq!((c(1, true).intra_threads(), c(4, false).intra_threads(), Threads::Pool { normal: true }.intra_threads()), (None, Some(4), None));
+        assert!(c(1, true).expressible(None) && c(2, false).expressible(None) && Threads::Pool { normal: true }.expressible(None));
+        assert!(!c(2, true).expressible(None) && !c(4, false).expressible(None) && c(4, false).expressible(Some("x")));
+        assert_eq!((c(2, true).count_param(), c(2, false).count_param(), c(6, false).count_param()), (Some(2), None, Some(6)));
+        assert_eq!(c(1, true).label(), "1@normal");
+        assert_eq!(Threads::Pool { normal: false }.label(), "pool@below_normal");
     }
 
     fn outcomes(rows: &[(&str, &str, &str)]) -> EngineInfo {

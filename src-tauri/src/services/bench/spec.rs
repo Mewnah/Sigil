@@ -25,6 +25,24 @@
 //!   convolutions); `load.gpu` itself is unchanged.
 //! - Run modes `quality` (fidelity against the offline ceiling), `compare` (competitor WAVs),
 //!   `contention` (named load profiles) and `autotune` (the per-PC autotuner).
+//!
+//! P3B-S0 added (frozen; serde defaults keep every earlier spec parsing and meaning the same; each
+//! field is a no-op until its workstream lands):
+//! - `load.gpu.out_of_process` (P3B-A: the `--headless gpu-load` child);
+//! - `rvc` engine: `cpu_arena`, `dynamic_block_base`, `qos` (`app` | `none`; P3B-A / P3B-G) and
+//!   `content_variant` (`auto` | `fp32` | `fp16` | `int8`; P3B-B / P3B-D);
+//! - quality `ceiling.mode` (`long_shape` default | `whole` | `b`), quality `fidelity`
+//!   ([`FidelitySpec`]: `offsets_s`, `reference_clips`) and `scoring.analyzer` (`v1` default | `v2`)
+//!   (P3B-B);
+//! - `stream`: `output_cushion` (`fixed` | `adaptive`), `sola_search_ms` (null = automatic) and
+//!   `device_block` (`fixed` | `model_divisor`) (P3B-H; the cushion reaches the bench's
+//!   `OutputPlayback` through `vc_rt`);
+//! - run modes `rescore` ([`RescoreRun`]: score saved stream / ceiling WAV pairs; P3B-B) and
+//!   `load_twice` ([`LoadTwiceRun`]: a second voice in the same process; P3B-A);
+//! - `vram` ([`VramSpec`]: `sample_ms`, the load-peak sampler; P3B-A);
+//! - compare v2 (P3B-C): `compare.corpus` (a corpus manifest), candidate metadata (`system`,
+//!   `app_version`, `config`, `latency_kind`, `input_sha256`, `voice_sha256`, `call_ms`) and
+//!   `sigil.configs`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -68,6 +86,19 @@ pub struct BenchSpec {
     pub thresholds: Thresholds,
     #[serde(default)]
     pub output: OutputSpec,
+    /// P3B-S0: VRAM sampling during the engine load (P3B-A).
+    #[serde(default)]
+    pub vram: VramSpec,
+}
+
+/// VRAM sampling of a benchmark (P3B-S0; P3B-A implements the sampler).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VramSpec {
+    /// Period of the load-peak sampler around the engine load (ms); 0 = off (today's single
+    /// before / after measurement).
+    #[serde(default)]
+    pub sample_ms: f64,
 }
 
 fn default_schema() -> String {
@@ -222,6 +253,20 @@ pub struct StreamSpec {
     /// Silence-gate threshold (RMS dBFS, -90..-10).
     #[serde(default = "default_silence_db")]
     pub silence_db: f32,
+    // ---- P3B-S0 (the params of the same names; no-ops until P3B-H) ----
+    /// `fixed` (the prefill as set) or `adaptive`.
+    #[serde(default = "default_fixed")]
+    pub output_cushion: String,
+    /// SOLA search window (ms, 0-10); `None` = automatic (overlap / 2).
+    #[serde(default)]
+    pub sola_search_ms: Option<f64>,
+    /// `fixed` (`block_frames` as set) or `model_divisor`.
+    #[serde(default = "default_fixed")]
+    pub device_block: String,
+}
+
+fn default_fixed() -> String {
+    "fixed".to_string()
 }
 
 impl Default for StreamSpec {
@@ -304,6 +349,11 @@ impl StreamSpec {
     /// Crossfade in model-output samples, as the worker computes it.
     pub fn crossfade_samples(&self, model_out_sr: u32) -> usize {
         ((self.crossfade_ms / 1000.0) * f64::from(model_out_sr)).round().max(0.0) as usize
+    }
+
+    /// The output cushion mode of the stream (P3B-S0).
+    pub fn output_cushion(&self) -> crate::services::voice_changer::params::OutputCushion {
+        crate::services::voice_changer::params::OutputCushion::from_str_lossy(&self.output_cushion)
     }
 
     /// The hot voice controls of the stream.
@@ -497,6 +547,25 @@ pub struct RvcSpec {
     /// P5-S0: a reference WAV used directly (wins over `reference_voice`; no library needed).
     #[serde(default)]
     pub reference_clip: String,
+    // ---- P3B-S0 (no-ops until their workstream lands) ----
+    /// ONNX Runtime's CPU arena for the voice's sessions; `None` = the voice changer's rule
+    /// (`ort_session::vc_cpu_arena_default`). P3B-G.
+    #[serde(default)]
+    pub cpu_arena: Option<bool>,
+    /// ONNX Runtime's `session.dynamic_block_base` (`VcSessionOptions::dynamic_block_base`). P3B-G.
+    #[serde(default)]
+    pub dynamic_block_base: Option<i32>,
+    /// `app` (default: the app's process QoS opt-out, as the voice changer runs) or `none`. P3B-A.
+    #[serde(default = "default_qos")]
+    pub qos: String,
+    /// Content-encoder variant: `auto` (the pool's order) or `fp32` / `fp16` / `int8` pinned
+    /// (P3B-B's ceiling, P3B-D's precision checks).
+    #[serde(default = "default_auto")]
+    pub content_variant: String,
+}
+
+fn default_qos() -> String {
+    "app".to_string()
 }
 
 fn default_auto() -> String {
@@ -542,6 +611,10 @@ pub enum RunSpec {
     Contention(ContentionRun),
     /// The per-PC autotuner on the spec's voice.
     Autotune(AutotuneRun),
+    /// P3B-S0: score saved stream / ceiling WAV pairs with the current scorer (P3B-B).
+    Rescore(RescoreRun),
+    /// P3B-S0: load a second voice in the same process (cold vs warm load; P3B-A).
+    LoadTwice(LoadTwiceRun),
 }
 
 impl RunSpec {
@@ -554,6 +627,8 @@ impl RunSpec {
             RunSpec::Compare(r) => &r.name,
             RunSpec::Contention(r) => &r.name,
             RunSpec::Autotune(r) => &r.name,
+            RunSpec::Rescore(r) => &r.name,
+            RunSpec::LoadTwice(r) => &r.name,
         }
     }
 
@@ -566,6 +641,8 @@ impl RunSpec {
             RunSpec::Compare(_) => RunMode::Compare,
             RunSpec::Contention(_) => RunMode::Contention,
             RunSpec::Autotune(_) => RunMode::Autotune,
+            RunSpec::Rescore(_) => RunMode::Rescore,
+            RunSpec::LoadTwice(_) => RunMode::LoadTwice,
         }
     }
 
@@ -578,6 +655,8 @@ impl RunSpec {
             RunSpec::Compare(r) => &r.thresholds,
             RunSpec::Contention(r) => &r.thresholds,
             RunSpec::Autotune(r) => &r.thresholds,
+            RunSpec::Rescore(r) => &r.thresholds,
+            RunSpec::LoadTwice(r) => &r.thresholds,
         }
     }
 
@@ -585,7 +664,7 @@ impl RunSpec {
     /// its own; a compare run only when Sigil's own output is one of the rows).
     pub fn uses_engine(&self) -> bool {
         match self {
-            RunSpec::E2eLoopback(_) | RunSpec::Autotune(_) => false,
+            RunSpec::E2eLoopback(_) | RunSpec::Autotune(_) | RunSpec::Rescore(_) => false,
             RunSpec::Compare(c) => c.sigil.include,
             _ => true,
         }
@@ -611,10 +690,14 @@ pub enum RunMode {
     Autotune,
     /// A recording of the running voice changer (`live_record.rs`; reports only, not a spec mode).
     LiveRecord,
+    /// P3B-S0: saved WAV pairs scored again (P3B-B).
+    Rescore,
+    /// P3B-S0: a second voice loaded in the same process (P3B-A).
+    LoadTwice,
 }
 
 impl RunMode {
-    pub const ALL: [RunMode; 8] = [
+    pub const ALL: [RunMode; 10] = [
         RunMode::Offline,
         RunMode::Paced,
         RunMode::E2eLoopback,
@@ -623,6 +706,8 @@ impl RunMode {
         RunMode::Contention,
         RunMode::Autotune,
         RunMode::LiveRecord,
+        RunMode::Rescore,
+        RunMode::LoadTwice,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -635,6 +720,8 @@ impl RunMode {
             RunMode::Contention => "contention",
             RunMode::Autotune => "autotune",
             RunMode::LiveRecord => "live_record",
+            RunMode::Rescore => "rescore",
+            RunMode::LoadTwice => "load_twice",
         }
     }
 }
@@ -769,6 +856,10 @@ pub struct GpuLoadSpec {
     /// MatMuls per run.
     #[serde(default = "default_gpu_depth")]
     pub depth: usize,
+    /// P3B-S0: run the load in a separate `Sigil.exe --headless gpu-load` process (a game's own
+    /// process and queue; P3B-A). `false` = the in-process load (today).
+    #[serde(default)]
+    pub out_of_process: bool,
 }
 
 fn default_gpu_period_ms() -> f64 {
@@ -894,6 +985,12 @@ pub struct CeilingSpec {
     /// noise. `false` keeps the run's levers.
     #[serde(default = "default_true")]
     pub exact: bool,
+    /// `long_shape` (default: the long blocks above), `whole` (the whole utterance in one
+    /// dynamic-shape call) or `b` (ceiling B: 400 ms blocks, 160 ms lookahead). A scorer v2 run of a
+    /// template voice renders all three; the mode picks the primary, the ceiling the v1 metrics and the
+    /// headline v2 rows use (P3B-B, ADR 0009).
+    #[serde(default = "default_ceiling_mode")]
+    pub mode: String,
 }
 
 impl Default for CeilingSpec {
@@ -903,8 +1000,26 @@ impl Default for CeilingSpec {
             extra_context_ms: default_ceiling_extra_context_ms(),
             lookahead_ms: default_ceiling_lookahead_ms(),
             exact: true,
+            mode: default_ceiling_mode(),
         }
     }
+}
+
+fn default_ceiling_mode() -> String {
+    "long_shape".to_string()
+}
+
+/// P3B-S0: how a quality run samples fidelity (P3B-B).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FidelitySpec {
+    /// Lead silences (s) the clip is scored at (different anchored-noise realizations; the report
+    /// gives the median and spread); empty = the run's `lead_s` only.
+    #[serde(default)]
+    pub offsets_s: Vec<f64>,
+    /// Clips of the target speaker for the identity metric (speech only); empty = none.
+    #[serde(default)]
+    pub reference_clips: Vec<PathBuf>,
 }
 
 fn default_ceiling_block_ms() -> f64 {
@@ -942,6 +1057,14 @@ pub struct ScoringSpec {
     /// Click detector threshold (second-difference peak over its local level).
     #[serde(default = "default_click_threshold")]
     pub click_threshold: f64,
+    /// The scorer set: `v1` (default: the P3 metrics), `v2` (P3B-B, ADR 0009; v1 is reported next
+    /// to it) or `v2+ablations` (v2 plus the oracle ablations at the first offset).
+    #[serde(default = "default_analyzer")]
+    pub analyzer: String,
+}
+
+fn default_analyzer() -> String {
+    "v1".to_string()
 }
 
 impl Default for ScoringSpec {
@@ -975,6 +1098,47 @@ pub struct QualityRun {
     /// Transcribe the input, the stream and the ceiling for CER (plan T5: CER <= offline + 1 pt).
     #[serde(default)]
     pub stt: Option<SttSpec>,
+    /// P3B-S0: offsets and reference clips (P3B-B).
+    #[serde(default)]
+    pub fidelity: FidelitySpec,
+    #[serde(default)]
+    pub thresholds: Thresholds,
+}
+
+/// One saved rendition pair of a `rescore` run (P3B-S0).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RescorePair {
+    /// Row name in the report.
+    pub name: String,
+    /// The streamed output WAV.
+    pub stream: PathBuf,
+    /// The offline ceiling's WAV of the same input.
+    pub ceiling: PathBuf,
+    /// The input clip (F0 and speech regions); `None` = derived from the ceiling.
+    #[serde(default)]
+    pub input: Option<PathBuf>,
+}
+
+/// P3B-S0: score saved stream / ceiling WAV pairs (any build's output, `exe-s0` included) with the
+/// current scorer (P3B-B implements it).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RescoreRun {
+    pub name: String,
+    #[serde(default)]
+    pub pairs: Vec<RescorePair>,
+    #[serde(default)]
+    pub scoring: ScoringSpec,
+    #[serde(default)]
+    pub thresholds: Thresholds,
+}
+
+/// P3B-S0: load the spec's voice a second time in the same process (P3B-A implements it).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoadTwiceRun {
+    pub name: String,
     #[serde(default)]
     pub thresholds: Thresholds,
 }
@@ -999,6 +1163,10 @@ pub struct CompareSigil {
     pub latency_from: String,
     #[serde(default = "default_latency_metric")]
     pub latency_metric: String,
+    /// P3B-S0: Sigil configurations scored as rows (`shipping_default`, `autotuned`,
+    /// `low_latency`, `quality`); empty = the spec's engine only (P3B-C).
+    #[serde(default)]
+    pub configs: Vec<String>,
 }
 
 impl Default for CompareSigil {
@@ -1024,6 +1192,39 @@ pub struct CandidateSpec {
     pub latency_ms: Option<f64>,
     #[serde(default)]
     pub notes: String,
+    // ---- P3B-S0 metadata (P3B-C) ----
+    /// The system that produced it (`rvc_webui`, `applio`, `w_okada`, ...).
+    #[serde(default)]
+    pub system: String,
+    #[serde(default)]
+    pub app_version: String,
+    /// Its settings (`block_ms`, `extra_ms`, `crossfade_ms`, `f0_method`, `index_rate`, `protect`,
+    /// `rms_mix`, `precision`, `ep`, `gpu`).
+    #[serde(default)]
+    pub config: Option<serde_json::Value>,
+    /// How `latency_ms` was measured: `e2e_loopback`, `declared` or `algorithmic` (empty =
+    /// unknown).
+    #[serde(default)]
+    pub latency_kind: String,
+    #[serde(default)]
+    pub input_sha256: String,
+    #[serde(default)]
+    pub voice_sha256: String,
+    /// Its per-block compute (ms), when its driver measured it.
+    #[serde(default)]
+    pub call_ms: Option<CallMsStats>,
+}
+
+/// Per-block compute statistics of a competitor (P3B-S0).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallMsStats {
+    #[serde(default)]
+    pub p50: Option<f64>,
+    #[serde(default)]
+    pub p95: Option<f64>,
+    #[serde(default)]
+    pub p99: Option<f64>,
 }
 
 /// Competitor comparison on the same input.
@@ -1034,6 +1235,11 @@ pub struct CompareRun {
     /// The input every candidate converted; `None` = the spec's input.
     #[serde(default)]
     pub input: Option<PathBuf>,
+    /// A `sigil-compare-corpus/1` manifest (`compare.rs` `CorpusManifest`; template
+    /// `scripts/bench/corpus.example.json`): several clips with their points, scored per clip with
+    /// paired statistics (compare v2, T6). `candidates` are ignored when it is set.
+    #[serde(default)]
+    pub corpus: Option<PathBuf>,
     /// Transpose every candidate used (the input F0 is shifted by it for the pitch errors).
     #[serde(default)]
     pub semitones: f32,
@@ -1180,9 +1386,27 @@ impl BenchSpec {
         }
         for run in &mut self.runs {
             let scoring = match run {
-                RunSpec::Quality(q) => Some(&mut q.scoring),
+                RunSpec::Quality(q) => {
+                    for p in &mut q.fidelity.reference_clips {
+                        fix(p);
+                    }
+                    Some(&mut q.scoring)
+                }
+                RunSpec::Rescore(r) => {
+                    for pair in &mut r.pairs {
+                        fix(&mut pair.stream);
+                        fix(&mut pair.ceiling);
+                        if let Some(p) = &mut pair.input {
+                            fix(p);
+                        }
+                    }
+                    Some(&mut r.scoring)
+                }
                 RunSpec::Compare(c) => {
                     if let Some(p) = &mut c.input {
+                        fix(p);
+                    }
+                    if let Some(p) = &mut c.corpus {
                         fix(p);
                     }
                     for cand in &mut c.candidates {
@@ -1360,6 +1584,17 @@ impl StreamSpec {
         check_range("stream.formant_shift", f64::from(self.formant_shift), -1.0, 1.0)?;
         check_range("stream.input_gain", f64::from(self.input_gain), 0.0, 16.0)?;
         check_range("stream.output_gain", f64::from(self.output_gain), 0.0, 16.0)?;
+        match self.output_cushion.trim().to_ascii_lowercase().as_str() {
+            "fixed" | "adaptive" => {}
+            other => return Err(format!("stream.output_cushion '{other}' must be fixed or adaptive")),
+        }
+        match self.device_block.trim().to_ascii_lowercase().as_str() {
+            "fixed" | "model_divisor" => {}
+            other => return Err(format!("stream.device_block '{other}' must be fixed or model_divisor")),
+        }
+        if let Some(ms) = self.sola_search_ms {
+            check_range("stream.sola_search_ms", ms, 0.0, 10.0)?;
+        }
         match self.worker_priority.as_str() {
             "auto" | "protect_game" | "protect_voice" => Ok(()),
             other => Err(format!(
@@ -1443,6 +1678,17 @@ impl EngineSpec {
                 }
                 check_range("engine.block_ms", r.block_ms, 0.0, 200.0)?;
                 check_range("engine.lookahead_ms", r.lookahead_ms, 0.0, 80.0)?;
+                match r.qos.trim().to_ascii_lowercase().as_str() {
+                    "app" | "none" => {}
+                    other => return Err(format!("engine.qos '{other}' must be app or none")),
+                }
+                match r.content_variant.trim().to_ascii_lowercase().as_str() {
+                    "auto" | "fp32" | "fp16" | "int8" => {}
+                    other => return Err(format!("engine.content_variant '{other}' must be auto, fp32, fp16 or int8")),
+                }
+                if let Some(n) = r.dynamic_block_base {
+                    check_range("engine.dynamic_block_base", f64::from(n), 1.0, 1_024.0)?;
+                }
                 if r.lookahead_ms > 0.0 && r.build.trim().eq_ignore_ascii_case("factory") {
                     return Err("engine.lookahead_ms needs build 'auto' or 'direct' (the factory does not take it)".into());
                 }
@@ -1501,6 +1747,13 @@ impl RunSpec {
                 check_range("ceiling.block_ms", q.ceiling.block_ms, 20.0, 200.0)?;
                 check_range("ceiling.extra_context_ms", q.ceiling.extra_context_ms, 0.0, 4_000.0)?;
                 check_range("ceiling.lookahead_ms", q.ceiling.lookahead_ms, 0.0, 80.0)?;
+                match q.ceiling.mode.trim().to_ascii_lowercase().as_str() {
+                    "long_shape" | "whole" | "b" => {}
+                    other => return Err(format!("ceiling.mode '{other}' must be long_shape, whole or b")),
+                }
+                for &o in &q.fidelity.offsets_s {
+                    check_range("fidelity.offsets_s[]", o, 0.0, 30.0)?;
+                }
                 q.scoring.validate()?;
                 if let Some(stt) = &q.stt {
                     if stt.engine.trim().is_empty() {
@@ -1513,8 +1766,8 @@ impl RunSpec {
                 c.scoring.validate()?;
                 check_range("semitones", f64::from(c.semitones), -48.0, 48.0)?;
                 check_range("max_offset_ms", c.max_offset_ms, 10.0, 10_000.0)?;
-                if !c.sigil.include && c.candidates.is_empty() {
-                    return Err("a compare run needs candidates or sigil.include".into());
+                if !c.sigil.include && c.candidates.is_empty() && c.corpus.is_none() {
+                    return Err("a compare run needs candidates, a corpus or sigil.include".into());
                 }
                 let mut names = HashSet::new();
                 for cand in &c.candidates {
@@ -1535,10 +1788,46 @@ impl RunSpec {
                 if let Some(l) = c.sigil.latency_ms {
                     check_range("sigil.latency_ms", l, 0.0, 10_000.0)?;
                 }
+                for cand in &c.candidates {
+                    match cand.latency_kind.trim() {
+                        "" | "e2e_loopback" | "declared" | "algorithmic" => {}
+                        other => {
+                            return Err(format!(
+                                "candidate '{}': latency_kind '{other}' must be e2e_loopback, declared or algorithmic",
+                                cand.name
+                            ))
+                        }
+                    }
+                }
+                for cfg in &c.sigil.configs {
+                    match cfg.trim() {
+                        "shipping_default" | "autotuned" | "low_latency" | "quality" => {}
+                        other => {
+                            return Err(format!(
+                                "sigil.configs: '{other}' must be shipping_default, autotuned, low_latency or quality"
+                            ))
+                        }
+                    }
+                }
                 Ok(())
             }
             RunSpec::Contention(c) => super::contention::validate(c),
             RunSpec::Autotune(a) => a.request.validate(),
+            RunSpec::Rescore(r) => {
+                r.scoring.validate()?;
+                let mut names = HashSet::new();
+                for pair in &r.pairs {
+                    check_id("pairs[].name", &pair.name)?;
+                    if !names.insert(pair.name.as_str()) {
+                        return Err(format!("duplicate pair '{}'", pair.name));
+                    }
+                    if pair.stream.as_os_str().is_empty() || pair.ceiling.as_os_str().is_empty() {
+                        return Err(format!("pair '{}' needs a stream and a ceiling WAV", pair.name));
+                    }
+                }
+                Ok(())
+            }
+            RunSpec::LoadTwice(_) => Ok(()),
         }
     }
 }
@@ -1603,6 +1892,8 @@ impl ScoringSpec {
             "cpu" | "cuda" | "dml" => {}
             other => return Err(format!("scoring.analysis_ep '{other}' must be cpu, cuda or dml")),
         }
+        // v1, v2 or v2+ablations (the parser also rejects unknown options).
+        super::fidelity::analyzer_opts(&self.analyzer).map_err(|e| format!("{e} (scoring.analyzer must be v1, v2 or v2+ablations)"))?;
         check_range("scoring.click_threshold", self.click_threshold, 2.0, 100.0)
     }
 }
@@ -1619,6 +1910,30 @@ mod tests {
             "engine": { "kind": "stub" },
             "runs": [ { "mode": "offline", "name": "off" } ]
         })
+    }
+
+    /// P3B-I0: `scoring.analyzer` takes `v2+ablations`, and a compare run needs one of candidates,
+    /// a corpus or `sigil.include`.
+    #[test]
+    fn scorer_v2_options_and_corpus_compare_validate() {
+        for (analyzer, ok) in [("v1", true), ("v2", true), ("v2+ablations", true), ("v2+fast", false), ("v1+ablations", false), ("v3", false)] {
+            let mut v = minimal();
+            v["runs"] = serde_json::json!([{ "mode": "offline", "name": "off" }, { "mode": "quality", "name": "q", "scoring": { "analyzer": analyzer } }]);
+            let r = BenchSpec::from_value(v);
+            assert_eq!(r.is_ok(), ok, "{analyzer}: {:?}", r.err());
+        }
+        let compare = |body: serde_json::Value| {
+            let mut v = minimal();
+            let mut run = serde_json::json!({ "mode": "compare", "name": "c", "sigil": { "include": false } });
+            for (k, val) in body.as_object().unwrap() {
+                run[k] = val.clone();
+            }
+            v["runs"] = serde_json::json!([run]);
+            BenchSpec::from_value(v)
+        };
+        let err = compare(serde_json::json!({})).unwrap_err();
+        assert!(err.contains("candidates, a corpus or sigil.include"), "{err}");
+        assert!(compare(serde_json::json!({ "corpus": "corpus.json" })).is_ok());
     }
 
     #[test]

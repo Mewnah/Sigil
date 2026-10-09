@@ -16,6 +16,8 @@
 //! - P5-S0: `families` lists every P5 voice family (`vc::families`) with its facts and whether this
 //!   build runs it (`FamilyKind::available`); `slot_formats` gains the formats of the families that
 //!   run.
+//! - P3B-S0: the `content_norm` and `f0_decode` levers read `content::running_norm_available` and
+//!   `vc::f0_decode::available`.
 
 use serde::Serialize;
 use tauri::command;
@@ -83,6 +85,9 @@ pub(crate) fn lever_available(lever: Lever) -> bool {
         Lever::CudaGraphs => gpu::io_binding::available() && gpu::cuda_graph::available(),
         Lever::GpuPriority => gpu::cuda_stream::available() || gpu::dml_queue::available(),
         Lever::Governor => engine::governor::available(),
+        // P3B-S0: offered once their workstream lands (P3B-D, P3B-F).
+        Lever::ContentNorm => engine::content::running_norm_available(),
+        Lever::F0Decode => crate::services::neural_audio::vc::f0_decode::available(),
     }
 }
 
@@ -173,6 +178,9 @@ pub(crate) fn resolve_levers(
         if mode == LeverMode::On && !on {
             let why = if lever_available(lever) {
                 format!("does not apply on the {base} execution provider")
+            } else if lever == Lever::ContentNorm {
+                // Offered only when the content encoder has an installed stream variant (P3B-D).
+                "needs the content encoder's stream variant, which is not installed".to_string()
             } else {
                 "not available in this build".to_string()
             };

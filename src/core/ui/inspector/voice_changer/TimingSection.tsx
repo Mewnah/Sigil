@@ -1,5 +1,7 @@
 // Voice-changer inspector (P3-S0 split of inspector_voice_changer.tsx; owned by P3-G).
-// Timing and buffer (latency preset, budget, worker priority) and the advanced block / buffer settings.
+// Timing and buffer (latency preset, budget, worker priority) and the advanced block / buffer settings;
+// in RVC mode also the pacing controls (P3B-H: output cushion, device block, SOLA search, content context).
+import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
 import {
     chunkFramesToMsAt48k,
     isVoiceChangerChunkFrames,
@@ -16,10 +18,12 @@ import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { InputContainer, InputSelect } from "../components/input";
 import { InspectorInfoButton, VcDetails, VcDraftNumberInput, VcSliderField, VcSubHeader } from "./common";
+import { PacingControls } from "./PacingControls";
 
 const LATENCY_BUDGET = VC_NUMBER_RANGES.latency_budget_ms;
 
-export const TimingSection: FC = () => {
+/** `metrics` is the running engine's latest sample, if any (the live output cushion). */
+export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ metrics = null }) => {
     const { t } = useTranslation();
     const voiceChanger = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
@@ -162,6 +166,7 @@ export const TimingSection: FC = () => {
                         />
                     </InputContainer>
                 </div>
+                {isRvc ? <PacingControls metrics={metrics} /> : null}
                 <label className="label cursor-pointer justify-start gap-2 py-0">
                     <input
                         type="checkbox"

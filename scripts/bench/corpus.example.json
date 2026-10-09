@@ -1,70 +1,131 @@
 {
-  "$comment": "Template for the local benchmark corpus manifest. Copy it to <app_data>/bench/corpus/corpus.json (Windows: %APPDATA%\\com.sigil.app\\bench\\corpus\\corpus.json) and list the clips stored next to it. The corpus holds consented recordings of real people: it lives only on your PC and is never committed or uploaded. Specs reference a clip with an input such as {\"kind\": \"wav\", \"path\": \"corpus/clips/speech-01.wav\"} (IPC specs resolve paths against <app_data>/bench/; CLI specs against the spec file's folder, so use an absolute path there). Synthetic stand-ins for every kind can be written with scripts/bench/make-test-clips.py.",
-  "schema": "sigil-bench-corpus/1",
-  "name": "local",
-  "description": "20 consented speech clips (VRChat-style mic, several speakers and languages), the same clips with world-music bleed at -20 dB, and a singing set.",
-  "defaults": {
-    "sample_rate": 48000,
-    "channels": 1,
-    "level": "as recorded (do not normalize; the harness measures real mic levels)"
+  "$comment": [
+    "Template of a compare corpus (schema sigil-compare-corpus/1): what Sigil's compare mode (bench/compare.rs, plan T6) scores Sigil against the other voice changers on. A compare run names it as compare.corpus; every path is relative to this file's folder.",
+    "Audio never goes into the repository. Build a corpus with scripts/bench/fetch-public-corpus.py (LibriSpeech test-clean and CMU ARCTIC with EGG truth, about 92 clips, written to %LOCALAPPDATA%/sigil-dev-cache/corpus/public-v1) or scripts/bench/make-test-clips.py --local-corpus (the dev cache's speech clips); consented recordings of real people may be added as clips too (local only).",
+    "clips: id (used as {clip} in point paths), input, its sha256 (checked), optional f0_truth (scripts/vc-bench/egg_f0.py CSV: tracker-independent truth, before the transpose) and references (neutral upstream renders from scripts/vc-bench/rvc_offline_reference.py, one per noise seed). DNSMOS is scored only on clips of 9.01 s or more; at a paired SD of 0.21 the +0.05 DNSMOS row needs about 68 clips (50 % power).",
+    "points: the other systems' operating points, one WAV per clip ({clip} in wav), each with the JSON sidecar its scripts/vc-bench driver wrote next to it (<wav>.json: config, input and voice sha256, per-block compute, GPU, latency). tier offline = a driver's block loop over the file; live = recorded through the devices (a captures entry, or play_record.py). Points whose transpose or voice differ from the corpus's are refused; offline points count only when their per-block p99 compute is below their block period on the run's GPU.",
+    "captures: record a live point's WAVs with Sigil's play-and-record meter (plays every clip on meter.output_device: record must be true; only missing WAVs unless overwrite). Start the system under test first (another app, or Sigil's own voice changer) with its input on the cable the meter plays to.",
+    "sigil.points: extra in-process Sigil rows, the spec's engine and stream with fields replaced; role ablation rows are paired with the row they ablate (versus) and never counted as competitors. Sigil's named configurations come from the compare run's sigil.configs (shipping_default, autotuned, low_latency, quality).",
+    "margins are fixed before the run (the defaults are the plan's: DNSMOS +0.05 superiority, non-inferiority 0.05 DNSMOS / 0.005 GPE / 0.1 dB MCD / 0.01 speaker similarity, latency 0.7x). stand_in_references renders the spec's own voice offline as references for a dry run before upstream renders exist (neutral between Sigil's rows, not between engines)."
+  ],
+  "schema": "sigil-compare-corpus/1",
+  "name": "public-v1",
+  "description": "LibriSpeech test-clean and CMU ARCTIC (EGG truth) clips of 10-20 s at -26 LUFS; the MIT default voice in every system.",
+  "voice": {
+    "name": "MIT default voice (PhoenixStormJr/RVC-V2-default-voice)",
+    "sha256": "c9d6b0ac7aa8df91917757894561cd690e5c4b66e97a9f92630c0a7257fbfccc",
+    "path": "default.pth"
   },
+  "transpose": 0,
   "clips": [
     {
+      "id": "libri-1089-1",
+      "input": "clips/libri-1089-1.wav",
+      "sha256": "",
+      "references": ["refs/libri-1089-1.seed1.wav", "refs/libri-1089-1.seed2.wav"],
+      "speaker": "librispeech-1089",
+      "sex": "M",
+      "language": "en",
+      "seconds": 12.4,
+      "source": "LibriSpeech test-clean: 1089-134686-0000, 1089-134686-0001",
+      "license": "CC BY 4.0 (LibriSpeech ASR corpus, Panayotov et al., OpenSLR 12)"
+    },
+    {
+      "id": "arctic-bdl-1",
+      "input": "clips/arctic-bdl-1.wav",
+      "sha256": "",
+      "f0_truth": "clips/arctic-bdl-1.f0.csv",
+      "references": ["refs/arctic-bdl-1.seed1.wav", "refs/arctic-bdl-1.seed2.wav"],
+      "speaker": "arctic-bdl",
+      "sex": "M",
+      "language": "en",
+      "seconds": 10.6,
+      "source": "CMU ARCTIC bdl: arctic_a0001, arctic_a0002, arctic_a0003, arctic_a0004",
+      "license": "CMU ARCTIC, BSD-style (free use with attribution; Kominek and Black, CMU LTI)"
+    },
+    {
       "id": "speech-01",
-      "file": "clips/speech-01.wav",
-      "kind": "speech",
+      "input": "clips/speech-01.wav",
+      "sha256": "",
       "speaker": "S1",
       "language": "en",
       "seconds": 10.0,
-      "mic": "headset",
-      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
-      "tags": ["male", "casual"],
-      "notes": "Plain reading, quiet room."
-    },
-    {
-      "id": "speech-02",
-      "file": "clips/speech-02.wav",
-      "kind": "speech",
-      "speaker": "S2",
-      "language": "ja",
-      "seconds": 10.0,
-      "mic": "desk condenser",
-      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
-      "tags": ["female", "fast"],
-      "notes": "Casual conversation, keyboard noise."
-    },
-    {
-      "id": "speech-01-bleed",
-      "file": "clips/speech-01-bleed.wav",
-      "kind": "speech_bleed",
-      "source": "speech-01",
-      "bleed_db": -20,
-      "speaker": "S1",
-      "language": "en",
-      "seconds": 10.0,
-      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
-      "notes": "speech-01 mixed with VRChat world music at -20 dB (make-test-clips.py --mix can make a synthetic stand-in)."
-    },
-    {
-      "id": "singing-01",
-      "file": "clips/singing-01.wav",
-      "kind": "singing",
-      "speaker": "S3",
-      "language": "en",
-      "seconds": 15.0,
-      "range": "E2-D#5",
-      "consent": { "given": true, "date": "2026-09-28", "scope": "local benchmarking only" },
-      "notes": "Sustained notes and a scale (F0 range and pitch-error checks)."
-    },
-    {
-      "id": "synthetic-voice",
-      "file": "clips/voice_48000.wav",
-      "kind": "synthetic",
-      "speaker": null,
-      "language": null,
-      "seconds": 10.0,
-      "consent": { "given": true, "date": null, "scope": "generated; no person" },
-      "notes": "python scripts/bench/make-test-clips.py --out <corpus>/clips --signals voice"
+      "source": "a consented recording (local only)",
+      "notes": "VRChat-style headset mic, plain reading."
     }
-  ]
+  ],
+  "points": [
+    {
+      "name": "rvc_webui-40",
+      "system": "rvc_webui",
+      "tier": "offline",
+      "wav": "out/rvc_webui/b40/{clip}.wav",
+      "config": { "block_ms": 40, "f0_method": "rmvpe" },
+      "notes": "rvc_webui_offline.py --corpus corpus.json --out-dir out/rvc_webui --sweep 40,60,100,250 (prints these entries)"
+    },
+    {
+      "name": "rvc_webui-250",
+      "system": "rvc_webui",
+      "tier": "offline",
+      "wav": "out/rvc_webui/b250/{clip}.wav",
+      "config": { "block_ms": 250, "f0_method": "rmvpe" }
+    },
+    {
+      "name": "applio-100",
+      "system": "applio",
+      "tier": "offline",
+      "wav": "out/applio/b100/{clip}.wav",
+      "config": { "block_ms": 100, "f0_method": "rmvpe" }
+    },
+    {
+      "name": "wokada-live",
+      "system": "w_okada",
+      "app_version": "VCClient 2.0",
+      "tier": "live",
+      "wav": "out/wokada-live/{clip}.wav",
+      "config": { "block_ms": 64, "f0_method": "rmvpe", "transpose": 0 },
+      "latency_ms": 190.0,
+      "latency_kind": "e2e_loopback",
+      "notes": "latency from an e2e_loopback run through the app (onset detector, calibrated)"
+    },
+    {
+      "name": "sigil-live",
+      "system": "sigil",
+      "role": "sigil",
+      "tier": "live",
+      "wav": "out/sigil-live/{clip}.wav",
+      "config": { "block_ms": 40, "f0_method": "rmvpe", "transpose": 0 },
+      "notes": "Sigil's own live voice changer, captured the same way as every other live system"
+    }
+  ],
+  "captures": [
+    {
+      "point": "wokada-live",
+      "record": false,
+      "meter": { "output_device": "CABLE Input", "input_device": "CABLE-B Output", "calibration_ms": 11.8 }
+    }
+  ],
+  "sigil": {
+    "points": [
+      {
+        "name": "abl-40",
+        "role": "ablation",
+        "versus": "low_latency",
+        "label": "SVE ablation: anchored noise and phase0 off",
+        "engine": { "levers": { "anchored_noise": "off", "nsf_phase0": "off" } }
+      }
+    ]
+  },
+  "margins": {
+    "dnsmos_superiority": 0.05,
+    "dnsmos_noninferiority": 0.05,
+    "gpe_noninferiority": 0.005,
+    "mcd_noninferiority_db": 0.1,
+    "speaker_noninferiority": 0.01,
+    "latency_ratio": 0.7
+  },
+  "min_clips": 20,
+  "analyzers": ["rmvpe", "swiftf0", "crepe", "dio"],
+  "loudness_lufs": -26,
+  "listening": { "sigil": "low_latency" }
 }

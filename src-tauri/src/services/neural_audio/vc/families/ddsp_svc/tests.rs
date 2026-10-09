@@ -1124,6 +1124,9 @@ fn real_model(a: &RealAssets, layout: &DdspLayout, slot: &Path, ep: &str, pitch_
             rmvpe_path: a.rmvpe.as_deref(),
             app_data: None,
             small_models_on_cpu: true,
+            precision: crate::services::neural_audio::vc::engine::PrecisionMode::Auto,
+            expected_call_frames: None,
+            max_context_16k: None,
         },
         GpuLevers::from_effective(&levers),
     )?;

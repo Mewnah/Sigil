@@ -1,0 +1,32 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-F streaming F0 v2 fidelity A/B (P3B-B scorer v2, ADR 0009): the voice in ${SLOT} on ${EP}, ${PITCH} F0, ${BLOCK_MS} ms engine blocks on the voice changer's default 512-frame device block, ${EXTRA_MS} ms extra context, ${LOOKAHEAD_MS} ms lookahead, the ${PRESET} preset, levers ${LEVERS_JSON}, the clip ${CLIP} scored at three absolute offsets (leads of at least 4 s, so the stream starts in silence and the silence skip runs before every utterance) against ceiling A (long shape, the primary), ceiling B and the whole-utterance ceiling, with the floors. The fed-F0 rows (fine pitch error, gross pitch error, V/UV and onset lag of the F0 the engine fed its generator, against whole-clip RMVPE of the input) are the P3B-F targets; MCD, speaker cosine and DNSMOS must stay within noise. Materialized by scripts/bench/specs/p3b/f/run_fidelity.ps1, each side with its own SIGIL_VC_F0_* / SIGIL_RMVPE_* switches in its environment (one executable).",
+  "seed": 20261003,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "${PRESET}",
+    "block_ms": ${BLOCK_MS},
+    "lookahead_ms": ${LOOKAHEAD_MS},
+    "levers": ${LEVERS_JSON},
+    "build": "direct"
+  },
+  "runs": [
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 4.0,
+      "ceiling": { "mode": "long_shape" },
+      "fidelity": { "offsets_s": [4.0, 4.27, 4.61], "reference_clips": [] },
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu", "analyzer": "v2" }
+    }
+  ],
+  "thresholds": {},
+  "output": { "write_timeline": false, "write_audio": false }
+}

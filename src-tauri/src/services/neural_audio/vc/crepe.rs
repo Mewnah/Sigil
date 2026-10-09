@@ -74,6 +74,8 @@ pub struct CrepePitchExtractor {
     periodicity: Vec<f32>,
     tmp: Vec<f32>,
     confidence: Vec<f32>,
+    /// The probabilities of the last call (`frames × 360`), for [`PitchExtractor::last_salience`].
+    salience: Vec<f32>,
 }
 
 impl CrepePitchExtractor {
@@ -134,6 +136,7 @@ impl CrepePitchExtractor {
             periodicity: Vec::new(),
             tmp: Vec::new(),
             confidence: Vec::new(),
+            salience: Vec::new(),
         })
     }
 
@@ -250,9 +253,21 @@ fn mean3(src: &[f32], out: &mut Vec<f32>) {
 
 impl PitchExtractor for CrepePitchExtractor {
     fn f0(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
+        let mut f0 = Vec::with_capacity(mono_16k.len() / HOP + 1);
+        self.f0_into(mono_16k, &mut f0)?;
+        Ok(f0)
+    }
+
+    /// P3B-E: straight into the caller's buffer (no contour allocation; the ONNX Runtime call
+    /// itself still allocates its outputs), with the probabilities kept for [`last_salience`].
+    ///
+    /// [`last_salience`]: PitchExtractor::last_salience
+    fn f0_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+        out.clear();
+        self.salience.clear();
         if mono_16k.is_empty() {
             self.confidence.clear();
-            return Ok(Vec::new());
+            return Ok(());
         }
         let n = frame_windows(mono_16k, &mut self.frames, &mut self.levels);
         let run_n = self.pin.size(n);
@@ -282,6 +297,11 @@ impl PitchExtractor for CrepePitchExtractor {
         let rows = n;
         self.raw_f0.clear();
         self.periodicity.clear();
+        self.salience.extend(
+            prob[..rows * SALIENCE_BINS]
+                .iter()
+                .map(|&v| if v.is_finite() { v } else { 0.0 }),
+        );
         for row in prob[..rows * SALIENCE_BINS].chunks_exact(SALIENCE_BINS) {
             let (hz, peak) = local_average_f0(row);
             self.raw_f0.push(hz);
@@ -291,16 +311,21 @@ impl PitchExtractor for CrepePitchExtractor {
         drop(outputs);
         median3(&self.periodicity, &mut self.confidence);
         mean3(&self.raw_f0, &mut self.tmp);
-        let mut f0 = Vec::with_capacity(n);
         for ((&hz, &pd), &level) in self.tmp.iter().zip(&self.confidence).zip(&self.levels) {
-            f0.push(if pd >= self.periodicity_threshold && level >= SILENCE_DBFS {
+            out.push(if pd >= self.periodicity_threshold && level >= SILENCE_DBFS {
                 hz
             } else {
                 0.0
             });
         }
-        self.post.process(&mut f0, &self.post_cfg);
-        Ok(f0)
+        self.post.process(out, &self.post_cfg);
+        Ok(())
+    }
+
+    /// The network's probabilities of the last call (`frames × 360`, the 20-cent grid RMVPE uses).
+    fn last_salience(&self) -> Option<(&[f32], usize)> {
+        (!self.salience.is_empty() && self.salience.len() == self.confidence.len() * SALIENCE_BINS)
+            .then_some((self.salience.as_slice(), SALIENCE_BINS))
     }
 
     /// ±512-sample windows (±3.2 frames), then the 3-tap filters and the median of the octave gate.

@@ -24,6 +24,17 @@
 //!   (metric functions) with [`dsp`] and [`scorers`] (CAM++, DNSMOS, STT), [`ceiling`] (the offline
 //!   ceiling) and `fidelity` (the `quality` mode), [`compare`], [`contention`], [`live_record`],
 //!   [`autotune`].
+//! - P3B-A: [`attribution`] (per-call stage / glue / harness / sync / GPU-time metrics, onset calls,
+//!   SOLA join histograms, the paced T1 decomposition, the load breakdown, the algorithmic latency
+//!   table and the `load_twice` run), [`gpu_state`] (NVML clocks / P-state / reasons, the GPU speed
+//!   index, the host probe, power plan and QoS, the VRAM load-peak sampler and the CUDA context,
+//!   memory and arena probes), [`gpu_load_child`] (the out-of-process GPU load,
+//!   `--headless gpu-load`), [`metrics::paired`] (the perf gate's paired statistics). Every spec
+//!   records `neural_audio::telemetry` while it runs; the engine load's breakdown, VRAM ledger and
+//!   CUDA figures go to `report.engine.attribution` and into every engine run's metrics
+//!   (`load_<stage>_ms`, `vram_load_peak_mb`, `vram_cuda_context_mb`, `generator_builds`), each
+//!   run's GPU / host state to `details.state` (`state_*` metrics). `engine.qos = app` (default)
+//!   applies the app's process EcoQoS opt-out before the load, as the voice changer runs.
 //!
 //! # Frozen contract (P1-S0b; change only through INTEGRATE)
 //! - [`headless_bench`]`(spec, out) -> Result<String, String>`: body of
@@ -44,6 +55,10 @@
 //! EP outcomes as `bench.vc`, `bench.vc.content` and `bench.vc.pitch`, apart from the voice
 //! changer's rows, so an in-app RVC run may share the PC with a running voice changer.
 
+/// Oracle ablations of the fidelity scorer v2 (P3B-B; stub by P3B-S0).
+pub mod ablation;
+/// Per-stage attribution and the `load_twice` run (P3B-A; stub by P3B-S0).
+pub mod attribution;
 /// Per-PC autotuner (P3-F; scaffolded by P3-S0).
 pub mod autotune;
 /// The offline ceiling (P3-F).
@@ -59,12 +74,18 @@ pub mod e2e_loopback;
 pub mod engine;
 /// The `quality` run mode (P3-F).
 mod fidelity;
+/// The out-of-process GPU load, `--headless gpu-load` (P3B-A; stub by P3B-S0).
+pub mod gpu_load_child;
+/// GPU clocks / P-state and host state of a run (P3B-A; stub by P3B-S0).
+pub mod gpu_state;
 #[cfg(test)]
 mod hot_path_tests;
 /// In-app live recording of the running voice changer (P3-F; scaffolded by P3-S0).
 pub mod live_record;
 pub mod load_sim;
 pub mod metrics;
+/// Multi-clip scoring and the `rescore` run (P3B-B; stub by P3B-S0).
+pub mod multi_clip;
 mod offline;
 mod paced;
 /// Quality metrics against the offline ceiling (P3-F; scaffolded by P3-S0).
@@ -78,10 +99,13 @@ pub mod signals;
 pub mod spec;
 mod vc_rt;
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::services::neural_audio::telemetry;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -167,19 +191,136 @@ pub(crate) struct Prepared {
     pub vram_engine_mb: Option<f64>,
 }
 
-fn prepare(spec: &BenchSpec) -> Result<Prepared, String> {
+/// What `prepare` measured besides the [`Prepared`] engine (P3B-A): the engine-level metrics every
+/// engine run carries, the report's `engine.attribution`, and the CUDA context the benchmark
+/// retained (released when the spec ends).
+#[derive(Default)]
+struct PrepareExtras {
+    metrics: metrics::Metrics,
+    attribution: serde_json::Map<String, serde_json::Value>,
+    cuda: Option<gpu_state::cuda::ContextProbe>,
+}
+
+/// The run-state probes of a spec (`SIGIL_BENCH_STATE`: `off`, `light` = no GPU speed index,
+/// anything else = full).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StateMode {
+    Full,
+    Light,
+    Off,
+}
+
+impl StateMode {
+    fn from_env() -> StateMode {
+        match std::env::var("SIGIL_BENCH_STATE").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Ok("off" | "0") => StateMode::Off,
+            Ok("light") => StateMode::Light,
+            _ => StateMode::Full,
+        }
+    }
+}
+
+/// Whether an engine's active rung runs on the CUDA device context: CUDA itself and the TensorRT
+/// accelerators of the CUDA rung (`EngineInfo::gpu`'s rule). A CUDA plan that fell back to
+/// DirectML or the CPU is not.
+fn cuda_rung_active(active: Option<&str>) -> bool {
+    matches!(active, Some("cuda" | "tensorrt_rtx" | "tensorrt"))
+}
+
+/// The engine's process VRAM delta in MiB (`after - before`) without the CUDA context the
+/// benchmark retained for an engine that did not end up on the CUDA rung (`unused_context_mb`):
+/// that context is the benchmark's, not the engine's.
+fn engine_vram_mb(before: Option<u64>, after: Option<u64>, unused_context_mb: Option<f64>) -> Option<f64> {
+    match (before, after) {
+        (Some(a), Some(b)) => Some((b.saturating_sub(a) as f64 - unused_context_mb.unwrap_or(0.0)).max(0.0)),
+        _ => None,
+    }
+}
+
+/// The CUDA ordinal of a spec's engine when its sessions are planned on the CUDA rung (a plan, not
+/// an outcome: the CUDA pack may be missing, so `prepare` checks the loaded engine's active rung
+/// and drops the context it retained when the engine did not end up there).
+fn cuda_ordinal(spec: &BenchSpec) -> Option<i32> {
+    let spec::EngineSpec::Rvc(r) = &spec.engine else {
+        return None;
+    };
+    let priority = crate::services::rt_thread::WorkerPriority::from_str_lossy(&spec.stream.worker_priority);
+    let plan = rvc_build::plan(r, &spec.stream, priority).ok()?;
+    (plan.ep == "cuda").then_some(r.gpu_device_index)
+}
+
+/// The process QoS of the run (`engine.qos`): `app` applies the app's EcoQoS opt-out (the
+/// headless bench never ran the diagnostics plugin that does it), `none` leaves the process as
+/// Windows manages it. Returns what was asked.
+fn apply_qos(spec: &BenchSpec) -> Option<&'static str> {
+    let spec::EngineSpec::Rvc(r) = &spec.engine else {
+        return None;
+    };
+    if r.qos.trim().eq_ignore_ascii_case("none") {
+        Some("none")
+    } else {
+        let _ = crate::services::diagnostics::qos::opt_out_power_throttling();
+        Some("app")
+    }
+}
+
+fn prepare(spec: &BenchSpec) -> Result<(Prepared, PrepareExtras), String> {
     let s = &spec.stream;
     let input = signals::render_input(&spec.input, s.input_rate, usize::from(s.input_channels), spec.seed)?;
     if input.len() / usize::from(s.input_channels) < s.block_frames as usize {
         return Err("the input clip is shorter than one block".into());
     }
+    let mut extras = PrepareExtras::default();
+    let qos = apply_qos(spec);
     let vram0 = process_vram_mb();
+    // P3B-A: the load-peak sampler, the load spans and the VRAM marks around the load; on CUDA the
+    // device's primary context is retained first (its VRAM measured once per process). The app
+    // creates that context inside the voice load, so the retain is timed as a load stage
+    // (`cuda_context`) and added to `engine_load_ms`: the load stays the app's cold load.
+    let sampler = (spec.vram.sample_ms > 0.0).then(|| gpu_state::VramSampler::start(Duration::from_secs_f64(spec.vram.sample_ms / 1000.0)));
+    let load_mark = telemetry::load_mark();
+    let vram_marks = telemetry::vram_mark_count();
+    let ledger0 = crate::services::neural_audio::gpu::arena::ledger().snapshot();
+    let w0 = telemetry::now_ns();
+    let t_ctx = Instant::now();
+    let mut cuda = cuda_ordinal(spec).and_then(|d| {
+        let _span = telemetry::load_span(telemetry::LoadStage::CudaContext);
+        gpu_state::cuda::ContextProbe::retain(d).ok()
+    });
+    let context_ms = t_ctx.elapsed().as_secs_f64() * 1000.0;
     let priority = crate::services::rt_thread::WorkerPriority::from_str_lossy(&s.worker_priority);
+    // The load window starts before the context retain; it moves behind it when that context turns
+    // out not to belong to the engine (below).
+    let w_after_context = telemetry::now_ns();
     let mut engine = build_engine(&spec.engine, s, priority, spec.seed)?;
+    let w1 = telemetry::now_ns();
+    let peak = sampler.map(gpu_state::VramSampler::stop);
     if engine.rvc.as_ref().is_some_and(|p| p.format.family().is_some()) {
         configure_family_stream(&mut engine, s);
     }
     let vram1 = process_vram_mb();
+    // A CUDA plan whose engine ended on DirectML or the CPU (no `runtime/nvidia-cuda13` pack, an
+    // old driver) never created a CUDA context of its own: the one retained above is the
+    // benchmark's. Release it and leave it out of the load time, the load breakdown and the VRAM
+    // figures, so a DirectML engine is not charged a CUDA context in the report or the T3/T9 rows.
+    let mut w0 = w0;
+    let mut unused_context_mb = None;
+    if cuda.is_some() && !cuda_rung_active(engine.info.execution_provider_active.as_deref()) {
+        let unused = cuda.take();
+        unused_context_mb = unused.as_ref().and_then(|c| c.context_mb);
+        w0 = w_after_context;
+        engine.info.warnings.push(format!(
+            "the plan asked for the CUDA rung but the engine runs on {}: the benchmark's own CUDA context ({} MB, {:.0} ms) is left out of the load time and the VRAM figures",
+            engine.info.execution_provider_active.as_deref().unwrap_or("the CPU"),
+            unused_context_mb.map_or_else(|| "unmeasured".to_string(), |mb| format!("{mb:.0}")),
+            context_ms
+        ));
+        drop(unused);
+    }
+    if cuda.is_some() {
+        engine.info.load_ms += context_ms;
+        extras.metrics.insert("cuda_context_ms".into(), context_ms);
+    }
     if let Some(note) = spec::device_block_note(s) {
         engine.info.warnings.push(note);
     }
@@ -190,15 +331,140 @@ fn prepare(spec: &BenchSpec) -> Result<Prepared, String> {
         engine.fixed_block(),
         engine.info.model_delay_ms,
     )?;
-    Ok(Prepared {
-        engine,
-        probe,
-        input,
-        vram_engine_mb: match (vram0, vram1) {
-            (Some(a), Some(b)) => Some(b.saturating_sub(a) as f64),
-            _ => None,
+    let vram_engine_mb = engine_vram_mb(vram0, vram1, unused_context_mb);
+
+    // ---- load breakdown ----
+    let load = attribution::LoadBreakdown::of(&telemetry::load_events_since(load_mark), w0, w1);
+    load.insert_metrics("load", &mut extras.metrics);
+    extras.metrics.insert("generator_builds".into(), f64::from(load.generator_builds));
+    extras.attribution.insert("load".into(), serde_json::to_value(&load).unwrap_or_default());
+    // The plan's `load_breakdown_ms`: wall-clock ms by stage plus `other`, summing to the load
+    // window (the engine load, `engine_load_ms`, up to the timer's placement).
+    let mut breakdown: serde_json::Map<String, serde_json::Value> = load.stages_ms.iter().map(|(k, v)| ((*k).to_string(), (*v).into())).collect();
+    breakdown.insert("other".into(), load.other_ms.into());
+    extras.attribution.insert("load_breakdown_ms".into(), breakdown.into());
+
+    // ---- VRAM ----
+    let mut vram = serde_json::Map::new();
+    if let Some(mb) = vram_engine_mb {
+        vram.insert("engine_mb".into(), mb.into());
+    }
+    if let (Some(a), Some((Some(pk), n))) = (vram0, peak) {
+        let peak_mb = (pk.saturating_sub(a) as f64 - unused_context_mb.unwrap_or(0.0)).max(0.0);
+        extras.metrics.insert("vram_load_peak_mb".into(), peak_mb);
+        vram.insert("load_peak_mb".into(), peak_mb.into());
+        // The load transient above the steady state (T3: a cold load peaks <= steady + 150 MB).
+        if let Some(steady) = vram_engine_mb {
+            extras.metrics.insert("vram_load_overshoot_mb".into(), (peak_mb - steady).max(0.0));
+            vram.insert("load_overshoot_mb".into(), (peak_mb - steady).max(0.0).into());
+        }
+        vram.insert("load_peak_samples".into(), n.into());
+        vram.insert("load_peak_sample_ms".into(), spec.vram.sample_ms.into());
+    }
+    // The ledger's change over the load (session plans' measured holds) and the spans' marks
+    // (the non-plan sessions, with the VRAM probe on).
+    let ledger1 = crate::services::neural_audio::gpu::arena::ledger().snapshot();
+    let mut ledger = serde_json::Map::new();
+    for (k, v) in &ledger1.components {
+        let d = v - ledger0.components.get(k).copied().unwrap_or(0.0);
+        if d.abs() > 0.0 {
+            ledger.insert(k.clone(), d.into());
+        }
+    }
+    vram.insert("ledger".into(), ledger.into());
+    // `measured`: what each component's load spans allocated themselves (DXGI process deltas with
+    // the VRAM probe on; nested spans count once; `concurrent` when another thread's span
+    // overlapped, whose allocations the reading may include). `marks`: the components' own marks
+    // (`telemetry::vram_mark`, e.g. a content plan's hold) and arena statistics
+    // (`telemetry::arena_mark`, as `<component>/<source>`), kept apart from the spans.
+    let mut measured = serde_json::Map::new();
+    let by_component = load.vram_by_component();
+    for (component, (mb, concurrent)) in &by_component {
+        measured.insert((*component).to_string(), serde_json::json!({"mb": mb, "concurrent": concurrent}));
+    }
+    vram.insert("measured".into(), measured.into());
+    // The closures. Steady state: the session plans' holds (`ledger`, held while the plans live)
+    // plus the CUDA context against the steady process delta: `ledger_unattributed_mb` is what no
+    // plan holds (eager sessions that stay, activations outside a plan). Load time: the spans
+    // (`measured`) are what each component allocated while it loaded, transient copies included
+    // (an eager session that a plan replaces and releases), so their sum exceeds the steady delta
+    // by about the load overshoot. Both read process-wide DXGI deltas: sessions built at the same
+    // time on two threads count each other's allocations (`measured.*.concurrent`, and a plan's
+    // hold measured meanwhile); for a clean per-component split load with the F0 helper off
+    // (`SIGIL_VC_F0_OVERLAP=0`: the same sessions, built one after another).
+    let ledger_sum: f64 = ledger1
+        .components
+        .iter()
+        .map(|(k, v)| v - ledger0.components.get(k).copied().unwrap_or(0.0))
+        .filter(|d| *d > 0.0)
+        .sum();
+    if let Some(engine_mb) = vram_engine_mb {
+        if ledger_sum > 0.0 {
+            let context = cuda.as_ref().and_then(|c| c.context_mb).unwrap_or(0.0);
+            vram.insert("ledger_sum_mb".into(), ledger_sum.into());
+            vram.insert("ledger_unattributed_mb".into(), (engine_mb - context - ledger_sum).into());
+        }
+    }
+    if !by_component.is_empty() {
+        let sum: f64 = by_component.values().map(|(mb, _)| *mb).sum();
+        let any_concurrent = by_component.values().any(|(_, c)| *c);
+        vram.insert("measured_sum_mb".into(), sum.into());
+        vram.insert("measured_concurrent".into(), any_concurrent.into());
+        if let Some(engine_mb) = vram_engine_mb {
+            // Load-time allocations above the steady delta (transients, or concurrent spans).
+            vram.insert("measured_over_steady_mb".into(), (sum - engine_mb).into());
+        }
+    }
+    let mut marks: BTreeMap<String, f64> = BTreeMap::new();
+    for m in telemetry::vram_marks_since(vram_marks).into_iter().filter(|m| m.source != "span") {
+        let key = match m.source {
+            "explicit" => m.component.to_string(),
+            other => format!("{}/{other}", m.component),
+        };
+        *marks.entry(key).or_insert(0.0) += m.mb;
+    }
+    vram.insert("marks".into(), serde_json::to_value(&marks).unwrap_or_default());
+    if let Some(c) = &cuda {
+        if let Some(mb) = c.context_mb {
+            extras.metrics.insert("vram_cuda_context_mb".into(), mb);
+            vram.insert("cuda_context_mb".into(), mb.into());
+        }
+        if let (Some(before), Some(after)) = (c.device_used_before_mb, c.memory()) {
+            extras.metrics.insert("vram_cuda_device_delta_mb".into(), after.used_mb - before);
+            vram.insert("cuda_device_delta_mb".into(), (after.used_mb - before).into());
+            vram.insert("cuda_device_used_mb".into(), after.used_mb.into());
+            vram.insert("cuda_device_total_mb".into(), after.total_mb.into());
+        }
+        if let Some(b) = c.stack_limit_bytes() {
+            extras.metrics.insert("cuda_stack_limit_kb".into(), b as f64 / 1024.0);
+            vram.insert("cuda_stack_limit_kb".into(), (b as f64 / 1024.0).into());
+        }
+        if let Some(stats) = gpu_state::cuda::env_arena_stats(c.ordinal()) {
+            vram.insert("cuda_env_arena".into(), serde_json::to_value(stats).unwrap_or_default());
+        }
+    }
+    extras.attribution.insert("vram".into(), vram.into());
+    extras.cuda = cuda;
+
+    // ---- host, QoS and the algorithmic latency table ----
+    let mut host = serde_json::to_value(gpu_state::host_snapshot()).unwrap_or_default();
+    gpu_state::insert_json(&mut host, "qos_requested", qos);
+    extras.attribution.insert("host".into(), host);
+    if engine.fixed_block().is_some() {
+        let table = attribution::algorithmic_latency_table(s, engine.info.output_rate, engine.info.min_context_samples, &[20.0, 40.0, 60.0, 80.0]);
+        extras
+            .attribution
+            .insert("algorithmic_latency_table".into(), serde_json::to_value(table).unwrap_or_default());
+    }
+    Ok((
+        Prepared {
+            engine,
+            probe,
+            input,
+            vram_engine_mb,
         },
-    })
+        extras,
+    ))
 }
 
 /// Family voices build their sessions when a harness configures their stream (P5-I0): build one
@@ -265,6 +531,39 @@ fn write_run_files(dir: &Path, name: &str, outcome: &RunOutcome, spec: &BenchSpe
     Ok(files)
 }
 
+/// The process-wide state a spec switches on, restored on every exit of [`run_spec`] (a panic
+/// that unwinds it included): the telemetry's GPU-timing and VRAM-probe flags, and the GPU speed
+/// index's session (a DirectML or CUDA session with its own device and queue), which must not
+/// outlive the benchmark in the running app.
+struct SpecProcessState {
+    gpu_timing: bool,
+    vram_probe: bool,
+}
+
+impl SpecProcessState {
+    fn enter(gpu_timing: bool, vram_probe: bool) -> SpecProcessState {
+        if gpu_timing {
+            telemetry::set_gpu_timing(true);
+        }
+        if vram_probe {
+            telemetry::set_vram_probe(true);
+        }
+        SpecProcessState { gpu_timing, vram_probe }
+    }
+}
+
+impl Drop for SpecProcessState {
+    fn drop(&mut self) {
+        if self.vram_probe {
+            telemetry::set_vram_probe(false);
+        }
+        if self.gpu_timing {
+            telemetry::set_gpu_timing(false);
+        }
+        gpu_state::release_speed_index();
+    }
+}
+
 /// Run every run of `spec`, write the reports into `out_dir` (when given) and return the report.
 /// Never fails as a whole: an engine that does not load, a device that does not open or a
 /// cancellation become per-run statuses, so a report always describes what happened.
@@ -275,8 +574,15 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
     let spec_value = serde_json::to_value(spec).unwrap_or_default();
     let spec_sha256 = hex::encode(Sha256::digest(spec_value.to_string().as_bytes()));
     let run_count = spec.runs.len();
+    // P3B-A: telemetry (stage and load spans, syncs, VRAM marks) for the whole spec; GPU time per
+    // plan run on request (`SIGIL_BENCH_GPU_TIMING=1`: CUDA events, P3B-G); the spans' VRAM
+    // samples only for VRAM runs (`vram.sample_ms`), since they cost load time.
+    let _recording = telemetry::start_recording();
+    let gpu_timing = std::env::var("SIGIL_BENCH_GPU_TIMING").is_ok_and(|v| v.trim() == "1");
+    let vram_probe = spec.vram.sample_ms > 0.0;
+    let process_state = SpecProcessState::enter(gpu_timing, vram_probe);
 
-    let prepared: Option<Result<Prepared, String>> = spec.runs.iter().any(RunSpec::uses_engine).then(|| {
+    let prepared_all: Option<Result<(Prepared, PrepareExtras), String>> = spec.runs.iter().any(RunSpec::uses_engine).then(|| {
         (ctx.progress)(&Progress {
             run: spec.runs[0].name().to_string(),
             run_index: 0,
@@ -286,11 +592,43 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
         });
         prepare(spec)
     });
+    let (prepared, extras): (Option<Result<Prepared, String>>, Option<PrepareExtras>) = match prepared_all {
+        Some(Ok((p, x))) => (Some(Ok(p)), Some(x)),
+        Some(Err(e)) => (Some(Err(e)), None),
+        None => (None, None),
+    };
+    let state_ctx = gpu_state::StateContext {
+        engine_ep: match &prepared {
+            Some(Ok(p)) => p.engine.info.execution_provider_active.clone(),
+            _ => None,
+        },
+        device: match &spec.engine {
+            spec::EngineSpec::Rvc(r) => r.gpu_device_index,
+            spec::EngineSpec::Stub(_) => 0,
+        },
+        period_ms: 1_000,
+        speed_index: true,
+    };
+    let state_mode = StateMode::from_env();
 
     let mut runs: Vec<RunReport> = Vec::with_capacity(run_count);
     for (index, run) in spec.runs.iter().enumerate() {
         let run_started = Instant::now();
         let name = run.name().to_string();
+        // P3B-A: the run's GPU / host state (start, 1 Hz, end) and load spans (re-plans, the
+        // ceiling's generator builds). `SIGIL_BENCH_STATE=off` skips the state probes (an A/B
+        // against an exe without them), `light` keeps them without the GPU speed index.
+        let state_probe = (!ctx.cancel.load(Ordering::Relaxed) && state_mode != StateMode::Off).then(|| {
+            let mut c = state_ctx.clone();
+            if state_mode == StateMode::Light {
+                c.speed_index = false;
+            }
+            gpu_state::RunStateProbe::start(c)
+        });
+        let run_load_mark = telemetry::load_mark();
+        // P3B-F: the F0 caches' extractor calls over this run (process-wide counters).
+        let f0_calls_mark = crate::services::neural_audio::vc::engine::f0_cache::process_call_counts();
+        let run_w0 = telemetry::now_ns();
         let progress = |fraction: f64, message: &str| {
             (ctx.progress)(&Progress {
                 run: name.clone(),
@@ -375,8 +713,17 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
                     compare::run_compare(c, spec, engine, &runs, out_dir.is_some(), ctx.cancel, &progress)
                 }
                 RunSpec::Autotune(a) => autotune::run_in_spec(a, spec, ctx.cancel, &progress),
+                // P3B-S0 stubs (P3B-B, P3B-A).
+                RunSpec::Rescore(r) => multi_clip::run_rescore(r, spec, ctx.cancel, &progress),
+                RunSpec::LoadTwice(r) => match &prepared {
+                    Some(Ok(p)) => attribution::run_load_twice_with(r, spec, Some(p), ctx.cancel, &progress),
+                    Some(Err(e)) => Err(e.clone()),
+                    None => attribution::run_load_twice(r, spec, ctx.cancel, &progress),
+                },
             }
         };
+        let run_load = attribution::LoadBreakdown::of(&telemetry::load_events_since(run_load_mark), run_w0, telemetry::now_ns());
+        let state = state_probe.map(gpu_state::RunStateProbe::finish);
         let report = match result {
             Ok(mut outcome) => {
                 if let Some(Ok(p)) = &prepared {
@@ -384,7 +731,35 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
                         if let Some(mb) = p.vram_engine_mb {
                             outcome.metrics.insert("vram_engine_mb".into(), mb);
                         }
+                        // P3B-A: the engine load's breakdown, VRAM and CUDA figures, and this
+                        // run's own generator builds (a quality run's ceiling builds its own).
+                        if let Some(x) = &extras {
+                            for (k, v) in &x.metrics {
+                                outcome.metrics.entry(k.clone()).or_insert(*v);
+                            }
+                        }
+                        outcome.metrics.insert("run_generator_builds".into(), f64::from(run_load.generator_builds));
+                        // Extractor calls of this run, and those longer than the extractor's bound
+                        // (calls it had to split: 0 with priming on a bounded plan).
+                        let (calls, long_calls) = crate::services::neural_audio::vc::engine::f0_cache::process_call_counts();
+                        outcome.metrics.insert("f0_calls".into(), calls.saturating_sub(f0_calls_mark.0) as f64);
+                        outcome.metrics.insert("f0_long_calls".into(), long_calls.saturating_sub(f0_calls_mark.1) as f64);
+                        // The run's own load work (the harness's re-plan to the live shape and its
+                        // warm-up, a ceiling's builds): part of a cold start in the app.
+                        outcome.metrics.insert("run_load_spans_ms".into(), run_load.stages_ms.values().sum::<f64>());
                     }
+                }
+                if (state.is_some() || !run_load.spans.is_empty()) && outcome.details.is_null() {
+                    outcome.details = serde_json::json!({});
+                }
+                if !run_load.spans.is_empty() {
+                    gpu_state::insert_json(&mut outcome.details, "run_load", &run_load);
+                }
+                if let Some(st) = &state {
+                    for (k, v) in st.metrics() {
+                        outcome.metrics.insert(k.into(), v);
+                    }
+                    gpu_state::insert_json(&mut outcome.details, "state", st);
                 }
                 let thresholds = evaluate(&outcome.metrics, &spec.thresholds, run);
                 let (files, file_error) = match out_dir {
@@ -421,6 +796,7 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
     }
 
     let failures: Vec<String> = runs.iter().flat_map(run_failures).collect();
+    drop(process_state);
     BenchReport {
         schema: REPORT_SCHEMA.to_string(),
         name: spec.name.clone(),
@@ -433,7 +809,16 @@ pub fn run_spec(spec: &BenchSpec, out_dir: Option<&Path>, ctx: &BenchContext<'_>
         spec: spec_value,
         environment: environment(),
         engine: match &prepared {
-            Some(Ok(p)) => serde_json::to_value(&p.engine.info).ok(),
+            Some(Ok(p)) => serde_json::to_value(&p.engine.info).ok().map(|mut v| {
+                if let (Some(obj), Some(x)) = (v.as_object_mut(), &extras) {
+                    let mut a = x.attribution.clone();
+                    a.insert("gpu_timing".into(), gpu_timing.into());
+                    let (load_dropped, gpu_dropped) = telemetry::global().dropped();
+                    a.insert("telemetry_dropped".into(), serde_json::json!({"load_events": load_dropped, "gpu_times": gpu_dropped}));
+                    obj.insert("attribution".into(), serde_json::Value::Object(a));
+                }
+                v
+            }),
             _ => None,
         },
         runs,
@@ -650,6 +1035,62 @@ mod tests {
         |_: &Progress| {}
     }
 
+    /// Only the CUDA rung (and the TensorRT accelerators on it) uses the context the benchmark
+    /// retains before the load: a CUDA plan that fell back is not charged it.
+    #[test]
+    fn only_the_cuda_rung_uses_the_retained_context() {
+        for active in ["cuda", "tensorrt_rtx", "tensorrt"] {
+            assert!(cuda_rung_active(Some(active)), "{active}");
+        }
+        for active in ["dml", "dml_hp", "cpu", ""] {
+            assert!(!cuda_rung_active(Some(active)), "{active}");
+        }
+        assert!(!cuda_rung_active(None));
+    }
+
+    /// An engine that ended on DirectML is not charged the CUDA context the benchmark retained: the
+    /// VRAM delta loses it, and never goes below zero.
+    #[test]
+    fn an_unused_cuda_context_is_not_charged_to_the_engine() {
+        assert_eq!(engine_vram_mb(Some(100), Some(930), None), Some(830.0));
+        assert_eq!(engine_vram_mb(Some(100), Some(930), Some(330.0)), Some(500.0));
+        assert_eq!(engine_vram_mb(Some(100), Some(150), Some(330.0)), Some(0.0));
+        assert_eq!(engine_vram_mb(None, Some(1), None), None);
+        assert_eq!(engine_vram_mb(Some(1), None, Some(5.0)), None);
+    }
+
+    /// A finished spec leaves no GPU speed-index session in the process (the in-app benchmark would
+    /// otherwise keep a DirectML device and queue until the app exits).
+    #[test]
+    fn a_finished_spec_releases_the_speed_index() {
+        let _serial = gpu_state::SPEED_CACHE_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        gpu_state::seed_cpu_speed_session_for_tests();
+        let spec = BenchSpec::from_value(serde_json::json!({
+            "name": "release", "engine": {"kind": "stub"},
+            "input": {"kind": "synthetic", "signal": "voice", "seconds": 2},
+            "runs": [{"mode": "offline", "name": "o"}]
+        }))
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let progress = quiet();
+        let r = run_spec(&spec, None, &BenchContext { cancel: &cancel, progress: &progress });
+        assert_eq!(r.runs[0].status, RunStatus::Passed, "{:?}", r.runs[0].error);
+        assert!(!gpu_state::speed_index_cached(), "run_spec releases the speed index at its end");
+    }
+
+    /// The same when the spec unwinds: the guard's drop runs during a panic.
+    #[test]
+    fn a_spec_that_unwinds_still_releases_the_speed_index() {
+        let _serial = gpu_state::SPEED_CACHE_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        gpu_state::seed_cpu_speed_session_for_tests();
+        let unwound = std::panic::catch_unwind(|| {
+            let _state = SpecProcessState::enter(false, false);
+            panic!("a run panicked");
+        });
+        assert!(unwound.is_err());
+        assert!(!gpu_state::speed_index_cached(), "the process state was restored during the unwind");
+    }
+
     /// A benchmark and a tune share one slot, claimed atomically: whoever holds it refuses the
     /// other (and itself) until its guard drops.
     #[test]
@@ -814,6 +1255,63 @@ mod tests {
             // over four device blocks.
             assert!(m["rtf_p50"] > 0.05, "{}: {m:?}", run.name);
         }
+    }
+
+    /// P3B-A on a stub: the engine's attribution (load window, host, the 10 ms vs 512-frame
+    /// algorithmic latency of a fixed-block engine), the per-run state and load spans, the
+    /// attribution metrics of every engine run, and a `load_twice` run that loads a second engine
+    /// while the first streams.
+    #[test]
+    fn specs_report_attribution_state_and_load_twice() {
+        let spec = BenchSpec::from_value(serde_json::json!({
+            "name": "attr", "engine": {"kind": "stub", "compute_ms": 2.0, "compute": "sleep", "fixed_block_ms": 40},
+            "input": {"kind": "synthetic", "signal": "voice", "seconds": 3},
+            "stream": {"block_frames": 1920, "output_prefill_ms": 80, "output_max_queue_ms": 150},
+            "vram": {"sample_ms": 10},
+            "runs": [
+                {"mode": "offline", "name": "off"},
+                {"mode": "paced", "name": "p", "seconds": 3, "clock": "simulated", "warmup_s": 0.5},
+                {"mode": "load_twice", "name": "twice", "thresholds": {"second_load_ms": {"max": 60000}}}
+            ]
+        }))
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let progress = quiet();
+        let r = run_spec(&spec, None, &BenchContext { cancel: &cancel, progress: &progress });
+        for run in &r.runs {
+            assert_eq!(run.status, RunStatus::Passed, "{}: {:?} {:?}", run.name, run.error, run.thresholds);
+            assert!(run.details.get("state").is_some(), "{}: state", run.name);
+            assert!(run.metrics.contains_key("state_host_probe_ms"), "{}", run.name);
+            assert!(run.metrics.contains_key("load_other_ms") && run.metrics["generator_builds"] == 0.0, "{}: {:?}", run.name, run.metrics);
+        }
+        let a = &r.engine.as_ref().unwrap()["attribution"];
+        assert!(a["load"]["window_ms"].as_f64().unwrap() >= 0.0, "{a}");
+        assert!(a["load_breakdown_ms"].get("other").is_some(), "{a}");
+        assert!(r.runs.iter().all(|run| run.metrics.contains_key("run_load_spans_ms")));
+        assert!(a["host"].get("process_qos").is_some(), "{a}");
+        let table = a["algorithmic_latency_table"].as_array().expect("a fixed-block engine gets the table");
+        assert_eq!(table.len(), 8, "20/40/60/80 ms x 480/512 frames");
+        let off = &r.runs[0];
+        // The stub has no stages: the harness time of its calls is still reported.
+        assert!(off.metrics.contains_key("harness_ms_p50"), "{:?}", off.metrics);
+        assert!(off.details.get("cycles").is_some() && off.details.get("worker_thread").is_some());
+        let paced = &r.runs[1];
+        assert!(paced.metrics.contains_key("t1_hold_ms_p50") && paced.metrics.contains_key("t1_residual_p50_ms"), "{:?}", paced.metrics);
+        // A fixed-block engine: the model calls map to its blocks, the parts add up to the p50. (The
+        // paced run charges the stub's nominal compute: with measured sleeps the residual follows
+        // the machine's load, which made this test fail under a loaded build machine.)
+        assert!(paced.details["t1"]["engine_block_offset_frames"].is_number(), "{}", paced.details["t1"]);
+        assert!(paced.metrics["t1_at_p50_engine_wait_ms"] >= 0.0 && paced.metrics["t1_residual_p50_ms"].abs() <= 1.0, "{:?}", paced.metrics);
+        // The parts' means add up to the mean latency exactly.
+        let t1 = &paced.details["t1"];
+        assert!((t1["sum_of_means_ms"].as_f64().unwrap() - t1["latency_mean_ms"].as_f64().unwrap()).abs() < 1e-6, "{t1}");
+        assert!(paced.metrics.contains_key("joins_silent"));
+        let twice = &r.runs[2];
+        assert!(twice.metrics["second_load_ms"] >= 0.0 && twice.metrics.contains_key("engine_load_ms"), "{:?}", twice.metrics);
+        assert_eq!(twice.metrics["model_errors"], 0.0, "the background voice's errors (a spec-wide model_errors threshold applies)");
+        // The first voice streamed (a stub loads too fast for calls during the load itself).
+        assert!(twice.details["background"]["calls"].as_u64().unwrap() >= 1, "{}", twice.details);
+        assert!(twice.details["load_breakdown"].is_object());
     }
 
     #[test]

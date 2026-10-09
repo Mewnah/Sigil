@@ -1,0 +1,26 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B scorecard spec, Sigil Voice Engine on the CPU (GPU EPs off), preset ${CPU_PRESET} (the shipped Streamer preset runs ONNX Runtime on one thread; the sve-cpu-pool row runs the low_latency preset on ONNX Runtime's default pool, the T4 reference): the voice in ${SLOT}, ${PITCH_CPU} F0, ${CPU_BLOCK_MS} ms engine blocks (the revised T4 operating point: 120 ms) on the 512-frame device block, process QoS ${QOS} (run the baseline with QOS=app and QOS=none once each: whether the app's EcoQoS opt-out matters). Offline compute (T4 RTF), a wall-clock paced run (T4 cores, core-seconds per audio-second) and the H3 simulation (4 game threads at 60 %: T1 Streamer). Materialized by run-perf-gate.ps1 -Profile p3b.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 64, "worker_priority": "auto" },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER_CPU}",
+    "execution_provider": "cpu",
+    "pitch_extractor": "${PITCH_CPU}",
+    "preset": "${CPU_PRESET}",
+    "block_ms": ${CPU_BLOCK_MS},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": ${CPU_REPEAT_JSON} },
+    { "mode": "paced", "name": "paced", "seconds": ${PACED_S_JSON}, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h3-game", "profile": "h3_cpu_game", "seconds": ${PACED_S_JSON}, "warmup_s": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

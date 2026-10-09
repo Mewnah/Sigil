@@ -10,7 +10,10 @@
 //!   The governor reads [`VramLedger::snapshot`], and the voice changer resizes its
 //!   `resources::claim_vram(Subsystem::Vc, ..)` to the measured process delta (P3-E; 0 MB on CPU).
 //!   Measurements are process-wide deltas, so plans built concurrently on one adapter share them
-//!   approximately.
+//!   approximately. A probe also registers its measurement **window**: [`VramProbe::delta`] says
+//!   whether another probe's window overlapped it ([`VramDelta::exclusive`]), so a caller that must
+//!   not attribute a neighbour's allocations to itself (the GPU kNN, `vc.knn`) can fall back to its
+//!   computed size when the load ran in parallel.
 //! - **Shared environment arena** ([`ensure_cuda_env_arena`]): one ONNX Runtime CUDA arena per
 //!   device registered on the environment (`CreateAndRegisterAllocatorV2`) that sessions opt into
 //!   (`session.use_env_allocators`, `ort_session::GpuExtras::cuda_env_arena`). Sessions that run one
@@ -30,6 +33,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -136,17 +140,97 @@ impl std::fmt::Debug for VramHold {
     }
 }
 
+/// How long a probe that was never read counts as an open measurement window (an abandoned probe
+/// must not make every later measurement look overlapped).
+const WINDOW_OPEN_LIMIT: Duration = Duration::from_secs(120);
+/// Closed windows are kept this long for the overlap check (a window longer than this is a hung
+/// load; the check then reads as exclusive, like an unmeasured process).
+const WINDOW_KEEP: Duration = Duration::from_secs(900);
+/// At most this many windows are remembered (oldest dropped first).
+const WINDOW_MAX: usize = 256;
+
+#[derive(Clone, Copy, Debug)]
+struct Window {
+    seq: u64,
+    adapter: u32,
+    start: Instant,
+    /// The first read of the probe; `None` while it is open.
+    end: Option<Instant>,
+}
+
+impl Window {
+    /// Where the window ends for the overlap check at `now`: its read, else now (still running),
+    /// else its start plus [`WINDOW_OPEN_LIMIT`] (abandoned).
+    fn effective_end(&self, now: Instant) -> Instant {
+        self.end.unwrap_or_else(|| now.min(self.start + WINDOW_OPEN_LIMIT))
+    }
+}
+
+/// The measurement windows of this process's VRAM probes (pure bookkeeping; the clock is passed in).
+#[derive(Default)]
+struct Windows {
+    next: u64,
+    list: Vec<Window>,
+}
+
+impl Windows {
+    /// Register a window that starts at `now`; returns its id.
+    fn open(&mut self, adapter: u32, now: Instant) -> u64 {
+        self.list.retain(|w| now.saturating_duration_since(w.end.unwrap_or(w.start)) <= WINDOW_KEEP);
+        if self.list.len() >= WINDOW_MAX {
+            self.list.remove(0);
+        }
+        let seq = self.next;
+        self.next += 1;
+        self.list.push(Window { seq, adapter, start: now, end: None });
+        seq
+    }
+
+    /// End window `seq` at `now` (its first read; later reads keep that end) and say whether no
+    /// other window on its adapter overlapped it. A window the bookkeeping no longer knows reads as
+    /// exclusive (nothing to compare with).
+    fn close(&mut self, seq: u64, now: Instant) -> bool {
+        let Some(me) = self.list.iter_mut().find(|w| w.seq == seq) else {
+            return true;
+        };
+        me.end.get_or_insert(now);
+        let me = *me;
+        let (start, end) = (me.start, me.effective_end(now));
+        !self.list.iter().any(|w| w.seq != seq && w.adapter == me.adapter && w.start < end && start < w.effective_end(now))
+    }
+}
+
+fn windows() -> &'static Mutex<Windows> {
+    static WINDOWS: OnceLock<Mutex<Windows>> = OnceLock::new();
+    WINDOWS.get_or_init(|| Mutex::new(Windows::default()))
+}
+
+/// What a [`VramProbe`] gained, and whether anything else could have contributed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VramDelta {
+    /// MiB this process gained on the adapter since the probe started (0 when it shrank).
+    pub mb: f64,
+    /// No other probe's window on the adapter overlapped this one: `mb` is this probe's own
+    /// footprint, up to allocations by code that has no probe (a neighbour's work is counted in
+    /// `mb` when this is `false`).
+    pub exclusive: bool,
+}
+
 /// This process's VRAM on one DXGI adapter at construction, for measuring what a build added.
 #[derive(Clone, Copy, Debug)]
 pub struct VramProbe {
     adapter: u32,
     before_mb: u64,
+    /// The probe's measurement window (see [`VramProbe::delta`]).
+    window: u64,
 }
 
 impl VramProbe {
     /// Start measuring on DXGI adapter `adapter` (`None` when DXGI cannot report it).
     pub fn start(adapter: u32) -> Option<VramProbe> {
-        gpu_mem::process_vram_usage(adapter).map(|u| VramProbe { adapter, before_mb: u.process_usage_mb })
+        let usage = gpu_mem::process_vram_usage(adapter)?;
+        let window = windows().lock().unwrap_or_else(PoisonError::into_inner).open(adapter, Instant::now());
+        Some(VramProbe { adapter, before_mb: usage.process_usage_mb, window })
     }
 
     /// Start measuring on the adapter a session of `ep` on device `device` uses (the DXGI index of
@@ -156,10 +240,19 @@ impl VramProbe {
         Self::start(dxgi_adapter_for(ep, device)?)
     }
 
-    /// MiB this process gained on the adapter since [`start`](Self::start) (0 when it shrank).
+    /// MiB this process gained on the adapter since [`start`](Self::start) (0 when it shrank). The
+    /// first read ends the probe's measurement window.
     pub fn delta_mb(&self) -> Option<f64> {
+        self.delta().map(|d| d.mb)
+    }
+
+    /// [`delta_mb`](Self::delta_mb) with whether the measurement was exclusive: no other probe on
+    /// the adapter was measuring at the same time (the delta is process-wide, so a neighbour's
+    /// allocations inside the window are counted too). The first read ends the probe's window.
+    pub fn delta(&self) -> Option<VramDelta> {
         let now = gpu_mem::process_vram_usage(self.adapter)?.process_usage_mb;
-        Some(now.saturating_sub(self.before_mb) as f64)
+        let exclusive = windows().lock().unwrap_or_else(PoisonError::into_inner).close(self.window, Instant::now());
+        Some(VramDelta { mb: now.saturating_sub(self.before_mb) as f64, exclusive })
     }
 
     pub fn adapter(&self) -> u32 {
@@ -314,5 +407,96 @@ mod tests {
         let probe = VramProbe::start(adapter.index).expect("DXGI VRAM usage");
         assert_eq!(probe.adapter(), adapter.index);
         assert!(probe.delta_mb().unwrap() >= 0.0);
+    }
+
+    /// P3B-G (review fix): the windows of probes that run at the same time are told apart from a
+    /// probe that runs alone, with the real probe type (hardware GPU). Other tests of this process
+    /// may measure concurrently, so only the direction that must hold is asserted: a probe whose
+    /// window contains another probe's whole window is never exclusive.
+    #[cfg(windows)]
+    #[test]
+    fn nested_probe_windows_are_not_exclusive() {
+        let Some(adapter) = gpu_mem::adapters().into_iter().find(|a| !a.software) else {
+            eprintln!("no hardware GPU; skipped");
+            return;
+        };
+        let outer = VramProbe::start(adapter.index).expect("DXGI VRAM usage");
+        let inner = VramProbe::start(adapter.index).expect("DXGI VRAM usage");
+        let inner_delta = inner.delta().unwrap();
+        let outer_delta = outer.delta().unwrap();
+        assert!(!inner_delta.exclusive, "the outer window was open when the inner one started");
+        assert!(!outer_delta.exclusive, "the inner window ran inside the outer one");
+        assert!(inner_delta.mb >= 0.0 && outer_delta.mb >= 0.0);
+    }
+
+    fn at(base: Instant, ms: u64) -> Instant {
+        base + Duration::from_millis(ms)
+    }
+
+    /// Windows that do not overlap in time are exclusive, in either order; any overlap (nested,
+    /// partial, another still open) is not, for both windows; other adapters never interfere.
+    #[test]
+    fn measurement_windows_report_overlap() {
+        let t0 = Instant::now();
+        let mut w = Windows::default();
+        // Back to back: each ran alone.
+        let a = w.open(0, at(t0, 0));
+        assert!(w.close(a, at(t0, 100)));
+        let b = w.open(0, at(t0, 100));
+        assert!(w.close(b, at(t0, 200)), "a window that starts when the last ended is alone");
+        // Nested: the outer is not alone, and neither is the inner.
+        let outer = w.open(0, at(t0, 1000));
+        let inner = w.open(0, at(t0, 1100));
+        assert!(!w.close(inner, at(t0, 1200)));
+        assert!(!w.close(outer, at(t0, 1300)));
+        // Partial overlap, both orders (the first to be read sees the second still open).
+        let p = w.open(0, at(t0, 2000));
+        let q = w.open(0, at(t0, 2050));
+        assert!(!w.close(p, at(t0, 2100)));
+        assert!(!w.close(q, at(t0, 2200)));
+        // Another adapter's window is not a neighbour.
+        let x = w.open(0, at(t0, 3000));
+        let y = w.open(1, at(t0, 3010));
+        assert!(w.close(x, at(t0, 3100)));
+        assert!(w.close(y, at(t0, 3200)));
+        // A later window is alone again even though earlier windows overlapped each other.
+        let z = w.open(0, at(t0, 4000));
+        assert!(w.close(z, at(t0, 4100)));
+        // A second read keeps the first read's end.
+        assert!(w.close(z, at(t0, 9000)), "the window ended at its first read");
+        assert!(!w.close(outer, at(t0, 9000)), "and so does an overlapped one");
+    }
+
+    /// A probe that was never read stops counting after the open limit, so one abandoned probe does
+    /// not make every later measurement look overlapped; before that it does count.
+    #[test]
+    fn an_abandoned_window_expires() {
+        let t0 = Instant::now();
+        let mut w = Windows::default();
+        let _forgotten = w.open(0, at(t0, 0));
+        let early = w.open(0, at(t0, 1000));
+        assert!(!w.close(early, at(t0, 2000)), "the forgotten window is still within its limit");
+        let limit = WINDOW_OPEN_LIMIT.as_millis() as u64;
+        let late = w.open(0, at(t0, limit + 5000));
+        assert!(w.close(late, at(t0, limit + 6000)), "an unread window older than the limit no longer counts");
+        // An unknown window id (dropped from the bookkeeping) reads as exclusive.
+        assert!(w.close(9_999, at(t0, limit + 7000)));
+    }
+
+    /// The bookkeeping is bounded: old closed windows are dropped, and so are the oldest when more
+    /// than [`WINDOW_MAX`] are open.
+    #[test]
+    fn measurement_windows_are_bounded() {
+        let t0 = Instant::now();
+        let mut w = Windows::default();
+        for k in 0..(WINDOW_MAX as u64 + 40) {
+            w.open(0, at(t0, k));
+        }
+        assert_eq!(w.list.len(), WINDOW_MAX);
+        let mut w = Windows::default();
+        let old = w.open(0, at(t0, 0));
+        w.close(old, at(t0, 10));
+        w.open(0, at(t0, WINDOW_KEEP.as_millis() as u64 + 1000));
+        assert_eq!(w.list.len(), 1, "a window closed longer ago than the keep time is forgotten");
     }
 }

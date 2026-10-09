@@ -54,7 +54,14 @@ pub const DENOISE_DPDFNET: &str = "vc/denoise-dpdfnet";
 pub const VOICE_DEFAULT: &str = "vc/voice-default";
 
 // ---- benchmark-only models (kind `bench`; never needed by normal users, P3-F) ----
+/// CAM++ as sherpa-onnx exported it: its segment poolings are `AveragePool(ceil_mode)`, which ONNX
+/// Runtime divides by the full kernel on the last, partial segment, so it is not upstream's function
+/// (ADR 0006). The legacy speaker scorer (`scoring.speaker_model: legacy`), kept for one release.
 pub const BENCH_CAMPPLUS: &str = "bench/campplus";
+/// The same CAM++ checkpoint re-exported with exact segment pooling (P3B-B,
+/// `scripts/vc-templates/export_bench.py`; >= 100 dB SNR against upstream PyTorch): the speaker
+/// scorer of the fidelity scorer v2 (ADR 0009). Same I/O contract as [`BENCH_CAMPPLUS`].
+pub const BENCH_CAMPPLUS_EXACT: &str = "bench/campplus-exact";
 pub const BENCH_DNSMOS: &str = "bench/dnsmos-p835";
 /// The GPU load generator of the contention runs (a small deterministic convolution workload, input
 /// `x` `[1, 32, H, W]`; P3-A export, added by P3-I0). The benchmark's load simulator builds the same

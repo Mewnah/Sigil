@@ -65,10 +65,22 @@
 //! - `EngineRequest::cancel`: a background load ([`VoiceSet`]) and the worker's first load hand the
 //!   family their cancel flag, so a sidecar voice stops waiting for its helper once nobody wants it.
 
+//! # Added by P3B-H
+//! - [`create_engine_for_stream`] / [`StreamHint`]: a template voice behind a stream harness of known
+//!   geometry plans its final shapes at load (the lookahead, the harness's SOLA tail and extra
+//!   context), builds its generator once and its pitch bank, content encoder (with its plan) and
+//!   generator beside each other (`SigilRvcEngine::load_hooked`); `SIGIL_VC_FINAL_SHAPES=0` and
+//!   `SIGIL_VC_PARALLEL_LOAD=0` are the kill switches. A background hot-switch load
+//!   ([`LoadedVoice::load_background`]) builds sequentially at a lower priority.
+//! - [`HarnessSpec::sola_search_ms`]: the SOLA search window of the harness (and of the planned tail).
+//! - [`LoadedVoice::own_mb`] / [`LoadedVoice::shared`]: a shared RMVPE plan is counted once by
+//!   [`VoiceSet::vram_mb`] and leaves with its last holder.
+
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::services::diagnostics::EpOutcome;
@@ -76,20 +88,25 @@ use crate::services::neural_audio::denoise::{self, harness::DenoisedModel, Denoi
 use crate::services::neural_audio::gpu::arena::VramProbe;
 use crate::services::neural_audio::gpu::GpuLevers;
 use crate::services::neural_audio::ort_session::VcSessionOptions;
-use crate::services::neural_audio::vc::engine::{self, presets, EffectiveLevers, F0Range, Lever, LeverMode, PrecisionMode, SigilRvcEngine, SigilRvcRequest};
+use crate::services::neural_audio::telemetry::{self, LoadStage};
+use crate::services::neural_audio::vc::engine::{
+    self, presets, EffectiveLevers, F0Range, Lever, LeverMode, PrecisionMode, SigilRvcEngine, SigilRvcRequest, StreamGeometry,
+};
 use crate::services::neural_audio::vc::f0_fusion::{create_pitch_extractor, create_pitch_extractor_with, PitchBankRequest};
 use crate::services::neural_audio::vc::manifest::{load_slot_manifest, SlotFormat};
+use crate::services::neural_audio::vc::rmvpe::shared_components as shared_pitch_components;
 use crate::services::neural_audio::vc::rvc::LegacyNoise;
 use crate::services::neural_audio::vc::engine::governor::QualityLevel;
 use crate::services::neural_audio::vc::engine::post::{PostConfig, PostStage};
 use crate::services::neural_audio::vc::families::{self, reference::ReferenceClip, FamilyKind, FamilyRequest, CREATION_REFERENCE};
-use crate::services::neural_audio::vc::stream::HarnessContext;
+use crate::services::neural_audio::vc::stream::{sola_want_16k, HarnessContext, HarnessOptions};
 use crate::services::neural_audio::vc::traits::{
-    ConversionCtx, PitchExtractor, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, DEFAULT_NOISE_SCALE,
+    ConversionCtx, ModelTelemetry, PitchExtractor, ReferenceEmbedding, SingingFlags, StreamReport, VoiceControls, DEFAULT_NOISE_SCALE,
 };
 use crate::services::neural_audio::vc::{assets, import, VcStreamHarness, VoiceConversionModel};
 use crate::services::neural_audio::{RvcModel, RvcPresetProfile};
 use crate::services::resources::{self, Subsystem, VramClaim};
+use crate::services::rt_thread::{self, WorkerPriority};
 
 /// How the slot in `slot_dir` runs: its manifest's format, or a legacy ONNX slot when it has no
 /// `manifest.json` (the manifest is then inferred from the generator, `bases.rs`).
@@ -147,6 +164,10 @@ pub(crate) struct EngineRequest {
     /// not persisted): a family that waits on something outside the process (a sidecar helper's
     /// start or handshake) stops waiting (`FamilyRequest::cancel`). `None` = never called off.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// P3B-S0: the content encoder's left context of template voices (ms, params
+    /// `content_context_ms`; `None` = the preset's), handed to `SigilRvcRequest::content_context_16k`
+    /// (a no-op until P3B-D).
+    pub content_context_ms: Option<f64>,
 }
 
 /// A loaded engine.
@@ -206,8 +227,12 @@ fn is_light_f0(method: &str) -> bool {
 }
 
 /// The pitch extractor of a request (pitch bank factory), its notes and EP outcomes; with the
-/// `governor` lever on, also the light extractor its `light_f0` step switches to.
-fn build_pitch(request: &EngineRequest) -> Result<BuiltPitch, String> {
+/// `governor` lever on, also the light extractor its `light_f0` step switches to. `shapes` are the
+/// audio frames of one incremental F0 call and the longest whole-window call (16 kHz samples) of the
+/// voice's final plan, which size RMVPE's plan (P3B-E / P3B-H); `None` when the voice's plan is not
+/// known yet (the plan then assumes the Low-latency window).
+fn build_pitch(request: &EngineRequest, shapes: Option<(usize, usize)>) -> Result<BuiltPitch, String> {
+    let _span = telemetry::load_span(LoadStage::PitchPlain);
     let fcpe = opt_path(&request.fcpe_path);
     let rmvpe = opt_path(&request.rmvpe_path);
     let bank = create_pitch_extractor_with(
@@ -220,6 +245,9 @@ fn build_pitch(request: &EngineRequest) -> Result<BuiltPitch, String> {
             rmvpe_path: rmvpe.as_deref(),
             app_data: request.app_data.as_deref(),
             small_models_on_cpu: true,
+            precision: request.precision,
+            expected_call_frames: shapes.map(|s| s.0),
+            max_context_16k: shapes.map(|s| s.1),
         },
         GpuLevers::from_effective(&request.levers),
     )?;
@@ -246,6 +274,9 @@ fn build_pitch(request: &EngineRequest) -> Result<BuiltPitch, String> {
             rmvpe_path: None,
             app_data: request.app_data.as_deref(),
             small_models_on_cpu: true,
+            precision: request.precision,
+            expected_call_frames: None,
+            max_context_16k: None,
         });
         match light {
             Ok(light) => {
@@ -310,6 +341,34 @@ impl PitchExtractor for SwitchablePitch {
     fn receptive_frames(&self) -> Option<(usize, usize)> {
         self.receptive
     }
+
+    // P3B-S0: the voice's extractor sizes the cache geometry; the light one never needs more.
+    fn preferred_input_frames(&self) -> Option<usize> {
+        self.main.preferred_input_frames()
+    }
+
+    fn max_call_frames(&self) -> Option<usize> {
+        match (self.main.max_call_frames(), self.light.max_call_frames()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn last_salience(&self) -> Option<(&[f32], usize)> {
+        if self.use_light.load(Ordering::Relaxed) {
+            self.light.last_salience()
+        } else {
+            self.main.last_salience()
+        }
+    }
+
+    fn f0_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+        if self.use_light.load(Ordering::Relaxed) {
+            self.light.f0_into(mono_16k, out)
+        } else {
+            self.main.f0_into(mono_16k, out)
+        }
+    }
 }
 
 /// A model whose voice has the governor's light F0 extractor ([`SwitchablePitch`]): the
@@ -366,6 +425,14 @@ impl VoiceConversionModel for GovernedModel {
     fn stream_report(&self) -> Option<StreamReport> {
         self.inner.stream_report()
     }
+
+    fn time_anchored(&self) -> bool {
+        self.inner.time_anchored()
+    }
+
+    fn telemetry(&self) -> Option<&dyn ModelTelemetry> {
+        self.inner.telemetry()
+    }
 }
 
 
@@ -385,11 +452,96 @@ pub(crate) fn create_engine(request: EngineRequest) -> Result<CreatedEngine, Str
 /// [`create_engine`] with the 16 kHz denoiser that runs inside the harness (`gtcrn`; any other kind
 /// is not the factory's and is ignored here: the worker runs it on the capture's device-rate copy).
 pub(crate) fn create_engine_with(request: EngineRequest, denoiser: DenoiserKind) -> Result<CreatedEngine, String> {
+    create_engine_for_stream(request, denoiser, None)
+}
+
+thread_local! {
+    /// Set on the loader thread of a background hot-switch load (see [`BackgroundLoad`]).
+    static BACKGROUND_LOAD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks the calling thread as a background voice load for its lifetime (P3B-H): the load runs its
+/// branches one after the other (the live voice keeps the cores) and the thread runs below normal
+/// priority with the system-managed EcoQoS state. The first load of a run is in the foreground and
+/// builds in parallel. It also holds an RMVPE [`WarmupScope`](crate::services::neural_audio::vc::rmvpe::WarmupScope)
+/// for its lifetime, so a voice that joined the live voice's shared RMVPE plan runs its warm-up
+/// calls right behind the live voice's call instead of taking the plan's lock at an arbitrary moment.
+struct BackgroundLoad {
+    _warmup: crate::services::neural_audio::vc::rmvpe::WarmupScope,
+}
+
+impl BackgroundLoad {
+    fn enter() -> BackgroundLoad {
+        BACKGROUND_LOAD.with(|b| b.set(true));
+        // The loader thread is dedicated to this load: nothing to restore afterwards.
+        let _ = rt_thread::set_worker_priority(WorkerPriority::ProtectGame, false);
+        BackgroundLoad {
+            _warmup: crate::services::neural_audio::vc::rmvpe::warmup_scope(),
+        }
+    }
+
+    fn active() -> bool {
+        BACKGROUND_LOAD.with(Cell::get)
+    }
+}
+
+impl Drop for BackgroundLoad {
+    fn drop(&mut self) {
+        BACKGROUND_LOAD.with(|b| b.set(false));
+    }
+}
+
+/// What the stream harness around a template voice will ask for (P3B-H): the load plans the voice's
+/// final shapes from it, so the harness's `configure_stream` finds them equal and rebuilds nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StreamHint {
+    /// The harness's crossfade (ms).
+    pub crossfade_ms: f64,
+    /// The harness's extra context (ms).
+    pub extra_context_ms: f64,
+    /// The harness's SOLA search window (ms); `None` = automatic.
+    pub sola_search_ms: Option<f64>,
+}
+
+impl StreamHint {
+    /// The hint of a run's harness spec.
+    pub(crate) fn of(spec: &HarnessSpec) -> StreamHint {
+        StreamHint {
+            crossfade_ms: spec.crossfade_ms,
+            extra_context_ms: spec.extra_context_ms,
+            sola_search_ms: spec.sola_search_ms,
+        }
+    }
+
+    /// The geometry of a template voice with engine blocks of `block_16k` samples and output rate
+    /// `out_sr`: the tick's `want` (block + SOLA tail, as `VcStreamHarness` computes it), the extra
+    /// context and the crossfade.
+    fn geometry(&self, block_16k: usize, out_sr: u32) -> StreamGeometry {
+        StreamGeometry {
+            want_16k: sola_want_16k(block_16k, self.crossfade_ms, out_sr, harness_options(self.sola_search_ms)),
+            harness_extra_16k: ((self.extra_context_ms / 1000.0) * 16_000.0).round().max(0.0) as usize,
+            crossfade_ms: self.crossfade_ms,
+        }
+    }
+}
+
+/// The harness options of a run: its SOLA search window, the environment's overrides for the rest.
+fn harness_options(sola_search_ms: Option<f64>) -> HarnessOptions {
+    HarnessOptions {
+        sola_search_ms,
+        ..HarnessOptions::default()
+    }
+    .with_env()
+}
+
+/// [`create_engine_with`] for an engine that will run behind a stream harness of the given geometry
+/// (`LoadedVoice::load_cancellable`, the benchmark): a template voice plans its final shapes at load.
+pub(crate) fn create_engine_for_stream(request: EngineRequest, denoiser: DenoiserKind, hint: Option<&StreamHint>) -> Result<CreatedEngine, String> {
     let format = slot_format(&request.slot_dir)?;
     let probe = VramProbe::for_rung(&request.ep, request.session.cuda_device_index);
     let mut created = match format {
         SlotFormat::LegacyOnnxRvc => create_legacy(&request)?,
-        SlotFormat::SigilRvc => create_sigil(&request)?,
+        SlotFormat::SigilRvc => create_sigil(&request, hint)?,
         SlotFormat::Family(kind) => create_family(&request, kind)?,
         SlotFormat::Unknown(f) => return Err(format!("the voice-changer format '{f}' is not supported by this build")),
     };
@@ -408,7 +560,7 @@ fn create_legacy(request: &EngineRequest) -> Result<CreatedEngine, String> {
         mut outcomes,
         light_f0,
         light_note,
-    } = build_pitch(request)?;
+    } = build_pitch(request, None)?;
     let mut model = RvcModel::load(
         &request.slot_dir,
         &request.hubert_path,
@@ -486,7 +638,16 @@ fn create_legacy(request: &EngineRequest) -> Result<CreatedEngine, String> {
     })
 }
 
-fn create_sigil(request: &EngineRequest) -> Result<CreatedEngine, String> {
+/// What a template voice's pitch branch reports besides the extractor (filled on its thread).
+#[derive(Default)]
+struct PitchMeta {
+    notes: Vec<String>,
+    outcomes: Vec<(String, EpOutcome)>,
+    light_f0: Option<Arc<AtomicBool>>,
+    light_note: Option<String>,
+}
+
+fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<CreatedEngine, String> {
     if !engine::available() {
         return Err("Sigil template voices (sigil-rvc-1) are not supported by this build".into());
     }
@@ -497,13 +658,6 @@ fn create_sigil(request: &EngineRequest) -> Result<CreatedEngine, String> {
         .filter(|d| d.is_dir())
         .or_else(import::templates_dir)
         .ok_or("the bundled vc-templates folder was not found; reinstall Sigil")?;
-    let BuiltPitch {
-        extractor: pitch,
-        notes: mut warnings,
-        mut outcomes,
-        light_f0,
-        light_note,
-    } = build_pitch(request)?;
     let preset = presets::engine_preset(
         request.preset,
         request.block_ms,
@@ -513,32 +667,77 @@ fn create_sigil(request: &EngineRequest) -> Result<CreatedEngine, String> {
         request.precision,
     );
     let noise_seed = noise_seed_for(&request.slot_dir, manifest.source_sha256.as_deref());
-    let mut engine = SigilRvcEngine::load(SigilRvcRequest {
-        slot_dir: request.slot_dir.clone(),
-        manifest,
-        templates_dir,
-        ep: request.ep.clone(),
-        session: request.session.clone(),
-        levers: request.levers.clone(),
-        pitch,
-        content_encoder: opt_path(&request.hubert_path),
-        index: None,
-        preset,
-        f0_range: request.f0_range,
-        noise_seed,
-    })?;
+    // P3B-H: the load plans the voice's final shapes (lookahead, the harness's SOLA tail and extra
+    // context) and builds the pitch bank beside its other branches. With the kill switch
+    // (`SIGIL_VC_FINAL_SHAPES=0`) the load plans P3's defaults and the lookahead is applied below.
+    let final_shapes = SigilRvcEngine::final_shapes_enabled();
+    let stream = hint
+        .filter(|_| final_shapes)
+        .and_then(|h| plan_block_16k(&preset).map(|block| h.geometry(block, manifest.sample_rate)));
+    let pitch_meta: Mutex<Option<PitchMeta>> = Mutex::new(None);
+    let pitch_builder = |f0_frames: usize, window_16k: usize| -> Result<Box<dyn PitchExtractor>, String> {
+        let b = build_pitch(request, Some((f0_frames, window_16k)))?;
+        *pitch_meta.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PitchMeta {
+            notes: b.notes,
+            outcomes: b.outcomes,
+            light_f0: b.light_f0,
+            light_note: b.light_note,
+        });
+        Ok(b.extractor)
+    };
+    let mut engine = SigilRvcEngine::load_hooked(
+        SigilRvcRequest {
+            slot_dir: request.slot_dir.clone(),
+            manifest,
+            templates_dir,
+            ep: request.ep.clone(),
+            session: request.session.clone(),
+            levers: request.levers.clone(),
+            pitch: SigilRvcEngine::pending_pitch(),
+            content_encoder: opt_path(&request.hubert_path),
+            index: None,
+            preset,
+            f0_range: request.f0_range,
+            noise_seed,
+            lookahead_ms: if final_shapes { request.lookahead_ms } else { 0.0 },
+            stream,
+            content_context_16k: request
+                .content_context_ms
+                .filter(|ms| ms.is_finite() && *ms >= 0.0)
+                .map(|ms| (ms * 16.0).round() as usize),
+        },
+        Some(Box::new(pitch_builder)),
+        request.cancel.as_deref(),
+        // The load validates the voice with one conversion where a stream harness warms it next (a
+        // caller that passes the stream's geometry builds that harness: `LoadedVoice::load_cancellable`,
+        // which refuses the voice if the warm-up fails, see `warmup_verdict`); the other callers (the
+        // benchmark's builds) keep the two validation conversions.
+        hint.is_some(),
+        // A background hot-switch load builds sequentially.
+        BackgroundLoad::active(),
+    )?;
+    let PitchMeta {
+        notes: mut warnings,
+        mut outcomes,
+        light_f0,
+        light_note,
+    } = pitch_meta
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_default();
     engine.set_silence_skip(request.silence_skip);
-    // Lookahead (before the harness is built: it sizes its context from the plan). Not on a
-    // DirectML content encoder yet: with lookahead its window shape costs 35-49 ms per call there
-    // instead of about 4 ms (the same DirectML re-plan as a crossfade other than 20 ms; P3-I0
-    // measurement), which no 40 ms block survives.
-    let content_on_dml = engine
-        .ep_outcomes()
-        .iter()
-        .any(|(c, o)| c.ends_with("vc.content") && o.active == "dml");
     let mut lookahead_note = None;
-    if request.lookahead_ms > 0.0 {
-        if content_on_dml {
+    if !final_shapes && request.lookahead_ms > 0.0 {
+        // The kill switch's flow (P5): lookahead after the load, before the harness is built (it sizes
+        // its context from the plan). Not on a DirectML content encoder without a fixed shape: with
+        // lookahead its window shape costs 35-49 ms per call there instead of about 4 ms.
+        let content_on_dml = engine
+            .ep_outcomes()
+            .iter()
+            .any(|(c, o)| c.ends_with("vc.content") && o.active == "dml");
+        // The engine has run its warm-up tick by now, so this reports what the loaded voice really
+        // runs (an encoder whose plan was refused keeps the skip).
+        if content_on_dml && !engine.content_runs_fixed_shape() {
             lookahead_note = Some(
                 "lookahead: not used while the content encoder runs on DirectML (it would cost 35-49 ms per block there)"
                     .to_string(),
@@ -567,6 +766,12 @@ fn create_sigil(request: &EngineRequest) -> Result<CreatedEngine, String> {
         reference: None,
         min_output_buffer_ms: None,
     })
+}
+
+/// The engine block of a preset in 16 kHz samples (`None` for a block the plan refuses: the load
+/// reports that error).
+fn plan_block_16k(preset: &presets::EnginePreset) -> Option<usize> {
+    engine::plan::block_frames(preset.block_ms).ok().map(|f| f * 160)
 }
 
 /// The reference clip of `request`: its explicit WAV, else its voice-library voice (from
@@ -612,7 +817,7 @@ fn create_family(request: &EngineRequest, kind: FamilyKind) -> Result<CreatedEng
         return Err(format!("choose a reference voice from the voice library for this {} voice", kind.as_str()));
     }
     let (pitch, mut warnings, mut outcomes, light_f0, light_note) = if info.needs_pitch {
-        let b = build_pitch(request)?;
+        let b = build_pitch(request, None)?;
         (Some(b.extractor), b.notes, b.outcomes, b.light_f0, b.light_note)
     } else {
         (None, Vec::new(), Vec::new(), None, None)
@@ -739,6 +944,14 @@ impl VoiceConversionModel for ContextModel {
     fn stream_report(&self) -> Option<StreamReport> {
         self.inner.stream_report()
     }
+
+    fn time_anchored(&self) -> bool {
+        self.inner.time_anchored()
+    }
+
+    fn telemetry(&self) -> Option<&dyn ModelTelemetry> {
+        self.inner.telemetry()
+    }
 }
 
 /// Wrap the model with GTCRN at 16 kHz (CPU, one thread: it is tiny). A denoiser that cannot load
@@ -854,6 +1067,14 @@ impl VoiceConversionModel for PostModel {
     fn stream_report(&self) -> Option<StreamReport> {
         self.inner.stream_report()
     }
+
+    fn time_anchored(&self) -> bool {
+        self.inner.time_anchored()
+    }
+
+    fn telemetry(&self) -> Option<&dyn ModelTelemetry> {
+        self.inner.telemetry()
+    }
 }
 
 /// The in-harness denoiser's rate (GTCRN).
@@ -892,6 +1113,8 @@ pub(crate) struct HarnessSpec {
     pub extra_context_ms: f64,
     pub crossfade_ms: f64,
     pub chunk_frames: usize,
+    /// SOLA search window (ms; params `sola_search_ms`, P3B-H); `None` = automatic (half the overlap).
+    pub sola_search_ms: Option<f64>,
 }
 
 /// Build the stream harness around a created engine (warms it at the live shape).
@@ -906,7 +1129,7 @@ pub(crate) fn build_harness_with(model: Box<dyn VoiceConversionModel>, spec: &Ha
     let model_out_sr = model.output_sample_rate();
     let extra_samples = ((spec.extra_context_ms / 1000.0) * 16_000.0).round().max(0.0) as usize;
     let crossfade_samples = ((spec.crossfade_ms / 1000.0) * f64::from(model_out_sr)).round().max(0.0) as usize;
-    VcStreamHarness::with_context(
+    VcStreamHarness::with_options(
         model,
         spec.r_in,
         spec.r_out,
@@ -916,6 +1139,7 @@ pub(crate) fn build_harness_with(model: Box<dyn VoiceConversionModel>, spec: &Ha
         crossfade_samples,
         spec.chunk_frames,
         context,
+        harness_options(spec.sola_search_ms),
     )
 }
 
@@ -948,12 +1172,104 @@ pub(crate) struct LoadedVoice {
     /// The smallest output buffer (prefill, max queue; ms) it plays with (P5-I0; the worker uses
     /// the larger of it and the user's while this voice is active).
     pub min_output_buffer_ms: Option<(f64, f64)>,
+    /// VRAM of this voice alone (MiB): `vram_mb` less the shared components it built (P3B-H; equal to
+    /// `vram_mb` when it built none).
+    pub own_mb: f64,
+    /// The shared components (a pooled RMVPE plan) it holds, built or joined. [`VoiceSet::vram_mb`]
+    /// counts each once across the set, and a component goes with its last holder.
+    pub shared: Vec<SharedHold>,
     /// Resource-governor claim (resized to the measured VRAM; 0 MB on the CPU).
     _claim: VramClaim,
     pub load_ms: f64,
     /// Its load warnings were shown (they are toasted on its first activation only, not on every
     /// switch back to it).
     pub warnings_shown: bool,
+}
+
+/// A VRAM component several voices of a run can hold at once (P3B-E's RMVPE plan; the content
+/// encoder's plans are part of the building voice's measurement until the pool lists them).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SharedHold {
+    pub id: String,
+    pub mb: f64,
+}
+
+/// `(id, holders, MiB)` of every shared component alive now.
+fn shared_snapshot() -> Vec<(String, usize, f64)> {
+    shared_pitch_components()
+        .into_iter()
+        .map(|c| (c.id, c.users, c.vram_mb.unwrap_or(0.0)))
+        .collect()
+}
+
+/// Voices released so far (started, finished): [`release`] frees an evicted voice on its own thread,
+/// which drops that voice's hold on a shared plan at some point between the two. A load compares the
+/// marks around its shared-plan snapshots to know whether holders may have left meanwhile.
+static RELEASES_STARTED: AtomicU64 = AtomicU64::new(0);
+static RELEASES_DONE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReleaseMark {
+    started: u64,
+    done: u64,
+}
+
+impl ReleaseMark {
+    fn now() -> ReleaseMark {
+        // `done` first: a release that starts and finishes in between makes `started` larger, never smaller.
+        let done = RELEASES_DONE.load(Ordering::SeqCst);
+        ReleaseMark { started: RELEASES_STARTED.load(Ordering::SeqCst), done }
+    }
+
+    fn in_flight(self) -> bool {
+        self.started != self.done
+    }
+
+    /// Whether any voice release began, ended or was under way between the marks `before` (taken
+    /// before the first snapshot) and `after` (taken after the second): its drop may have lowered a
+    /// plan's holder count between the snapshots.
+    fn churned(before: ReleaseMark, after: ReleaseMark) -> bool {
+        before != after || before.in_flight() || after.in_flight()
+    }
+}
+
+/// F0 methods whose plan can be a shared RMVPE plan on a GPU rung (`rmvpe`, the fusion's pitch part,
+/// and `crepe`, which runs RMVPE while its own model is not installed).
+fn may_hold_rmvpe_plan(ep: &str, pitch_method: &str) -> bool {
+    !ep.trim().eq_ignore_ascii_case("cpu") && matches!(pitch_method.trim(), "rmvpe" | "fusion" | "crepe")
+}
+
+/// The components the voice that loaded between `before` and `after` holds (more holders than
+/// before: built or joined), and the VRAM of those it built (nobody held them before).
+///
+/// A join is seen as one more holder, which a holder leaving between the snapshots hides (voices
+/// are released on their own thread). With `uncertain` (voices were released around the load, and
+/// this voice can hold such a plan) every plan that was held before and still is counts as held by
+/// this voice too: a plan credited to a voice that does not hold it only makes the budget evict early,
+/// one that is missed leaves VRAM over-committed. (Exact bookkeeping needs the extractor to report the
+/// plan it holds, `RmvpePitchExtractor::shared_component_id`; it does not reach the factory yet.)
+fn holds_since(before: &[(String, usize, f64)], after: &[(String, usize, f64)], uncertain: bool) -> (Vec<SharedHold>, f64) {
+    let (mut holds, mut built) = (Vec::new(), 0.0);
+    for (id, users, mb) in after {
+        let was = before.iter().find(|b| &b.0 == id).map_or(0, |b| b.1);
+        if *users > was || (uncertain && was > 0) {
+            holds.push(SharedHold { id: id.clone(), mb: *mb });
+            if was == 0 {
+                built += mb;
+            }
+        }
+    }
+    (holds, built)
+}
+
+/// A template voice whose stream warm-up failed does not load: its two F0 paths (whole window and
+/// incremental) run in that warm-up, so a failure there fails every live tick. (The load's own check
+/// is one conversion where a harness warm-up follows; this keeps the second one fatal, as before.)
+fn warmup_verdict(format: &SlotFormat, slot_dir: &Path, failure: Option<&str>) -> Result<(), String> {
+    match failure {
+        Some(e) if *format == SlotFormat::SigilRvc => Err(format!("voice {}: test conversion failed: {e}", slot_dir.display())),
+        _ => Ok(()),
+    }
 }
 
 /// Error of a background load stopped because nobody wanted the voice any more.
@@ -971,8 +1287,11 @@ impl LoadedVoice {
         let label = format!("vc: {}", key.slot_dir.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         let gpu = request.ep != "cpu";
         let probe = VramProbe::for_rung(&request.ep, request.session.cuda_device_index);
+        let may_hold_plan = may_hold_rmvpe_plan(&request.ep, &request.pitch_extractor);
+        let releases_before = ReleaseMark::now();
+        let shared_before = shared_snapshot();
         let singing = SingingFlags::from_range(request.f0_range);
-        let created = create_engine_with(request, key.denoiser)?;
+        let created = create_engine_for_stream(request, key.denoiser, Some(&StreamHint::of(spec)))?;
         check()?;
         let model_input_rate = created.model.input_sample_rate();
         let context = HarnessContext {
@@ -980,6 +1299,7 @@ impl LoadedVoice {
             singing,
         };
         let harness = build_harness_with(created.model, spec, context)?;
+        warmup_verdict(&created.format, &key.slot_dir, harness.warmup_failure())?;
         check()?;
         // The harness configured the model's stream, which may have rebuilt sessions (a CPU
         // fallback, a CUDA graph that no longer captures): the voice reports what runs now (T7).
@@ -990,6 +1310,9 @@ impl LoadedVoice {
         // The warm-up above allocated the sessions' working memory: measure after it.
         let vram_mb = probe.and_then(|p| p.delta_mb()).unwrap_or(created.vram_mb).max(created.vram_mb);
         let claim = resources::claim_vram(Subsystem::Vc, &label, if gpu { vram_mb.round() as u64 } else { 0 });
+        let shared_after = shared_snapshot();
+        let uncertain = may_hold_plan && ReleaseMark::churned(releases_before, ReleaseMark::now());
+        let (shared, built_mb) = holds_since(&shared_before, &shared_after, uncertain);
         Ok(LoadedVoice {
             key,
             harness,
@@ -1003,10 +1326,19 @@ impl LoadedVoice {
             model_delay_16k: created.model_delay_16k,
             model_input_rate,
             min_output_buffer_ms: created.min_output_buffer_ms,
+            own_mb: (vram_mb - built_mb).max(0.0),
+            shared,
             _claim: claim,
             load_ms: t0.elapsed().as_secs_f64() * 1000.0,
             warnings_shown: false,
         })
+    }
+
+    /// [`load_cancellable`](Self::load_cancellable) for a hot-switch load on its own thread while
+    /// another voice plays (`VoiceSet`): sequential branches at a lower priority (P3B-H).
+    pub(crate) fn load_background(key: EngineKey, request: EngineRequest, spec: &HarnessSpec, cancel: &AtomicBool) -> Result<LoadedVoice, String> {
+        let _background = BackgroundLoad::enter();
+        Self::load_cancellable(key, request, spec, cancel)
     }
 
     /// A stand-in voice around `model` (tests of the switching logic elsewhere in the crate).
@@ -1027,6 +1359,8 @@ impl LoadedVoice {
             model_delay_16k: 0,
             model_input_rate,
             min_output_buffer_ms: None,
+            own_mb: vram_mb,
+            shared: Vec::new(),
             _claim: resources::claim_vram(Subsystem::Vc, "test: voice", 0),
             load_ms: 0.0,
             warnings_shown: false,
@@ -1135,7 +1469,7 @@ impl VoiceSet {
             active,
             hot_slots,
             vram_budget_mb,
-            Arc::new(LoadedVoice::load_cancellable),
+            Arc::new(LoadedVoice::load_background),
         )
     }
 
@@ -1187,9 +1521,21 @@ impl VoiceSet {
         self.slot_dirs_iter().map(Path::to_path_buf).collect()
     }
 
-    /// VRAM held by the loaded voices (MiB).
+    /// VRAM held by the loaded voices (MiB): each voice's own, plus every shared component (a pooled
+    /// RMVPE plan) once however many voices hold it, for as long as one of them does (P3B-H: the voice
+    /// that built a shared plan leaving does not free it).
     pub(crate) fn vram_mb(&self) -> f64 {
-        self.active.vram_mb + self.idle.iter().map(|v| v.vram_mb).sum::<f64>() + self.ready.as_ref().map_or(0.0, |v| v.vram_mb)
+        let voices = || std::iter::once(&self.active).chain(self.ready.iter()).chain(self.idle.iter());
+        let own: f64 = voices().map(|v| v.own_mb).sum();
+        let mut seen: Vec<&str> = Vec::new();
+        let mut shared = 0.0;
+        for hold in voices().flat_map(|v| v.shared.iter()) {
+            if !seen.contains(&hold.id.as_str()) {
+                seen.push(&hold.id);
+                shared += hold.mb;
+            }
+        }
+        own + shared
     }
 
     /// Nothing to load: a queued request is dropped and the load in flight is told to stop (it is
@@ -1370,7 +1716,16 @@ impl VoiceSet {
 /// take tens of milliseconds; the worker must not stall on it).
 fn release(voice: Option<LoadedVoice>) {
     let Some(voice) = voice else { return };
-    if let Err(e) = std::thread::Builder::new().name("sigil-vc-release".into()).spawn(move || drop(voice)) {
+    // Counted around the drop (the start before anything is dropped): `ReleaseMark` tells a load whether
+    // holders of a shared plan may have left while it measured.
+    RELEASES_STARTED.fetch_add(1, Ordering::SeqCst);
+    let released = std::thread::Builder::new().name("sigil-vc-release".into()).spawn(move || {
+        drop(voice);
+        RELEASES_DONE.fetch_add(1, Ordering::SeqCst);
+    });
+    if let Err(e) = released {
+        // The closure (and the voice in it) was dropped by the failed spawn, here.
+        RELEASES_DONE.fetch_add(1, Ordering::SeqCst);
         tracing::debug!("voice changer: releasing a voice on the worker thread ({e})");
     }
 }
@@ -1417,6 +1772,107 @@ mod tests {
         std::fs::write(dir.join("manifest.json"), br#"{"format":"future-family-9"}"#).unwrap();
         assert!(slot_format(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Hot voices that share a pitch plan count it once against the VRAM budget, and it stays counted
+    /// until its last holder goes, whichever voice built it (P3B-H).
+    #[test]
+    fn shared_components_are_counted_once_and_leave_with_their_last_holder() {
+        let shared_voice = |name: &str, own: f64, shared: &[(&str, f64)]| {
+            let mut v = voice(name, 0.1, own + shared.iter().map(|s| s.1).sum::<f64>());
+            v.own_mb = own;
+            v.shared = shared.iter().map(|(id, mb)| SharedHold { id: (*id).into(), mb: *mb }).collect();
+            v
+        };
+        let no_loads: VoiceLoader = Arc::new(|_, _, _, _| Err("no loads".into()));
+        // A built the RMVPE plan (400 MB), B joined it; each has 100 MB of its own; C holds none.
+        let mut set = VoiceSet::with_loader(shared_voice("a", 100.0, &[("rmvpe-1", 400.0)]), 3, 0, no_loads.clone());
+        set.idle.push(shared_voice("b", 100.0, &[("rmvpe-1", 400.0)]));
+        set.idle.push(shared_voice("c", 100.0, &[]));
+        assert_eq!(set.vram_mb(), 100.0 + 100.0 + 100.0 + 400.0, "the plan is counted once");
+        // The builder leaves: the plan stays (B holds it), so only A's own 100 MB go.
+        drop(std::mem::replace(&mut set.active, shared_voice("d", 100.0, &[])));
+        assert_eq!(set.vram_mb(), 100.0 + 100.0 + 100.0 + 400.0);
+        // The last holder leaves and the plan goes with it.
+        set.idle.retain(|v| v.key.slot_dir != key("b").slot_dir);
+        assert_eq!(set.vram_mb(), 100.0 + 100.0);
+        // A budget evicts by the shared-aware total: 400 + 3 x 100 does not fit 600 MB, so the
+        // oldest idle voice goes.
+        let mut set = VoiceSet::with_loader(shared_voice("a", 100.0, &[("rmvpe-1", 400.0)]), 4, 600, no_loads);
+        set.retire(shared_voice("b", 100.0, &[("rmvpe-1", 400.0)]));
+        set.retire(shared_voice("c", 100.0, &[("rmvpe-1", 400.0)]));
+        assert_eq!(set.vram_mb(), 600.0, "one voice was evicted to fit 600 MB");
+        assert_eq!(set.slot_dirs().len(), 2);
+    }
+
+    fn row(id: &str, users: usize, mb: f64) -> (String, usize, f64) {
+        (id.to_string(), users, mb)
+    }
+
+    /// A voice joins a shared plan (2 -> 3 holders) while an evicted voice, released on its own thread,
+    /// drops its hold (3 -> 2): the counts between the load's snapshots show no join. Knowing that
+    /// voices were released around the load, the join is credited anyway.
+    #[test]
+    fn a_join_hidden_by_a_leaving_holder_is_still_credited() {
+        let before = [row("rmvpe-1", 2, 400.0)];
+        // Plain join: one more holder, nothing built.
+        let (holds, built) = holds_since(&before, &[row("rmvpe-1", 3, 400.0)], false);
+        assert_eq!(holds, vec![SharedHold { id: "rmvpe-1".into(), mb: 400.0 }]);
+        assert_eq!(built, 0.0);
+        // Masked by the leaving holder: counting holders alone misses it ...
+        let masked = [row("rmvpe-1", 2, 400.0)];
+        assert!(holds_since(&before, &masked, false).0.is_empty());
+        // ... the churn of releases makes the credit conservative.
+        let (holds, built) = holds_since(&before, &masked, true);
+        assert_eq!(holds, vec![SharedHold { id: "rmvpe-1".into(), mb: 400.0 }]);
+        assert_eq!(built, 0.0, "a plan someone held before was not built by this voice");
+        // A plan this voice built (nobody held it before) is credited and counted as built either way.
+        for uncertain in [false, true] {
+            let (holds, built) = holds_since(&[], &[row("rmvpe-2", 1, 300.0)], uncertain);
+            assert_eq!((holds.len(), built), (1, 300.0));
+        }
+        // A plan that is gone (its last holder left) is not held by anyone.
+        assert!(holds_since(&before, &[], true).0.is_empty());
+    }
+
+    #[test]
+    fn release_churn_is_read_from_the_marks() {
+        let m = |started, done| ReleaseMark { started, done };
+        assert!(!ReleaseMark::churned(m(3, 3), m(3, 3)), "nothing was released around the load");
+        assert!(ReleaseMark::churned(m(3, 3), m(4, 4)), "a release began and ended");
+        assert!(ReleaseMark::churned(m(3, 3), m(4, 3)), "a release is under way");
+        assert!(ReleaseMark::churned(m(4, 3), m(4, 4)), "one ended during the load");
+        assert!(ReleaseMark::churned(m(4, 3), m(4, 3)), "one was under way throughout");
+        // The real counters: a release is counted when it starts, before anything is dropped.
+        let before = ReleaseMark::now();
+        release(Some(voice("released", 0.1, 0.0)));
+        assert!(ReleaseMark::churned(before, ReleaseMark::now()));
+    }
+
+    #[test]
+    fn only_voices_that_can_hold_an_rmvpe_plan_get_the_conservative_credit() {
+        for method in ["rmvpe", "fusion", "crepe", " rmvpe "] {
+            assert!(may_hold_rmvpe_plan("cuda", method), "{method}");
+            assert!(may_hold_rmvpe_plan("dml", method), "{method}");
+            assert!(!may_hold_rmvpe_plan("cpu", method), "{method}: RMVPE is GPU-only");
+        }
+        assert!(!may_hold_rmvpe_plan(" CPU ", "rmvpe"));
+        for method in ["swiftf0", "fcpe", "dio", "pesto"] {
+            assert!(!may_hold_rmvpe_plan("cuda", method), "{method}");
+        }
+    }
+
+    /// The load validates a template voice with one conversion where the stream harness warms it next;
+    /// the harness's warm-up (both F0 paths) failing refuses the voice, as the load's second pass did.
+    #[test]
+    fn a_template_voice_with_a_failed_warmup_does_not_load() {
+        let dir = Path::new("C:/voices/alice");
+        let err = warmup_verdict(&SlotFormat::SigilRvc, dir, Some("rvc_convert: boom")).unwrap_err();
+        assert!(err.contains("alice") && err.contains("test conversion failed") && err.contains("boom"), "{err}");
+        assert!(warmup_verdict(&SlotFormat::SigilRvc, dir, None).is_ok());
+        // Bring-your-own and family voices keep a warn-only warm-up.
+        assert!(warmup_verdict(&SlotFormat::LegacyOnnxRvc, dir, Some("boom")).is_ok());
+        assert!(warmup_verdict(&SlotFormat::Family(FamilyKind::DdspSvc), dir, Some("boom")).is_ok());
     }
 
     #[test]
@@ -1548,7 +2004,185 @@ mod tests {
             reference_clip: None,
             latency_budget_ms: 300.0,
             cancel: None,
+            content_context_ms: None,
         }
+    }
+
+    /// The dev rig's request for the default voice on `ep` (40 ms blocks, RMVPE, the Low-latency
+    /// preset's levers) with the app-data folder `app` (`SIGIL_TEST_APP_DATA`).
+    fn dev_rig_request(app: &Path, ep: &str) -> EngineRequest {
+        use crate::services::neural_audio::vc::engine::LeverRequest;
+        let slot = app.join("voice-changer").join("models").join("default");
+        let mut rvc = super::super::params::RvcParamsState::default();
+        super::super::worker::fill_store_pitch_paths(&mut rvc, app);
+        let mut request = test_request(&slot);
+        request.app_data = Some(app.to_path_buf());
+        request.ep = ep.to_string();
+        request.pitch_extractor = "rmvpe".into();
+        request.rmvpe_path = rvc.rmvpe_path.clone();
+        request.block_ms = 40.0;
+        request.chunk_frames = 512;
+        request.levers = super::super::capabilities::resolve_levers(&LeverRequest::default(), RvcPresetProfile::LowLatency, ep, PrecisionMode::Auto);
+        request
+    }
+
+    /// The reference stream (48 kHz in, 48 kHz stereo out, 512-frame blocks, 20 ms crossfade).
+    fn dev_rig_spec() -> HarnessSpec {
+        HarnessSpec {
+            r_in: 48_000,
+            r_out: 48_000,
+            ch_in: 1,
+            ch_out: 2,
+            extra_context_ms: 64.0,
+            crossfade_ms: 20.0,
+            chunk_frames: 512,
+            sola_search_ms: None,
+        }
+    }
+
+    /// P3B-H dev-rig stress of the load path: `SIGIL_STRESS_LOADS` (default 200) loads of the real
+    /// default voice per rung of `SIGIL_BENCH_EPS` (default `dml,cuda`) through the factory in one
+    /// process, alternating the parallel and the sequential load, each followed by a few converted
+    /// blocks and a drop (the ADR 0006 release-then-run crash class, a CUDA graph capture beside
+    /// another thread's session creation, a hang). Prints the median load time of each order.
+    /// `SIGIL_TEST_APP_DATA` is an app-data folder with `voice-changer/models/default` and the model
+    /// store; run it alone (`--ignored load_stress_dev_rig --nocapture`) and hold the GPU timing lock.
+    #[test]
+    #[ignore = "dev-rig: needs SIGIL_TEST_APP_DATA (a model store with the default voice) and a GPU"]
+    fn load_stress_dev_rig() {
+        let Some(app) = std::env::var_os("SIGIL_TEST_APP_DATA").map(PathBuf::from) else {
+            eprintln!("SIGIL_TEST_APP_DATA is not set; skipped");
+            return;
+        };
+        std::env::set_var("SIGIL_APP_DATA_DIR", &app);
+        let loads: usize = std::env::var("SIGIL_STRESS_LOADS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
+        let eps = std::env::var("SIGIL_BENCH_EPS").unwrap_or_else(|_| "dml,cuda".into());
+        for ep in eps.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let mut times: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+            let started = Instant::now();
+            for i in 0..loads {
+                let parallel = i % 2 == 0;
+                std::env::set_var("SIGIL_VC_PARALLEL_LOAD", if parallel { "1" } else { "0" });
+                let request = dev_rig_request(&app, ep);
+                let spec = dev_rig_spec();
+                let t = Instant::now();
+                let created = create_engine_for_stream(request, DenoiserKind::Off, Some(&StreamHint::of(&spec))).unwrap_or_else(|e| panic!("{ep} load {i} (parallel {parallel}): {e}"));
+                let load_ms = t.elapsed().as_secs_f64() * 1000.0;
+                let mut harness = build_harness(created.model, &spec).unwrap_or_else(|e| panic!("{ep} harness {i}: {e}"));
+                let block: Vec<f32> = (0..512).map(|k| 0.1 * (k as f32 * 0.05).sin()).collect();
+                for _ in 0..16 {
+                    harness.push_and_convert(&block).unwrap_or_else(|e| panic!("{ep} convert {i}: {e}"));
+                }
+                times[usize::from(!parallel)].push(load_ms);
+                if i % 20 == 0 {
+                    eprintln!("{ep}: load {i}/{loads} ({} ms, parallel {parallel}), {:.0} s elapsed", load_ms.round(), started.elapsed().as_secs_f64());
+                }
+                drop(harness);
+            }
+            let median = |v: &mut Vec<f64>| {
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+            };
+            let (par, seq) = (median(&mut times[0]), median(&mut times[1]));
+            eprintln!("{ep}: {loads} loads without a crash or a hang; median load parallel {par:.0} ms, sequential {seq:.0} ms");
+        }
+    }
+
+    /// Dev-rig smoke of the real load path (`LoadedVoice::load_cancellable`, as the worker and `VoiceSet`
+    /// run it): the default voice loads on the first rung of `SIGIL_BENCH_EPS` (default `cpu`) with the
+    /// stream geometry as its hint, its stream warm-up passes the template verdict, the shared plan it
+    /// built (a GPU rung with RMVPE) is on its holds, and it converts a few blocks. Needs
+    /// `SIGIL_TEST_APP_DATA` like the stress test; run it alone (`--ignored --exact --nocapture`).
+    #[test]
+    #[ignore = "dev-rig: needs SIGIL_TEST_APP_DATA (a model store with the default voice)"]
+    fn load_cancellable_smoke_dev_rig() {
+        let Some(app) = std::env::var_os("SIGIL_TEST_APP_DATA").map(PathBuf::from) else {
+            eprintln!("SIGIL_TEST_APP_DATA is not set; skipped");
+            return;
+        };
+        std::env::set_var("SIGIL_APP_DATA_DIR", &app);
+        let eps = std::env::var("SIGIL_BENCH_EPS").unwrap_or_else(|_| "cpu".into());
+        let ep = eps.split(',').map(str::trim).find(|e| !e.is_empty()).unwrap_or("cpu").to_string();
+        let request = dev_rig_request(&app, &ep);
+        let key = EngineKey {
+            slot_dir: request.slot_dir.clone(),
+            pitch_extractor: request.pitch_extractor.clone(),
+            f0_range: request.f0_range,
+            denoiser: DenoiserKind::Off,
+            reference_voice: String::new(),
+        };
+        let spec = dev_rig_spec();
+        let cancel = AtomicBool::new(false);
+        let mut voice = LoadedVoice::load_cancellable(key, request, &spec, &cancel).unwrap_or_else(|e| panic!("{ep}: {e}"));
+        assert_eq!(voice.harness.warmup_failure(), None, "{ep}: a template voice with a failed warm-up must not load");
+        assert_eq!(voice.format, SlotFormat::SigilRvc);
+        let block: Vec<f32> = (0..512).map(|k| 0.1 * (k as f32 * 0.05).sin()).collect();
+        for tick in 0..24 {
+            let out = voice.harness.push_and_convert(&block).unwrap_or_else(|e| panic!("{ep} tick {tick}: {e}"));
+            assert!(out.iter().all(|x| x.is_finite()), "{ep} tick {tick}");
+        }
+        eprintln!(
+            "SMOKE {ep}: loaded in {:.0} ms, vram {:.0} MB (own {:.0}), shared holds {:?}, outcomes {:?}",
+            voice.load_ms, voice.vram_mb, voice.own_mb, voice.shared, voice.outcomes
+        );
+    }
+
+    /// P3B-H dev-rig measurement of the GPU prewarm: one process, one cold load of the default voice
+    /// on `SIGIL_BENCH_EPS` (the first rung), after the prewarm (`SIGIL_TEST_PREWARM=1`: the cached
+    /// preflight and canary of `ort_session::check_gpu_ep`, as the app runs them at start) or without
+    /// it (`0`). Prints one `PREWARM_RESULT` line: the prewarm's wall time, the load's, and the
+    /// process VRAM (MiB, DXGI) before, after the prewarm, after the load and after the voice is gone
+    /// (the idle cost of keeping the warm-up). Run it in fresh processes, ABBA, under the GPU lock.
+    #[test]
+    #[ignore = "dev-rig: needs SIGIL_TEST_APP_DATA (a model store with the default voice) and a GPU"]
+    fn prewarm_first_load_dev_rig() {
+        use crate::services::bench::metrics::process_vram_mb;
+        let Some(app) = std::env::var_os("SIGIL_TEST_APP_DATA").map(PathBuf::from) else {
+            eprintln!("SIGIL_TEST_APP_DATA is not set; skipped");
+            return;
+        };
+        std::env::set_var("SIGIL_APP_DATA_DIR", &app);
+        let ep = std::env::var("SIGIL_BENCH_EPS").unwrap_or_else(|_| "cuda".into());
+        let ep = ep.split(',').next().unwrap_or("cuda").trim().to_string();
+        let warm = std::env::var("SIGIL_TEST_PREWARM").is_ok_and(|v| v.trim() == "1");
+        let vram = || process_vram_mb().map_or(-1.0, |v| v as f64);
+        let _recording = telemetry::start_recording();
+        let mark0 = telemetry::load_mark();
+        let before = vram();
+        let t = Instant::now();
+        if warm {
+            crate::services::neural_audio::ort_session::check_gpu_ep(&ep, 0).unwrap_or_else(|e| panic!("prewarm {ep}: {e}"));
+        }
+        let prewarm_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let after_prewarm = vram();
+        let mark1 = telemetry::load_mark();
+        let request = dev_rig_request(&app, &ep);
+        let spec = dev_rig_spec();
+        let t = Instant::now();
+        let created = create_engine_for_stream(request, DenoiserKind::Off, Some(&StreamHint::of(&spec))).unwrap_or_else(|e| panic!("{ep} load: {e}"));
+        let load_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let after_load = vram();
+        let harness = build_harness(created.model, &spec).unwrap_or_else(|e| panic!("{ep} harness: {e}"));
+        drop(harness);
+        let after_drop = vram();
+        // The longest preload / canary span of the prewarm and of the load, and the CUDA context span.
+        let longest = |events: &[telemetry::LoadEvent], key: &str| events.iter().filter(|e| e.stage.key() == key).map(|e| e.duration_ms()).fold(0.0, f64::max);
+        let all = telemetry::load_events_since(mark0);
+        let (pre, load_events) = all.split_at(mark1.saturating_sub(mark0).min(all.len()));
+        if std::env::var_os("SIGIL_TEST_PREWARM_SPANS").is_some() {
+            let t0 = load_events.iter().map(|e| e.start_ns).min().unwrap_or(0);
+            let mut sorted: Vec<_> = load_events.to_vec();
+            sorted.sort_by_key(|e| e.start_ns);
+            for e in sorted {
+                eprintln!("SPAN t{} {:8.1} +{:7.1} {}", e.thread, (e.start_ns - t0) as f64 / 1e6, e.duration_ms(), e.stage.key());
+            }
+        }
+        eprintln!(
+            "PREWARM_RESULT ep={ep} warm={warm} prewarm_ms={prewarm_ms:.0} load_ms={load_ms:.0} prewarm_canary_ms={:.0} load_canary_max_ms={:.0} load_cuda_context_ms={:.0} vram_before={before} vram_after_prewarm={after_prewarm} vram_after_load={after_load} vram_after_drop={after_drop}",
+            longest(pre, "preload_canary"),
+            longest(load_events, "preload_canary"),
+            longest(load_events, "cuda_context"),
+        );
     }
 
     // ---- hot voice set ----
@@ -1577,6 +2211,7 @@ mod tests {
             extra_context_ms: 32.0,
             crossfade_ms: 10.0,
             chunk_frames: 480,
+            sola_search_ms: None,
         }
     }
 
@@ -1604,6 +2239,8 @@ mod tests {
             model_delay_16k: 0,
             model_input_rate: 16_000,
             min_output_buffer_ms: None,
+            own_mb: vram_mb,
+            shared: Vec::new(),
             _claim: resources::claim_vram(Subsystem::Vc, "test: voice", 0),
             load_ms: 0.0,
             warnings_shown: false,
@@ -1885,6 +2522,7 @@ mod tests {
                 extra_context_ms: 64.0,
                 crossfade_ms: 20.0,
                 chunk_frames: chunk,
+                sola_search_ms: None,
             };
             let input = vec![0.1f32; chunk];
             // Prime `k` blocks, then: do the switch block and the one after it play the voice?
@@ -1982,7 +2620,7 @@ mod tests {
         req.hubert_path = hubert.to_string_lossy().into_owned();
         req.levers.levers.set(Lever::Governor, true);
         req.levers.levers.set(Lever::GpuKnn, true);
-        let built = build_pitch(&req).unwrap();
+        let built = build_pitch(&req, None).unwrap();
         assert!(built.light_f0.is_none() && built.light_note.is_none(), "dio is already light");
         let created = create_engine(req).unwrap();
         assert_eq!(created.format, SlotFormat::LegacyOnnxRvc);
@@ -2047,6 +2685,41 @@ mod tests {
         let err = create_engine(req).err().expect("the toy template is not 100 frames per second");
         assert!(err.contains("frames per second"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A background hot-switch load marks only its own thread, for exactly as long as it runs.
+    #[test]
+    fn a_background_load_marks_only_its_own_thread() {
+        assert!(!BackgroundLoad::active());
+        std::thread::spawn(|| {
+            let guard = BackgroundLoad::enter();
+            assert!(BackgroundLoad::active());
+            assert!(crate::services::neural_audio::vc::rmvpe::warming_now(), "a background load holds the RMVPE warm-up scope");
+            drop(guard);
+            assert!(!BackgroundLoad::active());
+        })
+        .join()
+        .unwrap();
+        assert!(!BackgroundLoad::active(), "the calling thread was never marked");
+    }
+
+    /// The hint of a run's harness plans the geometry the harness asks for: the tick's `want`
+    /// (block + SOLA tail) and the extra context in 16 kHz samples, with the SOLA search window.
+    #[test]
+    fn the_stream_hint_plans_the_harness_geometry() {
+        let mut sp = spec();
+        sp.crossfade_ms = 10.0;
+        sp.extra_context_ms = 64.0;
+        let hint = StreamHint::of(&sp);
+        assert_eq!((hint.crossfade_ms, hint.extra_context_ms, hint.sola_search_ms), (10.0, 64.0, None));
+        let g = hint.geometry(640, 40_000);
+        assert_eq!(g.harness_extra_16k, 1_024);
+        assert_eq!(g.crossfade_ms, 10.0);
+        assert_eq!(g.want_16k, sola_want_16k(640, 10.0, 40_000, harness_options(None)));
+        // A narrower search window asks the model for less.
+        sp.sola_search_ms = Some(2.0);
+        let narrow = StreamHint::of(&sp).geometry(640, 40_000);
+        assert!(narrow.want_16k < g.want_16k, "{} vs {}", narrow.want_16k, g.want_16k);
     }
 
     // ---- P5 families (P5-S0) ----

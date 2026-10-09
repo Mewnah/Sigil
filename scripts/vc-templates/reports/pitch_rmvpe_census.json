@@ -1,0 +1,109 @@
+{
+  "inputs": 62,
+  "tensors": 327,
+  "over_8000": [],
+  "max_weight_abs": 19109.8671875,
+  "top": [
+    {
+      "tensor": "/unet/decoder/layers.1/conv1/conv1.0/ConvTranspose_output_0",
+      "max_abs": 1026.2957763671875
+    },
+    {
+      "tensor": "/unet/decoder/layers.2/conv1/conv1.0/ConvTranspose_output_0",
+      "max_abs": 816.2642822265625
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv1/conv1.0/ConvTranspose_output_0",
+      "max_abs": 228.67312622070312
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv2.3/Add_output_0",
+      "max_abs": 146.5561981201172
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv2.2/Add_output_0",
+      "max_abs": 140.07659912109375
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv2.1/Add_output_0",
+      "max_abs": 134.56138610839844
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv2.0/Add_output_0",
+      "max_abs": 127.0064697265625
+    },
+    {
+      "tensor": "/unet/decoder/layers.0/conv2.0/shortcut/Conv_output_0",
+      "max_abs": 122.94597625732422
+    },
+    {
+      "tensor": "/unet/encoder/layers.0/conv.2/Add_output_0",
+      "max_abs": 105.73892211914062
+    },
+    {
+      "tensor": "/unet/encoder/layers.0/conv.3/Add_output_0",
+      "max_abs": 105.73892211914062
+    },
+    {
+      "tensor": "/unet/encoder/layers.0/pool/Pad_output_0",
+      "max_abs": 105.73892211914062
+    },
+    {
+      "tensor": "/unet/decoder/layers.4/Concat_output_0",
+      "max_abs": 105.73892211914062
+    },
+    {
+      "tensor": "/unet/intermediate/layers.3/conv.3/Add_output_0",
+      "max_abs": 99.87584686279297
+    },
+    {
+      "tensor": "/unet/intermediate/layers.3/conv.2/Add_output_0",
+      "max_abs": 95.03089141845703
+    },
+    {
+      "tensor": "/unet/intermediate/layers.3/conv.1/Add_output_0",
+      "max_abs": 89.55547332763672
+    },
+    {
+      "tensor": "/unet/intermediate/layers.3/conv.0/Add_output_0",
+      "max_abs": 87.61067199707031
+    },
+    {
+      "tensor": "/unet/decoder/layers.3/conv1/conv1.0/ConvTranspose_output_0",
+      "max_abs": 86.14948272705078
+    },
+    {
+      "tensor": "/unet/intermediate/layers.2/conv.3/Add_output_0",
+      "max_abs": 83.7709732055664
+    },
+    {
+      "tensor": "/unet/intermediate/layers.2/conv.2/Add_output_0",
+      "max_abs": 78.3555679321289
+    },
+    {
+      "tensor": "/unet/intermediate/layers.2/conv.1/Add_output_0",
+      "max_abs": 73.93421173095703
+    },
+    {
+      "tensor": "/unet/encoder/layers.0/conv.2/conv/conv.3/Conv_output_0",
+      "max_abs": 73.79254913330078
+    },
+    {
+      "tensor": "/unet/encoder/layers.0/conv.3/conv/conv.3/Conv_output_0",
+      "max_abs": 71.65484619140625
+    },
+    {
+      "tensor": "/unet/intermediate/layers.0/conv.0/shortcut/Conv_output_0",
+      "max_abs": 70.72181701660156
+    },
+    {
+      "tensor": "/unet/intermediate/layers.0/conv.0/Add_output_0",
+      "max_abs": 70.72181701660156
+    },
+    {
+      "tensor": "/unet/intermediate/layers.1/conv.2/Add_output_0",
+      "max_abs": 70.2033920288086
+    }
+  ],
+  "ok": true
+}

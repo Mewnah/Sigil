@@ -222,6 +222,7 @@ fn realtime_session_options(base: &VcSessionOptions) -> VcSessionOptions {
         vram_cap_mb: None,
         component_prefix: base.component_prefix,
         cpu_arena: false,
+        dynamic_block_base: None,
     }
 }
 
@@ -236,6 +237,7 @@ fn background_session_options(base: &VcSessionOptions) -> VcSessionOptions {
         vram_cap_mb: None,
         component_prefix: base.component_prefix,
         cpu_arena: true,
+        dynamic_block_base: None,
     }
 }
 

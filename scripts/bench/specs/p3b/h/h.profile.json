@@ -1,0 +1,195 @@
+{
+  "$comment": "P3B-H working profile (run-perf-gate.ps1 -Profile scripts/bench/specs/p3b/h/h.profile.json): the load rows (final shapes, parallel cold start) and the pacing rows (cushion, device block, SOLA). Interleave with -CompareEnv (SIGIL_VC_FINAL_SHAPES=0, SIGIL_VC_PARALLEL_LOAD=0, SIGIL_VC_SOLA_SLACK=aligned, SIGIL_VC_SOLA_SEARCH_MS=2) or -CompareVars (OUTPUT_CUSHION=adaptive, BLOCK_FRAMES=480). P3B-A owns scripts/bench/profiles/; the rows P3B-I0 should lift are listed in README.md.",
+  "schema": "sigil-bench-profile/1",
+  "name": "p3b-h",
+  "description": "P3B-H load path and stream latency.",
+  "specs": [],
+  "vars": {
+    "CLIP": "",
+    "SLOT": "",
+    "CONTENT_ENCODER": "",
+    "EP": "cuda",
+    "PITCH": "rmvpe",
+    "PRESET": "low_latency",
+    "BUILD": "auto",
+    "LEVERS_JSON": "{}",
+    "QOS": "app",
+    "CROSSFADE_MS": "20",
+    "LOAD_BLOCK_MS": "40",
+    "LOOKAHEAD_MS": "0",
+    "BLOCK_MS": "40",
+    "EXTRA_MS": "64",
+    "BLOCK_FRAMES": "512",
+    "OUTPUT_CUSHION": "fixed",
+    "DEVICE_BLOCK": "fixed",
+    "SOLA_SEARCH_JSON": "null",
+    "PREFILL_MS_JSON": "35",
+    "MAX_QUEUE_MS_JSON": "70",
+    "WRITE_AUDIO_JSON": "false",
+    "RUNS_JSON": "[{\"mode\": \"paced\", \"name\": \"paced\", \"seconds\": 120, \"clock\": \"wall\", \"warmup_s\": 25}]"
+  },
+  "templates": [
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-cpu",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cpu",
+        "PITCH": "swiftf0",
+        "PRESET": "streamer",
+        "LOAD_BLOCK_MS": "120"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-quality-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "PRESET": "quality",
+        "LOOKAHEAD_MS": "20",
+        "BUILD": "direct"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-quality-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "PRESET": "quality",
+        "LOOKAHEAD_MS": "20",
+        "BUILD": "direct"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-xfade10-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "CROSSFADE_MS": "10",
+        "BUILD": "direct"
+      }
+    },
+    {
+      "file": "specs/p3b/h/load.template.json",
+      "name": "h-load-xfade10-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "CROSSFADE_MS": "10",
+        "BUILD": "direct"
+      }
+    },
+    {
+      "file": "specs/p3b/h/pace.template.json",
+      "name": "h-pace-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda"
+      }
+    },
+    {
+      "file": "specs/p3b/h/pace.template.json",
+      "name": "h-pace-dml",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml"
+      }
+    },
+    {
+      "file": "specs/p3b/h/pace.template.json",
+      "name": "h-pace-cuda-loads",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 120, \"warmup_s\": 25}, {\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 120, \"warmup_s\": 25}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 120, \"warmup_s\": 25}]"
+      }
+    },
+    {
+      "file": "specs/p3b/h/pace.template.json",
+      "name": "h-pace-dml-loads",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "dml",
+        "RUNS_JSON": "[{\"mode\": \"contention\", \"name\": \"h2-load70\", \"profile\": \"h2_load70\", \"seconds\": 120, \"warmup_s\": 25}, {\"mode\": \"contention\", \"name\": \"h2-load70-oop\", \"profile\": \"h2_load70_oop\", \"seconds\": 120, \"warmup_s\": 25}, {\"mode\": \"contention\", \"name\": \"h1-sim\", \"profile\": \"h1_vrchat_obs\", \"seconds\": 120, \"warmup_s\": 25}]"
+      }
+    },
+    {
+      "file": "specs/p3b/h/pace.template.json",
+      "name": "h-soak-cuda",
+      "requires": [
+        "SLOT",
+        "CLIP"
+      ],
+      "vars": {
+        "EP": "cuda",
+        "OUTPUT_CUSHION": "adaptive",
+        "RUNS_JSON": "[{\"mode\": \"paced\", \"name\": \"soak\", \"seconds\": 1800, \"clock\": \"wall\", \"warmup_s\": 25}]",
+        "BLOCK_FRAMES": "480"
+      }
+    }
+  ],
+  "metrics": [
+    "engine_load_ms",
+    "generator_builds",
+    "load_*_ms",
+    "latency_ms_p50",
+    "latency_ms_p95",
+    "latency_ms_p99",
+    "underruns",
+    "call_ms_p95",
+    "join_*"
+  ],
+  "targets": []
+}

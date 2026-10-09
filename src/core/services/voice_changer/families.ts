@@ -391,6 +391,15 @@ export function voiceKind(slot: Pick<VcSlotInfo, "format" | "family"> | null | u
     return slot.format === SIGIL_RVC_FORMAT ? "template" : "legacy";
 }
 
+/**
+ * Whether the Sigil Voice Engine's own controls apply (engine block, lookahead, content context, device
+ * block): a template voice, or no listed voice (the default setup). Not a bring-your-own ONNX voice, and
+ * not a family voice either (a family sets its own block).
+ */
+export function runsOnTemplateEngine(kind: VoiceKind): boolean {
+    return kind !== "legacy" && kind !== "family";
+}
+
 /** Families this build runs, in `VC_FAMILIES` order. */
 export function availableFamilies(caps: Pick<VcCapabilities, "families">): VcFamilyCapability[] {
     return VC_FAMILIES.flatMap((id) => {

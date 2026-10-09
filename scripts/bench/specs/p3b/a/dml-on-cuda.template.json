@@ -1,0 +1,25 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-A advisory load row: the voice in ${SLOT} on ${EP} (CUDA), ${PITCH} F0, 40 ms engine blocks on the 512-frame device block, the Low-latency preset, process QoS ${QOS}, under the conv hammer at 70 % duty on DirectML in the same process (h2_load70_dml: a D3D12 queue beside the engine's CUDA context, between the same-context CUDA hammer of h2_load70 and the separate process of h2_load70_oop). -Var BUILD=direct adds the per-component breakdown.",
+  "seed": 20260930,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    { "mode": "contention", "name": "h2-load70-dml", "profile": "h2_load70_dml", "seconds": ${PACED_S_JSON}, "warmup_s": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": false, "write_audio": false }
+}

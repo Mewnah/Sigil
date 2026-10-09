@@ -30,8 +30,8 @@ use realfft::{RealFftPlanner, RealToComplex};
 use crate::services::diagnostics::EpOutcome;
 use crate::services::neural_audio::ort_session::{build_session, ModelSource, VcSessionOptions};
 
-use super::f0_post::smooth_f0;
-use super::pitch_onnx::{flat_f0, waveform_shape, MainInput, PitchInputs, ShapePin};
+use super::f0_post::smooth_f0_stream;
+use super::pitch_onnx::{flat_f0, flat_f0_slice, waveform_shape, MainInput, PitchInputs, ShapePin};
 use super::rvc::{foreign_graph_problem, graph_inputs, graph_outputs, non_onnx_file_problem, GraphKind, GraphValue};
 use super::traits::PitchExtractor;
 
@@ -207,8 +207,8 @@ impl FcpePitchExtractor {
         &self.outcome
     }
 
-    /// A waveform export's F0 (`rank` 1 / 2 / 3).
-    fn f0_waveform(&mut self, mono_16k: &[f32], rank: usize) -> Result<Vec<f32>, String> {
+    /// A waveform export's F0 (`rank` 1 / 2 / 3) into `out`.
+    fn f0_waveform_into(&mut self, mono_16k: &[f32], rank: usize, out: &mut Vec<f32>) -> Result<(), String> {
         let n = mono_16k.len();
         let run_n = self.pin.size_aligned(n, HOP);
         let lead_frames = (run_n - n) / HOP;
@@ -226,21 +226,18 @@ impl FcpePitchExtractor {
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("FCPE output: {}", e))?;
         let dims: Vec<usize> = shape.iter().map(|d| (*d).max(0) as usize).collect();
-        let mut f0 = flat_f0(&dims, data).ok_or_else(|| format!("FCPE output shape {dims:?} unsupported; expected F0 [1, T] or [T]"))?;
-        if lead_frames > 0 {
-            f0.drain(..lead_frames.min(f0.len()));
-        }
-        for v in f0.iter_mut() {
-            if !v.is_finite() || *v < 0.0 {
-                *v = 0.0;
-            }
-        }
-        Ok(f0)
+        let f0 = flat_f0_slice(&dims, data).ok_or_else(|| format!("FCPE output shape {dims:?} unsupported; expected F0 [1, T] or [T]"))?;
+        out.extend(
+            f0.iter()
+                .skip(lead_frames)
+                .map(|&v| if !v.is_finite() || v < 0.0 { 0.0 } else { v }),
+        );
+        Ok(())
     }
 
-    /// A mel export's F0: the log-mel here (end-aligned in the DirectML pin, the frames before the
-    /// audio's at the silence floor), the graph, then the output decode.
-    fn f0_mel(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
+    /// A mel export's F0 into `out`: the log-mel here (end-aligned in the DirectML pin, the frames
+    /// before the audio's at the silence floor), the graph, then the output decode.
+    fn f0_mel_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
         let frames = mono_16k.len() / HOP + 1;
         let padded = self.pin.size(frames);
         let lead = padded - frames;
@@ -253,13 +250,16 @@ impl FcpePitchExtractor {
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("FCPE output: {}", e))?;
         let dims: Vec<usize> = shape.iter().map(|d| (*d).max(0) as usize).collect();
-        let mut f0 = decode_mel_output(&dims, data, self.mel_output, padded)?;
-        if f0.len() > frames {
-            f0.drain(..f0.len() - frames);
+        let f0 = decode_mel_output(&dims, data, self.mel_output, padded)?;
+        let skip = if f0.len() > frames {
+            f0.len() - frames
         } else if lead > 0 && f0.len() == padded {
-            f0.drain(..lead);
-        }
-        Ok(f0)
+            lead
+        } else {
+            0
+        };
+        out.extend_from_slice(&f0[skip..]);
+        Ok(())
     }
 }
 
@@ -369,15 +369,24 @@ fn latent_to_f0(row: &[f32], table: &[f32], threshold: f32) -> f32 {
 
 impl PitchExtractor for FcpePitchExtractor {
     fn f0(&mut self, mono_16k: &[f32]) -> Result<Vec<f32>, String> {
-        if mono_16k.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut f0 = match self.input {
-            FcpeInput::Waveform { rank } => self.f0_waveform(mono_16k, rank)?,
-            FcpeInput::Mel => self.f0_mel(mono_16k)?,
-        };
-        smooth_f0(&mut f0, 3);
+        let mut f0 = Vec::with_capacity(mono_16k.len() / HOP + 1);
+        self.f0_into(mono_16k, &mut f0)?;
         Ok(f0)
+    }
+
+    /// P3B-E: straight into the caller's buffer (no contour copy; the ONNX Runtime call itself
+    /// still allocates its outputs).
+    fn f0_into(&mut self, mono_16k: &[f32], out: &mut Vec<f32>) -> Result<(), String> {
+        out.clear();
+        if mono_16k.is_empty() {
+            return Ok(());
+        }
+        match self.input {
+            FcpeInput::Waveform { rank } => self.f0_waveform_into(mono_16k, rank, out)?,
+            FcpeInput::Mel => self.f0_mel_into(mono_16k, out)?,
+        }
+        smooth_f0_stream(out, 3);
+        Ok(())
     }
 
     // No `receptive_frames` (the F0 cache's default lead-in, 12 frames). Measured at the P3 final

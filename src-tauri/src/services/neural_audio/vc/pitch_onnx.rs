@@ -85,11 +85,6 @@ impl PitchInputs {
         })
     }
 
-    /// Name of the main (audio) input.
-    pub(super) fn main_name(&self) -> &str {
-        &self.main_name
-    }
-
     /// Declared shape of the main input (for error messages).
     pub(super) fn main_dims(&self) -> &[i64] {
         &self.main_dims
@@ -203,11 +198,17 @@ pub(super) fn local_average_f0(row: &[f32]) -> (f32, f32) {
 
 /// Flatten a direct F0 output (`[T]`, `[1, T]` or `[1, T, 1]`, Hz) into `T` values.
 pub(super) fn flat_f0(dims: &[usize], data: &[f32]) -> Option<Vec<f32>> {
+    flat_f0_slice(dims, data).map(<[f32]>::to_vec)
+}
+
+/// [`flat_f0`] without the copy: the `T` values of a direct F0 output, borrowed (P3B-E: the
+/// extractors' allocation-free `f0_into`).
+pub(super) fn flat_f0_slice<'a>(dims: &[usize], data: &'a [f32]) -> Option<&'a [f32]> {
     let t = match dims {
         [t] => *t,
         [1, t] => *t,
         [1, t, 1] => *t,
         _ => return None,
     };
-    (data.len() >= t).then(|| data[..t].to_vec())
+    (data.len() >= t).then(|| &data[..t])
 }

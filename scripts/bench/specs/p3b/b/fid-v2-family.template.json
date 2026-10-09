@@ -1,0 +1,32 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-B scorer v2 on a family voice (not a template voice): the slot ${SLOT} (e.g. P5-A's DDSP-SVC 6.3 synthetic voice) on ${EP}, its own blocks, the clip ${CLIP}. Checks that a v2 quality run of a non-template voice scores with the v2 metrics that need no engine probe (exact CAM++ on speech frames, the F0 split of the output analyzer, binomial clicks, envelope and offset-corrected MCD, three offsets) against the family's own offline ceiling (a second instance converting the whole recording), and refuses the template-only parts (ceiling B, the whole-utterance renderer, fed F0, ablations). Materialized by hand: replace the placeholders.",
+  "seed": 20261001,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": 512, "extra_context_ms": 0 },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "",
+    "rmvpe": "",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "rmvpe",
+    "preset": "quality",
+    "block_ms": 0,
+    "levers": {},
+    "build": "auto"
+  },
+  "runs": [
+    {
+      "mode": "quality",
+      "name": "fidelity",
+      "lead_s": 1.0,
+      "ceiling": { "mode": "long_shape" },
+      "fidelity": { "offsets_s": [1.0, 1.27, 1.61], "reference_clips": [] },
+      "scoring": { "f0_method": "auto", "analysis_ep": "cpu", "analyzer": "v2" }
+    }
+  ],
+  "thresholds": {},
+  "output": { "write_timeline": false, "write_audio": true }
+}

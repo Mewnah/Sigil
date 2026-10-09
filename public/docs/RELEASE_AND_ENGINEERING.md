@@ -14,6 +14,7 @@ Release QA checklists, **network threat model**, **dependency audits**, **perfor
 - [P4 exit matrix (translation stack)](#p4-exit-matrix-translation-stack)
 - [P5 exit matrix (voice families)](#p5-exit-matrix-voice-families)
 - [P6 exit matrix (streamer features and extended engines)](#p6-exit-matrix-streamer-features-and-extended-engines)
+- [P3B exit matrix (voice-engine optimization)](#p3b-exit-matrix-voice-engine-optimization)
 - [Research §6 bug verification](#research-6-bug-verification)
 - [Network security and threat model](#network-security-and-threat-model)
 - [Dependency audit notes](#dependency-audit-notes)
@@ -338,6 +339,30 @@ P6 added other players' captions, the caption window and SteamVR overlay, VRChat
 23. **Readings:** Japanese and Chinese lines in `pnpm tauri dev` with the dictionary card; `readings.stt` reaches `/client`.
 24. **Music gate A/B:** turn on **Ignore music and singing (experimental)**, install `vad/firered-aed`, play VRChat world music (segments drop with reason `music`), speak over it (captions continue).
 25. **Kokoro Japanese:** with the Japanese dictionary installed, a Japanese Kokoro voice reads kanji with Japanese readings (`日本語` as にほんご, not Mandarin).
+
+## P3B exit matrix (voice-engine optimization)
+
+P3B optimized the Sigil Voice Engine after P3 missed several targets (per-call compute, Low-latency delay, VRAM, the CPU generator) and made the benchmark trustworthy enough to say so ([plan → P3B outcomes](SPEECH_STACK_IMPLEMENTATION_PLAN.md#p3b-outcomes-binding-amendments-for-p7), [ADR 0009](adr/0009-vc-scorer-v2.md), [ADR 0010](adr/0010-sve-optimization-p3b.md)). Gates at P3B integration (2026-10-09, dev rig H2, no other job running): `pnpm typecheck` clean; `pnpm i18n:check` OK (23 keys merged from P3B-S0 and P3B-H, `pnpm i18n:sync` run); `pnpm test:unit` 135 files / 1977 tests; `pnpm build` OK; `cargo clippy --all-targets` **0 warnings**; full `cargo test` **2556 passed / 0 failed / 148 ignored** (the first full run had one failure, `process_host::tests::crashed_helper_is_restarted_then_given_up`, a pid-liveness assertion that passes alone 3 of 3 and in the second full run; it is not a P3B file); the release build of the integrated tree has 0 warnings. Final gate after the review fixes (same day, lane `p3b-dev`): `pnpm typecheck` clean; `pnpm i18n:check` OK (`voice_changer.device_block_not_applied` merged); `pnpm test:unit` 135 files / 1982 tests; `pnpm build` OK; `cargo clippy --all-targets` **0 warnings**; full `cargo test` **2621 passed / 0 failed / 151 ignored** on two consecutive runs. The first full run of that gate failed `bench::compare::tests::a_corpus_run_scores_points_and_refuses_unfair_ones` once: its Sigil row is timed on the wall clock against a 10.7 ms block, a stall of the test process (4.7 s p99 in the reproduction under 24 CPU spinners) marks the row real-time-infeasible and the listening pairs are skipped, as designed; it passed alone, in the whole `bench::` module twice and in two more full runs, and its assertion now prints the trials and the skip reasons. By the user's scope change (2026-10-09) there was no regression scorecard; the functional smoke and three integrated confirmations are in [VC_BENCHMARKS.md → Integrated smoke](benchmarks/VC_BENCHMARKS.md#integrated-smoke-p3b-i0).
+
+| Exit criterion | Evidence | Status |
+|---|---|---|
+| Gates green | Above | Met |
+| Every default flip has recorded interleaved evidence; no fidelity-lowering lever is a default | [ADR 0010](adr/0010-sve-optimization-p3b.md) lists what is on (with the ABBA numbers) and what is a switch (with the reason); `engine/presets.rs` records both next to the code | Met |
+| Every new engine path keeps a kill switch | The switch table in [DEVELOPER_GUIDE → Voice-engine optimization](DEVELOPER_GUIDE.md#voice-engine-optimization-p3b); `SIGIL_VC_PARALLEL_LOAD=0` and `SIGIL_CUDA_TUNING=wait=spin` were exercised on the integrated build (the shared DirectML queue is opt-in, `SIGIL_VC_DML_SHARED=1`, since the review) | Met |
+| The integrated engine runs on CUDA, DirectML and the CPU without a crash and with sane output | Smoke: 6 runs exit 0 with 0 model errors; EPs as requested, no fallback or warning; output finite, length equal to the input, rms 0.107-0.126 | Met |
+| The shipped defaults did not make the engine slower | Integrated smoke: offline call p95 CUDA 7.2, DirectML 7.8 ms (P5 baseline 10.9 / 11.1); hybrid wait against spin NEUTRAL on call p95 / p99 and -85 % / -91 % CPU (the shared DirectML queue measured -11 % call p50 but is opt-in since the review: its content-stage p95 REGRESSED, rule R3) | Met (the final scorecard is P7-B's) |
+| Targets as revised | T1 132.6 ms (115.2 opt-in), T2 CUDA met under load / missed idle, T3 missed except the extra voice, T4 met on cores and the GPU rows / missed on Streamer RTF, T5 v2 missed except clicks, T6 undecided, T9 met | **Missed** (reported as misses; [VC_BENCHMARKS → Scorecard v2](benchmarks/VC_BENCHMARKS.md#scorecard-v2-targets-as-revised-v1-rows-above-stay-for-continuity)) |
+| The benchmark can decide | Interleaved gate resolution measured (two A/A sessions: 62-64 of 64 rows NEUTRAL, no false REGRESSED), GPU/host state flags, attribution, scorer v2 with the exact CAM++, compare v2 | Met (paced rows resolve to 8-13 %) |
+
+**Manual checks still open** (need the real app, another PC, a headset, a download or a listening session):
+
+1. **H1 and H3 live records** (RTX 3060 / 4060 under VRChat + OBS; a 6-core CPU with VRChat): T1 / T2 / T3 / T4 are simulator numbers until then. NVIDIA's *Prefer maximum performance* for Sigil.exe removes the idle-clock paced penalty.
+2. **Live device for the new pacing controls:** `device_block=model_divisor` on WASAPI (44.1 and 48 kHz devices, shared and exclusive), the adaptive cushion under a real game; P7-B decides their defaults.
+3. **Competitors and T6:** install RVC WebUI / Applio / w-okada / vc-rs / rvc-realtime on a PC you are happy to put them on, capture their renditions (`scripts/vc-bench/README.md`), fetch the public corpus (`scripts/bench/fetch-public-corpus.py`, about 646 MB), run a `compare` with a corpus manifest, then the blind A/B (`tools/listening-test`, 5+ listeners).
+4. **Listening checks:** the 20-trial A/B page for the ablation dry run (time anchoring did not move any automatic metric), and DirectML `ja-long`'s seams (one narrow-window click).
+5. **The e2e loopback** through a virtual cable (the dev PC's cable endpoints are disabled) for the true end-to-end T1 row.
+6. **The T8 community corpus** (40 voices) and a trained DDSP-SVC voice (P5 items, unchanged).
+7. **A packaged build:** `pnpm tauri:release`, `pwsh scripts/release/verify-bundle.ps1`, start the installed app and run a voice on CUDA and DirectML (the engine's CUDA graphs and the hybrid wait need the provider next to the exe).
 
 ## Research §6 bug verification
 

@@ -1,0 +1,60 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P3B-E RMVPE A/B spec: the Sigil Voice Engine on ${EP} with the voice in ${SLOT}, ${PITCH} F0, 40 ms blocks on the default 512-frame device block, ${EXTRA_MS} ms extra context, the Low-latency preset (LEVERS_JSON overrides the levers), process QoS ${QOS}: offline compute (T2 idle; the attribution's f0_ms_steady_* is RMVPE's per-call time, call_ms_onset_* the onset ticks, vram_engine_mb T3, engine_load_ms / load_pitch_plan_ms T9), a wall-clock paced run and the in-process 70 % hammer (the runs verification (3) of P3B-E names). Interleave with run-perf-gate.ps1 -Profile scripts/bench/specs/p3b/e/rmvpe.profile.json and -CompareEnv (SIGIL_RMVPE_PLAN_FRAMES=32 (the VRAM saver), SIGIL_RMVPE_T32=0, SIGIL_RMVPE_FP16=1).",
+  "seed": 20260930,
+  "input": {
+    "kind": "wav",
+    "path": "${CLIP}"
+  },
+  "stream": {
+    "input_rate": 48000,
+    "output_rate": 48000,
+    "input_channels": 1,
+    "output_channels": 2,
+    "block_frames": ${BLOCK_FRAMES},
+    "extra_context_ms": ${EXTRA_MS}
+  },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    {
+      "mode": "offline",
+      "name": "offline",
+      "repeat": ${OFFLINE_REPEAT_JSON}
+    },
+    {
+      "mode": "paced",
+      "name": "paced",
+      "seconds": ${PACED_S_JSON},
+      "clock": "wall",
+      "warmup_s": 1
+    },
+    {
+      "mode": "contention",
+      "name": "h2-load70",
+      "profile": "h2_load70",
+      "seconds": ${PACED_S_JSON},
+      "warmup_s": 1
+    }
+  ],
+  "thresholds": {
+    "model_errors": {
+      "max": 0
+    }
+  },
+  "output": {
+    "write_timeline": false,
+    "write_audio": false
+  }
+}

@@ -13,6 +13,10 @@
  * the rest run once their workstream lands, and `voice_changer_get_capabilities` (`ipc.ts`) says
  * which. The UI offers the baseline plus the capabilities; until then a value runs its stand-in
  * (`PITCH_EXTRACTOR_STAND_IN`) or base rung (`EXECUTION_PROVIDER_BASE`), exactly as in Rust.
+ *
+ * P3B (P3B-S0): the levers `content_norm` / `f0_decode`, `output_cushion`, `device_block`, and the
+ * optional numbers `sola_search_ms` / `content_context_ms` whose automatic value travels as
+ * `AUTO_MS` (-1; an absent or null field on `set` keeps the stored value).
  */
 
 export const VC_MODES = ["classic", "onnx", "sidecar", "rvc"] as const;
@@ -94,6 +98,9 @@ export const VC_LEVERS = [
     "cuda_graphs",
     "gpu_priority",
     "governor",
+    // P3B (P3B-S0)
+    "content_norm",
+    "f0_decode",
 ] as const;
 export type VcLever = (typeof VC_LEVERS)[number];
 
@@ -105,6 +112,17 @@ export const BASELINE_DENOISERS: readonly Denoiser[] = ["off"];
 /** P3: F0 search range (per voice). */
 export const F0_RANGES = ["speech", "singing"] as const;
 export type F0Range = (typeof F0_RANGES)[number];
+
+/** P3B: how the output cushion (prefill) is sized (Rust `params::OutputCushion`). */
+export const OUTPUT_CUSHIONS = ["fixed", "adaptive"] as const;
+export type OutputCushion = (typeof OUTPUT_CUSHIONS)[number];
+
+/** P3B: how the device block is chosen for template voices (Rust `params::DeviceBlockMode`). */
+export const DEVICE_BLOCKS = ["fixed", "model_divisor"] as const;
+export type DeviceBlock = (typeof DEVICE_BLOCKS)[number];
+
+/** P3B: the wire value of "automatic" for `sola_search_ms` and `content_context_ms` (Rust `AUTO_MS`). */
+export const AUTO_MS = -1;
 
 export const VC_ENUM_DEFAULTS = {
     mode: "classic",
@@ -120,6 +138,8 @@ export const VC_ENUM_DEFAULTS = {
     leverMode: "auto",
     denoiser: "off",
     f0Range: "speech",
+    outputCushion: "fixed",
+    deviceBlock: "fixed",
 } as const satisfies {
     mode: VcMode;
     latencyPreset: LatencyPreset;
@@ -134,6 +154,8 @@ export const VC_ENUM_DEFAULTS = {
     leverMode: LeverMode;
     denoiser: Denoiser;
     f0Range: F0Range;
+    outputCushion: OutputCushion;
+    deviceBlock: DeviceBlock;
 };
 
 export interface NumberRange {
@@ -172,6 +194,9 @@ export const VC_NUMBER_RANGES = {
     silence_db: { min: -90, max: -10, default: -42 },
     hot_slots: { min: 1, max: 8, default: 1 },
     vram_budget_mb: { min: 0, max: 65536, default: 0 },
+    // P3B (P3B-S0): the default is AUTO_MS (outside [min, max]: "automatic").
+    sola_search_ms: { min: 0, max: 10, default: -1 },
+    content_context_ms: { min: 0, max: 3000, default: -1 },
 } as const satisfies Record<string, NumberRange>;
 
 /** `output_max_queue_ms` is clamped to `[prefill + MIN_ABOVE_PREFILL, MAX]` (Rust `clamp_output_buffer_ms`). */
@@ -255,6 +280,25 @@ export function normalizeDenoiser(s: unknown): Denoiser {
 /** Rust `normalize_f0_range`: anything unknown is `speech`. */
 export function normalizeF0Range(s: unknown): F0Range {
     return pick(F0_RANGES, s, VC_ENUM_DEFAULTS.f0Range);
+}
+
+/** Rust `OutputCushion::from_str_lossy`: anything unknown is `fixed`. */
+export function normalizeOutputCushion(s: unknown): OutputCushion {
+    return pick(OUTPUT_CUSHIONS, s, VC_ENUM_DEFAULTS.outputCushion);
+}
+
+/** Rust `DeviceBlockMode::from_str_lossy`: anything unknown is `fixed`. */
+export function normalizeDeviceBlock(s: unknown): DeviceBlock {
+    return pick(DEVICE_BLOCKS, s, VC_ENUM_DEFAULTS.deviceBlock);
+}
+
+/**
+ * Rust `auto_or_clamped` for the optional P3B numbers: a negative value is `AUTO_MS` (automatic), a
+ * non-finite one is `fallback`, anything else is clamped to `[min, max]`.
+ */
+export function autoOrClamped(n: unknown, min: number, max: number, fallback: number): number {
+    if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+    return n < 0 ? AUTO_MS : Math.min(max, Math.max(min, n));
 }
 
 /** Rust `WorkerPriority::from_str_lossy`: anything unknown is `auto`. */

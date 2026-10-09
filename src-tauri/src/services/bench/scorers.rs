@@ -15,6 +15,20 @@
 //!
 //! Sessions are background sessions (2 threads, recorded as `bench.quality.*`), built through
 //! `ort_session` on the analysis EP of the run (CPU by default).
+//!
+//! # Scorer v2 (P3B-B, ADR 0009)
+//! - The v2 speaker scorer is `bench/campplus-exact` ([`SpeakerEmbedder::resolve_v2`]): the same
+//!   3D-Speaker checkpoint as `bench/campplus`, re-exported with exact segment pooling (>= 100 dB SNR
+//!   against upstream PyTorch; the legacy file differs from upstream on every length that is not a
+//!   whole number of 100-frame segments). `speaker_model: legacy` selects the old file.
+//! - Embeddings are of speech frames only ([`SpeakerEmbedder::embed_masked`] with a
+//!   [`speech_frame_mask`]): the P3 scorer embedded the whole region, near-silence included, and the
+//!   ceiling's re-rendered silence (6 frames at -78 dBFS, the speech bit-identical) moved the cosine
+//!   of identical stream audio by 0.006-0.008 between two builds. A pair is embedded on the same
+//!   frames (the reference's mask), so the same WAV pair always gives a bit-identical cosine.
+//! - A target-speaker set ([`centroid`]): the identity metric compares a rendition with the
+//!   normalised mean embedding of reference clips of the target voice.
+//! - Every model is stamped with its file's sha256 ([`file_sha256`]).
 
 use std::path::{Path, PathBuf};
 
@@ -73,35 +87,147 @@ pub struct SpeakerEmbedder {
     session: Session,
     pub outcome: EpOutcome,
     pub path: PathBuf,
+    /// The store id it was resolved as (`bench/campplus-exact`, `bench/campplus`), or `explicit`.
+    pub id: String,
+    /// sha256 of the model file (the scorer's version stamp).
+    pub sha256: String,
 }
 
 /// Shortest clip CAM++ embeds (0.5 s: 48 fbank frames).
 const MIN_EMBED_SAMPLES: usize = 8_000;
+/// Fewest frames an embedding is computed from (0.5 s of 10 ms fbank frames).
+pub const MIN_EMBED_FRAMES: usize = 48;
+/// Frames within this many dB of a clip's loudest frame are speech for the speaker embedding (the
+/// MCD's speech range).
+pub const SPEAKER_SPEECH_RANGE_DB: f64 = 40.0;
+
+/// sha256 (hex) of a file.
+pub fn file_sha256(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("{}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(hex::encode(h.finalize()))
+}
+
+/// Which Kaldi fbank frames (`dsp::kaldi_fbank`'s grid: 400 samples every 160) of a 16 kHz clip
+/// are speech: frame energy within `range_db` of the clip's loudest frame.
+pub fn speech_frame_mask(audio_16k: &[f32], range_db: f64) -> Vec<bool> {
+    let energy: Vec<f64> = super::dsp::frames(audio_16k.len(), 400, 160)
+        .map(|s| {
+            let e = audio_16k[s..s + 400].iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / 400.0;
+            10.0 * (e + 1e-12).log10()
+        })
+        .collect();
+    let peak = energy.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    energy.into_iter().map(|e| e >= peak - range_db).collect()
+}
+
+/// The L2-normalised mean of L2-normalised embeddings (a target-speaker set's centroid).
+pub fn centroid(embeddings: &[Vec<f32>]) -> Option<Vec<f32>> {
+    let dim = embeddings.first()?.len();
+    let mut acc = vec![0.0f64; dim];
+    for e in embeddings.iter().filter(|e| e.len() == dim) {
+        for (a, &v) in acc.iter_mut().zip(e) {
+            *a += f64::from(v);
+        }
+    }
+    let norm = acc.iter().map(|v| v * v).sum::<f64>().sqrt();
+    (norm > 0.0 && norm.is_finite()).then(|| acc.iter().map(|v| (v / norm) as f32).collect())
+}
 
 impl SpeakerEmbedder {
-    pub fn load(path: &Path, ep: &str) -> Result<SpeakerEmbedder, String> {
+    fn load_as(path: &Path, ep: &str, id: &str) -> Result<SpeakerEmbedder, String> {
         let (session, outcome) = load("bench.quality.campplus", path, ep)?;
         Ok(SpeakerEmbedder {
             session,
             outcome,
             path: path.to_path_buf(),
+            id: id.to_string(),
+            sha256: file_sha256(path)?,
         })
     }
 
-    /// The store's `bench/campplus` (or `explicit`); `None` when not installed.
+    /// The store's `bench/campplus` (or `explicit`); `None` when not installed (the v1 scorer).
     pub fn resolve(explicit: &str, ep: &str) -> Result<Option<SpeakerEmbedder>, String> {
+        let id = if explicit.trim().is_empty() { assets::BENCH_CAMPPLUS } else { "explicit" };
         match resolve_bench_model(explicit, assets::BENCH_CAMPPLUS, "model.onnx")? {
-            Some(p) => SpeakerEmbedder::load(&p, ep).map(Some),
+            Some(p) => SpeakerEmbedder::load_as(&p, ep, id).map(Some),
             None => Ok(None),
         }
     }
 
-    /// L2-normalized 192-d embedding of a 16 kHz clip (at least 0.5 s).
+    /// The v2 speaker scorer: `""` = the store's `bench/campplus-exact`, `legacy` = `bench/campplus`,
+    /// anything else a file; `None` when the store entry is not installed.
+    pub fn resolve_v2(spec: &str, ep: &str) -> Result<Option<SpeakerEmbedder>, String> {
+        let t = spec.trim();
+        if t.eq_ignore_ascii_case("legacy") {
+            return Self::resolve("", ep);
+        }
+        let id = if t.is_empty() { assets::BENCH_CAMPPLUS_EXACT } else { "explicit" };
+        match resolve_bench_model(t, assets::BENCH_CAMPPLUS_EXACT, "model.onnx")? {
+            Some(p) => SpeakerEmbedder::load_as(&p, ep, id).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// `{id, path, sha256, ep}` for reports.
+    pub fn describe(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "path": self.path.display().to_string(),
+            "sha256": self.sha256,
+            "ep": self.outcome.active,
+        })
+    }
+
+    /// L2-normalized 192-d embedding of a 16 kHz clip (at least 0.5 s; every frame).
     pub fn embed(&mut self, audio_16k: &[f32]) -> Result<Vec<f32>, String> {
         if audio_16k.len() < MIN_EMBED_SAMPLES {
             return Err(format!("CAM++: {} samples is shorter than 0.5 s", audio_16k.len()));
         }
-        let (mut fb, frames) = kaldi_fbank(audio_16k, 80);
+        let (fb, frames) = kaldi_fbank(audio_16k, 80);
+        self.embed_fbank(fb, frames)
+    }
+
+    /// L2-normalized embedding of the fbank frames of `audio_16k` that `mask` keeps (the frame grid
+    /// of [`speech_frame_mask`]; frames beyond the mask are dropped), mean-normalized over those
+    /// frames. At least [`MIN_EMBED_FRAMES`] must remain.
+    pub fn embed_masked(&mut self, audio_16k: &[f32], mask: &[bool]) -> Result<Vec<f32>, String> {
+        let (fb, frames) = kaldi_fbank(audio_16k, 80);
+        let mut kept = Vec::with_capacity(fb.len());
+        let mut n = 0usize;
+        for f in 0..frames {
+            if mask.get(f).copied().unwrap_or(false) {
+                kept.extend_from_slice(&fb[f * 80..(f + 1) * 80]);
+                n += 1;
+            }
+        }
+        if n < MIN_EMBED_FRAMES {
+            return Err(format!("CAM++: {n} speech frames (at least {MIN_EMBED_FRAMES} needed)"));
+        }
+        self.embed_fbank(kept, n)
+    }
+
+    /// Cosine of two clips' speakers on the same frames (`mask`, usually the reference's speech).
+    pub fn similarity_masked(&mut self, a_16k: &[f32], b_16k: &[f32], mask: &[bool]) -> Result<f64, String> {
+        let a = self.embed_masked(a_16k, mask)?;
+        let b = self.embed_masked(b_16k, mask)?;
+        Ok(cosine(&a, &b))
+    }
+
+    fn embed_fbank(&mut self, mut fb: Vec<f32>, frames: usize) -> Result<Vec<f32>, String> {
+        if frames == 0 {
+            return Err("CAM++: no fbank frames".into());
+        }
         // Mean normalization over time (per bin).
         for b in 0..80 {
             let mean = (0..frames).map(|f| f64::from(fb[f * 80 + b])).sum::<f64>() / frames as f64;
@@ -341,6 +467,59 @@ mod tests {
         // The polynomials map the raw model range onto 1..5 monotonically.
         assert!(poly(&POLY_OVRL, 3.0) > poly(&POLY_OVRL, 2.0));
         assert!((poly(&POLY_OVRL, 2.5) - 2.412).abs() < 0.01, "{}", poly(&POLY_OVRL, 2.5));
+    }
+
+    /// Speech frames are on the fbank grid, relative to the clip's loudest frame; the centroid of a
+    /// set is the normalised mean; a file's sha256.
+    #[test]
+    fn speech_masks_centroids_and_stamps() {
+        let mut x = vec![0.0f32; 8_000];
+        x.extend((0..16_000).map(|n| (0.3 * (n as f64 * 0.05).sin()) as f32));
+        x.extend(vec![1e-6f32; 8_000]);
+        let m = speech_frame_mask(&x, SPEAKER_SPEECH_RANGE_DB);
+        assert_eq!(m.len(), super::super::dsp::frames(x.len(), 400, 160).count());
+        // Frames inside the tone are speech, the silence on both sides is not.
+        assert!(!m[10] && m[60] && m[140] && !m[m.len() - 5], "{m:?}");
+        let c = centroid(&[vec![1.0, 0.0], vec![0.0, 1.0]]).unwrap();
+        assert!((c[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6 && (c[1] - c[0]).abs() < 1e-7);
+        assert!(centroid(&[]).is_none());
+        assert!(centroid(&[vec![0.0, 0.0]]).is_none());
+        let p = std::env::temp_dir().join(format!("sigil-sha-{}", std::process::id()));
+        std::fs::write(&p, b"abc").unwrap();
+        assert_eq!(file_sha256(&p).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let _ = std::fs::remove_file(&p);
+        assert!(file_sha256(Path::new("Z:/no/such/file")).is_err());
+    }
+
+    /// The v2 speaker scorer on the dev rig: the same pair scored twice (two loads of the model)
+    /// gives a bit-identical cosine, and two different 3.8 s utterances of one speaker score well
+    /// above the different-speaker level. `SIGIL_TEST_MODELS_DIR` = the dev cache
+    /// (`vc-assets/bench/campplus-exact`, `models/transcribe/samples`).
+    #[test]
+    #[ignore = "needs SIGIL_TEST_MODELS_DIR with vc-assets/bench/campplus-exact and models/transcribe/samples"]
+    fn campplus_v2_is_deterministic() {
+        let Some(root) = std::env::var_os("SIGIL_TEST_MODELS_DIR").map(PathBuf::from) else {
+            return;
+        };
+        let clip = |name: &str| -> Vec<f32> {
+            let (x, sr, ch) = super::super::signals::read_wav(&root.join("models").join("transcribe").join("samples").join(name)).unwrap();
+            super::super::signals::resample(&super::super::signals::to_mono(&x, ch), sr, 16_000).unwrap()
+        };
+        let jfk = clip("jfk.wav");
+        let (a, b) = (&jfk[4_800..4_800 + 60_800], &jfk[96_000..96_000 + 60_800]);
+        let score = || {
+            let mut sp = SpeakerEmbedder::resolve_v2("", "cpu").unwrap().expect("bench/campplus-exact in the dev cache");
+            let mask = speech_frame_mask(a, SPEAKER_SPEECH_RANGE_DB);
+            (sp.similarity_masked(a, b, &mask).unwrap(), sp.sha256.clone())
+        };
+        let (c1, sha) = score();
+        let (c2, _) = score();
+        assert_eq!(c1.to_bits(), c2.to_bits(), "{c1} vs {c2}");
+        let ja = clip("ja-short.wav");
+        let mut sp = SpeakerEmbedder::resolve_v2("", "cpu").unwrap().unwrap();
+        let other = sp.similarity_masked(a, &ja[..60_800], &speech_frame_mask(a, SPEAKER_SPEECH_RANGE_DB)).unwrap();
+        eprintln!("CAM++ v2 ({}): same speaker, different words {c1:.4}; another speaker {other:.4}", &sha[..16]);
+        assert!(c1 - other > 0.3, "{c1} {other}");
     }
 
     #[test]
