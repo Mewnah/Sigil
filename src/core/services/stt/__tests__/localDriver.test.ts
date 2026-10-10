@@ -116,7 +116,7 @@ class FakeClock implements SegmentClock {
 
 type Out = { kind: "interim" | "final" | "abandon"; text: string; meta: SttTextMeta };
 
-function publisher(twoPass: boolean) {
+function publisher(twoPass: boolean, interim?: boolean) {
   const clock = new FakeClock();
   const out: Out[] = [];
   const holding: boolean[] = [];
@@ -125,6 +125,7 @@ function publisher(twoPass: boolean) {
     stream: "mic",
     epoch: 3,
     twoPass,
+    interim,
     clock,
     sink: {
       interim: (text, meta) => out.push({ kind: "interim", text, meta }),
@@ -339,6 +340,145 @@ describe("SegmentPublisher", () => {
   });
 });
 
+describe("SegmentPublisher interim switch (stt.local.interim)", () => {
+  type Pub = ReturnType<typeof publisher>;
+  const finalsOf = (p: Pub) => p.out.filter((o) => o.kind === "final").map((o) => ({ text: o.text, meta: o.meta }));
+
+  /** A session script: partials, a dropped segment, Smart Turn, audio tags and held first-pass finals. */
+  function script(p: Pub, twoPass: boolean) {
+    p.partial(1, 0, "hel");
+    p.partial(1, 1, "hello wor");
+    p.closed(1, 2_000);
+    p.final(1, 2, "Hello world.", { turnEnd: true });
+    if (twoPass) {
+      p.clock.advance(200);
+      p.final(1, 3, "Hello, world.", { pass: "second", turnEnd: true });
+    }
+    p.partial(2, 0, "uh");
+    p.pub.utterance({ kind: "dropped", pipelineId: "mic", epoch: 3, segmentId: 2, reason: "no_speech" });
+    p.partial(3, 0, "lagging");
+    p.closed(3);
+    p.final(3, 1, "Lagging.", { tags: ["event:laughter"] });
+    p.partial(4, 0, "moving on");
+    p.final(4, 1, "Moving on.");
+    if (twoPass) {
+      p.closed(5);
+      p.final(5, 1, "Held one.");
+      p.pub.commitHeld();
+      p.final(6, 1, "Held two, no replacement.");
+      p.clock.advance(60_000);
+    }
+    p.partial(7, 0, "still open");
+    p.pub.flush();
+  }
+
+  it("publishes interims by default and when asked to", () => {
+    for (const interim of [undefined, true]) {
+      const p = publisher(false, interim);
+      p.partial(1, 0, "hel");
+      expect(p.summary()).toEqual(["interim:hel@mic:3:1#0"]);
+    }
+  });
+
+  it("publishes no interim and no abandon marker, only the finals", () => {
+    const p = publisher(false, false);
+    p.partial(7, 0, "hel");
+    p.partial(7, 1, "hello");
+    p.closed(7);
+    expect(p.out).toEqual([]);
+    p.final(7, 2, "Hello.", { lang: "en-US", turnEnd: true });
+    expect(p.summary()).toEqual(["final:Hello.@mic:3:7#2"]);
+    expect(p.out[0].meta).toEqual({ segmentId: "mic:3:7", revision: 2, lang: "en", turnEnd: true });
+    // Partials of a finished segment are still ignored, finals of a later one unaffected.
+    p.partial(7, 5, "late");
+    p.partial(8, 0, "next");
+    p.final(8, 0, "Next.");
+    expect(p.summary()).toEqual(["final:Hello.@mic:3:7#2", "final:Next.@mic:3:8#0"]);
+  });
+
+  it("a final that follows no partial is published at once, as before", () => {
+    const off = publisher(false, false);
+    const on = publisher(false, true);
+    for (const p of [off, on]) p.final(1, 0, "Straight to final.", { tags: ["emotion:happy"] });
+    expect(finalsOf(off)).toEqual(finalsOf(on));
+    expect(off.out).toHaveLength(1);
+  });
+
+  it("two-pass: a held first-pass final is not shown as an interim; the replacement (or the timeout) publishes it", () => {
+    const p = publisher(true, false);
+    p.partial(1, 0, "i scream");
+    p.closed(1);
+    p.final(1, 1, "I scream.");
+    expect(p.out).toEqual([]);
+    p.clock.advance(200);
+    p.final(1, 2, "Ice cream.", { pass: "second" });
+    expect(p.summary()).toEqual(["final:Ice cream.@mic:3:1#2"]);
+
+    // No replacement: the first-pass text is published after Rust's budget, exactly when it is with interims on.
+    const q = publisher(true, false);
+    q.closed(2, 2_000);
+    q.final(2, 1, "Words.");
+    q.clock.advance(TWO_PASS_BUDGET_MS + 1_000 + HOLD_MARGIN_MS - 1);
+    expect(q.out).toEqual([]);
+    q.clock.advance(2);
+    expect(q.summary()).toEqual(["final:Words.@mic:3:2#1"]);
+  });
+
+  it("every final is the same with interims off as with them on (single pass and two-pass)", () => {
+    for (const twoPass of [false, true]) {
+      const off = publisher(twoPass, false);
+      const on = publisher(twoPass, true);
+      script(off, twoPass);
+      script(on, twoPass);
+      const kinds = new Set(off.out.map((o) => o.kind));
+      expect([...kinds], `twoPass ${twoPass}`).toEqual(["final"]);
+      expect(on.out.some((o) => o.kind === "interim"), `the script does show interims with them on (twoPass ${twoPass})`).toBe(true);
+      expect(finalsOf(off), `twoPass ${twoPass}`).toEqual(finalsOf(on));
+      expect(finalsOf(off).length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("keeps finals in order: a segment still without its final lets the next one wait, at most STALL_MS after that final", () => {
+    const p = publisher(false, false);
+    p.partial(1, 0, "lagging");
+    p.closed(1);
+    p.partial(2, 0, "moving on");
+    p.final(2, 1, "Moving on."); // waits behind segment 1, which has no final yet
+    expect(p.out).toEqual([]);
+    p.clock.advance(STALL_MS - 1);
+    expect(p.out).toEqual([]);
+    p.clock.advance(1);
+    expect(p.summary()).toEqual(["final:Moving on.@mic:3:2#1"]); // segment 1 is given up (no interim to abandon)
+    p.final(1, 1, "Lagging."); // its late final is still published
+    expect(p.summary()).toEqual(["final:Moving on.@mic:3:2#1", "final:Lagging.@mic:3:1#1"]);
+    // When the earlier final arrives in time, nothing waits and the order is the segment order.
+    const q = publisher(false, false);
+    q.closed(1);
+    q.final(2, 1, "Second.");
+    q.final(1, 1, "First.");
+    expect(q.summary()).toEqual(["final:First.@mic:3:1#1", "final:Second.@mic:3:2#1"]);
+  });
+
+  it("flush, commitHeld and dispose behave the same, without markers", () => {
+    const p = publisher(true, false);
+    p.closed(1);
+    p.final(1, 1, "One.");
+    p.closed(2);
+    p.final(2, 1, "Two.");
+    p.partial(3, 0, "open sentence");
+    expect(p.out).toEqual([]);
+    expect(p.pub.commitHeld()).toBe(true);
+    expect(p.summary()).toEqual(["final:One.@mic:3:1#1", "final:Two.@mic:3:2#1"]);
+    p.pub.flush();
+    expect(p.summary()).toHaveLength(2); // the open sentence's partial was never kept: nothing to abandon
+    const q = publisher(true, false);
+    q.final(1, 0, "Held.");
+    q.pub.dispose();
+    q.clock.advance(60_000);
+    expect(q.out).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 // Pure helpers
 
@@ -346,14 +486,14 @@ describe("local backend settings → Rust", () => {
   it("builds the route request and the pipeline config", () => {
     const local = { ...Service_STT_Schema.parse({}).local, language: "ja-JP", tier: "gpu" as const, twoPass: false, smartTurn: true, hotwords: "Sigil, VRChat, sigil" };
     const request = buildLocalRouteRequest(local);
-    expect(request).toEqual({ language: "ja", tier: "gpu", twoPass: false });
+    expect(request).toEqual({ language: "ja", tier: "gpu", twoPass: false, interim: true });
     expect(buildLocalRouteRequest({ ...local, language: "nonsense-123" }).language).toBe("auto");
     const config = buildLocalPipelineConfig(local, { threshold: "0.6", minSilenceMs: "700" }, request, "USB Mic");
     expect(config).toMatchObject({
       pipelineId: LOCAL_PIPELINE_ID,
       source: "USB Mic",
       language: "ja",
-      route: { language: "ja", tier: "gpu", twoPass: false },
+      route: { language: "ja", tier: "gpu", twoPass: false, interim: true },
       smartTurn: true,
       hotwords: ["Sigil", "VRChat"],
       hallucinationFilter: true,
@@ -363,6 +503,36 @@ describe("local backend settings → Rust", () => {
     // P6-S0: the music gate (P6-L A/B) is off unless asked for.
     expect(local.musicGate).toBe(false);
     expect(buildLocalPipelineConfig({ ...local, musicGate: true }, undefined, request, null).musicGate).toBe(true);
+  });
+
+  it("maps the interim switch to the route request: on by default, off asks for a plan without the stream", () => {
+    const defaults = Service_STT_Schema.parse({}).local;
+    expect(defaults.interim).toBe(true);
+    expect(buildLocalRouteRequest(defaults)).toEqual({ language: "auto", tier: "auto", twoPass: true, interim: true });
+    // Settings without the key (a profile from before it existed, or no settings at all) count as on.
+    expect(buildLocalRouteRequest(undefined).interim).toBe(true);
+    expect(buildLocalRouteRequest({}).interim).toBe(true);
+    expect(buildLocalRouteRequest({ interim: undefined }).interim).toBe(true);
+    // Off changes nothing but the one field.
+    const off = { ...defaults, interim: false };
+    expect(buildLocalRouteRequest(off)).toEqual({ language: "auto", tier: "auto", twoPass: true, interim: false });
+    expect(buildLocalRouteRequest({ ...off, language: "ja-JP", tier: "gpu", twoPass: false })).toEqual({
+      language: "ja",
+      tier: "gpu",
+      twoPass: false,
+      interim: false,
+    });
+    // The pipeline starts with the same route the preview used (Rust plans both the same way).
+    const request = buildLocalRouteRequest(off);
+    expect(buildLocalPipelineConfig(off, undefined, request, null).route).toEqual(request);
+    expect(buildLocalPipelineConfig(defaults, undefined, buildLocalRouteRequest(defaults), null).route).toEqual({
+      language: "auto",
+      tier: "auto",
+      twoPass: true,
+      interim: true,
+    });
+    // A request built by an older caller (no field) still plans with interim results on.
+    expect(buildLocalPipelineConfig(off, undefined, {}, null).route?.interim).toBe(true);
   });
 
   it("maps pipeline statuses to status lines", () => {
@@ -507,21 +677,27 @@ function makeModels(installed: string[]) {
   };
 }
 
-/** Plans the fake router returns: two-pass en (Nemotron + Parakeet) or single pass (Nemotron alone). */
+/**
+ * Plans the fake router returns: two-pass en (Nemotron + Parakeet), single pass (Nemotron alone), or, with interim
+ * results off (`interim: false`, as the real router does), the final alone (Parakeet) for the two-pass request.
+ */
 function planFor(request: RustSpeechRouteRequest | undefined, installed: Set<string>): RustSpeechRoutePlan {
   const twoPass = request?.twoPass !== false;
-  const models = twoPass ? [NEMOTRON, SHERPA, PARAKEET] : [NEMOTRON, SHERPA];
+  const finalOnly = twoPass && request?.interim === false;
+  const models = finalOnly ? [PARAKEET, SHERPA] : twoPass ? [NEMOTRON, SHERPA, PARAKEET] : [NEMOTRON, SHERPA];
   return {
     language: "en",
     tier: "cpu",
-    streaming: { engine: "sherpa-online", model: NEMOTRON, threads: null, variant: null, options: { language: "en" } },
+    streaming: finalOnly
+      ? null
+      : { engine: "sherpa-online", model: NEMOTRON, threads: null, variant: null, options: { language: "en" } },
     final: twoPass ? { engine: "sherpa-offline", model: PARAKEET, threads: null, variant: null, options: { language: "en" } } : null,
     fallback: null,
     languageId: null,
     models,
     missing: models.filter((m) => !installed.has(m)),
     vramMb: 0,
-    notes: [],
+    notes: finalOnly ? ["finals_only"] : [],
   };
 }
 
@@ -624,7 +800,7 @@ describe("STT_LocalService", () => {
     await h.svc.start(params());
     expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
     expect(h.askConsent).not.toHaveBeenCalled();
-    expect(h.calls("plugin:speech|start_pipeline")[0].config).toMatchObject({ pipelineId: "mic", language: "en", route: { twoPass: true } });
+    expect(h.calls("plugin:speech|start_pipeline")[0].config).toMatchObject({ pipelineId: "mic", language: "en", route: { twoPass: true, interim: true } });
     expect(localSpeechState.plan?.final?.model).toBe(PARAKEET);
     const e = h.epoch;
     h.emit("speech:partial", { pipelineId: "mic", epoch: e, segmentId: 1, revision: 0, text: "hello", lang: "en" });
@@ -645,6 +821,94 @@ describe("STT_LocalService", () => {
     h.emit("speech:partial", { pipelineId: "mic", epoch: e, segmentId: 2, revision: 0, text: "after stop", lang: "en" });
     expect(h.receiver.onInterim).toHaveBeenCalledTimes(interims);
     expect(localSpeechState.plan).toBeNull();
+  });
+
+  describe("interim results switch", () => {
+    const sessionFinal = (epoch: number, segmentId: number, text: string, extra: Record<string, unknown> = {}) => ({
+      pipelineId: "mic", epoch, segmentId, revision: 1, text, lang: "en", tags: [], pass: "first", engine: "sherpa-offline",
+      model: PARAKEET, startMs: 0, endMs: 900, forced: false, latencyMs: 10, turnEnd: null, ...extra,
+    });
+
+    it("on by default, and for settings saved without the key: the request keeps the stream", async () => {
+      const h = harness();
+      await h.svc.start(params());
+      expect(h.calls("plugin:speech|preview_route")[0].request).toEqual({ language: "en", tier: "auto", twoPass: true, interim: true });
+      expect(localSpeechState.plan?.streaming?.model).toBe(NEMOTRON);
+      await h.svc.stop();
+      // A profile from before the key: the field is simply absent.
+      const old = harness();
+      const legacy = params();
+      delete (legacy.local as Partial<STT_State["local"]>).interim;
+      await old.svc.start(legacy);
+      expect(old.calls("plugin:speech|start_pipeline")[0].config).toMatchObject({ route: { interim: true } });
+      old.emit("speech:partial", { pipelineId: "mic", epoch: old.epoch, segmentId: 1, revision: 0, text: "hello", lang: "en" });
+      expect(old.receiver.onInterim).toHaveBeenCalledTimes(1);
+      await old.svc.stop();
+    });
+
+    it("off: asks for a plan without the stream, runs the final alone and publishes finals only", async () => {
+      const h = harness();
+      await h.svc.start(params({ interim: false }));
+      const request = { language: "en", tier: "auto", twoPass: true, interim: false };
+      expect(h.calls("plugin:speech|preview_route")[0].request).toEqual(request);
+      expect(h.calls("plugin:speech|start_pipeline")[0].config).toMatchObject({ route: request });
+      expect(localSpeechState.plan).toMatchObject({ streaming: null, final: { model: PARAKEET } });
+      // Nothing is held for a replacement that cannot come: a final goes out at once.
+      const e = h.epoch;
+      h.emit("speech:utterance", { kind: "utterance", pipelineId: "mic", epoch: e, segmentId: 1, startMs: 0, endMs: 900, samples: 14_400, forced: false });
+      h.emit("speech:final", sessionFinal(e, 1, "Hello there."));
+      expect(h.receiver.onFinal).toHaveBeenCalledTimes(1);
+      expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello there.", { segmentId: `${MIC}:${e}:1`, revision: 1, lang: "en" });
+      expect(h.receiver.onInterim).not.toHaveBeenCalled();
+      await h.svc.stop();
+    });
+
+    it("off: a partial that still arrives (a stream that is the plan's only engine) is dropped; its finals are published", async () => {
+      const h = harness();
+      await h.svc.start(params({ interim: false, twoPass: false }));
+      expect(localSpeechState.plan).toMatchObject({ streaming: { model: NEMOTRON }, final: null });
+      const e = h.epoch;
+      h.emit("speech:partial", { pipelineId: "mic", epoch: e, segmentId: 1, revision: 0, text: "hel", lang: "en" });
+      h.emit("speech:partial", { pipelineId: "mic", epoch: e, segmentId: 1, revision: 1, text: "hello", lang: "en" });
+      h.emit("speech:final", sessionFinal(e, 1, "Hello.", { revision: 2, engine: "sherpa-online", model: NEMOTRON }));
+      expect(h.receiver.onInterim).not.toHaveBeenCalled();
+      expect(h.receiver.onFinal).toHaveBeenCalledTimes(1);
+      expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello.", { segmentId: `${MIC}:${e}:1`, revision: 2, lang: "en" });
+      await h.svc.stop();
+    });
+
+    it("off: an automatic restart keeps it off", async () => {
+      const h = harness();
+      await h.svc.start(params({ interim: false, twoPass: false }));
+      const first = h.epoch;
+      h.emit("speech:status", { pipelineId: "mic", epoch: first, state: "error", code: "capture_error", detail: "device lost", progress: null, level: "error", modelId: null, engine: null, device: null });
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2);
+      expect(h.calls("plugin:speech|start_pipeline")[1].config).toMatchObject({ route: { interim: false } });
+      const second = h.epoch;
+      expect(second).toBeGreaterThan(first);
+      h.emit("speech:partial", { pipelineId: "mic", epoch: second, segmentId: 1, revision: 0, text: "hello", lang: "en" });
+      h.emit("speech:final", sessionFinal(second, 1, "Hello.", { revision: 1, engine: "sherpa-online", model: NEMOTRON }));
+      expect(h.receiver.onInterim).not.toHaveBeenCalled();
+      expect(h.receiver.onFinal).toHaveBeenCalledWith("Hello.", expect.objectContaining({ segmentId: `${MIC}:${second}:1` }));
+      await h.svc.stop();
+    });
+
+    it("off: the final-only plan needs no streaming model download", async () => {
+      // Nemotron is not installed; with the switch off only Parakeet (+ runtime) is asked for.
+      const h = harness({ installed: [SHERPA], consent: "download" });
+      const run = h.svc.start(params({ interim: false }));
+      await flush();
+      expect(h.askConsent).toHaveBeenCalledTimes(1);
+      expect((h.askConsent.mock.calls[0][0] as ConsentRequest).items.map((i) => i.title)).toEqual(["parakeet-ultra-int8"]);
+      await flush();
+      expect(h.models.install).toHaveBeenCalledWith([PARAKEET]);
+      h.models.finish(PARAKEET);
+      await flush();
+      await run;
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      await h.svc.stop();
+    });
   });
 
   it("accepts the new session's events before start_pipeline returns", async () => {

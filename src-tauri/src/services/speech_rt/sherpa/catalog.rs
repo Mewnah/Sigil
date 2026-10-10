@@ -587,6 +587,7 @@ mod tests {
                 language: "auto".into(),
                 tier: Tier::Cpu,
                 two_pass,
+                interim: true,
             };
             let plan = router::plan_with(&request, &ctx);
             assert_eq!(model(&plan.final_engine).as_deref(), Some(ids::QWEN3_ASR_0_6B), "{plan:?}");

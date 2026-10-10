@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BackendSchema } from "@/core/schema";
 import { TextEventSchema, TextEventType } from "@/types";
 import { OpenAiAudioPreset, Service_STT_Schema, STT_Backends } from "..";
 
@@ -30,6 +31,43 @@ describe("STT schema split (P2-S0)", () => {
 
   it("still normalizes the legacy Deepgram language typo", () => {
     expect(Service_STT_Schema.parse({ deepgram: { language: "zn-CN" } }).deepgram.language).toBe("zh-CN");
+  });
+});
+
+// Interim results switch of the local backend: a new key in an already persisted slice (`services.stt.data.local`), so
+// no migration step and no `PERSISTED_SERVICE_KEYS` change: zod fills the default when a saved file lacks the key.
+describe("local.interim (interim results switch)", () => {
+  it("defaults to on", () => {
+    expect(Service_STT_Schema.parse({}).local.interim).toBe(true);
+    expect(Service_STT_Schema.parse({ backend: "local" }).local.interim).toBe(true);
+    expect(Service_STT_Schema.parse({ local: {} }).local.interim).toBe(true);
+  });
+
+  it("loads a profile saved before the key existed as on, keeping its other values", () => {
+    const saved = { language: "ja", tier: "cpu", twoPass: false, smartTurn: true, hotwords: "Sigil", hallucinationFilter: false, musicGate: true };
+    const s = Service_STT_Schema.parse({ backend: "local", local: saved });
+    expect(s.local).toMatchObject({ ...saved, interim: true });
+    // Through the whole persisted settings file (`Service_State.init` parses it with `BackendSchema`).
+    const file = BackendSchema.parse({ services: { stt: { showActionButton: true, data: { backend: "local", local: saved } } } });
+    expect(file.services.stt.data.local).toMatchObject({ ...saved, interim: true });
+    expect(file.services.stt.showActionButton).toBe(true);
+    expect(BackendSchema.parse({}).services.stt.data.local.interim).toBe(true);
+  });
+
+  it("keeps an explicit choice and falls back to on for a missing value", () => {
+    expect(Service_STT_Schema.parse({ local: { interim: false } }).local.interim).toBe(false);
+    expect(Service_STT_Schema.parse({ local: { interim: true } }).local.interim).toBe(true);
+    expect(Service_STT_Schema.parse({ local: { interim: undefined } }).local.interim).toBe(true);
+    // Round trip through JSON (how settings are stored).
+    const off = Service_STT_Schema.parse({ local: { interim: false } });
+    expect(Service_STT_Schema.parse(JSON.parse(JSON.stringify(off))).local.interim).toBe(false);
+  });
+
+  it("does not touch the other backends' interim switches", () => {
+    const s = Service_STT_Schema.parse({ local: { interim: false } });
+    expect(s.azure.interim).toBe(true);
+    expect(s.deepgram.interim).toBe(true);
+    expect(s.geminiLive.interim).toBe(true);
   });
 });
 

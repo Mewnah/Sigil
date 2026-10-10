@@ -17,6 +17,7 @@ import {
   routeContext,
   routedLanguages,
   ROUTING_TABLE,
+  routeRequest,
   sameLanguage,
   SMART_TURN_MODEL_ID,
   specOnGpu,
@@ -55,7 +56,7 @@ const model = (spec: RustSpeechEngineSpec | null) => spec?.model ?? null;
 type Expect = Record<string, unknown>;
 interface FixtureCase {
   name: string;
-  request: { language?: string; tier?: RustSpeechTier; twoPass?: boolean };
+  request: { language?: string; tier?: RustSpeechTier; twoPass?: boolean; interim?: boolean };
   context: Partial<RouteContext>;
   expect: Expect;
 }
@@ -399,6 +400,124 @@ describe("planRoute invariants on every language × tier × PC", () => {
   it("returns an empty plan without a table", () => {
     const plan = planRoute({ language: "ja-JP" }, pc(0, 0, 8), null);
     expect(plan).toMatchObject({ language: "ja", tier: "cpu", streaming: null, final: null, notes: [ROUTE_NOTES.routingTableInvalid] });
+  });
+});
+
+describe("interim results off (mirror of speech::router `interim: false`)", () => {
+  const t = () => table();
+  const pc = (vramTotal: number, vramAvailable: number, cores: number, extra: Partial<RouteContext> = {}): RouteContext =>
+    routeContext({
+      gpu: vramTotal > 0,
+      gpuVariant: vramTotal > 0 ? "cuda13" : null,
+      vramAvailableMb: vramAvailable,
+      vramTotalMb: vramTotal,
+      physicalCores: cores,
+      installed: referencedIds(t()),
+      gpuReason: vramTotal === 0 ? "no_gpu" : null,
+      ...extra,
+    });
+
+  it("applies Rust's request defaults: interim is on unless it is false", () => {
+    expect(routeRequest({})).toEqual({ language: "auto", tier: "auto", twoPass: true, interim: true });
+    expect(routeRequest(null).interim).toBe(true);
+    expect(routeRequest({ interim: true }).interim).toBe(true);
+    expect(routeRequest({ interim: false })).toEqual({ language: "auto", tier: "auto", twoPass: true, interim: false });
+    expect(routeRequest({ language: "ja", tier: "gpu", twoPass: false, interim: false })).toEqual({
+      language: "ja",
+      tier: "gpu",
+      twoPass: false,
+      interim: false,
+    });
+  });
+
+  it("drops the stream of a two-pass plan and keeps the final (nothing new to download)", () => {
+    const cpu = pc(0, 0, 8);
+    const on = planRoute({ language: "en", tier: "auto" }, cpu);
+    const off = planRoute({ language: "en", tier: "auto", interim: false }, cpu);
+    expect([model(on.streaming), model(on.final)]).toEqual([NEMOTRON, PARAKEET_ULTRA]);
+    expect([model(off.streaming), model(off.final)]).toEqual([null, PARAKEET_ULTRA]);
+    expect(isTwoPassPlan(off)).toBe(false);
+    expect(planHasEngine(off)).toBe(true);
+    expect(off.notes).toContain(ROUTE_NOTES.finalsOnly);
+    expect(off.models).not.toContain(NEMOTRON);
+    const fresh = planRoute({ language: "en", tier: "auto", interim: false }, pc(0, 0, 8, { installed: [] }));
+    expect(fresh.missing).toEqual(fresh.models);
+    expect(fresh.missing).not.toContain(NEMOTRON);
+    expect(requiredModelIds(off, false)).not.toContain(NEMOTRON);
+  });
+
+  it("keeps a GPU final, its tier and its CPU fallback, and the language-ID engine of auto mode", () => {
+    const gpu = pc(12_288, 6_600, 4);
+    const on = planRoute({ language: "ja", tier: "auto" }, gpu);
+    const off = planRoute({ language: "ja", tier: "auto", interim: false }, gpu);
+    expect([on.tier, model(on.streaming), model(on.fallback)]).toEqual(["gpu", NEMOTRON, null]);
+    // Finals-only GPU plans always keep the CPU fallback (it replaces the GPU engine).
+    expect([off.tier, model(off.streaming), model(off.fallback)]).toEqual(["gpu", null, QWEN3_0_6B]);
+    expect(off.final).toEqual(on.final);
+    expect(off.vramMb).toBe(on.vramMb);
+    const cpu = pc(0, 0, 8);
+    const autoOn = planRoute({ language: "auto" }, cpu);
+    const autoOff = planRoute({ language: "auto", interim: false }, cpu);
+    expect(model(autoOn.streaming)).toBe(NEMOTRON);
+    expect(autoOff.streaming).toBeNull();
+    expect(autoOff.final).toEqual(autoOn.final);
+    expect(autoOff.languageId).toEqual(autoOn.languageId);
+  });
+
+  it("keeps a streaming model that is the only engine of its tier, and every one-pass choice", () => {
+    const cpu = pc(0, 0, 8);
+    for (const l of ["nb", "ar", "hi", "tr"]) {
+      const off = planRoute({ language: l, tier: "cpu", interim: false }, cpu);
+      expect([model(off.streaming), model(off.final)], l).toEqual([NEMOTRON, null]);
+      expect(off, l).toEqual(planRoute({ language: l, tier: "cpu" }, cpu));
+    }
+    // The same language with a GPU final available loses the stream.
+    expect(planRoute({ language: "ar", tier: "auto", interim: false }, pc(12_288, 6_600, 8)).streaming).toBeNull();
+    // English streams alone on 4 cores (one pass), with or without interim results.
+    const few = pc(0, 0, 4);
+    const fewOff = planRoute({ language: "en", interim: false }, few);
+    expect([model(fewOff.streaming), model(fewOff.final)]).toEqual([NEMOTRON, null]);
+    expect(fewOff).toEqual(planRoute({ language: "en" }, few));
+  });
+
+  it("is the interim-on plan minus the stream, on every PC, language, tier and pass setting", () => {
+    const pcs: RouteContext[] = [
+      pc(0, 0, 8),
+      pc(0, 0, 4),
+      pc(0, 0, 0),
+      pc(12_288, 6_600, 8),
+      pc(16_376, 11_400, 8),
+      pc(24_576, 15_000, 16),
+      pc(0, 0, 8, { vcRunning: true, vcGpu: false }),
+      pc(12_288, 5_400, 8, { vcRunning: true, vcGpu: true }),
+      pc(24_576, 15_000, 16, { vcRunning: true }),
+      pc(24_576, 15_000, 16, { installed: [] }),
+    ];
+    const languages = [...routedLanguages(), "auto", "sw", "he", "zh-HK", "pt-BR", "", "xx-invalid-1"];
+    let dropped = 0;
+    for (const ctx of pcs)
+      for (const l of languages)
+        for (const tier of ["auto", "cpu", "gpu"] as const)
+          for (const twoPass of [true, false]) {
+            const what = `${JSON.stringify(l)} / ${tier} / two-pass ${twoPass} / ${ctx.physicalCores} cores, ${ctx.vramTotalMb} MB`;
+            const on = planRoute({ language: l, tier, twoPass }, ctx);
+            const off = planRoute({ language: l, tier, twoPass, interim: false }, ctx);
+            expect(planHasEngine(off), what).toBe(true);
+            expect(isTwoPassPlan(off), `never two-pass: ${what}`).toBe(false);
+            if (isTwoPassPlan(on)) {
+              dropped++;
+              expect(off.streaming, what).toBeNull();
+              expect(off.final, what).toEqual(on.final);
+              expect([off.tier, off.vramMb, off.languageId], what).toEqual([on.tier, on.vramMb, on.languageId]);
+              if (on.fallback) expect(off.fallback, what).toEqual(on.fallback);
+              expect(off.notes, what).toContain(ROUTE_NOTES.finalsOnly);
+              expect(off.models, what).not.toContain(on.streaming!.model);
+              expect(off.missing, what).not.toContain(on.streaming!.model);
+              // Nothing new to download, except the CPU fallback a finals-only GPU plan always keeps.
+              if (on.fallback || !off.fallback) for (const m of off.models) expect(on.models, what).toContain(m);
+            } else expect(off, what).toEqual(on);
+          }
+    expect(dropped).toBeGreaterThan(100);
   });
 });
 

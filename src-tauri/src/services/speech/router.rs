@@ -39,6 +39,13 @@
 //! the row says its own finals are caption quality (`streamFinal`) and the route is on the CPU,
 //! else the final alone (finals only, no partials).
 //!
+//! `interim: false` ([`RouteRequest::interim`], "no live partial captions") turns the two-pass
+//! plan into the final alone, so the streaming model is not planned, loaded or run (its CPU is
+//! saved); the one-pass choices above are unchanged, because a stream that is the plan's only
+//! engine produces the finals too, and swapping it for another model would change downloads and
+//! quality. Everything else (tier, language ID, CPU fallback of a GPU final) is planned for the
+//! final-only plan exactly as for any other finals-only plan.
+//!
 //! # CPU fallback of a GPU final
 //! A GPU final gets the row's CPU final as `fallback` (promoted for the rest of the session when
 //! the GPU engine fails). Next to a streaming model that fallback would be a second CPU engine, so
@@ -916,7 +923,15 @@ pub(crate) fn plan_table(table: &RoutingTable, request: &RouteRequest, ctx: &Rou
     let (mut streaming, final_pick) = match (streaming, best_final) {
         (Some(s), Some(f)) => {
             if request.two_pass && (tier == Tier::Gpu || cpu_two_engines) {
-                (Some(s), Some(f))
+                if request.interim {
+                    (Some(s), Some(f))
+                } else {
+                    // No live partials wanted: the stream would only feed first-pass text that the
+                    // final replaces, so it is not planned (never loaded or run) and the final
+                    // engine decodes each closed utterance alone (`finals_only`). Only here: a
+                    // stream that is the plan's sole engine stays, its finals are the captions.
+                    (None, Some(f))
+                }
             } else {
                 p.note(if !request.two_pass {
                     notes::SINGLE_PASS
@@ -1095,6 +1110,15 @@ mod tests {
             language: language.into(),
             tier,
             two_pass,
+            interim: true,
+        }
+    }
+
+    /// [`req`] with interim results (live partial captions) off.
+    fn req_quiet(language: &str, tier: Tier, two_pass: bool) -> RouteRequest {
+        RouteRequest {
+            interim: false,
+            ..req(language, tier, two_pass)
         }
     }
 
@@ -1727,6 +1751,130 @@ mod tests {
             assert_eq!(model(&ja.streaming), None, "{ja:?}");
             assert!(ja.notes.iter().any(|x| x == note) && !ja.notes.iter().any(|x| x == other), "{ja:?}");
         }
+    }
+
+    /// `interim: false` (no live partial captions): a two-pass plan becomes its final engine alone
+    /// (the streaming model is not planned, so it is neither a requirement nor loaded or run);
+    /// every other plan, including a stream that is the only engine, is exactly the plan
+    /// `interim: true` gives.
+    #[test]
+    fn interim_off_drops_only_the_stream_that_runs_next_to_a_final() {
+        // English on an 8-core CPU: Nemotron + Parakeet Ultra becomes Parakeet Ultra alone.
+        let cpu = pc(0, 0, 8);
+        let on = plan_with(&req("en", Tier::Auto, true), &cpu);
+        assert_eq!((model(&on.streaming), model(&on.final_engine)), (Some(NEMOTRON), Some(PARAKEET_ULTRA)), "{on:?}");
+        let off = plan_with(&req_quiet("en", Tier::Auto, true), &cpu);
+        assert_eq!((model(&off.streaming), model(&off.final_engine)), (None, Some(PARAKEET_ULTRA)), "{off:?}");
+        assert!(off.notes.iter().any(|n| n == notes::FINALS_ONLY), "{off:?}");
+        assert!(!plan_models(&off).contains(&NEMOTRON), "the stream is not a requirement: {off:?}");
+        assert!(!off.missing.iter().any(|m| m == NEMOTRON), "{off:?}");
+        let mut nothing_installed = pc(0, 0, 8);
+        nothing_installed.installed.clear();
+        let fresh = plan_with(&req_quiet("en", Tier::Auto, true), &nothing_installed);
+        assert!(!fresh.models.iter().any(|m| m == NEMOTRON) && !fresh.missing.iter().any(|m| m == NEMOTRON), "nothing to download for it: {fresh:?}");
+        assert!(plan_with(&req("en", Tier::Auto, true), &nothing_installed).missing.iter().any(|m| m == NEMOTRON));
+
+        // Auto language keeps its language ID / detecting final; only the stream goes.
+        let auto_on = plan_with(&req("auto", Tier::Auto, true), &cpu);
+        let auto_off = plan_with(&req_quiet("auto", Tier::Auto, true), &cpu);
+        assert_eq!(model(&auto_on.streaming), Some(NEMOTRON), "{auto_on:?}");
+        assert_eq!(model(&auto_off.streaming), None, "{auto_off:?}");
+        assert_eq!(auto_off.final_engine, auto_on.final_engine);
+        assert_eq!(auto_off.language_id, auto_on.language_id);
+
+        // A GPU final stays on the GPU and keeps its CPU fallback (a finals-only GPU plan always has
+        // one), even where the CPU could not have run the stream next to it.
+        let gpu = pc(12_288, 6_600, 4);
+        let on = plan_with(&req("ja", Tier::Auto, true), &gpu);
+        assert_eq!((on.tier, model(&on.streaming), model(&on.fallback)), (Tier::Gpu, Some(NEMOTRON), None), "{on:?}");
+        let off = plan_with(&req_quiet("ja", Tier::Auto, true), &gpu);
+        assert_eq!((off.tier, model(&off.streaming), model(&off.fallback)), (Tier::Gpu, None, Some(QWEN3_0_6B)), "{off:?}");
+        assert_eq!(off.final_engine, on.final_engine);
+        assert_eq!(off.vram_mb, on.vram_mb);
+
+        // A tier that offers only a streaming engine keeps it: its finals are the captions.
+        for l in ["nb", "ar", "hi", "tr"] {
+            let cpu_only = plan_with(&req_quiet(l, Tier::Cpu, true), &cpu);
+            assert_eq!((model(&cpu_only.streaming), model(&cpu_only.final_engine)), (Some(NEMOTRON), None), "{l}: {cpu_only:?}");
+            assert_eq!(cpu_only, plan_with(&req(l, Tier::Cpu, true), &cpu), "{l}: identical to interim on");
+        }
+        // ...while the same language with a GPU final available drops it.
+        let ar = plan_with(&req_quiet("ar", Tier::Auto, true), &pc(12_288, 6_600, 8));
+        assert_eq!((ar.tier, model(&ar.streaming)), (Tier::Gpu, None), "{ar:?}");
+
+        // One-pass choices are untouched: a 4-core PC streams English alone with or without interim.
+        let few = pc(0, 0, 4);
+        let few_off = plan_with(&req_quiet("en", Tier::Auto, true), &few);
+        assert_eq!((model(&few_off.streaming), model(&few_off.final_engine)), (Some(NEMOTRON), None), "{few_off:?}");
+        assert_eq!(few_off, plan_with(&req("en", Tier::Auto, true), &few));
+    }
+
+    /// The same rule over every language × tier × pass setting × PC (the PCs of
+    /// `every_request_on_every_pc_keeps_the_rules`, trimmed): a plan with interim off is never
+    /// two-pass; it is the interim-on plan minus the stream when that was two-pass, else equal.
+    #[test]
+    fn interim_off_matches_interim_on_everywhere_but_the_dropped_stream() {
+        let table = t();
+        let mut languages: Vec<String> = table
+            .routes
+            .iter()
+            .flat_map(|r| r.languages.iter().cloned())
+            .filter(|l| l != "*")
+            .collect();
+        languages.extend(["sw", "he", "zh-HK", "pt-BR", "", "xx-invalid-1"].map(String::from));
+        let mut cpu_vc = pc(0, 0, 8);
+        cpu_vc.vc_running = true;
+        cpu_vc.vc_gpu = Some(false);
+        let mut gpu_vc = pc(12_288, 5_400, 8);
+        gpu_vc.vc_running = true;
+        gpu_vc.vc_gpu = Some(true);
+        let mut vc_unknown = pc(24_576, 15_000, 16);
+        vc_unknown.vc_running = true;
+        let mut nothing_installed = pc(24_576, 15_000, 16);
+        nothing_installed.installed.clear();
+        let pcs = [
+            ("cpu 8 cores", pc(0, 0, 8)),
+            ("cpu 4 cores", pc(0, 0, 4)),
+            ("cpu unknown cores", pc(0, 0, 0)),
+            ("12 GB", pc(12_288, 6_600, 8)),
+            ("16 GB", pc(16_376, 11_400, 8)),
+            ("24 GB", pc(24_576, 15_000, 16)),
+            ("vc on cpu", cpu_vc),
+            ("vc on gpu", gpu_vc),
+            ("vc device unknown", vc_unknown),
+            ("nothing installed", nothing_installed),
+        ];
+        let mut dropped = 0;
+        for (pc_name, ctx) in &pcs {
+            for l in &languages {
+                for tier in [Tier::Auto, Tier::Cpu, Tier::Gpu] {
+                    for two_pass in [true, false] {
+                        let what = format!("{pc_name} / {l:?} / {tier:?} / two-pass {two_pass}");
+                        let on = plan_with(&req(l, tier, two_pass), ctx);
+                        let off = plan_with(&req_quiet(l, tier, two_pass), ctx);
+                        assert!(off.streaming.is_some() || off.final_engine.is_some(), "an engine: {what}: {off:?}");
+                        assert!(off.streaming.is_none() || off.final_engine.is_none(), "never two-pass: {what}: {off:?}");
+                        if let (Some(stream), Some(_)) = (&on.streaming, &on.final_engine) {
+                            dropped += 1;
+                            assert!(off.streaming.is_none(), "{what}: {off:?}");
+                            assert_eq!(off.final_engine, on.final_engine, "{what}");
+                            assert_eq!((off.tier, off.vram_mb, &off.language_id), (on.tier, on.vram_mb, &on.language_id), "{what}");
+                            assert!(on.fallback.is_none() || off.fallback == on.fallback, "{what}: {off:?}");
+                            assert!(off.notes.iter().any(|n| n == notes::FINALS_ONLY), "{what}: {:?}", off.notes);
+                            assert!(!off.models.contains(&stream.model), "{what}: {off:?}");
+                            assert!(!off.missing.contains(&stream.model), "{what}: {off:?}");
+                            // Nothing new to download, except the CPU fallback a finals-only GPU plan always keeps.
+                            if on.fallback.is_some() || off.fallback.is_none() {
+                                assert!(off.models.iter().all(|m| on.models.contains(m)), "nothing new to download: {what}");
+                            }
+                        } else {
+                            assert_eq!(off, on, "{what}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(dropped > 100, "the sweep covers many two-pass plans ({dropped})");
     }
 
     #[test]

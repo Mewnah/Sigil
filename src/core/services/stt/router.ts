@@ -570,13 +570,14 @@ function emptyPlan(language: string, notes: string[]): RustSpeechRoutePlan {
   };
 }
 
-/** The request with Rust's defaults applied (`language` "auto", `tier` "auto", `twoPass` true). */
+/** The request with Rust's defaults applied (`language` "auto", `tier` "auto", `twoPass` true, `interim` true). */
 export function routeRequest(request: RustSpeechRouteRequest | null | undefined): Required<RustSpeechRouteRequest> {
   const tier = request?.tier === "cpu" || request?.tier === "gpu" ? request.tier : "auto";
   return {
     language: typeof request?.language === "string" ? request.language : AUTO_LANGUAGE,
     tier,
     twoPass: request?.twoPass !== false,
+    interim: request?.interim !== false,
   };
 }
 
@@ -635,7 +636,12 @@ export function planRoute(
   let streaming: ModelPick | null = streamingPick;
   let finalPick: ModelPick | null = bestFinal;
   if (streamingPick && bestFinal) {
-    if (!(req.twoPass && (tier === "gpu" || cpuTwoEngines))) {
+    if (req.twoPass && (tier === "gpu" || cpuTwoEngines)) {
+      // No live partials wanted (`interim` off): the stream is not planned at all (never loaded or run) and the final
+      // decodes each closed utterance alone. Only here: a stream that is the plan's sole engine stays (its finals are
+      // the captions), and the other one-pass choices below are unchanged.
+      if (!req.interim) streaming = null;
+    } else {
       p.note(
         !req.twoPass
           ? ROUTE_NOTES.singlePass

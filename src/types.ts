@@ -643,6 +643,12 @@ export interface RustSpeechRouteRequest {
   tier?: RustSpeechTier;
   /** Re-decode each closed utterance with the final model (default true). */
   twoPass?: boolean;
+  /**
+   * Live partial captions wanted (default true). `false`: a plan that would run a streaming model next to a final
+   * model is planned without the streaming model (never loaded or run); a streaming model that is the only engine of
+   * the plan stays, its finals are the captions.
+   */
+  interim?: boolean;
 }
 
 /** Rust `speech::engine_api::RoutePlan` (result of `plugin:speech|preview_route`). */

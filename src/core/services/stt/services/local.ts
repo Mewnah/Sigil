@@ -22,6 +22,11 @@
  * cannot fix (a model went missing, an unsupported or invalid request; see {@link restartCanFix}), the session stops
  * with a message.
  *
+ * Interim results (`stt.local.interim`, default on): off asks the router for a plan without the streaming model wherever
+ * a final model runs next to it (`RustSpeechRouteRequest.interim`; the stream is not loaded or run, which saves its CPU),
+ * and the publisher drops every partial and never shows a first-pass final as an interim, so only finals are published.
+ * A streaming model that is the plan's only engine stays (its finals are the captions). Read at each start.
+ *
  * Pure parts (the publisher, config builders, status and consent texts) are exported for `__tests__/localDriver`.
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -192,12 +197,17 @@ function noteEpoch(pipelineId: string, epoch: number): void {
 // ---------------------------------------------------------------------------------------------------------------
 // Settings → Rust
 
-/** `stt.local` → the router request (normalized language; Rust fills anything missing). */
+/**
+ * `stt.local` → the router request (normalized language; Rust fills anything missing). `interim: false` asks the
+ * router for a plan without the streaming model wherever a final model runs next to it (see
+ * `RustSpeechRouteRequest.interim`); a missing value counts as on, like every setting saved before the key existed.
+ */
 export function buildLocalRouteRequest(local: Partial<STT_State["local"]> | undefined): Required<RustSpeechRouteRequest> {
   return routeRequest({
     language: normalizeLanguage(local?.language) ?? "auto",
     tier: local?.tier,
     twoPass: local?.twoPass !== false,
+    interim: local?.interim !== false,
   });
 }
 
@@ -401,6 +411,11 @@ export interface SegmentPublisherOptions {
   stream?: string;
   /** The session re-decodes each segment (two-pass): hold first-pass finals for their replacement. */
   twoPass: boolean;
+  /**
+   * Publish interim text (default true). Off (the `stt.local.interim` setting): partials are dropped and a held
+   * first-pass final is not shown as an interim meanwhile; finals are published exactly as with interims on.
+   */
+  interim?: boolean;
   sink: SegmentSink;
   clock?: SegmentClock;
   /** Holding was suspended (replacements stopped arriving) or resumed. */
@@ -446,7 +461,9 @@ interface Segment {
  * consumers without segment ids (captions, translation, chatbox, TTS): segments are published strictly one after
  * another, each as interims with rising revisions and then at most one final.
  *
- * - Partials become interims (the newest wins while a segment waits behind an earlier one).
+ * - Partials become interims (the newest wins while a segment waits behind an earlier one). With `interim: false`
+ *   no interim is ever published (partials are dropped, a held first-pass final is not shown meanwhile); the finals
+ *   below are unchanged.
  * - Finals: a two-pass session publishes the replacement (`pass: "second"`) as the segment's final; the first-pass
  *   final is shown as an interim meanwhile and becomes the final when no replacement arrives within Rust's two-pass
  *   budget (plus slack), or once the next sentence has had text waiting for {@link BLOCKED_HOLD_MS}. After
@@ -461,6 +478,7 @@ export class SegmentPublisher {
   readonly epoch: number;
   readonly #stream: string;
   #twoPass: boolean;
+  readonly #interim: boolean;
   #holding: boolean;
   #misses = 0;
   readonly #sink: SegmentSink;
@@ -480,6 +498,7 @@ export class SegmentPublisher {
     this.epoch = options.epoch;
     this.#stream = options.stream ?? `${options.pipelineId}-${PROCESS_NONCE}`;
     this.#twoPass = options.twoPass;
+    this.#interim = options.interim !== false;
     this.#holding = options.twoPass;
     this.#sink = options.sink;
     this.#clock = options.clock ?? systemClock;
@@ -501,6 +520,7 @@ export class SegmentPublisher {
   }
 
   partial(ev: Pick<RustSpeechPartial, "segmentId" | "revision" | "text" | "lang">): void {
+    if (!this.#interim) return; // finals only: partials are neither kept nor published
     if (this.#disposed || this.#finished.has(ev.segmentId) || this.#released.has(ev.segmentId)) return;
     const text = String(ev.text ?? "").trim();
     if (!text) return;
@@ -658,6 +678,7 @@ export class SegmentPublisher {
   }
 
   #show(seg: Segment, c: Candidate): void {
+    if (!this.#interim) return; // the only place an interim leaves the publisher
     if (c.revision <= seg.shown) return;
     if (c.text !== seg.shownText) this.#sink.interim(c.text, this.#meta(seg, c.revision, c.lang));
     seg.shown = c.revision;
@@ -870,6 +891,8 @@ export class STT_LocalService implements ISTTService {
   #floor = 0;
   #config: RustSpeechPipelineConfig | null = null;
   #twoPass = false;
+  /** Publish interim text (`stt.local.interim` at the last start; applies until the next start). */
+  #interim = true;
   /** A session is live (started, not failed or stopped). */
   #running = false;
   #stopRequested = false;
@@ -902,6 +925,7 @@ export class STT_LocalService implements ISTTService {
     this.#stopRequested = false;
     this.#restartAttempts = 0;
     this.#plan = null;
+    this.#interim = params.local?.interim !== false;
     localSpeechState.restarts = 0;
     const signal = this.startAbortSignal ?? null;
     try {
@@ -1288,6 +1312,7 @@ export class STT_LocalService implements ISTTService {
       pipelineId: LOCAL_PIPELINE_ID,
       epoch,
       twoPass: this.#twoPass,
+      interim: this.#interim,
       clock: this.#deps.clock,
       sink: {
         interim: (text, meta) => this.receiver.onInterim(text, meta),

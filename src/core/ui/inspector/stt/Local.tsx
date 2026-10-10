@@ -52,7 +52,7 @@ interface PreviewState {
 }
 
 /** The plan Rust would run now for these settings (refreshed on changes, installs, and periodically). */
-function useRoutePreview(language: string, tier: string, twoPass: boolean, refreshKey: string): PreviewState & { refresh(): void } {
+function useRoutePreview(language: string, tier: string, twoPass: boolean, interim: boolean, refreshKey: string): PreviewState & { refresh(): void } {
   const [state, setState] = useState<PreviewState>({ plan: null, error: null, loading: true });
   const [tick, setTick] = useState(0);
   const tauri = isTauri();
@@ -69,7 +69,7 @@ function useRoutePreview(language: string, tier: string, twoPass: boolean, refre
     setState((s) => ({ ...s, loading: true }));
     // Debounced: typing in other fields re-renders; only these inputs matter.
     const timer = setTimeout(() => {
-      const request = buildLocalRouteRequest({ language, tier: tier as STT_State["local"]["tier"], twoPass });
+      const request = buildLocalRouteRequest({ language, tier: tier as STT_State["local"]["tier"], twoPass, interim });
       invoke<RustSpeechRoutePlan>("plugin:speech|preview_route", { request })
         .then((plan) => {
           if (!cancelled) setState({ plan, error: null, loading: false });
@@ -82,7 +82,7 @@ function useRoutePreview(language: string, tier: string, twoPass: boolean, refre
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tauri, language, tier, twoPass, refreshKey, tick]);
+  }, [tauri, language, tier, twoPass, interim, refreshKey, tick]);
 
   return { ...state, refresh: () => setTick((n) => n + 1) };
 }
@@ -161,7 +161,7 @@ export const Local: FC = () => {
     () => Object.values(modelsSnap.states).filter((s) => s?.state === "installed").map((s) => s.id).sort().join("|"),
     [modelsSnap.states],
   );
-  const preview = useRoutePreview(pr.language, pr.tier, pr.twoPass, installedKey);
+  const preview = useRoutePreview(pr.language, pr.tier, pr.twoPass, pr.interim !== false, installedKey);
 
   const languageOptions = useMemo(() => {
     const codes = languageCodes();
@@ -205,6 +205,9 @@ export const Local: FC = () => {
 
     <InputCheckbox label="stt.local_two_pass" value={pr.twoPass} onChange={e => up("twoPass", e)} />
     <Inspector.Description>{t("stt.local_two_pass_desc")}</Inspector.Description>
+
+    <InputCheckbox label="stt.field_enable_interim_results" value={pr.interim !== false} onChange={e => up("interim", e)} />
+    <Inspector.Description>{t("stt.local_interim_desc")}</Inspector.Description>
 
     <InputCheckbox label="stt.local_smart_turn" value={pr.smartTurn} onChange={e => up("smartTurn", e)} />
     <Inspector.Description>{t("stt.local_smart_turn_desc")}</Inspector.Description>

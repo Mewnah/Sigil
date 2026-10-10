@@ -1342,6 +1342,97 @@
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
         "fallbackModel": "stt/qwen3-asr-0.6b-int8"
       }
+    },
+    {
+      "name": "interim off: an English CPU two-pass plan runs the final alone, without the stream",
+      "request": {
+        "language": "en",
+        "tier": "cpu",
+        "twoPass": true,
+        "interim": false
+      },
+      "context": {
+        "physicalCores": 8,
+        "installed": []
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": null,
+        "finalModel": "stt/parakeet-ultra-int8",
+        "neverModels": [
+          "stt/nemotron-3.5-streaming-560ms-int8"
+        ],
+        "notesInclude": [
+          "finals_only"
+        ],
+        "missingInclude": [
+          "stt/parakeet-ultra-int8"
+        ]
+      }
+    },
+    {
+      "name": "interim off: a GPU two-pass plan keeps the GPU final and its CPU fallback, without the stream",
+      "request": {
+        "language": "ja",
+        "tier": "auto",
+        "twoPass": true,
+        "interim": false
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 15000,
+        "vramTotalMb": 24564,
+        "physicalCores": 16
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": null,
+        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "neverModels": [
+          "stt/nemotron-3.5-streaming-560ms-int8"
+        ],
+        "notesInclude": [
+          "finals_only"
+        ]
+      }
+    },
+    {
+      "name": "interim off: a streaming model that is the only engine of its tier stays",
+      "request": {
+        "language": "nb",
+        "tier": "cpu",
+        "twoPass": true,
+        "interim": false
+      },
+      "context": {
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "cpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": null
+      }
+    },
+    {
+      "name": "interim off: one-pass plans are unchanged (English streams alone on 4 cores)",
+      "request": {
+        "language": "en",
+        "tier": "auto",
+        "twoPass": true,
+        "interim": false
+      },
+      "context": {
+        "physicalCores": 4,
+        "gpuReason": "no_gpu"
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": null,
+        "notesInclude": [
+          "few_cores_single_pass"
+        ]
+      }
     }
   ]
 }

@@ -299,13 +299,13 @@ describe("Others settings", () => {
   it("builds the loopback pipeline config, never the microphone's", () => {
     const s = Service_Others_Schema.parse({ language: "JA", tier: "gpu", twoPass: false, musicGate: true });
     const request = othersRouteRequest(s);
-    expect(request).toEqual({ language: "ja", tier: "gpu", twoPass: false });
+    expect(request).toEqual({ language: "ja", tier: "gpu", twoPass: false, interim: true });
     expect(buildOthersPipelineConfig(s, request, "process:VRChat.exe")).toEqual({
       pipelineId: "loopback",
       source: "process:VRChat.exe",
       vad: {},
       language: "ja",
-      route: { language: "ja", tier: "gpu", twoPass: false },
+      route: { language: "ja", tier: "gpu", twoPass: false, interim: true },
       smartTurn: false,
       hotwords: [],
       hallucinationFilter: true,

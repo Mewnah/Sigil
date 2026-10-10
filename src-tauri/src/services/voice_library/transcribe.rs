@@ -123,6 +123,7 @@ fn candidates(language: Option<&str>) -> (Vec<EngineSpec>, Option<EngineSpec>) {
         language: language.unwrap_or(lang::AUTO).to_string(),
         tier: Tier::Auto,
         two_pass: true,
+        interim: true,
     };
     let plan = router::plan_with(&request, &ctx);
     let mut out: Vec<EngineSpec> = Vec::new();

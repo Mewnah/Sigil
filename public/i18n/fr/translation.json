@@ -451,7 +451,8 @@
     "provider_gemini_live": "Gemini Live (online, your key)",
     "backend_not_ready": "This speech recognizer is not available in this build yet.",
     "local_music_gate": "Ignore music and singing (experimental)",
-    "local_music_gate_desc": "Skips stretches that sound like music or singing, such as world music in VRChat, instead of turning them into captions. Needs a small extra download."
+    "local_music_gate_desc": "Skips stretches that sound like music or singing, such as world music in VRChat, instead of turning them into captions. Needs a small extra download.",
+    "local_interim_desc": "Shows words while you are still speaking. Turn it off to get each sentence only once it is finished: Sigil then does not run the live model whenever a more accurate one also runs, which saves processor time. A language that only has a live model keeps using it, and its finished sentences still appear. Applies the next time speech-to-text starts."
   },
   "tts": {
     "title": "Synthèse vocale",

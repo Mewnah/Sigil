@@ -279,6 +279,7 @@
     "local_tier_desc": "Best for my PC uses the graphics card when it has room and a better model for your language, and leaves it to the voice changer when the card is small.",
     "local_two_pass": "Two-pass accuracy",
     "local_two_pass_desc": "Shows live captions while you speak, then replaces each sentence with a more accurate transcription. Needs a larger download and more computing power; Sigil uses one pass when this PC cannot afford two.",
+    "local_interim_desc": "Shows words while you are still speaking. Turn it off to get each sentence only once it is finished: Sigil then does not run the live model whenever a more accurate one also runs, which saves processor time. A language that only has a live model keeps using it, and its finished sentences still appear. Applies the next time speech-to-text starts.",
     "local_smart_turn": "Detect when you finish speaking (Smart Turn)",
     "local_smart_turn_desc": "Lets translation, text-to-speech and the VRChat chatbox send sooner when you have finished your turn. Captions are not affected. Adds a 9 MB download.",
     "local_hotwords": "Hotwords",

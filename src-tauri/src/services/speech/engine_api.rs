@@ -166,6 +166,11 @@ pub struct RouteRequest {
     pub tier: Tier,
     /// Re-decode each closed utterance with the final model (revision + 1 replaces the partial).
     pub two_pass: bool,
+    /// Live partial captions wanted (default true). `false`: where the plan would run a streaming
+    /// engine next to a final engine, the streaming engine is not planned at all (never loaded or
+    /// run), so the final engine transcribes each closed utterance alone. A streaming engine that
+    /// is the plan's only engine stays (its finals are the captions).
+    pub interim: bool,
 }
 
 impl Default for RouteRequest {
@@ -174,6 +179,7 @@ impl Default for RouteRequest {
             language: "auto".into(),
             tier: Tier::Auto,
             two_pass: true,
+            interim: true,
         }
     }
 }
@@ -603,6 +609,23 @@ mod tests {
         assert!(f.options.is_null());
         assert!(c.streaming.is_none());
         assert_eq!(c.route, RouteRequest::default());
+    }
+
+    #[test]
+    fn route_request_interim_defaults_to_on_and_reads_camel_case() {
+        // A request from before the field existed (or from a caller that does not know it) keeps live partials.
+        let old: RouteRequest = serde_json::from_str(r#"{"language":"en","tier":"cpu","twoPass":false}"#).unwrap();
+        assert!(old.interim);
+        assert!(!old.two_pass);
+        assert!(serde_json::from_str::<RouteRequest>("{}").unwrap().interim);
+        assert!(RouteRequest::default().interim);
+        let off: RouteRequest = serde_json::from_str(r#"{"interim":false}"#).unwrap();
+        assert!(!off.interim);
+        assert!(off.two_pass, "the other fields keep their defaults");
+        // Inside a pipeline config too.
+        let c: PipelineConfig = serde_json::from_str(r#"{"route":{"language":"ja","interim":false}}"#).unwrap();
+        assert!(!c.route.interim);
+        assert_eq!(serde_json::to_value(&off).unwrap()["interim"], false);
     }
 
     #[test]

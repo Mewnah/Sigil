@@ -18,6 +18,13 @@ export const STT_Local_Schema = z.object({
    * still runs one pass where the PC cannot afford two (few cores, the voice changer on the CPU).
    */
   twoPass: zSafe(z.coerce.boolean(), true),
+  /**
+   * Interim results (live partial captions while speaking). Default on, so profiles saved before this key existed
+   * behave as before. Off: no partial / interim text is published, and where the plan would run a streaming model next
+   * to a final model it is planned without the streaming model (`RustSpeechRouteRequest.interim`), which saves its
+   * CPU. A streaming model that is the only engine of the plan stays, and its finals are still published.
+   */
+  interim: zSafe(z.coerce.boolean(), true),
   /** Smart Turn end-of-turn hints (commit translation / chatbox / TTS sooner; never shortens captions). */
   smartTurn: zSafe(z.coerce.boolean(), false),
   /** Comma- or newline-separated names and terms to bias recognition towards. */
