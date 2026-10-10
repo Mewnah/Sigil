@@ -7,7 +7,9 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use windows::{
     core::{s, PCSTR},
-    Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_ICONWARNING, MB_OK},
+    Win32::UI::WindowsAndMessaging::{
+        MessageBoxA, ShowWindow, MB_ICONWARNING, MB_OK, SW_SHOWMINNOACTIVE,
+    },
 };
 
 use crate::services::AppConfiguration;
@@ -79,6 +81,22 @@ fn main() {
         }
     };
 
+    let start_minimized = start_minimized();
+    let mut context = tauri::generate_context!();
+    if start_minimized {
+        // Created hidden and without focus; `setup` shows it minimized (see `show_minimized_without_focus`).
+        for window in context.config_mut().app.windows.iter_mut().filter(|w| w.label == "main") {
+            window.visible = false;
+            window.focus = false;
+        }
+    }
+    let mut window_state = tauri_plugin_window_state::Builder::default()
+        .skip_initial_state(services::caption_window::CAPTIONS_WINDOW_LABEL);
+    if start_minimized {
+        // The plugin's restore ends in show() + set_focus(), which would take the foreground.
+        window_state = window_state.skip_initial_state("main");
+    }
+
     tauri::Builder::default()
         // Registered first: plugins initialize in registration order, so the diagnostics setup (file log,
         // EcoQoS opt-out, EP probe) runs before every other plugin.
@@ -88,9 +106,12 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             let window = app.get_webview_window("main").expect("Failed to get main window");
             window.set_shadow(true).expect("Unsupported platform!");
+            if start_minimized {
+                show_minimized_without_focus(&window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -101,11 +122,7 @@ fn main() {
         ])
         // The caption window (P6-B) restores its own position and size without show()/set_focus(),
         // so it never steals the foreground from a game; saving still goes through this plugin.
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .skip_initial_state(services::caption_window::CAPTIONS_WINDOW_LABEL)
-                .build(),
-        )
+        .plugin(window_state.build())
         .manage(AppConfiguration { port: args.port })
         .plugin(services::osc::init())
         .plugin(services::web::init())
@@ -163,7 +180,7 @@ fn main() {
                 close_secondary_windows(window.app_handle());
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
@@ -174,6 +191,35 @@ fn main() {
                 services::vr_overlay::shutdown();
             }
         });
+}
+
+/// `SIGIL_START_MINIMIZED=1`: the main window starts minimized and never takes the foreground. Meant for automated
+/// runs (benchmarks, packaged smoke tests) on a PC someone is using: Tauri's focus path (`set_focus`, which the
+/// window-state restore also calls) forces the foreground with a synthetic Alt key press, past Windows' foreground lock.
+fn start_minimized() -> bool {
+    std::env::var("SIGIL_START_MINIMIZED").is_ok_and(|v| v.trim() == "1")
+}
+
+/// Show the hidden main window minimized without activating it (`SIGIL_START_MINIMIZED`). `show()` comes first so the
+/// webview counts as visible (created with `focus: false`, it shows without activation); the minimize is queued on the
+/// main thread right behind it.
+fn show_minimized_without_focus(window: &tauri::WebviewWindow) {
+    if let Err(e) = window.show() {
+        tracing::warn!("start minimized: show failed: {e}");
+    }
+    let hwnd = match window.hwnd() {
+        Ok(hwnd) => hwnd.0 as isize,
+        Err(e) => {
+            tracing::warn!("start minimized: no window handle: {e}");
+            return;
+        }
+    };
+    let queued = window.run_on_main_thread(move || unsafe {
+        let _ = ShowWindow(windows::Win32::Foundation::HWND(hwnd as *mut _), SW_SHOWMINNOACTIVE);
+    });
+    if let Err(e) = queued {
+        tracing::warn!("start minimized: could not queue the minimize: {e}");
+    }
 }
 
 /// Close every webview window except the main one (P6-S0).
