@@ -10,7 +10,7 @@ import { subscribeKey } from "valtio/utils";
 import { i18nReady } from "../stt/statusMessages";
 import { TurnCommitGate } from "../vrc/turnCommit";
 import { pushSystemLog } from "../systemLog";
-import { planTtsDesktopDefault } from "./defaults";
+import { planTtsDesktopDefault, profileUsesTts } from "./defaults";
 import { ErrorThrottle } from "./errorThrottle";
 import { TtsPipeline, ttsSinkTarget } from "./pipeline";
 import type { SentenceOptions } from "./sentence";
@@ -241,7 +241,8 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
 
   /**
    * P2 desktop default (`defaults.ts`): a new desktop install starts on the in-process Kokoro voice
-   * (`localNeural`); an existing profile on Web Speech / SAPI is offered it once by {@link runStartupOffer}.
+   * (`localNeural`); an existing profile on Web Speech / SAPI that uses TTS is offered it once by
+   * {@link runStartupOffer}. One that has not used TTS is left alone until it has.
    */
   #applyDesktopDefault(): void {
     let plan: ReturnType<typeof planTtsDesktopDefault>;
@@ -252,13 +253,14 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
         freshInstall: !window.ApiServer.state.onboardingComplete,
         backend: this.data.backend,
         localOfferShown: this.data.localOfferShown,
+        usesTts: profileUsesTts(this.data),
       });
     }
     catch (e) {
       console.error("[TTS] desktop default failed:", e);
       return;
     }
-    if (plan.action === "none")
+    if (plan.action === "none" || plan.action === "wait")
       return;
     window.ApiServer.patchService("tts", s => {
       if (plan.action === "local")
@@ -387,6 +389,19 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
 
   onStart(): void {
     this.#setStatus(ServiceNetworkState.connected);
+    this.#recordStarted();
+  }
+
+  /** Remember that this profile uses TTS (`everStarted`, read by the Kokoro offer at the next launch). */
+  #recordStarted(): void {
+    if (this.data.everStarted)
+      return;
+    try {
+      window.ApiServer.patchService("tts", s => { s.data.everStarted = true; });
+    }
+    catch (e) {
+      console.error("[TTS] could not record the first start:", e);
+    }
   }
 
   onStop(error?: string | undefined): void {

@@ -215,7 +215,7 @@ Final P2 gate after the review fixes (2026-09-29): `pnpm typecheck` clean, `pnpm
 
 **Manual checks still open** (need the real app, devices, servers or keys):
 
-1. **Fresh profile in `pnpm tauri dev`:** onboarding offers **On this PC (automatic)** first; press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a Qwen3-ASR 0.6B final); an existing profile on Web Speech sees the two one-time offers.
+1. **Fresh profile in `pnpm tauri dev`:** onboarding offers **On this PC (automatic)** first; press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a Qwen3-ASR 0.6B final); an existing profile on Web Speech sees the STT offer, and the Kokoro offer too once it uses TTS (auto-start on, a picked voice, or started once).
 2. **Whisper with a real microphone:** the download row fills and Models & Runtimes shows `whisper/<id>` installed; captions; the STT hard mute drops the open sentence; replugging a USB microphone continues the recording.
 3. **Vosk and Groq:** Vosk English captions and mute; Groq with a real key (captions, rate-limit status, bad-key message, nothing sent while muted); an OpenAI-compatible STT server on the LAN; the Moonshine server backend with the server off shows its message.
 4. **Local voices:** Kokoro en / ja / zh, Piper ru and Kitten from the panel (download, Preview, the UI never freezes).

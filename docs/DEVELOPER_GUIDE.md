@@ -251,11 +251,11 @@ Engine contract (`ISTTReceiver`): `onStart`, `onStop(error?)`, `onInterim(text, 
 | Profile | STT | TTS |
 |---|---|---|
 | New desktop install (on the schema default) | `local` (language `auto`); onboarding offers it first | `localNeural` (Kokoro v1.0) |
-| Existing profile on the old default | one-time offer of `local` (`offerLocalBackend`); **no** (or an offer already shown) moves it to Whisper as in P0, because Web Speech cannot run in the desktop webview | one-time offer of `localNeural` for Web Speech / SAPI profiles (`offerLocalTts`); **no** keeps the backend |
+| Existing profile on the old default | one-time offer of `local` (`offerLocalBackend`); **no** (or an offer already shown) moves it to Whisper as in P0, because Web Speech cannot run in the desktop webview | one-time offer of `localNeural` for Web Speech / SAPI profiles that use TTS (`offerLocalTts`); a profile with no sign of TTS use waits, unmarked, until it has; **no** keeps the backend |
 | Any other backend | recorded, never changed | recorded, never changed |
 | Web build | nothing | nothing |
 
-The offers are dialogs (`@tauri-apps/plugin-dialog` `ask`), shown once each and one after the other by `ApiServer.runSpeechDefaultOffers()` after i18n is ready (`stt.runStartupOffer()`, then `tts.runStartupOffer()`); `localOfferShown` records that an offer was shown either way. Accepting stops a running session and carries the STT language and microphone over (`localBackendCarryOver`); accepting the Kokoro offer opens the TTS panel. Whisper users migrated by P0 get no offer.
+The offers are dialogs (`@tauri-apps/plugin-dialog` `ask`), shown once each and one after the other by `ApiServer.runSpeechDefaultOffers()` after i18n is ready (`stt.runStartupOffer()`, then `tts.runStartupOffer()`); `localOfferShown` records that an offer was shown either way. Accepting stops a running session and carries the STT language and microphone over (`localBackendCarryOver`); accepting the Kokoro offer opens the TTS panel. Whisper users migrated by P0 get no offer. The Kokoro offer only goes to profiles that use TTS, because most users only run captions: `profileUsesTts` (`tts/defaults.ts`) counts a start recorded in `tts.everStarted` (set by `Service_TTS.onStart`), `autoStart`, or a voice picked for the Web Speech / SAPI backend. A profile without any of these gets the plan `wait`, which records nothing, so it is asked at the first launch after it starts TTS.
 
 ### TTS backend wiring
 

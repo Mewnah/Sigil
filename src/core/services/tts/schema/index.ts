@@ -86,6 +86,8 @@ export const Service_TTS_Schema = z.preprocess(migrateTtsRoute, z.object({
   desktopDefaultMigrated: zSafe(z.coerce.boolean(), false),
   /** The one-time "speak with Kokoro" offer was shown (answered or not). */
   localOfferShown: zSafe(z.coerce.boolean(), false),
+  /** TTS started at least once on this profile (a backend reported it started); the Kokoro offer waits for it. */
+  everStarted: zSafe(z.coerce.boolean(), false),
   route: TTS_Route_Schema,
   native: TTS_Native_Schema,
   windows: TTS_Windows_Schema,

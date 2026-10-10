@@ -57,6 +57,7 @@ function installWindow(data: TTS_State) {
       state: { services: { tts: { data } }, audioOutputDevice: "" },
       sound: { enqueueVoiceClip: vi.fn(async () => {}), clearVoiceClips: vi.fn() },
       voiceChanger: { state: { isRunning: false } },
+      patchService: (_key: "tts", fn: (s: { data: TTS_State }) => void) => fn({ data }),
     },
     ApiShared: {
       pubsub: {
@@ -359,7 +360,7 @@ describe("Service_TTS desktop default (P2)", () => {
   });
 
   it("offers Kokoro once to an existing Web Speech profile and switches on yes", async () => {
-    const { service, data, changeTab } = makeDesktop();
+    const { service, data, changeTab } = makeDesktop({ everStarted: true });
     await service.init();
     expect(data.backend).toBe(TTS_Backends.native);
     expect(data.desktopDefaultMigrated).toBe(true);
@@ -376,7 +377,7 @@ describe("Service_TTS desktop default (P2)", () => {
   });
 
   it("keeps the backend when the offer is declined, and never asks again", async () => {
-    const { service, data } = makeDesktop({ backend: TTS_Backends.windows });
+    const { service, data } = makeDesktop({ backend: TTS_Backends.windows, everStarted: true });
     await service.init();
     await service.runStartupOffer();
     expect(ask).toHaveBeenCalledTimes(1);
@@ -391,15 +392,42 @@ describe("Service_TTS desktop default (P2)", () => {
   });
 
   it("stops a running session before switching", async () => {
-    const { service, data } = makeDesktop();
+    const { service, data } = makeDesktop({ autoStart: true });
     await service.init();
-    service.start();
     last().receiver.onStart();
     vi.mocked(ask).mockResolvedValueOnce(true);
     await service.runStartupOffer();
     expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
     expect(data.backend).toBe(TTS_Backends.localNeural);
     service.dispose();
+  });
+
+  it("does not ask a profile that never used TTS, and asks at the launch after its first start", async () => {
+    const { service, data } = makeDesktop();
+    await service.init();
+    await service.runStartupOffer();
+    expect(ask).not.toHaveBeenCalled();
+    expect(data.desktopDefaultMigrated).toBe(false);
+    expect(data.localOfferShown).toBe(false);
+    expect(data.everStarted).toBe(false);
+
+    // A start that never comes up records nothing.
+    FakeBackend.startImpl = () => { throw new Error("no voice"); };
+    service.start();
+    expect(data.everStarted).toBe(false);
+    FakeBackend.startImpl = () => {};
+    service.start();
+    last().receiver.onStart();
+    expect(data.everStarted).toBe(true);
+    service.dispose();
+
+    const next = makeDesktop({ ...data });
+    await next.service.init();
+    await next.service.runStartupOffer();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(data.localOfferShown).toBe(false); // the first launch's data; the next launch recorded its own
+    expect(next.data.localOfferShown).toBe(true);
+    next.service.dispose();
   });
 
   it("does nothing in the web build", async () => {
