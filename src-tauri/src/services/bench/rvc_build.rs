@@ -43,7 +43,7 @@ use crate::services::neural_audio::vc::bases::{resolve_fcpe, resolve_hubert, res
 use crate::services::neural_audio::vc::engine::governor::QualityLevel;
 use crate::services::neural_audio::vc::engine::options::{EffectiveLevers, F0Range, Lever, LeverMode, LeverRequest, PrecisionMode};
 use crate::services::neural_audio::vc::engine::plan::MAX_CONTEXT_FRAMES;
-use crate::services::neural_audio::vc::engine::presets::{engine_preset, EnginePreset};
+use crate::services::neural_audio::vc::engine::presets::{cpu_streamer_block, engine_preset, EnginePreset};
 use crate::services::neural_audio::vc::engine::{SigilRvcEngine, SigilRvcRequest, TickStats};
 use crate::services::neural_audio::gpu::GpuLevers;
 use crate::services::neural_audio::vc::f0_fusion::{create_pitch_extractor_with, PitchBankRequest};
@@ -577,7 +577,12 @@ fn build_sve(p: &RvcPlan, preset_override: Option<EnginePreset>) -> Result<(Sigi
         .ok_or("the bundled vc-templates folder was not found")?;
     let (pitch, mut notes) = pitch_for(p)?;
     let preset = preset_override.unwrap_or_else(|| {
-        engine_preset(p.preset, p.block_ms, p.chunk_frames, p.device_rate, p.extra_context_ms, p.precision)
+        // The Streamer on the processor with the block on automatic takes the app's 120 ms block.
+        cpu_streamer_block(
+            engine_preset(p.preset, p.block_ms, p.chunk_frames, p.device_rate, p.extra_context_ms, p.precision),
+            p.ep,
+            p.block_ms,
+        )
     });
     // The stream's instance plans with the harness's geometry and lookahead, as the voice changer's
     // factory asks for it; the ceiling's instances (a preset override) plan their own shapes.

@@ -38,7 +38,7 @@ const DEFAULT_VOCODER_WINDOW_MS: u32 = 45;
 pub(super) const DEFAULT_VOCODER_OVERSAMPLE: u32 = 8;
 
 /// Output prefill before starting playback (latency cushion) — overridden by latency preset.
-const PREFILL_MS_LOW: f64 = 35.0;
+pub(super) const PREFILL_MS_LOW: f64 = 35.0;
 const MAX_QUEUE_MS_LOW: f64 = 70.0;
 /// Matches TS `OUTPUT_BUFFER_STABLE` / low-latency vs stable buffer templates.
 pub(super) const PREFILL_MS_STABLE: f64 = 80.0;
@@ -1079,6 +1079,11 @@ pub(super) struct VoiceChangerHotParams {
     pub(super) output_gain: f32,
     pub(super) output_prefill_ms: f64,
     pub(super) output_max_queue_ms: f64,
+    /// Whether the output prefill / max queue above are one of the app's stock buffers (the Low latency
+    /// 35 / 70 ms or the Stable 80 / 150 ms template, [`output_buffer_is_stock`]) and not numbers the
+    /// user typed: a voice with a burst floor (`block_buffer`) raises the stock ones and keeps the
+    /// typed ones unless the run proves they cannot play (`worker::port_limits`).
+    pub(super) output_buffer_stock: bool,
     pub(super) buffer_truncate_enabled: bool,
     pub(super) buffer_truncate_rms: f32,
     pub(super) buffer_truncate_chunks: u32,
@@ -1134,6 +1139,7 @@ impl Default for VoiceChangerHotParams {
             output_gain: 1.0,
             output_prefill_ms: PREFILL_MS_LOW,
             output_max_queue_ms: MAX_QUEUE_MS_LOW,
+            output_buffer_stock: true,
             buffer_truncate_enabled: false,
             buffer_truncate_rms: 0.0005,
             buffer_truncate_chunks: 32,
@@ -1158,6 +1164,19 @@ pub(super) fn clamp_output_buffer_ms(prefill: f64, max_q: f64) -> (f64, f64) {
     let prefill = prefill.clamp(5.0, 300.0);
     let max_q = max_q.clamp(prefill + 5.0, 600.0);
     (prefill, max_q)
+}
+
+/// Whether the (clamped) output buffer `prefill` / `max_q` under the latency preset `preset` (as
+/// [`normalize_latency_preset`] returns it) is one of the app's stock buffers rather than numbers the
+/// user typed: **Stable** always is (`apply_params` forces its template), **Low latency** is when it
+/// holds the template's 35 / 70 ms (a Low latency label over other numbers is a hand edit that kept the
+/// label), **custom** never is.
+pub(super) fn output_buffer_is_stock(preset: &str, prefill: f64, max_q: f64) -> bool {
+    match preset {
+        "stable" => true,
+        "low_latency" => prefill == PREFILL_MS_LOW && max_q == MAX_QUEUE_MS_LOW,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1292,6 +1311,22 @@ mod tests {
     fn enums_normalize() {
         assert_eq!(normalize_pitch_extractor("Dio"), "dio");
         assert_eq!(normalize_latency_preset("STABLE"), "stable");
+        // Stock buffers: the two templates only (the label decides for Stable, the numbers for Low latency).
+        for (preset, prefill, queue, stock) in [
+            ("low_latency", 35.0, 70.0, true),
+            ("low_latency", 36.0, 70.0, false),
+            ("low_latency", 35.0, 71.0, false),
+            ("stable", 80.0, 150.0, true),
+            ("stable", 10.0, 20.0, true),
+            ("custom", 35.0, 70.0, false),
+            ("custom", 80.0, 150.0, false),
+            ("anything else", 35.0, 70.0, false),
+        ] {
+            assert_eq!(output_buffer_is_stock(preset, prefill, queue), stock, "{preset} {prefill} / {queue}");
+        }
+        // The template numbers are the ones the UI and the stock check agree on.
+        assert_eq!((PREFILL_MS_LOW, MAX_QUEUE_MS_LOW), (35.0, 70.0));
+        assert_eq!((PREFILL_MS_STABLE, MAX_QUEUE_MS_STABLE), (80.0, 150.0));
         assert_eq!(normalize_latency_preset("whatever"), "low_latency");
         assert_eq!(normalize_rvc_preset("Quality"), "quality");
         assert_eq!(normalize_rvc_preset(" Studio_TRT "), "studio_trt");

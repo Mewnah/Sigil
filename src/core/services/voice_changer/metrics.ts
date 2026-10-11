@@ -8,7 +8,7 @@
  */
 import type { RustEpOutcome } from "@/types";
 
-import { VC_LEVERS, type VcLever } from "./contract";
+import { clampOutputBufferMs, VC_LEVERS, type VcLever } from "./contract";
 import { normalizeEffectiveLevers, type VcEffectiveLevers } from "./ipc";
 
 /** Raw `get_voice_changer_metrics` reply. */
@@ -30,6 +30,9 @@ export interface VoiceChangerMetricsRust {
     levers?: unknown;
     // P3B-H: the output cushion the queue holds
     cushion_ms?: number | null;
+    // The output prefill / max queue in force (the stored settings raised to the playing voice's floor)
+    buffer_prefill_ms?: number | null;
+    buffer_max_queue_ms?: number | null;
 }
 
 /** Normalized metrics: every number finite; P0 fields `null` when the backend does not report them. */
@@ -66,6 +69,13 @@ export interface VoiceChangerMetrics {
      * fixed prefill; `null` from a backend that predates it or before the output runs.
      */
     cushion_ms: number | null;
+    /**
+     * The output prefill and max queue in force (ms): the stored settings raised to what the playing
+     * voice needs (a template voice's block floor, a voice family's minimum); equal to the settings when
+     * nothing was raised. `null` from a backend that predates it or while stopped.
+     */
+    buffer_prefill_ms: number | null;
+    buffer_max_queue_ms: number | null;
 }
 
 function num(n: unknown): number {
@@ -106,7 +116,26 @@ export function normalizeMetrics(raw: unknown): VoiceChangerMetrics | null {
         governor_level: optNum(m.governor_level),
         levers: normalizeEffectiveLevers(m.levers),
         cushion_ms: optNum(m.cushion_ms),
+        buffer_prefill_ms: optNum(m.buffer_prefill_ms),
+        buffer_max_queue_ms: optNum(m.buffer_max_queue_ms),
     };
+}
+
+/**
+ * The output buffer the engine plays with when it is higher than the stored settings (`prefill` / `max
+ * queue`, ms), else `null`: a voice that converts a long block in one call needs more than the Low
+ * latency or Stable buffer (Rust `worker::port_limits`), and the settings keep showing the stored numbers.
+ * The stored numbers are clamped as Rust clamps them before they are compared.
+ */
+export function raisedOutputBuffer(
+    metrics: Pick<VoiceChangerMetrics, "buffer_prefill_ms" | "buffer_max_queue_ms"> | null,
+    storedPrefillMs: number,
+    storedMaxQueueMs: number,
+): { prefillMs: number; maxQueueMs: number } | null {
+    if (!metrics || metrics.buffer_prefill_ms == null || metrics.buffer_max_queue_ms == null) return null;
+    const stored = clampOutputBufferMs(storedPrefillMs, storedMaxQueueMs);
+    const raised = metrics.buffer_prefill_ms > stored.prefillMs + 0.5 || metrics.buffer_max_queue_ms > stored.maxQueueMs + 0.5;
+    return raised ? { prefillMs: metrics.buffer_prefill_ms, maxQueueMs: metrics.buffer_max_queue_ms } : null;
 }
 
 /** Display name of an EP id (technical names; not translated). */

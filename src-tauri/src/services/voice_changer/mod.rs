@@ -31,6 +31,8 @@
 //!   (P3-E).
 //! - [`timeline`]: the per-tick timeline for telemetry and live recording (P3-E).
 //! - [`cushion`]: the adaptive output cushion (P3B-H; `output_cushion = adaptive`), driven by the playback queue.
+//! - `block_buffer`: the output-buffer floor of a template voice that converts in bursts (a CPU generator on
+//!   engine blocks longer than the device chunk; `SIGIL_VC_BLOCK_BUFFER`), carried as `CreatedEngine::min_output_buffer_ms`.
 //! - [`cmd_import`]: `.pth` / `.zip` import and slot-store IPC (P3-B).
 //! - [`cmd_bench`]: autotune and live-record IPC (P3-F).
 //!
@@ -42,6 +44,7 @@
 //! Rust <-> TS parameter / metrics contract in `params_contract.json` next to this file.
 
 mod aux_feed;
+mod block_buffer;
 pub(crate) mod budget;
 pub(crate) mod capabilities;
 mod cmd_bench;

@@ -42,6 +42,7 @@
 //!   `voice_changer:stopped` ([`WorkerError`]). A missing monitor device is not fatal.
 
 use super::aux_feed::AuxMixer;
+use super::block_buffer::{self, StoredBufferProof};
 use super::budget::{capture_ring_capacity, push_capture, InputBacklog};
 use super::capabilities::resolve_levers;
 use super::commands::PARAMS_EVENT;
@@ -66,6 +67,7 @@ use crate::services::neural_audio::denoise::{self, Denoiser, DenoiserKind};
 use crate::services::neural_audio::gpu::arena::VramProbe;
 use crate::services::neural_audio::ort_session::VcSessionOptions;
 use crate::services::neural_audio::vc::engine::governor::{self, Governor, GovernorConfig, QualityLevel, TickLoad};
+use crate::services::neural_audio::vc::engine::presets;
 use crate::services::neural_audio::vc::engine::{EffectiveLevers, Lever};
 use crate::services::neural_audio::vc::import;
 use crate::services::neural_audio::vc::manifest::SlotFormat;
@@ -1117,19 +1119,47 @@ enum Engine {
     Rvc(Box<RvcRun>),
 }
 
-/// The output ports' prefill and queue: the user's, raised to the active voice's minimum (a family
-/// whose blocks compute in one burst, `families::min_output_buffer_ms`; P5-I0). The timeline and
-/// the end-to-end metric measure the real queue, so the raised buffer is counted in the latency.
-fn port_limits(h: &VoiceChangerHotParams, voice_min: Option<(f64, f64)>) -> PortLimits {
-    let (prefill_ms, max_queue_ms) = match voice_min {
-        Some((p, q)) => clamp_output_buffer_ms(h.output_prefill_ms.max(p), h.output_max_queue_ms.max(q)),
-        None => clamp_output_buffer_ms(h.output_prefill_ms, h.output_max_queue_ms),
+/// What the active voice needs of the output queue (`CreatedEngine::min_output_buffer_ms`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct VoiceFloor {
+    prefill_ms: f64,
+    max_queue_ms: f64,
+    /// A template voice's floor for blocks it converts in one call (`block_buffer`): the app's stock
+    /// buffers are raised to it, a buffer the user typed only once the run proves that it cannot hold
+    /// the voice's calls. Otherwise a voice family's minimum, which raises every stored value.
+    block: bool,
+}
+
+/// The output ports' prefill and queue: the user's, raised to the active voice's floor. The timeline
+/// and the end-to-end metric measure the real queue, so the raised buffer is counted in the latency.
+///
+/// - **No floor** (GPU voices, short blocks, bring-your-own voices, the other modes): the stored values.
+/// - **A voice family's minimum** (`families::min_output_buffer_ms`; P5-I0): the larger of each stored
+///   value and the minimum, whatever was stored.
+/// - **A template voice's burst floor** (`block_buffer`): the same for the stock buffers (Low latency
+///   35 / 70 ms, Stable 80 / 150 ms: `output_buffer_stock`); a buffer the user typed (Custom) stays
+///   unless the run proved it cannot hold the voice's model calls (`custom_cannot_play`, from
+///   `block_buffer::StoredBufferProof`).
+///
+/// Nothing stored is rewritten: the settings keep the user's numbers.
+fn port_limits(h: &VoiceChangerHotParams, floor: Option<VoiceFloor>, custom_cannot_play: bool) -> PortLimits {
+    let stored = || clamp_output_buffer_ms(h.output_prefill_ms, h.output_max_queue_ms);
+    let Some(f) = floor else {
+        let (prefill_ms, max_queue_ms) = stored();
+        return PortLimits { prefill_ms, max_queue_ms, min_prefill_ms: 0.0 };
     };
+    if f.block && !h.output_buffer_stock && !custom_cannot_play {
+        // The user's own buffer: kept (the adaptive cushion gets no voice floor either).
+        let (prefill_ms, max_queue_ms) = stored();
+        return PortLimits { prefill_ms, max_queue_ms, min_prefill_ms: 0.0 };
+    }
+    let (prefill_ms, max_queue_ms) =
+        clamp_output_buffer_ms(h.output_prefill_ms.max(f.prefill_ms), h.output_max_queue_ms.max(f.max_queue_ms));
     PortLimits {
         prefill_ms,
         max_queue_ms,
-        // The adaptive cushion's floor: what the active voice needs (a burst family's blocks).
-        min_prefill_ms: voice_min.map_or(0.0, |(p, _)| p),
+        // The adaptive cushion's floor: what the active voice needs.
+        min_prefill_ms: f.prefill_ms,
     }
 }
 
@@ -1154,11 +1184,17 @@ fn run_chunk_frames(st: &VoiceChangerState, setting: u32, rate: u32) -> (usize, 
     if slot.is_empty() || !matches!(super::factory::slot_format(Path::new(slot)), Ok(SlotFormat::SigilRvc)) {
         return (configured, Some("the voice is not a Sigil template voice"));
     }
-    let explicit = rvc.block_ms > 0.0;
-    let chunk = if explicit {
-        model_divisor_chunk(rvc.block_ms, rate)
-    } else {
-        model_divisor_chunk_auto(configured, rate)
+    // The Streamer on the processor with the block on automatic runs the 120 ms block it can keep up
+    // with (`presets::cpu_streamer_block`): for the divisor that is an explicit block.
+    let profile = RvcPresetProfile::from_str(&rvc.preset);
+    let ep = effective_rvc_ep(&rvc.execution_provider, profile);
+    let block_ms = (rvc.block_ms > 0.0)
+        .then_some(rvc.block_ms)
+        .or_else(|| presets::cpu_streamer_auto_block_ms(profile, ep, configured as u32, rate));
+    let explicit = block_ms.is_some();
+    let chunk = match block_ms {
+        Some(block_ms) => model_divisor_chunk(block_ms, rate),
+        None => model_divisor_chunk_auto(configured, rate),
     };
     match chunk {
         Some(chunk) => (chunk, None),
@@ -1170,10 +1206,18 @@ fn run_chunk_frames(st: &VoiceChangerState, setting: u32, rate: u32) -> (usize, 
     }
 }
 
-/// The active voice's output-buffer minimum (RVC mode).
-fn voice_output_minimum(engine: &Engine) -> Option<(f64, f64)> {
+/// The active voice's output-buffer floor (RVC mode). A template voice's is the burst floor of
+/// `block_buffer`; any other voice's is its family's minimum.
+fn voice_output_floor(engine: &Engine) -> Option<VoiceFloor> {
     match engine {
-        Engine::Rvc(run) => run.voices.active().min_output_buffer_ms,
+        Engine::Rvc(run) => {
+            let voice = run.voices.active();
+            voice.min_output_buffer_ms.map(|(prefill_ms, max_queue_ms)| VoiceFloor {
+                prefill_ms,
+                max_queue_ms,
+                block: voice.format == SlotFormat::SigilRvc,
+            })
+        }
         _ => None,
     }
 }
@@ -1521,7 +1565,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         .map_err(|e| WorkerError::device(format!("The input device '{}' could not be started: {e}", input.name)))?;
     let mut capbuf = CaptureBuffer::new(r_in, ch_in, chunk_frames, h_init.latency_budget_ms);
     rt_thread::preload();
-    let limits = port_limits(&h_init, voice_output_minimum(&engine));
+    let limits = port_limits(&h_init, voice_output_floor(&engine), false);
     let port_setup =|role: DeviceRole, saved: &str, underruns: Option<Arc<AtomicU64>>, which: fn(&super::state::MmcssStatus) -> &MmcssFlag| PortSetup {
         role,
         saved: saved.to_string(),
@@ -1571,6 +1615,11 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
     let mut aux_mixer = AuxMixer::new(r_in, ch_in);
     let mut times = ProcessTimeWindow::new();
     let mut e2e = ProcessTimeWindow::new();
+    // The evidence for raising a typed output buffer (`block_buffer::StoredBufferProof`), the floor it
+    // belongs to and whether the raise was logged.
+    let mut buffer_proof = StoredBufferProof::default();
+    let mut proof_floor: Option<VoiceFloor> = None;
+    let mut proof_logged = false;
     let mut mmcss_logged = false;
     let mut drop_log_at = Instant::now();
     let (mut logged_dropped, mut logged_events) = (0u64, 0u64);
@@ -1663,7 +1712,33 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
 
         // ---- Hot params. ----
         let h = *lock(&st.hot_params);
-        let limits = port_limits(&h, voice_output_minimum(&engine));
+        let floor = voice_output_floor(&engine);
+        if floor != proof_floor {
+            // Another voice (or none) plays: the calls remembered are not its calls.
+            buffer_proof.reset();
+            proof_floor = floor;
+            proof_logged = false;
+        }
+        let custom_cannot_play =
+            floor.is_some_and(|f| f.block) && !h.output_buffer_stock && buffer_proof.judge(h.output_prefill_ms);
+        if custom_cannot_play && !proof_logged {
+            proof_logged = true;
+            tracing::info!(
+                "voice changer: the output prefill of {:.0} ms cannot hold this voice's model calls (median {:.0} ms of the last {}); playing with at least {:.0} / {:.0} ms",
+                h.output_prefill_ms,
+                buffer_proof.median_call_ms().unwrap_or(0.0),
+                block_buffer::CALL_WINDOW,
+                floor.map_or(0.0, |f| f.prefill_ms),
+                floor.map_or(0.0, |f| f.max_queue_ms),
+            );
+        } else if !custom_cannot_play {
+            proof_logged = false;
+        }
+        let limits = port_limits(&h, floor, custom_cannot_play);
+        st.metrics_limit_prefill_us
+            .store((limits.prefill_ms * 1000.0).clamp(0.0, f64::from(u32::MAX - 1)) as u32, Ordering::Relaxed);
+        st.metrics_limit_queue_us
+            .store((limits.max_queue_ms * 1000.0).clamp(0.0, f64::from(u32::MAX - 1)) as u32, Ordering::Relaxed);
         out.set_limits(limits);
         if let Some(m) = monitor.as_mut() {
             m.set_limits(limits);
@@ -1922,6 +1997,9 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
             }
         };
 
+        if matches!(engine, Engine::Rvc(_)) {
+            buffer_proof.note_tick(model_ms, block_ms);
+        }
         if let Some(m) = monitor.as_mut() {
             // Always fed (silence at gain 0), so the monitor's queue keeps an unbroken timeline.
             let g_mon = h.monitor_gain;
@@ -2130,25 +2208,86 @@ mod tests {
         assert_eq!(WorkerError::from("x").code, "worker_error");
     }
 
-    /// A burst family's minimum raises the user's output buffer, never lowers it (P5-I0).
-    #[test]
-    fn the_active_voice_raises_the_output_buffer_to_its_minimum() {
-        let h = VoiceChangerHotParams {
-            output_prefill_ms: 35.0,
-            output_max_queue_ms: 70.0,
+    /// A voice family's minimum (P5-I0) and a template voice's burst floor (`block_buffer`) at 120 ms blocks.
+    const FAMILY_FLOOR: Option<VoiceFloor> = Some(VoiceFloor { prefill_ms: 80.0, max_queue_ms: 150.0, block: false });
+    const BLOCK_FLOOR: Option<VoiceFloor> = Some(VoiceFloor { prefill_ms: 110.0, max_queue_ms: 136.0, block: true });
+
+    /// Hot params with the given stored output buffer; `stock` says it is one of the app's templates.
+    fn buffer(prefill: f64, queue: f64, stock: bool) -> VoiceChangerHotParams {
+        VoiceChangerHotParams {
+            output_prefill_ms: prefill,
+            output_max_queue_ms: queue,
+            output_buffer_stock: stock,
             ..VoiceChangerHotParams::default()
-        };
-        let l = port_limits(&h, None);
-        assert_eq!((l.prefill_ms, l.max_queue_ms), (35.0, 70.0));
-        let l = port_limits(&h, Some((80.0, 150.0)));
-        assert_eq!((l.prefill_ms, l.max_queue_ms), (80.0, 150.0));
-        let big = VoiceChangerHotParams {
-            output_prefill_ms: 120.0,
-            output_max_queue_ms: 240.0,
-            ..h
-        };
-        let l = port_limits(&big, Some((80.0, 150.0)));
-        assert_eq!((l.prefill_ms, l.max_queue_ms), (120.0, 240.0), "a larger user buffer stays");
+        }
+    }
+
+    /// The limits and the adaptive cushion's floor of a stored buffer (`port_limits` takes the params by
+    /// reference: the stored numbers are the user's and are never rewritten).
+    fn limits_of(h: VoiceChangerHotParams, floor: Option<VoiceFloor>, custom_cannot_play: bool) -> (f64, f64, f64) {
+        let l = port_limits(&h, floor, custom_cannot_play);
+        (l.prefill_ms, l.max_queue_ms, l.min_prefill_ms)
+    }
+
+    /// A burst family's minimum raises every stored buffer, typed or not, and never lowers one (P5-I0).
+    #[test]
+    fn a_voice_familys_minimum_raises_the_output_buffer_never_lowers_it() {
+        for stock in [true, false] {
+            assert_eq!(limits_of(buffer(35.0, 70.0, stock), None, false), (35.0, 70.0, 0.0), "no floor: the stored values");
+            assert_eq!(limits_of(buffer(35.0, 70.0, stock), FAMILY_FLOOR, false), (80.0, 150.0, 80.0), "stock {stock}");
+            assert_eq!(limits_of(buffer(120.0, 240.0, stock), FAMILY_FLOOR, false), (120.0, 240.0, 80.0), "a larger user buffer stays");
+            assert_eq!(limits_of(buffer(60.0, 65.0, stock), FAMILY_FLOOR, false), (80.0, 150.0, 80.0));
+        }
+    }
+
+    /// The stock buffers (Low latency 35 / 70 ms, Stable 80 / 150 ms) are raised to the floor of a CPU
+    /// template voice on 120 ms blocks (110 / 136 ms, `block_buffer`): each field is the larger of the
+    /// stored value and the floor.
+    #[test]
+    fn the_stock_buffers_are_raised_to_the_block_floor() {
+        assert_eq!(limits_of(buffer(35.0, 70.0, true), BLOCK_FLOOR, false), (110.0, 136.0, 110.0), "the low-latency default");
+        assert_eq!(limits_of(buffer(80.0, 150.0, true), BLOCK_FLOOR, false), (110.0, 150.0, 110.0), "the stable preset");
+        // The run's evidence is about typed buffers; it changes nothing for a stock one.
+        assert_eq!(limits_of(buffer(35.0, 70.0, true), BLOCK_FLOOR, true), (110.0, 136.0, 110.0));
+        // No floor on the voice: exactly the stored values.
+        assert_eq!(limits_of(buffer(35.0, 70.0, true), None, false), (35.0, 70.0, 0.0));
+        assert_eq!(limits_of(buffer(80.0, 150.0, true), None, false), (80.0, 150.0, 0.0));
+    }
+
+    /// What happens to a buffer the user typed (the stored-value rule): it is kept, whatever its
+    /// distance from the floor, until the run proves that it cannot hold the voice's model calls; from
+    /// then on each field is the larger of it and the floor. A larger typed value is never touched.
+    #[test]
+    fn a_typed_buffer_stays_unless_the_run_proves_it_cannot_play() {
+        let cases = [
+            // (stored, kept as typed, raised once proven)
+            ((35.0, 70.0), (35.0, 70.0), (110.0, 136.0)),
+            ((5.0, 10.0), (5.0, 10.0), (110.0, 136.0)), // the smallest the sliders allow
+            ((60.0, 65.0), (60.0, 65.0), (110.0, 136.0)),
+            ((80.0, 150.0), (80.0, 150.0), (110.0, 150.0)),
+            ((100.0, 200.0), (100.0, 200.0), (110.0, 200.0)),
+            ((115.0, 120.0), (115.0, 120.0), (115.0, 136.0)),
+            ((60.0, 400.0), (60.0, 400.0), (110.0, 400.0)),
+            ((110.0, 136.0), (110.0, 136.0), (110.0, 136.0)),
+            ((120.0, 240.0), (120.0, 240.0), (120.0, 240.0)),
+            ((300.0, 600.0), (300.0, 600.0), (300.0, 600.0)),
+        ];
+        for ((prefill, queue), kept, raised) in cases {
+            let (p, q, floor) = limits_of(buffer(prefill, queue, false), BLOCK_FLOOR, false);
+            assert_eq!((p, q), kept, "typed {prefill} / {queue}, no evidence");
+            assert_eq!(floor, 0.0, "a typed buffer gets no voice floor for the adaptive cushion");
+            let (p, q, floor) = limits_of(buffer(prefill, queue, false), BLOCK_FLOOR, true);
+            assert_eq!((p, q), raised, "typed {prefill} / {queue}, proven");
+            assert_eq!(floor, 110.0);
+            // Never lowered, in either state.
+            assert!(p >= prefill && q >= queue);
+        }
+        // The same numbers as a stock buffer are raised without any evidence.
+        assert_eq!(limits_of(buffer(60.0, 65.0, true), BLOCK_FLOOR, false), (110.0, 136.0, 110.0));
+        // Evidence about a typed buffer changes nothing on a voice without a floor.
+        assert_eq!(limits_of(buffer(60.0, 65.0, false), None, true), (60.0, 65.0, 0.0));
+        // A family's minimum is not a template voice's: it raises a typed buffer without any evidence.
+        assert_eq!(limits_of(buffer(60.0, 65.0, false), FAMILY_FLOOR, false), (80.0, 150.0, 80.0));
     }
 
     #[test]

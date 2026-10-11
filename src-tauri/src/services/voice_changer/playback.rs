@@ -84,8 +84,14 @@ const VALLEY_PUSHES: usize = 256;
 ///   callback; the gate level, the prefill or one device callback, until one was measured). Pushes of an instant catch-up burst
 ///   all happen at one device time, so they drop out of the window as soon as the device plays on:
 ///   the valley is measured on steady playback. The recovery ends when a window's valley is already
-///   at the steady one. A stall therefore never leaves standing latency (the queue returns to its
-///   pre-stall level), and a short glitch costs nothing beyond itself.
+///   at the steady one. A single stall therefore never leaves standing latency (the queue returns to
+///   its pre-stall level), and a short glitch costs nothing beyond itself. Stalls that **repeat** are
+///   another matter: a voice that converts in bursts (one long model call per block while nothing is
+///   pushed) dries the device again before each recovery can end, so the recovery never ends and every
+///   catch-up burst is trimmed to the ring target, which is lost audio, not latency control (38-50 % of
+///   the converted audio on the CPU rows at the 35 / 70 ms default). The output queue must cover such
+///   a voice's call; the cap is no help here, since the trim to the ring target (which follows the
+///   prefill) comes first. `block_buffer` sizes the prefill for it.
 /// - **Drift:** otherwise, when the smallest queue level over a second of pushed audio stays above
 ///   the gate level by more than one chunk / capture period / device callback (clock drift between
 ///   capture and playback devices), the excess is trimmed. (The adaptive cushion keeps the user's
@@ -1644,6 +1650,123 @@ mod tests {
         // The cooldown held shrinking off for the 30 s after the underrun: the cushion is still
         // above the shrunk one 10 s later, and the stream plays on.
         assert!(sim.levels_between(40.0, 45.0).iter().min().copied().unwrap_or(0) >= 480);
+    }
+
+    /// A burst worker: a template voice whose model runs once per 120 ms block on the processor. The
+    /// eleven cheap ticks push a chunk each; the twelfth runs the call (about 90 ms here) and pushes
+    /// nothing, then the worker catches up with a burst of chunks at one instant. The device runs dry
+    /// during every call when the queue stands shorter than it, which starts a recovery that trims each
+    /// catch-up back to the ring target; the next call dries it again, so the recovery never ends
+    /// (P7-B: 38-50 % of the converted audio lost at 35 / 70 ms on the CPU rows).
+    fn burst_worker(prefill_ms: f64, max_queue_ms: f64) -> Sim {
+        let mut sim = Sim::new(prefill_ms, max_queue_ms, 512, 480, 480);
+        sim.late = Some((12, 4_300));
+        sim.run_for(60 * 48_000);
+        sim
+    }
+
+    /// [`burst_worker`] with a model call of `call_ms` and a device callback of `cb` frames.
+    fn burst_worker_with(prefill_ms: f64, max_queue_ms: f64, call_ms: f64, cb: usize) -> Sim {
+        let mut sim = Sim::new(prefill_ms, max_queue_ms, 512, 480, cb);
+        sim.late = Some((12, (call_ms * 48.0).round() as u64));
+        sim.run_for(60 * 48_000);
+        sim
+    }
+
+    /// Playback of a burst worker (`burst_worker_with`): the audio the trims discarded (share of the
+    /// pushed) and the dry callbacks in 60 s.
+    fn burst_outcome(prefill_ms: f64, max_queue_ms: f64, call_ms: f64, cb: usize) -> (f64, u64) {
+        let sim = burst_worker_with(prefill_ms, max_queue_ms, call_ms, cb);
+        (trimmed_share(&sim), sim.underruns())
+    }
+
+    /// The criterion that decides whether a typed output buffer is raised (`block_buffer::prefill_cannot_hold_call`:
+    /// the stored prefill is shorter than the median model call) is the knee of the burst worker, on a
+    /// 10 ms device callback and 512-frame chunks with a call every 120 ms (calls and times on the
+    /// simulation's 5 ms grid): wherever it says the buffer cannot hold the call, the output loses at
+    /// least 1 % of the audio and runs dry in at least 100 callbacks of the minute; wherever it does not,
+    /// the output plays at least 98 % of it. So a raise never touches a buffer that plays, and a buffer
+    /// it leaves alone loses at most the borderline 2 %.
+    #[test]
+    fn the_proof_criterion_is_the_knee_of_the_burst_worker() {
+        use super::super::block_buffer::prefill_cannot_hold_call;
+        let buffers = [(35.0, 70.0), (60.0, 120.0), (80.0, 150.0), (100.0, 125.0), (110.0, 136.0)];
+        let (mut raised, mut kept) = (0, 0);
+        for call in [70.0, 78.0, 90.0, 98.0, 110.0] {
+            for (prefill, queue) in buffers {
+                let (lost, dry) = burst_outcome(prefill, queue, call, 480);
+                if prefill_cannot_hold_call(prefill, call) {
+                    raised += 1;
+                    assert!(lost >= 0.01 && dry >= 100, "{prefill}/{queue} with {call} ms calls: raised, but plays ({:.2} % lost, {dry} dry)", 100.0 * lost);
+                } else {
+                    kept += 1;
+                    assert!(lost <= 0.02, "{prefill}/{queue} with {call} ms calls: kept, but loses {:.2} % ({dry} dry)", 100.0 * lost);
+                }
+            }
+        }
+        assert!(raised >= 10 && kept >= 10, "the matrix must reach both sides: {raised} raised, {kept} kept");
+    }
+
+    /// The floor has no term for the device's callback period: `OutputPlayback` stands the queue a
+    /// callback above the gate by itself (`ring_target`, `drift_slack`), so 110 / 136 ms plays 98 and
+    /// 110 ms calls on 10, 20, 30 and 40 ms callbacks with no dry callback and nothing lost, as it does
+    /// on 10 ms ones. (A reviewer proposed adding the excess of a long period to the floor; this is the
+    /// evidence that it is not needed.)
+    #[test]
+    fn a_longer_device_callback_needs_no_larger_floor() {
+        for cb in [480usize, 960, 1440, 1920] {
+            for call in [90.0, 98.0, 110.0] {
+                let (lost, dry) = burst_outcome(110.0, 136.0, call, cb);
+                assert!(lost <= 0.005 && dry == 0, "callback {} ms, {call} ms calls: {:.2} % lost, {dry} dry", cb / 48, 100.0 * lost);
+            }
+        }
+    }
+
+    /// A call that outruns the standing queue costs a dry hold and a recovery, not the whole output:
+    /// 100 / 125 ms against calls 10 ms longer than the prefill loses about 1.4 % (371 dry callbacks a
+    /// minute) where 110 / 136 ms loses nothing (the trap guard of `block_buffer` keeps the prefill at
+    /// the first-call limit for calls a little longer than the cover, and this is what that costs).
+    #[test]
+    fn a_call_ten_ms_past_the_prefill_costs_a_little_audio_not_all_of_it() {
+        let (lost, dry) = burst_outcome(100.0, 125.0, 110.0, 480);
+        assert!((0.005..=0.03).contains(&lost), "{:.2} % lost", 100.0 * lost);
+        assert!(dry > 100, "{dry} dry callbacks");
+        let (lost, dry) = burst_outcome(110.0, 136.0, 110.0, 480);
+        assert!(lost <= 0.005 && dry == 0, "a call as long as the prefill: {:.2} % lost, {dry} dry", 100.0 * lost);
+    }
+
+    /// Share of the pushed audio the trims discarded.
+    fn trimmed_share(sim: &Sim) -> f64 {
+        sim.pb.trimmed_frames() as f64 / sim.input_pos as f64
+    }
+
+    /// The queue cap is not the lever of a burst worker, the prefill is: at the shipped 35 / 70 ms the
+    /// recovery (rule 0) discards a large share of the converted audio, and a cap of 600 ms changes
+    /// nothing because the recovery trims to `ring_target()` (which follows the prefill) before the
+    /// cap is ever reached. With the floor `block_buffer` gives such a voice (110 / 136 ms for 120 ms
+    /// blocks) the same worker plays it all.
+    #[test]
+    fn a_burst_workers_loss_is_a_recovery_trim_that_only_the_prefill_removes() {
+        let stock = burst_worker(35.0, 70.0);
+        let wide_cap = burst_worker(35.0, 600.0);
+        for (name, sim) in [("35/70", &stock), ("35/600", &wide_cap)] {
+            let share = trimmed_share(sim);
+            let [recovery, drift, cap] = sim.pb.trimmed_by;
+            eprintln!("burst worker {name}: {:.1} % trimmed ({recovery} recovery, {drift} drift, {cap} cap), {} underruns, {} recoveries", 100.0 * share, sim.underruns(), sim.pb.recoveries());
+            assert!(share >= 0.30, "{name}: only {:.1} % trimmed", 100.0 * share);
+            assert!(recovery as f64 >= 0.95 * (recovery + drift + cap) as f64, "{name}: trims by rule {:?}", sim.pb.trimmed_by);
+            assert!(sim.underruns() > 100, "{name}: the device runs dry during the calls ({} underruns)", sim.underruns());
+        }
+        let (a, b) = (trimmed_share(&stock), trimmed_share(&wide_cap));
+        assert!((a - b).abs() < 0.03, "the cap changes nothing: {a:.3} vs {b:.3}");
+
+        let floored = burst_worker(110.0, 136.0);
+        let share = trimmed_share(&floored);
+        eprintln!("burst worker 110/136: {:.2} % trimmed, {} underruns", 100.0 * share, floored.underruns());
+        assert!(share <= 0.02, "110/136 plays it all: {:.2} % trimmed ({:?})", 100.0 * share, floored.pb.trimmed_by);
+        assert!(1.0 - share >= 0.98);
+        assert!(floored.underruns() <= 1, "no dry callbacks once the queue covers the call: {}", floored.underruns());
+        assert_eq!(floored.pb.recoveries(), 0, "no recovery at all");
     }
 
     /// The user's prefill is the cap and the floor of a voice that needs a larger buffer is

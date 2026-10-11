@@ -14,7 +14,7 @@ import {
 } from "@/core/services/voice_changer/contract";
 import { deviceBlockNote } from "@/core/services/voice_changer/chunkFrames";
 import { runsOnTemplateEngine } from "@/core/services/voice_changer/families";
-import { formatMs } from "@/core/services/voice_changer/metrics";
+import { formatMs, raisedOutputBuffer } from "@/core/services/voice_changer/metrics";
 import { FC } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
@@ -79,12 +79,16 @@ export const PacingControls: FC<{ metrics: VoiceChangerMetrics | null }> = ({ me
     const template = runsOnTemplateEngine(kind);
     const cushionNow = running && metrics?.cushion_ms != null ? metrics.cushion_ms : null;
     const adaptive = vc.outputCushion === "adaptive";
+    // The prefill the cushion is capped at is the one in force: a voice that needs a larger buffer raises
+    // it above the stored number.
+    const inForce = running ? raisedOutputBuffer(metrics, vc.outputPrefillMs, vc.outputMaxQueueMs) : null;
+    const capMs = inForce ? inForce.prefillMs : vc.outputPrefillMs;
     let cushionNote: string | undefined;
     if (adaptive) {
         cushionNote =
             cushionNow != null
-                ? t("voice_changer.output_cushion_adaptive_live", { ms: formatMs(cushionNow), max: formatMs(vc.outputPrefillMs) })
-                : t("voice_changer.output_cushion_adaptive_note", { max: formatMs(vc.outputPrefillMs) });
+                ? t("voice_changer.output_cushion_adaptive_live", { ms: formatMs(cushionNow), max: formatMs(capMs) })
+                : t("voice_changer.output_cushion_adaptive_note", { max: formatMs(capMs) });
     } else if (cushionNow != null) {
         cushionNote = t("voice_changer.output_cushion_live", { ms: formatMs(cushionNow) });
     }

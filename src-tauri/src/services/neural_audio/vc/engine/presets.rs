@@ -155,6 +155,65 @@ pub fn engine_preset(
 /// Longest block derived from the device block (the plan's longest block).
 pub const MAX_DERIVED_BLOCK_MS: f64 = (MAX_BLOCK_FRAMES * 10) as f64;
 
+/// The engine block (ms) the Streamer preset takes on the processor when no block is set: the 120 ms
+/// shape the CPU rows of the benchmark measure (RTF p99 0.74-0.89 on the 6-thread policy). The block
+/// derived from the device block (20 ms at the default 512 frames) cannot keep up on the processor:
+/// a call has a large fixed part (the content encoder's context, the F0 window) however short the
+/// block is: a headless paced run of the 20 ms shape on 6 threads measured a call of p50 57 ms and p99
+/// 76 ms, a real-time factor of 3.8 (the 120 ms rows: p99 89-107 ms), with 26 s of 40 s of input
+/// dropped; a call longer than its block falls behind for ever. The
+/// longer block adds latency, not distortion (the block is only how much new audio each call takes):
+/// about 270 ms end to end at 120 ms against a voice that breaks up. An explicit block (the setting, or
+/// Autotune's pick) always wins, and so does a derived one of [`CPU_STREAMER_KEEP_FROM_MS`] or more.
+pub const CPU_STREAMER_AUTO_BLOCK_MS: f64 = 120.0;
+
+/// A block derived from the device block that is this long (ms) or longer is a deliberate big device
+/// chunk (the default 512 frames derive 10.7 ms) and is kept as it is: only the shorter ones are
+/// raised to [`CPU_STREAMER_AUTO_BLOCK_MS`].
+pub const CPU_STREAMER_KEEP_FROM_MS: f64 = 60.0;
+const _: () = assert!(CPU_STREAMER_KEEP_FROM_MS < CPU_STREAMER_AUTO_BLOCK_MS);
+
+/// `SIGIL_VC_STREAMER_BLOCK=0|off|false|no` keeps the block derived from the device block for the
+/// Streamer on the processor ([`CPU_STREAMER_AUTO_BLOCK_MS`]).
+pub const CPU_STREAMER_BLOCK_ENV: &str = "SIGIL_VC_STREAMER_BLOCK";
+
+/// Whether [`CPU_STREAMER_AUTO_BLOCK_MS`] applies in this process ([`CPU_STREAMER_BLOCK_ENV`] not off).
+pub fn cpu_streamer_block_enabled() -> bool {
+    let value = std::env::var(CPU_STREAMER_BLOCK_ENV).ok().map(|v| v.trim().to_ascii_lowercase());
+    !matches!(value.as_deref(), Some("0" | "off" | "false" | "no"))
+}
+
+/// `preset` (from [`engine_preset`]) with the Streamer's processor block applied: for the Streamer on
+/// the CPU rung `base_ep` (`cpu`), with no block set (`requested_block_ms` not above 0), a derived block
+/// shorter than [`CPU_STREAMER_KEEP_FROM_MS`] becomes [`CPU_STREAMER_AUTO_BLOCK_MS`]. Every other preset,
+/// rung, explicit block and longer derived block is returned as it is. The voice changer's factory and the benchmark's builds both call
+/// it, so a spec that leaves the block on automatic measures what the app runs.
+pub fn cpu_streamer_block(preset: EnginePreset, base_ep: &str, requested_block_ms: f64) -> EnginePreset {
+    cpu_streamer_block_with(preset, base_ep, requested_block_ms, cpu_streamer_block_enabled())
+}
+
+/// The block (ms) the Streamer on the processor takes when none is set, for a device block of
+/// `chunk_frames` at `device_rate` ([`cpu_streamer_block`]); `None` when the rule does not apply.
+pub fn cpu_streamer_auto_block_ms(profile: RvcPresetProfile, base_ep: &str, chunk_frames: u32, device_rate: u32) -> Option<f64> {
+    let derived = engine_preset(profile, 0.0, chunk_frames, device_rate, 0.0, PrecisionMode::Auto);
+    let got = cpu_streamer_block(derived, base_ep, 0.0);
+    (got.block_ms != derived.block_ms).then_some(got.block_ms)
+}
+
+/// [`cpu_streamer_block`] with the kill switch passed in (tests never touch the environment).
+pub fn cpu_streamer_block_with(preset: EnginePreset, base_ep: &str, requested_block_ms: f64, enabled: bool) -> EnginePreset {
+    let unset = !requested_block_ms.is_finite() || requested_block_ms <= 0.0;
+    if enabled
+        && unset
+        && preset.profile == RvcPresetProfile::Streamer
+        && base_ep.trim().eq_ignore_ascii_case("cpu")
+        && preset.block_ms < CPU_STREAMER_KEEP_FROM_MS
+    {
+        return EnginePreset { block_ms: CPU_STREAMER_AUTO_BLOCK_MS, ..preset };
+    }
+    preset
+}
+
 /// Whether a lever the run resolved on (`resolved_on`, from the user's `mode` through
 /// [`auto_lever`]) also applies to a bring-your-own ONNX voice (the legacy `RvcModel`). The table
 /// above is measured on the template engine only: `anchored_noise` replaces the BYO `rnd` input's
@@ -216,6 +275,56 @@ mod tests {
             assert!(!auto_lever(RvcPresetProfile::LowLatency, Lever::ContentNorm, ep), "{ep}");
             assert!(!auto_lever(RvcPresetProfile::LowLatency, Lever::F0Decode, ep), "{ep}");
         }
+    }
+
+    /// The Streamer on the processor takes a block it can keep up with when none is set; nothing else
+    /// does, and nothing explicit or longer is shortened.
+    #[test]
+    fn the_cpu_streamer_takes_a_long_block_only_when_none_is_set() {
+        let derived = |profile, block, chunk| engine_preset(profile, block, chunk, 48_000, 64.0, PrecisionMode::Auto);
+        let on = |p: EnginePreset, ep: &str, block: f64| cpu_streamer_block_with(p, ep, block, true).block_ms;
+        // The app's default: 512 frames at 48 kHz derive 10.67 ms (planned to 20 ms).
+        let s = derived(RvcPresetProfile::Streamer, 0.0, 512);
+        assert!(s.block_ms < 20.0);
+        assert_eq!(on(s, "cpu", 0.0), CPU_STREAMER_AUTO_BLOCK_MS);
+        assert_eq!(on(s, " CPU ", 0.0), CPU_STREAMER_AUTO_BLOCK_MS, "the rung name is trimmed and case-blind");
+        assert_eq!(on(s, "cpu", -1.0), CPU_STREAMER_AUTO_BLOCK_MS);
+        assert_eq!(on(s, "cpu", f64::NAN), CPU_STREAMER_AUTO_BLOCK_MS);
+        // The rest of the preset is untouched.
+        let got = cpu_streamer_block_with(s, "cpu", 0.0, true);
+        assert_eq!((got.profile, got.extra_context_ms, got.precision), (s.profile, s.extra_context_ms, s.precision));
+        // A GPU rung, the other presets and the kill switch keep the derived block.
+        for ep in ["cuda", "dml", "", "tensorrt_rtx"] {
+            assert_eq!(on(s, ep, 0.0), s.block_ms, "rung {ep:?}");
+        }
+        for profile in [RvcPresetProfile::LowLatency, RvcPresetProfile::Quality, RvcPresetProfile::StudioTrt] {
+            let p = derived(profile, 0.0, 512);
+            assert_eq!(on(p, "cpu", 0.0), p.block_ms, "{profile:?}");
+        }
+        assert_eq!(cpu_streamer_block_with(s, "cpu", 0.0, false).block_ms, s.block_ms, "kill switch");
+        // An explicit block is the user's, shorter or longer.
+        for explicit in [10.0, 20.0, 40.0, 80.0, 120.0, 200.0] {
+            let p = derived(RvcPresetProfile::Streamer, explicit, 512);
+            assert_eq!(on(p, "cpu", explicit), explicit, "block {explicit}");
+        }
+        // A deliberate big device chunk (a derived block of 60 ms or more) is kept, in either direction;
+        // only a shorter one is raised.
+        for (chunk, ms) in [(9_600u32, 200.0), (5_760, 120.0), (3_840, 80.0), (3_584, 74.67), (2_880, 60.0)] {
+            let p = derived(RvcPresetProfile::Streamer, 0.0, chunk);
+            assert!((p.block_ms - ms).abs() < 0.01, "{chunk} frames derive {}", p.block_ms);
+            assert_eq!(on(p, "cpu", 0.0), p.block_ms, "{chunk} frames ({ms} ms) keep their block");
+        }
+        for chunk in [160u32, 512, 1_024, 2_048, 2_816] {
+            let p = derived(RvcPresetProfile::Streamer, 0.0, chunk);
+            assert!(p.block_ms < CPU_STREAMER_KEEP_FROM_MS, "{chunk}");
+            assert_eq!(on(p, "cpu", 0.0), CPU_STREAMER_AUTO_BLOCK_MS, "{chunk} frames ({} ms) are raised", p.block_ms);
+        }
+        // Unknown device rate: no derived block (0), still the processor's.
+        let unknown = engine_preset(RvcPresetProfile::Streamer, 0.0, 512, 0, 64.0, PrecisionMode::Auto);
+        assert_eq!(unknown.block_ms, 0.0);
+        assert_eq!(on(unknown, "cpu", 0.0), CPU_STREAMER_AUTO_BLOCK_MS);
+        // The environment switch reads like the other engine switches.
+        assert_eq!(CPU_STREAMER_BLOCK_ENV, "SIGIL_VC_STREAMER_BLOCK");
     }
 
     #[test]

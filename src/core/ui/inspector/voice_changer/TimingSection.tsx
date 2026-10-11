@@ -17,7 +17,8 @@ import { FC, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { InputContainer, InputSelect } from "../components/input";
-import { InspectorInfoButton, VcDetails, VcDraftNumberInput, VcSliderField, VcSubHeader } from "./common";
+import { formatMs, raisedOutputBuffer } from "@/core/services/voice_changer/metrics";
+import { InspectorInfoButton, VcDetails, VcDraftNumberInput, VcNote, VcSliderField, VcSubHeader } from "./common";
 import { PacingControls } from "./PacingControls";
 
 const LATENCY_BUDGET = VC_NUMBER_RANGES.latency_budget_ms;
@@ -25,7 +26,8 @@ const LATENCY_BUDGET = VC_NUMBER_RANGES.latency_budget_ms;
 /** `metrics` is the running engine's latest sample, if any (the live output cushion). */
 export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ metrics = null }) => {
     const { t } = useTranslation();
-    const voiceChanger = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
+    const vcSnap = useSnapshot(window.ApiServer.voiceChanger.state);
+    const voiceChanger = vcSnap.voiceChanger;
     const vcApi = window.ApiServer.voiceChanger;
     const isOnnx = voiceChanger.mode === "onnx";
     const isRvc = voiceChanger.mode === "rvc";
@@ -46,6 +48,8 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
         vcApi.state.voiceChanger.chunkFrames = n;
         await vcApi.syncParamsAndRestartIfRunning();
     };
+    // The buffer the engine plays with when the playing voice needs more than the stored settings.
+    const raised = vcSnap.isRunning ? raisedOutputBuffer(metrics, voiceChanger.outputPrefillMs, voiceChanger.outputMaxQueueMs) : null;
     return (
         <>
             <VcSubHeader
@@ -70,6 +74,16 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
                         : []),
                 ]}
             />
+            {raised ? (
+                <VcNote>
+                    {t("voice_changer.output_buffer_raised", {
+                        prefill: formatMs(raised.prefillMs),
+                        queue: formatMs(raised.maxQueueMs),
+                        stored_prefill: formatMs(voiceChanger.outputPrefillMs),
+                        stored_queue: formatMs(voiceChanger.outputMaxQueueMs),
+                    })}
+                </VcNote>
+            ) : null}
             <VcSliderField
                 labelKey="voice_changer.latency_budget"
                 infoKey="voice_changer.latency_budget_info"

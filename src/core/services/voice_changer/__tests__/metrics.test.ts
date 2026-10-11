@@ -7,6 +7,7 @@ import {
     formatMs,
     isVoiceChangerEpComponent,
     normalizeMetrics,
+    raisedOutputBuffer,
     type VoiceChangerMetrics,
 } from "../metrics";
 import { findSlot, normalizeSlots, sameSlotPath } from "../slots";
@@ -27,6 +28,8 @@ const sample = (over: Partial<VoiceChangerMetrics> = {}): VoiceChangerMetrics =>
     governor_level: null,
     levers: null,
     cushion_ms: null,
+    buffer_prefill_ms: null,
+    buffer_max_queue_ms: null,
     ...over,
 });
 
@@ -48,7 +51,35 @@ describe("metrics normalization", () => {
             governor_level: null,
             levers: null,
             cushion_ms: null,
+            buffer_prefill_ms: null,
+            buffer_max_queue_ms: null,
         });
+    });
+
+    it("reads the output buffer in force and drops nonsense", () => {
+        const m = normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, buffer_prefill_ms: 110, buffer_max_queue_ms: 136 });
+        expect([m?.buffer_prefill_ms, m?.buffer_max_queue_ms]).toEqual([110, 136]);
+        const bad = normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, buffer_prefill_ms: "110", buffer_max_queue_ms: null });
+        expect([bad?.buffer_prefill_ms, bad?.buffer_max_queue_ms]).toEqual([null, null]);
+    });
+
+    it("tells a buffer the voice raised from the stored one", () => {
+        const inForce = (prefill: number | null, queue: number | null) => sample({ buffer_prefill_ms: prefill, buffer_max_queue_ms: queue });
+        // The Low latency template under a CPU voice's 110 / 136 ms floor, and the Stable one (queue kept).
+        expect(raisedOutputBuffer(inForce(110, 136), 35, 70)).toEqual({ prefillMs: 110, maxQueueMs: 136 });
+        expect(raisedOutputBuffer(inForce(110, 150), 80, 150)).toEqual({ prefillMs: 110, maxQueueMs: 150 });
+        // Only the queue raised.
+        expect(raisedOutputBuffer(inForce(110, 136), 120, 130)).toEqual({ prefillMs: 110, maxQueueMs: 136 });
+        // Nothing raised: the in-force numbers are the stored ones (also when Rust clamped the stored queue up).
+        expect(raisedOutputBuffer(inForce(35, 70), 35, 70)).toBeNull();
+        expect(raisedOutputBuffer(inForce(110, 136), 110, 136)).toBeNull();
+        expect(raisedOutputBuffer(inForce(60, 65), 60, 65)).toBeNull();
+        expect(raisedOutputBuffer(inForce(40, 45), 40, 41)).toBeNull();
+        expect(raisedOutputBuffer(inForce(300, 600), 400, 900)).toBeNull();
+        // Stopped, or an older backend: no claim.
+        expect(raisedOutputBuffer(null, 35, 70)).toBeNull();
+        expect(raisedOutputBuffer(inForce(null, null), 35, 70)).toBeNull();
+        expect(raisedOutputBuffer(inForce(110, null), 35, 70)).toBeNull();
     });
 
     it("reads the output cushion the queue holds (P3B-H) and drops nonsense", () => {

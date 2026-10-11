@@ -456,7 +456,11 @@ fn paced_worker(p: &PacedInput<'_>, load_cpu: &LoadCpu) -> Result<RunOutcome, St
     let out_cb = s.playback_callback_frames();
     let mut input = InputSide::new(r_in, ch_in, block, s.latency_budget_ms);
     let (prefill_ms, max_queue_ms) = p.engine.info.output_buffer_ms(s);
-    let mut output = OutputSide::new(r_out, ch_out, prefill_ms, max_queue_ms, r_in, ch_in, cap_cb * ch_in).with_cushion(s.output_cushion());
+    // The voice's floor is also the adaptive cushion's, as the worker sets it (`OutputPort::set_limits`).
+    let voice_floor_ms = p.engine.info.min_output_buffer_ms.map_or(0.0, |m| m[0]);
+    let mut output = OutputSide::new(r_out, ch_out, prefill_ms, max_queue_ms, r_in, ch_in, cap_cb * ch_in)
+        .with_cushion(s.output_cushion())
+        .with_voice_floor(voice_floor_ms);
     let budget_frames = input.budget_frames();
 
     let mut sim = Sim {
@@ -822,7 +826,14 @@ mod tests {
     const CUSHION_MS: f64 = 80.0;
 
     fn paced(spec: &BenchSpec, input: &[f32]) -> RunOutcome {
-        let engine = build_engine(&spec.engine, &spec.stream, WorkerPriority::Auto, spec.seed).unwrap();
+        paced_with_floor(spec, input, None)
+    }
+
+    /// [`paced`] with the engine's output-buffer minimum set (what a factory build reports for a CPU
+    /// template voice on long blocks).
+    fn paced_with_floor(spec: &BenchSpec, input: &[f32], floor: Option<[f64; 2]>) -> RunOutcome {
+        let mut engine = build_engine(&spec.engine, &spec.stream, WorkerPriority::Auto, spec.seed).unwrap();
+        engine.info.min_output_buffer_ms = floor;
         let probe = probe_algorithmic_latency(
             &spec.stream,
             engine.info.output_rate,
@@ -973,6 +984,52 @@ mod tests {
         // The parts' means add up to the mean latency exactly.
         assert!((t1["sum_of_means_ms"].as_f64().unwrap() - t1["latency_mean_ms"].as_f64().unwrap()).abs() < 1e-6, "{t1}");
         assert!(m["t1_hold_ms_min"] >= -1e-9, "no sample is emitted before its model call: {m:?}");
+    }
+
+    /// A CPU template voice on 120 ms blocks (one model call of about 90 ms per block, 512-frame device
+    /// blocks): at the shipped 35 / 70 ms output buffer the device runs dry during every call, the
+    /// recovery trims each catch-up burst back to the ring target, and well under 70 % of the converted
+    /// audio is played (the P7-B finding). With the floor `voice_changer::block_buffer` gives such a
+    /// voice (110 / 136 ms, carried as `min_output_buffer_ms`) the same run plays it all. This pins the
+    /// failure and the fix end to end through the paced run's `OutputSide` (`OutputPlayback` + the ring).
+    #[test]
+    fn a_burst_engine_loses_audio_at_the_default_buffer_and_plays_it_with_the_floor() {
+        let s = spec(serde_json::json!({
+            "name": "t",
+            "engine": {"kind": "stub", "compute_ms": 90.0, "fixed_block_ms": 120},
+            "stream": {"output_channels": 1},
+            "runs": [{"mode": "paced", "name": "p", "seconds": 60, "clock": "simulated", "warmup_s": 1}]
+        }));
+        assert_eq!((s.stream.output_prefill_ms, s.stream.output_max_queue_ms), (35.0, 70.0), "the shipped buffer");
+        let input = render_input(&s.input, 48_000, 1, 1).unwrap();
+        let ratio = |o: &RunOutcome| o.details["played_frames"].as_f64().unwrap() / o.details["emitted_frames"].as_f64().unwrap();
+
+        let without = paced_with_floor(&s, &input, None);
+        let (m0, r0) = (&without.metrics, ratio(&without));
+        assert_eq!(m0["model_errors"], 0.0);
+        assert!(r0 < 0.7, "the default buffer plays {r0:.3} of the converted audio");
+        assert!(m0["output_trimmed_ms"] > 20_000.0, "the recovery trims the catch-up: {} ms", m0["output_trimmed_ms"]);
+
+        let with = paced_with_floor(&s, &input, Some([110.0, 136.0]));
+        let (m1, r1) = (&with.metrics, ratio(&with));
+        eprintln!(
+            "burst engine, 60 s simulated: 35/70 played {:.1} %, trimmed {:.1} s, dry {:.1} s | 110/136 played {:.2} %, trimmed {:.2} s, dry {:.0} ms, latency p50 {:.0} / p99 {:.0} ms (35/70: {:.0} / {:.0})",
+            100.0 * r0,
+            m0["output_trimmed_ms"] / 1000.0,
+            m0["underrun_ms"] / 1000.0,
+            100.0 * r1,
+            m1["output_trimmed_ms"] / 1000.0,
+            m1["underrun_ms"],
+            m1["latency_ms_p50"],
+            m1["latency_ms_p99"],
+            m0["latency_ms_p50"],
+            m0["latency_ms_p99"],
+        );
+        assert_eq!(m1["model_errors"], 0.0);
+        assert!(r1 >= 0.98, "the floor plays {r1:.3} of the converted audio ({:?})", m1);
+        assert!(m1["underrun_ms"] < 600.0, "dry output: {} ms ({} underruns)", m1["underrun_ms"], m1["underruns"]);
+        assert!(m1["output_trimmed_ms"] < 1_000.0, "{} ms trimmed", m1["output_trimmed_ms"]);
+        assert_eq!(m1["dropped_ms"], 0.0);
     }
 
     /// The traced latency is the real one: with an identity engine, the played audio is the

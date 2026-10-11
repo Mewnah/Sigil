@@ -2585,7 +2585,8 @@
     "lever_info_content_norm": "Opt-in. Normalises the speech features with running statistics of your recent speech instead of each short window's own, which raised voice similarity by about 0.01 in our tests and costs a little spectral accuracy. It needs the content encoder's streaming variant, which is not part of the downloads yet; without it the engine switches this off and says so.",
     "lever_name_f0_decode": "Pitch smoothing across blocks (experimental)",
     "lever_info_f0_decode": "Experimental. Decides each new pitch frame together with the frames before it, which can correct octave jumps. On our test speech it did not improve pitch accuracy and slightly lowered voice similarity, so it is off by default. Works with the RMVPE pitch method. Not used for singing.",
-    "device_block_not_applied": "Not applied here: the engine block follows the chunk size, or no whole 10 ms block fits this sample rate, so the chunk size above is used. Running {{ms}} ms blocks."
+    "device_block_not_applied": "Not applied here: the engine block follows the chunk size, or no whole 10 ms block fits this sample rate, so the chunk size above is used. Running {{ms}} ms blocks.",
+    "output_buffer_raised": "This voice plays with at least {{prefill}} / {{queue}} ms of output buffer (prefill / max queue), more than the {{stored_prefill}} / {{stored_queue}} ms set here: it converts a long block in one call while the output keeps playing. Your numbers are kept for other voices; a buffer you typed yourself is raised only when it cannot hold the voice's calls."
   },
   "diagnostics": {
     "section_title": "GPU & diagnostics",

@@ -117,8 +117,9 @@ impl EngineInfo {
         }
     }
 
-    /// The output prefill and queue a paced run plays with: `stream`'s, raised to the voice
-    /// family's minimum (`min_output_buffer_ms`) like the voice changer's worker.
+    /// The output prefill and queue a paced run plays with: `stream`'s, raised to the engine's
+    /// minimum (`min_output_buffer_ms`) like the voice changer's worker. A benchmark spec has no Custom
+    /// buffer: what it sets is the stream's stock buffer, and the minimum applies to it.
     pub(crate) fn output_buffer_ms(&self, stream: &StreamSpec) -> (f64, f64) {
         match self.min_output_buffer_ms {
             Some([p, q]) => (stream.output_prefill_ms.max(p), stream.output_max_queue_ms.max(q)),
@@ -592,6 +593,24 @@ mod tests {
 
     fn stream(v: serde_json::Value) -> StreamSpec {
         serde_json::from_value(v).unwrap()
+    }
+
+    /// A paced run plays with the stream's output buffer raised to the engine's minimum, as the voice
+    /// changer's worker does (a CPU template voice on long blocks: `voice_changer::block_buffer`), and
+    /// never lowered below the stream's own. A benchmark spec has no Custom buffer (what it sets is the
+    /// stream's stock buffer), so the minimum always applies to it.
+    #[test]
+    fn the_paced_output_buffer_is_the_stream_raised_to_the_engine_minimum() {
+        let mut info = EngineInfo::new("stub", 16_000, 16_000, 0);
+        let default = stream(serde_json::json!({}));
+        assert_eq!((default.output_prefill_ms, default.output_max_queue_ms), (35.0, 70.0));
+        assert_eq!(info.output_buffer_ms(&default), (35.0, 70.0), "no minimum: the stream's");
+        info.min_output_buffer_ms = Some([110.0, 136.0]);
+        assert_eq!(info.output_buffer_ms(&default), (110.0, 136.0));
+        let long = stream(serde_json::json!({"output_prefill_ms": 150, "output_max_queue_ms": 300}));
+        assert_eq!(info.output_buffer_ms(&long), (150.0, 300.0), "a larger stream buffer stays");
+        let mixed = stream(serde_json::json!({"output_prefill_ms": 100, "output_max_queue_ms": 200}));
+        assert_eq!(info.output_buffer_ms(&mixed), (110.0, 200.0));
     }
 
     #[test]

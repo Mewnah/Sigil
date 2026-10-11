@@ -4,7 +4,7 @@
 use super::aux_feed::AuxFeed;
 use super::params::{
     clamp_output_buffer_ms, latency_budget_or, normalize_execution_provider, normalize_latency_preset,
-    normalize_pitch_extractor, normalize_rvc_preset, AuxMicGate, RvcParamsState, VoiceChangerHotParams,
+    output_buffer_is_stock, normalize_pitch_extractor, normalize_rvc_preset, AuxMicGate, RvcParamsState, VoiceChangerHotParams,
     VoiceChangerMode, VoiceChangerParams, DEFAULT_VOCODER_OVERSAMPLE, FORMANT_SEMITONES_RANGE, MAX_QUEUE_MS_STABLE,
     PREFILL_MS_STABLE, RMS_MIX_RANGE,
 };
@@ -154,6 +154,10 @@ pub struct VoiceChangerState {
     pub(super) metrics_governor_level: Arc<AtomicU32>,
     /// The output cushion the queue holds (us; `METRIC_UNSET` = not measured; P3B-H).
     pub(super) metrics_cushion_us: Arc<AtomicU32>,
+    /// The output prefill and max queue in force (us; `METRIC_UNSET` = not running): the stored values
+    /// raised to the active voice's floor (`worker::port_limits`), which the settings do not show.
+    pub(super) metrics_limit_prefill_us: Arc<AtomicU32>,
+    pub(super) metrics_limit_queue_us: Arc<AtomicU32>,
     /// The device block the run uses (frames; 0 = the hot param's; P3B-H `device_block`).
     pub(super) metrics_chunk_frames: Arc<AtomicU32>,
     /// Levers, accelerator and precision the running engine uses.
@@ -286,6 +290,8 @@ impl VoiceChangerState {
             metrics_vram_mb: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_governor_level: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_cushion_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_limit_prefill_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_limit_queue_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_chunk_frames: Arc::new(AtomicU32::new(0)),
             run_levers: Arc::new(Mutex::new(None)),
             run_ep: Arc::new(Mutex::new(None)),
@@ -313,6 +319,8 @@ impl VoiceChangerState {
         self.metrics_vram_mb.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_governor_level.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_cushion_us.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_limit_prefill_us.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_limit_queue_us.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_chunk_frames.store(0, Ordering::Relaxed);
         *lock(&self.run_levers) = None;
         self.mmcss.reset();
@@ -408,6 +416,7 @@ impl VoiceChangerState {
             h.output_gain = params.output_gain.clamp(0.0, 4.0);
             h.output_prefill_ms = pf;
             h.output_max_queue_ms = mq;
+            h.output_buffer_stock = output_buffer_is_stock(lp, pf, mq);
             h.buffer_truncate_enabled = params.buffer_truncate_enabled;
             h.buffer_truncate_rms = params.buffer_truncate_rms.clamp(1e-8, 1.0);
             h.buffer_truncate_chunks = params.buffer_truncate_chunks.clamp(1, 500);
@@ -941,6 +950,42 @@ mod tests {
         assert_eq!(got.latency_budget_ms, Some(100.0));
         assert_eq!(got.aux_mic_gate.as_deref(), Some("none"));
         assert_eq!(got.worker_priority.as_deref(), Some("auto"));
+    }
+
+    /// The hot params say whether the stored output buffer is one of the app's templates or numbers
+    /// the user typed (`output_buffer_stock`: a voice with a burst floor raises the first and keeps the
+    /// second, `worker::port_limits`), from the latency preset and the numbers that came with it.
+    #[test]
+    fn the_hot_params_tell_a_stock_buffer_from_a_typed_one() {
+        let st = VoiceChangerState::new();
+        assert!(lock(&st.hot_params).output_buffer_stock, "the default buffer is the Low latency template");
+        let apply = |preset: &str, prefill: f64, queue: f64| {
+            st.apply_params(VoiceChangerParams {
+                latency_preset: preset.into(),
+                output_prefill_ms: prefill,
+                output_max_queue_ms: queue,
+                ..VoiceChangerParams::default()
+            });
+            let h = *lock(&st.hot_params);
+            (h.output_buffer_stock, h.output_prefill_ms, h.output_max_queue_ms)
+        };
+        // The templates, as the UI sends them.
+        assert_eq!(apply("low_latency", 35.0, 70.0), (true, 35.0, 70.0));
+        assert_eq!(apply("stable", 80.0, 150.0), (true, 80.0, 150.0));
+        // Stable forces its template whatever numbers came with it.
+        assert_eq!(apply("stable", 20.0, 30.0), (true, 80.0, 150.0));
+        // Typed numbers: the UI flips the label to custom on the first edit.
+        assert_eq!(apply("custom", 60.0, 120.0), (false, 60.0, 120.0));
+        assert_eq!(apply("custom", 35.0, 70.0), (false, 35.0, 70.0), "typed, even when they equal the template");
+        assert_eq!(apply("custom", 80.0, 150.0), (false, 80.0, 150.0));
+        // A Low latency label over other numbers is a hand edit that kept the label: typed.
+        assert_eq!(apply("low_latency", 50.0, 120.0), (false, 50.0, 120.0));
+        assert_eq!(apply("low_latency", 35.0, 90.0), (false, 35.0, 90.0));
+        // An unknown label is Low latency; numbers are clamped before they are judged.
+        assert_eq!(apply("whatever", 35.0, 70.0), (true, 35.0, 70.0));
+        assert_eq!(apply("whatever", 1.0, 1.0), (false, 5.0, 10.0));
+        // Back to the template.
+        assert_eq!(apply("low_latency", 35.0, 70.0), (true, 35.0, 70.0));
     }
 
     /// Settings and devices survive a restart: save through the store, flush, load into a fresh

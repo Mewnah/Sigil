@@ -60,7 +60,11 @@
 //! - `CreatedEngine::min_output_buffer_ms` / `LoadedVoice::min_output_buffer_ms`: the voice's
 //!   smallest output buffer (the loaded voice's `FamilyEngine::min_output_buffer_ms`, else
 //!   `families::min_output_buffer_ms` of its kind, slot options and EP); the worker plays the active
-//!   voice with the larger of it and the user's prefill / queue.
+//!   voice with the larger of it and the user's prefill / queue. A Sigil template voice (`sigil-rvc-1`)
+//!   gets one too when its generator runs on the processor with engine blocks longer than the device
+//!   chunk (`block_buffer`: [`create_sigil`] sizes it from the realized `vc.flowdec` rung, and
+//!   [`LoadedVoice::load_cancellable`] again after the stream configure; `SIGIL_VC_BLOCK_BUFFER=0`
+//!   switches it off). Every GPU rung, bring-your-own ONNX voice and family keeps its own value.
 //! - The in-harness denoiser is skipped (with a warning) for a model whose input is not 16 kHz.
 //! - `EngineRequest::cancel`: a background load ([`VoiceSet`]) and the worker's first load hand the
 //!   family their cancel flag, so a sidecar voice stops waiting for its helper once nobody wants it.
@@ -83,6 +87,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use super::block_buffer;
 use crate::services::diagnostics::EpOutcome;
 use crate::services::neural_audio::denoise::{self, harness::DenoisedModel, DenoiserKind};
 use crate::services::neural_audio::gpu::arena::VramProbe;
@@ -658,7 +663,7 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
         .filter(|d| d.is_dir())
         .or_else(import::templates_dir)
         .ok_or("the bundled vc-templates folder was not found; reinstall Sigil")?;
-    let preset = presets::engine_preset(
+    let derived_preset = presets::engine_preset(
         request.preset,
         request.block_ms,
         request.chunk_frames,
@@ -666,14 +671,26 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
         request.extra_context_ms,
         request.precision,
     );
+    // The Streamer on the processor with the block on automatic takes the 120 ms block it can keep up
+    // with (the 20 ms the device block derives is several times slower than real time there).
+    let preset = presets::cpu_streamer_block(derived_preset, &request.ep, request.block_ms);
+    let auto_cpu_block = preset.block_ms != derived_preset.block_ms;
+    if auto_cpu_block {
+        tracing::info!(
+            "voice changer: engine block {:.0} ms (automatic for the Streamer on the processor; the {:.0} ms the device block gives cannot keep up there; set a Block size to choose another, SIGIL_VC_STREAMER_BLOCK=0 restores the old rule)",
+            preset.block_ms,
+            derived_preset.block_ms,
+        );
+    }
     let noise_seed = noise_seed_for(&request.slot_dir, manifest.source_sha256.as_deref());
     // P3B-H: the load plans the voice's final shapes (lookahead, the harness's SOLA tail and extra
     // context) and builds the pitch bank beside its other branches. With the kill switch
     // (`SIGIL_VC_FINAL_SHAPES=0`) the load plans P3's defaults and the lookahead is applied below.
     let final_shapes = SigilRvcEngine::final_shapes_enabled();
+    let preset_block_16k = plan_block_16k(&preset);
     let stream = hint
         .filter(|_| final_shapes)
-        .and_then(|h| plan_block_16k(&preset).map(|block| h.geometry(block, manifest.sample_rate)));
+        .and_then(|h| preset_block_16k.map(|block| h.geometry(block, manifest.sample_rate)));
     let pitch_meta: Mutex<Option<PitchMeta>> = Mutex::new(None);
     let pitch_builder = |f0_frames: usize, window_16k: usize| -> Result<Box<dyn PitchExtractor>, String> {
         let b = build_pitch(request, Some((f0_frames, window_16k)))?;
@@ -752,7 +769,23 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
     let mut levers = engine.effective_levers().clone();
     levers.notes.extend(light_note);
     levers.notes.extend(lookahead_note);
+    if auto_cpu_block {
+        levers.notes.push(cpu_streamer_block_note(preset.block_ms));
+    }
     let output_sample_rate = engine.output_sample_rate();
+    // The engine's own block (its plan), else the preset's: the floor sizes the output queue for the
+    // model calls this voice makes (`block_buffer`).
+    let block_16k = VoiceConversionModel::fixed_block(&engine).or(preset_block_16k);
+    let min_output_buffer_ms = block_floor(&outcomes, &request.ep, block_16k, request.chunk_frames, request.device_rate, block_buffer::enabled());
+    if let Some(floor) = min_output_buffer_ms {
+        levers.notes.push(block_floor_note(floor, block_16k));
+        tracing::info!(
+            "voice changer: output buffer floor {:.0} / {:.0} ms (each {:.0} ms block converts in one call on the CPU while the output keeps playing; SIGIL_VC_BLOCK_BUFFER=0 switches it off)",
+            floor.0,
+            floor.1,
+            block_16k.map_or(0.0, |b| b as f64 / 16.0),
+        );
+    }
     Ok(CreatedEngine {
         model: governed(Box::new(engine), light_f0),
         format: SlotFormat::SigilRvc,
@@ -764,7 +797,7 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
         denoiser_latency_16k: 0,
         model_delay_16k,
         reference: None,
-        min_output_buffer_ms: None,
+        min_output_buffer_ms,
     })
 }
 
@@ -772,6 +805,50 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
 /// reports that error).
 fn plan_block_16k(preset: &presets::EnginePreset) -> Option<usize> {
     engine::plan::block_frames(preset.block_ms).ok().map(|f| f * 160)
+}
+
+/// Whether the generator of a template voice runs on the processor: its `vc.flowdec` session's
+/// outcome (the rung it really landed on; a GPU request that fell back is on the CPU), else the
+/// requested EP. Strict on the outcome: only `cpu` is the processor (`tensorrt` and the other
+/// accelerator ids are GPU rungs).
+fn generator_on_cpu(outcomes: &[(String, EpOutcome)], request_ep: &str) -> bool {
+    match outcomes.iter().find(|(c, _)| c == "vc.flowdec" || c.ends_with(".vc.flowdec")) {
+        Some((_, outcome)) => outcome.active.trim().eq_ignore_ascii_case("cpu"),
+        None => super::params::base_ep(request_ep) == "cpu",
+    }
+}
+
+/// The output-buffer floor of a template voice (`block_buffer`): `None` for a voice whose generator
+/// is on a GPU rung, a block of 40 ms or less on the device chunk, or with `SIGIL_VC_BLOCK_BUFFER=0`.
+fn block_floor(
+    outcomes: &[(String, EpOutcome)],
+    request_ep: &str,
+    block_16k: Option<usize>,
+    chunk_frames: u32,
+    device_rate: u32,
+    enabled: bool,
+) -> Option<(f64, f64)> {
+    let block_ms = block_16k? as f64 / 16.0;
+    let chunk_ms = f64::from(chunk_frames) * 1000.0 / f64::from(device_rate.max(1));
+    block_buffer::min_output_buffer_ms(block_ms, chunk_ms, generator_on_cpu(outcomes, request_ep), enabled)
+}
+
+/// The lever note of the Streamer's automatic block on the processor
+/// ([`presets::cpu_streamer_block`]).
+fn cpu_streamer_block_note(block_ms: f64) -> String {
+    format!(
+        "block: {block_ms:.0} ms (automatic for the Streamer on the processor: the shorter block the device block gives cannot keep up there; set a Block size to choose another)"
+    )
+}
+
+/// Prefix of the lever note [`block_floor_note`] writes (a recomputed floor replaces it).
+const BLOCK_FLOOR_NOTE: &str = "output buffer: at least ";
+
+fn block_floor_note((prefill, queue): (f64, f64), block_16k: Option<usize>) -> String {
+    format!(
+        "{BLOCK_FLOOR_NOTE}{prefill:.0} / {queue:.0} ms for {:.0} ms blocks on the processor (each block converts in one call and the output keeps playing meanwhile)",
+        block_16k.map_or(0.0, |b| b as f64 / 16.0),
+    )
 }
 
 /// The reference clip of `request`: its explicit WAV, else its voice-library voice (from
@@ -1286,6 +1363,7 @@ impl LoadedVoice {
         let t0 = Instant::now();
         let label = format!("vc: {}", key.slot_dir.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         let gpu = request.ep != "cpu";
+        let (request_ep, chunk_frames, device_rate) = (request.ep.clone(), request.chunk_frames, request.device_rate);
         let probe = VramProbe::for_rung(&request.ep, request.session.cuda_device_index);
         let may_hold_plan = may_hold_rmvpe_plan(&request.ep, &request.pitch_extractor);
         let releases_before = ReleaseMark::now();
@@ -1307,6 +1385,22 @@ impl LoadedVoice {
         if let Some(report) = harness.model_report() {
             merge_stream_report(&mut outcomes, &mut levers, &mut warnings, report);
         }
+        // So does the output-buffer floor of a template voice (`block_buffer`): the stream configure
+        // may have moved its generator to the CPU, so it is sized again from what runs now. The
+        // benchmark's builds keep the value `create_sigil` gave them.
+        let mut min_output_buffer_ms = created.min_output_buffer_ms;
+        if created.format == SlotFormat::SigilRvc {
+            let block_16k = harness.fixed_shape().map(|(block, _)| block);
+            let again = block_floor(&outcomes, &request_ep, block_16k, chunk_frames, device_rate, block_buffer::enabled());
+            if again != min_output_buffer_ms {
+                levers.notes.retain(|n| !n.starts_with(BLOCK_FLOOR_NOTE));
+                if let Some(floor) = again {
+                    levers.notes.push(block_floor_note(floor, block_16k));
+                    tracing::info!("voice changer: output buffer floor {:.0} / {:.0} ms once the stream is configured", floor.0, floor.1);
+                }
+                min_output_buffer_ms = again;
+            }
+        }
         // The warm-up above allocated the sessions' working memory: measure after it.
         let vram_mb = probe.and_then(|p| p.delta_mb()).unwrap_or(created.vram_mb).max(created.vram_mb);
         let claim = resources::claim_vram(Subsystem::Vc, &label, if gpu { vram_mb.round() as u64 } else { 0 });
@@ -1325,7 +1419,7 @@ impl LoadedVoice {
             denoiser_latency_16k: created.denoiser_latency_16k,
             model_delay_16k: created.model_delay_16k,
             model_input_rate,
-            min_output_buffer_ms: created.min_output_buffer_ms,
+            min_output_buffer_ms,
             own_mb: (vram_mb - built_mb).max(0.0),
             shared,
             _claim: claim,
@@ -1975,6 +2069,57 @@ mod tests {
         }
         let long_tick = families::family_manifest(FamilyKind::MeanVc, "z", serde_json::json!({"tick_ms": 160}));
         assert_eq!(families::min_output_buffer_ms(FamilyKind::MeanVc, "cpu", &long_tick), Some((80.0, 150.0)));
+    }
+
+    fn sessions(rows: &[(&str, &str, &str)]) -> Vec<(String, EpOutcome)> {
+        rows.iter()
+            .map(|(c, requested, active)| {
+                let reason = (requested != active).then(|| "fell back".to_string());
+                ((*c).to_string(), EpOutcome::new(*requested, *active, reason))
+            })
+            .collect()
+    }
+
+    /// The rung a template voice's floor follows is the generator's realized one (`vc.flowdec`): the
+    /// processor requested, or a GPU rung that fell back to it, gets the floor; any granted GPU rung
+    /// (accelerators included) none; without a generator outcome the requested EP decides.
+    #[test]
+    fn the_output_floor_follows_the_generators_realized_rung() {
+        const B_120: Option<usize> = Some(1_920);
+        let floor = |rows: &[(&str, &str, &str)], ep: &str, block: Option<usize>| block_floor(&sessions(rows), ep, block, 512, 48_000, true);
+        // Requested on the processor.
+        assert_eq!(floor(&[("vc.flowdec", "cpu", "cpu")], "cpu", B_120), Some((110.0, 136.0)));
+        // A GPU request whose generator fell back to the processor.
+        assert_eq!(floor(&[("vc.flowdec", "cuda", "cpu"), ("vc.pitch", "cuda", "cuda")], "cuda", B_120), Some((110.0, 136.0)));
+        assert_eq!(floor(&[("vc.flowdec", "dml", "cpu")], "dml", B_120), Some((110.0, 136.0)));
+        // Granted GPU rungs, accelerators included ("tensorrt" is not the processor).
+        for (requested, active) in [("cuda", "cuda"), ("dml", "dml"), ("dml_hp", "dml"), ("tensorrt_rtx", "tensorrt_rtx"), ("tensorrt_rtx", "tensorrt"), ("cuda", "cuda")] {
+            assert_eq!(floor(&[("vc.flowdec", requested, active)], "cpu", B_120), None, "{requested} -> {active}");
+        }
+        // The pitch bank on the processor next to a GPU generator does not make the voice a CPU one.
+        assert_eq!(floor(&[("vc.pitch", "cpu", "cpu"), ("vc.flowdec", "cuda", "cuda")], "cuda", B_120), None);
+        // A prefixed diagnostics name (the benchmark's `bench.vc.flowdec`) is the same session.
+        assert_eq!(floor(&[("bench.vc.flowdec", "cuda", "cuda")], "cpu", B_120), None);
+        // No generator outcome: the request decides.
+        assert_eq!(floor(&[], "cpu", B_120), Some((110.0, 136.0)));
+        assert_eq!(floor(&[("vc.pitch", "cpu", "cpu")], "cpu", B_120), Some((110.0, 136.0)));
+        assert_eq!(floor(&[], "cuda", B_120), None);
+        assert_eq!(floor(&[], "dml_hp", B_120), None);
+        // Short blocks (the shipped 40 ms reference shape, the app's 20 ms) and unknown blocks: none.
+        assert_eq!(floor(&[("vc.flowdec", "cpu", "cpu")], "cpu", Some(640)), None);
+        assert_eq!(floor(&[("vc.flowdec", "cpu", "cpu")], "cpu", Some(320)), None);
+        assert_eq!(floor(&[("vc.flowdec", "cpu", "cpu")], "cpu", None), None);
+        // The other families' own minimums are not this rule's.
+        let zs = families::family_manifest(FamilyKind::SigilZs, "z", serde_json::json!({}));
+        assert_eq!(families::min_output_buffer_ms(FamilyKind::SigilZs, "cpu", &zs), Some((95.0, 165.0)));
+    }
+
+    /// The lever note names the floor and the block.
+    #[test]
+    fn the_output_floor_note_names_the_numbers() {
+        let note = block_floor_note((110.0, 136.0), Some(1_920));
+        assert!(note.starts_with(BLOCK_FLOOR_NOTE), "{note}");
+        assert!(note.contains("110 / 136 ms") && note.contains("120 ms blocks"), "{note}");
     }
 
     pub(crate) fn test_request(slot: &Path) -> EngineRequest {

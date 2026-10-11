@@ -129,6 +129,11 @@ pub struct VoiceChangerMetrics {
     /// The output cushion the queue holds now in ms (P3B-H): the adaptive controller's target, else the
     /// fixed prefill (`null` while stopped or before the output runs).
     pub cushion_ms: Option<f64>,
+    /// The output prefill and max queue in force, in ms: the stored settings raised to what the playing
+    /// voice needs (`block_buffer`, a voice family's minimum, a long device period). Equal to the
+    /// settings when nothing was raised; `null` while stopped.
+    pub buffer_prefill_ms: Option<f64>,
+    pub buffer_max_queue_ms: Option<f64>,
 }
 
 /// Frames at `rate` Hz in ms (0 while not running).
@@ -185,6 +190,14 @@ pub(super) fn collect_metrics(state: &VoiceChangerState) -> VoiceChangerMetrics 
         levers: if running { lock(&state.run_levers).clone() } else { None },
         cushion_ms: {
             let c = state.metrics_cushion_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
+        buffer_prefill_ms: {
+            let c = state.metrics_limit_prefill_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
+        buffer_max_queue_ms: {
+            let c = state.metrics_limit_queue_us.load(Ordering::Relaxed);
             (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
         },
     }
@@ -256,6 +269,28 @@ mod tests {
         assert_eq!((m.vram_mb, m.governor_level), (Some(512.0), Some(1)));
         st.metrics_vram_mb.store(METRIC_UNSET, Ordering::Relaxed);
         assert_eq!(collect_metrics(&st).vram_mb, None);
+    }
+
+    /// The output buffer in force (the stored settings raised to the playing voice's floor, which the
+    /// settings do not show) is reported while running and reset with the run; stopped, it is null.
+    #[test]
+    fn the_output_buffer_in_force_is_reported_while_running() {
+        let st = VoiceChangerState::new();
+        let m = collect_metrics(&st);
+        assert_eq!((m.buffer_prefill_ms, m.buffer_max_queue_ms), (None, None), "never measured");
+        st.metrics_limit_prefill_us.store(110_000, Ordering::Relaxed);
+        st.metrics_limit_queue_us.store(136_000, Ordering::Relaxed);
+        let m = collect_metrics(&st);
+        assert_eq!((m.buffer_prefill_ms, m.buffer_max_queue_ms), (None, None), "stopped");
+        st.capture_sample_rate.store(48_000, Ordering::Relaxed);
+        st.is_running.store(true, Ordering::Relaxed);
+        let m = collect_metrics(&st);
+        assert_eq!((m.buffer_prefill_ms, m.buffer_max_queue_ms), (Some(110.0), Some(136.0)));
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!((json["buffer_prefill_ms"].as_f64(), json["buffer_max_queue_ms"].as_f64()), (Some(110.0), Some(136.0)));
+        st.reset_run_metrics();
+        let m = collect_metrics(&st);
+        assert_eq!((m.buffer_prefill_ms, m.buffer_max_queue_ms), (None, None), "a new run starts unmeasured");
     }
 
     /// Every P0 metrics field of the contract is serialized under its contract name.

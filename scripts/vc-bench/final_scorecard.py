@@ -679,12 +679,14 @@ def annotate_disturbance(rows: list[dict], load: list[dict]) -> None:
 # ---------------------------------------------------------------------------------------------
 # A paced or contention run converts the clip block by block and plays it through the production output queue
 # (prefill, cap, recovery and drift trims). An engine can be fast enough on call time and still lose a large
-# share of what it converted at that queue (CPU Streamer rows: 120 ms blocks against the 70 ms cap), and the
-# latency of such a run is the latency of the audio that survived. So every such run reports the share played,
-# and a target that reads "met" on call time or latency says so when the run lost audio.
+# share of what it converted at that queue (CPU Streamer rows: 120 ms blocks against the 35 ms prefill, whose
+# recovery trims every catch-up burst; the 70 ms cap is not the cause), and the latency of such a run is the
+# latency of the audio that survived. So every such run reports the share played, and a target that reads
+# "met" on call time or latency says so when the run lost audio.
 #
 # 0.98: the 3 s stall of the H1 simulation costs 0.3-0.5 % of a 60 s run and the GPU rows play 99.7-99.9 %;
-# the CPU rows play 49-65 %.
+# the CPU rows played 48-63 % at the default 35 / 70 ms queue and play 99.1-99.8 % with the output queue
+# floor of voice_changer/block_buffer.rs.
 DELIVERY_MIN_PLAYED = 0.98
 DELIVERY_RUNS = ("paced", "h3-game", "h1-sim", "h2-load70", "h2-load70-oop")
 DELIVERY_SPECS = ("sve-dml", "sve-cuda", "app-dml", "app-cuda", "sve-cpu", "sve-cpu-pool", "sve-cpu-t6")

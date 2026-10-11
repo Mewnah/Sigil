@@ -262,8 +262,9 @@ interval and the number of clips where FCPE is higher), because the Streamer but
 Besides the profile's targets the tables hold two things the gate does not judge. **Delivery:** every paced and contention run reports the share of
 the audio the engine converted that the output queue played (`played_ratio`, played over emitted frames of the run) next to the audio it trimmed, the
 output that ran dry and the underruns, and the derived rows require at least 98 %; a profile row that reads `met` on latency or cores in a run below
-that is shown as `met, but audio lost` with a note (a CPU engine can be fast enough per call and still lose 40-50 % of its output at the default
-35 / 70 ms output queue, and its latency is then the latency of the audio that survived). **The over-budget half of the H1-simulation T2b row**, which
+that is shown as `met, but audio lost` with a note (a CPU engine can be fast enough per call and still lose 37-52 % of its output at the default
+35 / 70 ms output queue, which a CPU template voice on long blocks no longer has: it plays with the output
+queue floor of `voice_changer/block_buffer.rs`; without it the latency is the latency of the audio that survived). **The over-budget half of the H1-simulation T2b row**, which
 the profile only gates on the call's p99. A row whose limit string the tool cannot read (`< 85`, text) gets the status `limit not parsed` and is counted
 apart, never `met` (`parse_limit` raises `LimitError`; an empty limit is `no limit`). The decision tables add a `B - A` column and a footnote for rows
 the gate judged on its linear scale with a floor (`underruns` and `over_budget_ratio` near zero): read the medians there, not the percentage. The CPU

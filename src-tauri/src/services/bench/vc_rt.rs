@@ -99,6 +99,7 @@ pub(super) struct OutputSide {
     producer: rtrb::Producer<f32>,
     playout: playback::RingPlayout,
     ring_cap: usize,
+    rate: u32,
     ch: usize,
     underruns: Arc<AtomicU64>,
     buf: Vec<f32>,
@@ -146,6 +147,7 @@ impl OutputSide {
             producer,
             playout,
             ring_cap,
+            rate,
             ch,
             underruns,
             buf: Vec::new(),
@@ -157,6 +159,25 @@ impl OutputSide {
     pub(super) fn with_cushion(mut self, cushion: crate::services::voice_changer::params::OutputCushion) -> Self {
         self.playback = self.playback.with_cushion(cushion);
         self
+    }
+
+    /// The smallest cushion the voice allows (`min_output_buffer_ms`, ms; 0 = none): the adaptive
+    /// cushion's floor, as `OutputPort` sets it from the voice's floor, so a floored voice cannot shed
+    /// below it here either (a fixed cushion already holds it in its prefill).
+    pub(super) fn with_voice_floor(mut self, prefill_ms: f64) -> Self {
+        let samples = if prefill_ms.is_finite() && prefill_ms > 0.0 {
+            (f64::from(self.rate) * prefill_ms / 1000.0).ceil() as usize * self.ch
+        } else {
+            0
+        };
+        self.playback.set_cushion_floor(samples);
+        self
+    }
+
+    /// The adaptive cushion's target (interleaved samples) and its sheds (tests).
+    #[cfg(test)]
+    pub(super) fn cushion_samples(&self) -> usize {
+        self.playback.cushion_samples()
     }
 
     fn ring_used(&self) -> usize {
@@ -313,6 +334,50 @@ mod tests {
         let mut block = Vec::new();
         assert!(input.take_block(&mut block, 512));
         assert_eq!(block.len(), 512);
+    }
+
+    /// The benchmark gives the adaptive cushion the voice's floor as the worker does
+    /// (`OutputPort::set_limits`): a stream with pauses lets the adaptive cushion shed far below its
+    /// 110 ms prefill, and with the voice's 110 ms floor it cannot shed at all. (Before this the
+    /// bench's adaptive runs of a floored voice measured a lower latency than the app plays.)
+    #[test]
+    fn the_voice_floor_holds_the_adaptive_cushion_in_the_benchmark_too() {
+        use crate::services::voice_changer::params::OutputCushion;
+        let run = |floor_ms: f64| {
+            let mut out = OutputSide::new(48_000, 1, 110.0, 136.0, 48_000, 1, 480)
+                .with_cushion(OutputCushion::Adaptive)
+                .with_voice_floor(floor_ms);
+            out.playback.set_cushion_history_ms(8_000.0);
+            // 512-frame blocks every 512 frames, 480-frame device callbacks, a pause in the speech
+            // every 112 blocks (38 quiet ones), for two minutes of device time.
+            let (mut t, mut next_push, mut next_cb, mut block) = (0u64, 0u64, 240u64, 0u64);
+            while t < 120 * 48_000 {
+                t = next_push.min(next_cb);
+                if next_push == t {
+                    next_push += 512;
+                    let quiet = block % 112 >= 112 - 38;
+                    block += 1;
+                    let amp = if quiet { 0.0 } else { 0.4 };
+                    let data: Vec<f32> = (0..512).map(|i| amp * (i as f32 * 0.1).sin()).collect();
+                    out.push(&data);
+                }
+                if next_cb == t {
+                    next_cb += 480;
+                    out.callback(480, None);
+                }
+            }
+            out.cushion_samples()
+        };
+        let prefill = 110 * 48;
+        let shed = run(0.0);
+        let held = run(110.0);
+        assert_eq!(held, prefill, "the voice's floor is the whole cushion");
+        assert!(shed + 20 * 48 <= prefill, "without the floor the cushion shed to {} ms", shed / 48);
+        // A smaller floor is a floor too, and nonsense is none.
+        let half = run(60.0);
+        assert!(half >= 60 * 48 && half <= prefill, "{} ms", half / 48);
+        assert_eq!(run(f64::NAN), shed);
+        assert_eq!(run(-5.0), shed);
     }
 
     #[test]
