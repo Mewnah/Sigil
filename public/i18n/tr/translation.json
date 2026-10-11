@@ -452,7 +452,27 @@
     "backend_not_ready": "This speech recognizer is not available in this build yet.",
     "local_music_gate": "Ignore music and singing (experimental)",
     "local_music_gate_desc": "Skips stretches that sound like music or singing, such as world music in VRChat, instead of turning them into captions. Needs a small extra download.",
-    "local_interim_desc": "Shows words while you are still speaking. Turn it off to get each sentence only once it is finished: Sigil then does not run the live model whenever a more accurate one also runs, which saves processor time. A language that only has a live model keeps using it, and its finished sentences still appear. Applies the next time speech-to-text starts."
+    "local_interim_desc": "Shows words while you are still speaking. Turn it off to get each sentence only once it is finished: Sigil then does not run the live model whenever a more accurate one also runs, which saves processor time. A language that only has a live model keeps using it, and its finished sentences still appear. Applies the next time speech-to-text starts.",
+    "lang_offer_detected": "Detected {{language}}. Lock captions to {{language}}?",
+    "lang_offer_system": "Your Windows language is {{language}}. Lock captions to {{language}}?",
+    "lang_offer_why": "Setting the language usually makes captions more accurate (most of all for European languages) and uses less memory. Locking restarts running captions at once when the {{language}} models are already installed; otherwise it applies the next time you press Start.",
+    "lang_offer_lock": "Lock to {{language}}",
+    "lang_offer_locking": "Locking...",
+    "lang_offer_keep": "Keep automatic",
+    "lang_offer_never": "Don't ask again",
+    "lang_offer_close": "Close",
+    "lang_offer_result_restarted": "Locked to {{language}}. Captions restarted with the {{language}} models.",
+    "lang_offer_result_next_start": "Locked to {{language}}. It applies the next time you press Start.",
+    "lang_offer_result_download": "Locked to {{language}}. The next Start downloads the {{language}} speech models first, and asks before it does. You can review them in Speech to Text. Until then, captions that start by themselves keep detecting the language automatically.",
+    "lang_offer_log_restarted": "Captions locked to {{language}}; they restarted with the {{language}} models.",
+    "lang_offer_log_next_start": "Captions locked to {{language}}; it applies the next time Start is pressed.",
+    "lang_offer_log_download": "Captions locked to {{language}}; the next Start downloads the {{language}} models first. Until then, captions that start by themselves keep detecting the language.",
+    "onboarding_language_title": "What language do you speak?",
+    "onboarding_language_hint": "Setting your language is the biggest step for accurate captions.",
+    "onboarding_language_system": "Chosen from your Windows language.",
+    "onboarding_language_label": "Spoken language",
+    "local_consent_auto_hint": "Tip: you are on Detect automatically, which needs a language-detection model on top of a general one. If you cancel and choose your language in Speech to Text first, Sigil usually downloads less and the captions are more accurate.",
+    "local_log_auto_fallback": "The {{language}} speech models are not downloaded, so captions started with automatic language detection. Open Speech-to-text and press Start to download the {{language}} models."
   },
   "tts": {
     "title": "Metinden Konuşmaya",
@@ -2586,7 +2606,8 @@
     "lever_name_f0_decode": "Pitch smoothing across blocks (experimental)",
     "lever_info_f0_decode": "Experimental. Decides each new pitch frame together with the frames before it, which can correct octave jumps. On our test speech it did not improve pitch accuracy and slightly lowered voice similarity, so it is off by default. Works with the RMVPE pitch method. Not used for singing.",
     "device_block_not_applied": "Not applied here: the engine block follows the chunk size, or no whole 10 ms block fits this sample rate, so the chunk size above is used. Running {{ms}} ms blocks.",
-    "output_buffer_raised": "This voice plays with at least {{prefill}} / {{queue}} ms of output buffer (prefill / max queue), more than the {{stored_prefill}} / {{stored_queue}} ms set here: it converts a long block in one call while the output keeps playing. Your numbers are kept for other voices; a buffer you typed yourself is raised only when it cannot hold the voice's calls."
+    "output_buffer_raised": "This voice plays with at least {{prefill}} / {{queue}} ms of output buffer (prefill / max queue), more than the {{stored_prefill}} / {{stored_queue}} ms set here: it converts a long block in one call while the output keeps playing. Your numbers are kept for other voices; a buffer you typed yourself is raised only when it cannot hold the voice's calls.",
+    "rvc_streamer_few_cores_note": "This PC has {{cores}} physical cores. Streamer converts on the processor, and with this few cores it falls behind while a game is running: in Sigil's test it skipped about a tenth to a fifth of the speech, and the voice arrived about half a second late. A longer Block size ({{block}} ms or more) kept up in the test, at a larger delay; Low latency (GPU) uses the graphics card instead."
   },
   "diagnostics": {
     "section_title": "GPU & diagnostics",

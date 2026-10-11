@@ -36,6 +36,7 @@ OmniVoice, Fish S2) stay opt-in and are **not** measured here.
 | 5 | `speed_stream.json` | cpu_speed | Nemotron 560 ms / 160 ms at real time: first partial, final latency, CPU |
 | 6 | `speed_pipeline.json`, `speed_pipeline_4c.json` | cpu_speed | The shipped caption pipeline (Silero VAD, router, two pass) at real time on 6 and 4 cores |
 | 7 | `mt_screen.json`, `mtspeed_*.json` | mt_quality / cpu_speed / gpu_under_load | Light translators: chrF and latency, then cost per line in the process tree |
+| 7b | `mt_europe.json`, `mtspeed_nllb-beam4_none.json`, `mtspeed_nllb-beam4_h3_cpu_game.json` | mt_quality / cpu_speed | MT-Europe (after P7): NLLB-200 600M beam 4 against Hy-MT2 1.8B on the CPU for the European pairs, on the casual lines, WMT24++, FLORES-200 and `flores200-eu` (Italian and Dutch); [`mt_europe_table.py`](mt_europe_table.py) prints the per-direction table with paired intervals |
 | 8 | `tts_speed.json`, `sapi-measure.ps1` | cpu_speed | Kokoro on the CPU; Windows SAPI |
 | 9 | `footprint/footprint.ps1` | (the real app) | Sigil's own CPU / RAM / GPU idle, with captions, with the OBS caption page and with translation |
 
@@ -67,6 +68,10 @@ $py = "$env:LOCALAPPDATA\sigil-dev-cache\p7\venv\Scripts\python.exe"
 & $py scripts/speech-bench/score/score_mt.py --report bench-results/speech/mt-screen/report.json `
   --set "$env:LOCALAPPDATA\sigil-dev-cache\p7\corpus\mt\sigil-casual.jsonl" --out bench-results/speech/mt-screen/scores
 & $py scripts/speech-bench/campaign/mt_table.py bench-results/speech/mt-screen/scores/mt_scores.json
+# MT-Europe (needs flores200-eu.jsonl: build_text_sets.py writes it next to the other sets; run the spec with the p7 corpus that holds it)
+& $py scripts/speech-bench/campaign/mt_europe_table.py --report bench-results/speech/mt-europe/report.json `
+  --set "$env:LOCALAPPDATA\sigil-dev-cache\p7\corpus\mt\sigil-casual.jsonl" --set "$env:LOCALAPPDATA\sigil-dev-cache\p7\corpus\mt\wmt24pp.jsonl" `
+  --set "$env:LOCALAPPDATA\sigil-dev-cache\p7\corpus\mt\flores200.jsonl" --set "$env:LOCALAPPDATA\sigil-dev-cache\p7\corpus\mt\flores200-eu.jsonl"
 ```
 
 `run-bench.ps1` is the same without the lock. `-Cpu` hides CUDA from the process (CPU-only rows), `-Affinity` is a

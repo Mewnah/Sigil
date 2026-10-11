@@ -288,6 +288,7 @@ class TranslationPipelineImpl implements TranslationPipeline {
         status: (update) => {
           if (epoch === this.#epoch) this.#applyStatus(update);
         },
+        translatorOnCpu: () => this.#o.translatorOnCpu?.() ?? false,
       });
       starting = Promise.resolve(engine.start(engineSettings, controller.signal));
     } catch (e) {

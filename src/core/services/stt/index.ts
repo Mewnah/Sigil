@@ -1,4 +1,4 @@
-import { IServiceInterface, ServiceNetworkState, TextEvent, TextEventSource, TextEventType } from "@/types";
+import { IServiceInterface, ServiceNetworkState, TextEvent, TextEventSource, TextEventType, type RustSpeechRoutePlan } from "@/types";
 import { WordReplacementsCache, buildWordReplacementsCache } from "@/utils";
 import i18n from "i18next";
 import { toast } from "react-toastify";
@@ -14,7 +14,7 @@ import { STT_VoskService } from "./services/vosk";
 import { STT_MoonshineService } from "./services/moonshine";
 import { STT_OpenAI_AudioService } from "./services/openaiAudio";
 import { STT_ExternalMicService } from "./services/externalMic";
-import { STT_LocalService } from "./services/local";
+import { STT_LocalService, buildLocalRouteRequest } from "./services/local";
 import { STT_GeminiLiveService } from "./services/geminiLive";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,7 +34,9 @@ import { i18nReady } from "./statusMessages";
 import { useAppUIStore } from "@/core/ui/store";
 import { Services } from "@/services-registry";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { normalizeLanguage } from "./router";
+import { normalizeLanguage, planHasEngine } from "./router";
+import { LanguageOffer } from "./languageOffer";
+import { languageDisplayName, type LockOutcome } from "./languageSuggestion";
 
 export type SttBackendMap = {
   [k in STT_Backends]?: ISTTServiceConstructor;
@@ -147,6 +149,13 @@ export function localBackendCarryOver(data: STT_State): LocalBackendCarryOver {
 
 type SttEngineInstance = InstanceType<NonNullable<SttBackendMap[STT_Backends]>>;
 
+/** System log line per lock outcome (`languageOffer.ts`). */
+const LOCK_LOG_KEYS: Record<LockOutcome, string> = {
+  restarted: "stt.lang_offer_log_restarted",
+  next_start: "stt.lang_offer_log_next_start",
+  download: "stt.lang_offer_log_download",
+};
+
 class Service_STT implements IServiceInterface {
   /** Engine classes per backend (injectable for tests). */
   constructor(private readonly engines: SttBackendMap = backends) {}
@@ -180,6 +189,21 @@ class Service_STT implements IServiceInterface {
   #statusExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Session epoch the download progress toast was shown for (`null` = not shown). */
   #progressToastEpoch: number | null = null;
+
+  /**
+   * The "Lock captions to your language?" suggestion of the automatic backend (`languageOffer.ts`): counts the finals
+   * of each session, keeps the offer the UI shows, and applies the user's answer. It only ever acts on a click.
+   */
+  readonly languageOffer: LanguageOffer = new LanguageOffer({
+    data: () => this.data,
+    patch: fn => window.ApiServer.patchService("stt", s => fn(s.data)),
+    now: () => Date.now(),
+    running: () => this.data.backend === STT_Backends.local && this.serviceState.status === ServiceNetworkState.connected,
+    routeReady: language => this.#routeReady(language),
+    restart: () => this.start({ automatic: true }),
+    log: (language, outcome) =>
+      pushSystemLog("STT", i18n.t(LOCK_LOG_KEYS[outcome], { language: languageDisplayName(language, i18n.language) }), "info"),
+  });
 
   updateLastMessage(value: string, isInterim: boolean, meta?: SttTextMeta) {
     this.#lastMessageState = meta ? { value, isInterim, meta } : { value, isInterim };
@@ -265,7 +289,17 @@ class Service_STT implements IServiceInterface {
       start: () => this.#onStartScoped(epoch),
       stop: (err) => this.#onStopScoped(epoch, err),
       interim: (v, meta) => void this.#sendInterim(v, meta),
-      final: (v, meta) => void this.#sendFinal(v, meta),
+      final: (v, meta) => {
+        // The finals of the engine itself (not the "[...]" marker): the language suggestion counts them. It is a
+        // convenience and must never get in the way of a caption.
+        try {
+          this.languageOffer.noteFinal(v, meta);
+        }
+        catch (e) {
+          console.error("[STT] language suggestion failed:", e);
+        }
+        void this.#sendFinal(v, meta);
+      },
       status: (status) => this.#applyEngineStatus(status),
       // Progress while connecting (download %, load status, first words) proves the engine is alive: restart the
       // window so long first-time downloads are not cut off while they are still moving.
@@ -548,6 +582,9 @@ class Service_STT implements IServiceInterface {
     this.updateReplacementsCache();
     this.eventDisposers.push(subscribeKey(this.data, "replaceWords", () => this.updateReplacementsCache()));
     this.eventDisposers.push(subscribeKey(this.data, "replaceWordsIgnoreCase", () => this.updateReplacementsCache()));
+    // A suggestion to lock the language is withdrawn when the profile leaves the automatic backend or language.
+    this.eventDisposers.push(subscribeKey(this.data, "backend", () => this.languageOffer.settingsChanged()));
+    this.eventDisposers.push(subscribeKey(this.data.local, "language", () => this.languageOffer.settingsChanged()));
 
     const unsubStream = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
       if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected) {
@@ -857,6 +894,7 @@ class Service_STT implements IServiceInterface {
     this.#commitEnginePending();
     this.#sessionEpoch++;
     const epoch = this.#sessionEpoch;
+    this.languageOffer.sessionStarted();
     this.#clearExternalMicConnectingTimeout();
     // A new session starts with no open sentence (an engine that stopped mid-interim must not leave the next one
     // with a stale interim or a pending unmute that engines without interims can never resolve).
@@ -905,8 +943,20 @@ class Service_STT implements IServiceInterface {
     }
   }
 
+  /**
+   * Whether the router would plan the automatic backend for `language` with every model already installed (the
+   * language suggestion restarts a running session only then; a restart must not turn into a download).
+   */
+  async #routeReady(language: string): Promise<boolean | null> {
+    const request = buildLocalRouteRequest({ ...this.data.local, language });
+    const plan = await invoke<RustSpeechRoutePlan | null>("plugin:speech|preview_route", { request });
+    if (!plan || typeof plan !== "object") return null;
+    return planHasEngine(plan) && Array.isArray(plan.missing) && plan.missing.length === 0;
+  }
+
   dispose() {
     this.stop();
+    this.languageOffer.dispose();
     this.eventDisposers.forEach(d => d());
     this.eventDisposers = [];
   }

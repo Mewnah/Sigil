@@ -20,6 +20,11 @@ import {
     pitchExtractorOptions,
     precisionOptions,
     profileOptions,
+    STREAMER_FEW_CORES_MAX,
+    STREAMER_KEEPS_UP_BLOCK_MS,
+    STREAMER_KEEPS_UP_BLOCK_MS_FEW,
+    streamerFewCoresNote,
+    streamerKeepsUpBlockMs,
 } from "../options";
 
 const caps = (over: Partial<VcCapabilities> = {}): VcCapabilities => ({ ...BASELINE_CAPABILITIES, ...over });
@@ -148,5 +153,51 @@ describe("levers", () => {
         expect(views.find((v) => v.lever === "governor")).toMatchObject({ inUse: false, note: "not available in this build" });
         expect(generalLeverNotes(running, VC_LEVERS)).toEqual(["tensorrt_rtx: not available in this build; running on cuda"]);
         expect(generalLeverNotes(null, VC_LEVERS)).toEqual([]);
+    });
+});
+
+describe("the Streamer on few physical cores (vc-cpu-rerun)", () => {
+    const base = { profile: "streamer", ep: "", physicalCores: 6, blockMs: 0 } as const;
+
+    it("warns on 1 to 6 physical cores with the Streamer on the processor and Block size on Auto", () => {
+        expect(STREAMER_FEW_CORES_MAX).toBe(6);
+        for (const cores of [1, 2, 4, 5]) expect(streamerFewCoresNote({ ...base, physicalCores: cores })).toEqual({ cores, blockMs: 200 });
+        expect(streamerFewCoresNote({ ...base, physicalCores: 6 })).toEqual({ cores: 6, blockMs: 160 });
+        // The 8-core dev rig kept up under the game stand-in; 7 is not measured and gets no note.
+        for (const cores of [7, 8, 12, 16]) expect(streamerFewCoresNote({ ...base, physicalCores: cores })).toBeNull();
+    });
+
+    it("says nothing while the core count is unknown", () => {
+        for (const cores of [null, undefined, 0, -1, Number.NaN]) {
+            expect(streamerFewCoresNote({ ...base, physicalCores: cores })).toBeNull();
+        }
+    });
+
+    it("follows the rung the preset runs on: an unset EP is the preset's CPU, a GPU rung is not the Streamer's problem", () => {
+        expect(streamerFewCoresNote({ ...base, ep: "cpu" })).toEqual({ cores: 6, blockMs: 160 });
+        for (const ep of ["cuda", "dml", "tensorrt_rtx"] as const) expect(streamerFewCoresNote({ ...base, ep })).toBeNull();
+        for (const profile of ["low_latency", "quality", "studio_trt"] as const) {
+            // Their unset EP is a GPU rung; on an explicit CPU they are not the Streamer's shape (no note).
+            expect(streamerFewCoresNote({ ...base, profile })).toBeNull();
+            expect(streamerFewCoresNote({ ...base, profile, ep: "cpu" })).toBeNull();
+        }
+    });
+
+    it("hides once Block size is long enough to keep up on a 6-core PC (160 ms, measured)", () => {
+        expect(STREAMER_KEEPS_UP_BLOCK_MS).toBe(160);
+        for (const blockMs of [0, 20, 60, 120, 159]) expect(streamerFewCoresNote({ ...base, blockMs })).toEqual({ cores: 6, blockMs: 160 });
+        for (const blockMs of [160, 200, 400]) expect(streamerFewCoresNote({ ...base, blockMs })).toBeNull();
+    });
+
+    it("does not call 160 ms enough on 4 or 5 cores, where only 200 ms was measured", () => {
+        // Benchmark: 160 ms was run on 6 cores only; 4 cores were run at 200 ms (nothing dropped under the game stand-in),
+        // 5 cores on no longer block. A 4-core PC at 160 ms would lose the note with no measurement behind the all-clear.
+        expect(STREAMER_KEEPS_UP_BLOCK_MS_FEW).toBe(200);
+        for (const cores of [1, 2, 3, 4, 5]) {
+            expect(streamerKeepsUpBlockMs(cores)).toBe(200);
+            for (const blockMs of [0, 120, 160, 199]) expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs })).toEqual({ cores, blockMs: 200 });
+            for (const blockMs of [200, 240]) expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs })).toBeNull();
+        }
+        expect(streamerKeepsUpBlockMs(6)).toBe(160);
     });
 });

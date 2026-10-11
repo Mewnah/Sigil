@@ -6,6 +6,7 @@ import {
   CircuitBreaker,
   isCloudEngine,
   ROUTER_START_RETRY_MS,
+  routeForPair,
   routerAttemptBudgetMs,
   routerLineBudgetMs,
   Translation_RouterService,
@@ -57,7 +58,9 @@ function setup(patch: (s: Translation_State) => void = () => {}) {
     }),
   ) as Record<TranslationEngineId, ITranslationEngineConstructor>;
   const statuses: TranslationStatusUpdate[] = [];
-  const host: TranslationEngineHost = { engines, status: (u) => statuses.push(u) };
+  /** `onCpu.value`: the bundled translator runs on the processor (the host's `translatorOnCpu`). */
+  const onCpu = { value: false };
+  const host: TranslationEngineHost = { engines, status: (u) => statuses.push(u), translatorOnCpu: () => onCpu.value };
   const state = Service_Translation_Schema.parse({
     sourceLanguage: "en",
     targetLanguage: "ja",
@@ -66,7 +69,7 @@ function setup(patch: (s: Translation_State) => void = () => {}) {
   patch(state);
   const router = new Translation_RouterService();
   router.attach(host);
-  return { router, ctl, statuses, state };
+  return { router, ctl, statuses, state, onCpu };
 }
 
 const live = () => new AbortController().signal;
@@ -159,10 +162,11 @@ describe("attempt budgets", () => {
 
   it("covers every member's start wait and attempt in a line's budget", () => {
     const auto = Service_Translation_Schema.parse({ auto: { chain: ["llm", "bergamot", "nllb"], attemptTimeoutMs: 1000 } }).auto;
-    expect(routerLineBudgetMs(auto, "final", "hi")).toBe(5 * 2000); // 3 chain members + 2 local fallbacks
+    // 3 chain members + 2 local fallbacks, plus half an attempt budget: a built-in route gives NLLB's attempt 1.5 times the budget
+    expect(routerLineBudgetMs(auto, "final", "hi")).toBe(5 * 2000 + 500);
     expect(routerLineBudgetMs(auto, "interim", "hi")).toBe(2 * 2000);
     auto.cloudFallback = false;
-    expect(routerLineBudgetMs(auto, "final", "x".repeat(600))).toBe(3 * (1000 + 5000));
+    expect(routerLineBudgetMs(auto, "final", "x".repeat(600))).toBe(3 * (1000 + 5000) + 2500);
   });
 });
 
@@ -506,5 +510,245 @@ describe("Translation_RouterService interims", () => {
     ctl.llm.translate = fail("y");
     await expect(router.translate(req("p", "interim"), live())).rejects.toThrow("transl.router_error_all_failed");
     expect(ctl.nllb.calls).toHaveLength(0);
+  });
+});
+
+describe("routeForPair", () => {
+  const autoOf = (patch: (a: Translation_State["auto"]) => void = () => {}) => {
+    const a = Service_Translation_Schema.parse({}).auto;
+    patch(a);
+    return a;
+  };
+
+  it("takes the built-in CPU route for a European pair, with the beam it asks of NLLB", () => {
+    expect(routeForPair(autoOf(), "en", "fr", "cpu")).toEqual({ chain: [B.nllb, B.llm, B.bergamot], nllbBeam: 4, nllbBudgetFactor: 1.5 });
+    expect(chainForPair(autoOf(), "pt-BR", "en", "cpu")).toEqual([B.nllb, B.llm, B.bergamot]);
+  });
+
+  it("keeps the chain on the default tier and for pairs without a route", () => {
+    expect(routeForPair(autoOf(), "en", "fr")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] });
+    expect(routeForPair(autoOf(), "en", "fr", "default")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] });
+    expect(routeForPair(autoOf(), "en", "ja", "cpu")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] });
+    expect(routeForPair(autoOf(), "", "fr", "cpu")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] }); // a source left on detect
+    expect(routeForPair(autoOf(), "en", "de", "cpu")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] }); // a tie
+    expect(routeForPair(autoOf(), "it", "en", "cpu")).toEqual({ chain: [B.llm, B.bergamot, B.nllb] }); // a tie
+  });
+
+  it("keeps the chain for a line with glossary terms or background text on the CPU tier", () => {
+    expect(routeForPair(autoOf(), "en", "fr", "cpu", { glossary: true })).toEqual({ chain: [B.llm, B.bergamot, B.nllb] });
+    expect(routeForPair(autoOf(), "en", "fr", "cpu", { background: true })).toEqual({ chain: [B.llm, B.bergamot, B.nllb] });
+    expect(routeForPair(autoOf(), "en", "fr", "cpu", { glossary: false, background: false }).nllbBeam).toBe(4);
+  });
+
+  it("lets a pair override of the user win, and a chain the user edited stand", () => {
+    const own = autoOf((a) => (a.pairOverrides = [{ from: "", to: "fr", chain: [B.deepl] }]));
+    expect(routeForPair(own, "en", "fr", "cpu")).toEqual({ chain: [B.deepl] });
+    expect(routeForPair(own, "en", "es", "cpu").chain).toEqual([B.nllb, B.llm, B.bergamot]); // other pairs keep the route
+    const any = autoOf((a) => (a.pairOverrides = [{ from: "", to: "", chain: [B.llm] }]));
+    expect(routeForPair(any, "en", "fr", "cpu")).toEqual({ chain: [B.llm] });
+    const edited = autoOf((a) => (a.chain = [B.deepl, B.llm]));
+    expect(routeForPair(edited, "en", "fr", "cpu")).toEqual({ chain: [B.deepl, B.llm] });
+  });
+});
+
+describe("Translation_RouterService built-in CPU-tier routes", () => {
+  const pair = (from: string, to: string) => (s: Translation_State) => {
+    s.sourceLanguage = from;
+    s.targetLanguage = to;
+  };
+
+  it("sends a European pair to NLLB first, asking for beam 4, while the translator runs on the processor", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    const used: string[] = [];
+    await expect(router.translate({ ...req("hello"), onEngine: (id) => used.push(id) }, live())).resolves.toBe("nllb:hello");
+    expect(used).toEqual(["nllb"]);
+    expect(ctl.nllb.calls[0].request).toMatchObject({ from: "en", to: "fr", beam: 4 });
+    expect(ctl.llm.calls).toHaveLength(0);
+  });
+
+  it("gives NLLB's beam-4 attempt on a final half again the budget, and an interim or any other member the plain one", async () => {
+    vi.useFakeTimers();
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    ctl.nllb.translate = never;
+    const p = router.translate(req("hello"), live());
+    await vi.advanceTimersByTimeAsync(1000); // attemptTimeoutMs: the default tier's llm would be given up here
+    expect(ctl.llm.calls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(p).resolves.toBe("llm:hello");
+    // The long final scales like any other attempt: 600 characters get 5 s, NLLB 7.5 s.
+    const long = router.translate(req("x".repeat(600)), live());
+    await vi.advanceTimersByTimeAsync(7499);
+    expect(ctl.llm.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(long).resolves.toBe(`llm:${"x".repeat(600)}`);
+  });
+
+  it("starts the same members as the default chain, so nothing new loads or downloads", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    expect([ctl.llm.starts, ctl.bergamot.starts, ctl.nllb.starts, ctl.deepl.starts]).toEqual([1, 1, 1, 0]);
+  });
+
+  it("changes nothing off the processor: the AI model first, no beam asked", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = false;
+    await router.start(state, live());
+    await expect(router.translate(req("hello"), live())).resolves.toBe("llm:hello");
+    expect(ctl.llm.calls[0].request.beam).toBeUndefined();
+    expect(ctl.nllb.calls).toHaveLength(0);
+  });
+
+  it("also applies with Source language left on automatic: the language the pipeline resolved for the line decides", async () => {
+    // The pipeline fills request.from from the setting, else the language the speech engine reported for the line, else a
+    // guess from the text; the router sees that language, not the (empty) setting.
+    const { router, ctl, state, onCpu } = setup(pair("", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate({ ...req("hello"), from: "en" }, live())).resolves.toBe("nllb:hello");
+    expect(ctl.nllb.calls[0].request).toMatchObject({ from: "en", to: "fr", beam: 4 });
+    // Only when no language is known at all does the chain stand.
+    await expect(router.translate(req("hello again"), live())).resolves.toBe("llm:hello again");
+  });
+
+  it("keeps the audience's pairs on the AI model on the processor", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "ja"));
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate(req("hello"), live())).resolves.toBe("llm:hello");
+    await expect(router.translate({ ...req("hello"), to: "ko" }, live())).resolves.toBe("llm:hello");
+    await expect(router.translate({ ...req("hello"), from: "zh", to: "en" }, live())).resolves.toBe("llm:hello");
+    expect(ctl.nllb.calls).toHaveLength(0);
+  });
+
+  it("keeps the pairs NLLB only tied on (German, Italian) on the AI model on the processor", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "de"));
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate(req("hello"), live())).resolves.toBe("llm:hello");
+    await expect(router.translate({ ...req("ciao"), from: "it", to: "en" }, live())).resolves.toBe("llm:ciao");
+    expect(ctl.nllb.calls).toHaveLength(0);
+  });
+
+  it("follows the tier line by line (the server's variant becomes known after the first lines)", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "es"));
+    await router.start(state, live());
+    await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+    onCpu.value = true;
+    await expect(router.translate(req("b"), live())).resolves.toBe("nllb:b");
+    onCpu.value = false;
+    await expect(router.translate(req("c"), live())).resolves.toBe("llm:c");
+    expect(ctl.nllb.calls.map((c) => c.request.beam)).toEqual([4]);
+  });
+
+  it("falls through to the AI model when the NLLB model is not installed, without a fallback warning", async () => {
+    const { router, ctl, statuses, state, onCpu } = setup(pair("en", "pt"));
+    onCpu.value = true;
+    ctl.nllb.start = () => Promise.reject(new TranslationError("not installed", { missing: ["mt/nllb-200-distilled-600m-int8"] }));
+    await router.start(state, live());
+    const used: string[] = [];
+    await expect(router.translate({ ...req("hello"), onEngine: (id) => used.push(id) }, live())).resolves.toBe("llm:hello");
+    expect(used).toEqual(["llm"]);
+    expect(statuses.some((s) => s.level === "warning" && s.text === "transl.router_status_fallback")).toBe(false);
+  });
+
+  it("does not flash a fallback warning when the retry of the NLLB start (every minute) finds the model still missing", async () => {
+    vi.useFakeTimers();
+    const { router, ctl, statuses, state, onCpu } = setup(pair("en", "pt"));
+    onCpu.value = true;
+    ctl.nllb.start = () => Promise.reject(new TranslationError("not installed", { missing: ["mt/nllb-200-distilled-600m-int8"] }));
+    await router.start(state, live());
+    await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+    expect(ctl.nllb.starts).toBe(1);
+    // A minute later the member is due another start; it is retried first (the model may be installed by now) ...
+    vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+    const used: string[] = [];
+    await expect(router.translate({ ...req("b"), onEngine: (id) => used.push(id) }, live())).resolves.toBe("llm:b");
+    expect(ctl.nllb.starts).toBe(2);
+    expect(used).toEqual(["llm"]);
+    // ... and a model that is still not there is nobody's "preferred" engine: no "using X instead of Y" for a PC without it.
+    expect(statuses.some((s) => s.text === "transl.router_status_fallback")).toBe(false);
+    vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+    await expect(router.translate(req("c"), live())).resolves.toBe("llm:c");
+    expect(statuses.some((s) => s.text === "transl.router_status_fallback")).toBe(false);
+  });
+
+  it("uses NLLB as soon as a retry finds the model installed", async () => {
+    vi.useFakeTimers();
+    const { router, ctl, statuses, state, onCpu } = setup(pair("en", "pt"));
+    onCpu.value = true;
+    ctl.nllb.start = () => Promise.reject(new TranslationError("not installed", { missing: ["mt/nllb-200-distilled-600m-int8"] }));
+    await router.start(state, live());
+    await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+    ctl.nllb.start = undefined; // downloaded meanwhile
+    vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+    await expect(router.translate(req("b"), live())).resolves.toBe("nllb:b");
+    expect(statuses.some((s) => s.text === "transl.router_status_fallback")).toBe(false);
+  });
+
+  it("still warns when NLLB, which is installed, fails a line after a failed start that was not about a missing model", async () => {
+    vi.useFakeTimers();
+    const { router, ctl, statuses, state, onCpu } = setup(pair("en", "pt"));
+    onCpu.value = true;
+    ctl.nllb.start = () => Promise.reject(new TranslationError("session create failed"));
+    await router.start(state, live());
+    await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+    vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+    await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+    expect(statuses.at(-1)).toEqual({ text: "transl.router_status_fallback", level: "warning" });
+  });
+
+  it("keeps the AI model first for a line with a glossary term or the background text, which NLLB would drop", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate({ ...req("a"), glossary: [{ source: "Mewnah", target: "Mewnah" }] }, live())).resolves.toBe("llm:a");
+    await expect(router.translate({ ...req("b"), background: "A VRChat stream about horror games." }, live())).resolves.toBe("llm:b");
+    expect(ctl.nllb.calls).toHaveLength(0);
+    // The same stream's other lines still take the route, and blank background or an empty glossary change nothing.
+    await expect(router.translate(req("c"), live())).resolves.toBe("nllb:c");
+    await expect(router.translate({ ...req("d"), background: "   ", glossary: [] }, live())).resolves.toBe("nllb:d");
+    expect(ctl.llm.calls.every((c) => c.request.beam === undefined)).toBe(true);
+  });
+
+  it("does not give up the route for the rolling context alone (NLLB translates each line alone; the docs say so)", async () => {
+    const { router, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate({ ...req("e"), context: [{ source: "hi", target: "salut" }] }, live())).resolves.toBe("nllb:e");
+  });
+
+  it("falls through to the AI model when NLLB fails a line, and shows the fallback warning", async () => {
+    const { router, ctl, statuses, state, onCpu } = setup(pair("en", "nl"));
+    onCpu.value = true;
+    await router.start(state, live());
+    ctl.nllb.translate = fail("decode failed");
+    await expect(router.translate(req("hello"), live())).resolves.toBe("llm:hello");
+    expect(statuses.at(-1)).toEqual({ text: "transl.router_status_fallback", level: "warning" });
+  });
+
+  it("lets a pair rule of the user turn the route off", async () => {
+    const { router, ctl, state, onCpu } = setup((s) => {
+      pair("en", "nl")(s);
+      s.auto.pairOverrides = [{ from: "en", to: "nl", chain: [B.llm, B.nllb] }];
+    });
+    onCpu.value = true;
+    await router.start(state, live());
+    await expect(router.translate(req("hello"), live())).resolves.toBe("llm:hello");
+    expect(ctl.nllb.calls).toHaveLength(0);
+  });
+
+  it("answers supports() from the route's members", async () => {
+    const { router, ctl, state, onCpu } = setup(pair("en", "fr"));
+    onCpu.value = true;
+    ctl.nllb.supports = () => false;
+    ctl.llm.supports = () => false;
+    ctl.bergamot.supports = () => false;
+    await router.start(state, live());
+    await vi.waitFor(() => expect(router.supports("en", "fr")).toBe(false));
   });
 });

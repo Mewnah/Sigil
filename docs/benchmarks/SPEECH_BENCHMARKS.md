@@ -107,9 +107,10 @@ same: its audio is VRChat's own, and the bleed numbers below pick the same engin
 Korean (SenseVoice beats Qwen3-ASR 0.6B under babble, 22.8 against 39.0, and ties in the VRChat mix). No separate
 row was added; a loopback-only Korean row is listed under "For later".
 
-Translation: the default chain **[bundled Hy-MT2 1.8B, Bergamot, NLLB-200 600M] is confirmed**, no router
-change (Hy-MT2 takes the ja, ko and zh targets by 5-16 chrF points over the better NLLB setting; NLLB beam 4 is ahead on some European
-pairs; see "Translation"). Text-to-speech: Kokoro (local), Windows SAPI and Edge (cloud) are the defaults;
+Translation: the default chain **[bundled Hy-MT2 1.8B, Bergamot, NLLB-200 600M] is confirmed** (Hy-MT2 takes the ja, ko and zh targets by 5-16 chrF points over the better NLLB setting).
+One built-in route was added after P7 (MT-Europe, 2026-10-11): while the bundled translator runs on the processor, English with French, Spanish, Portuguese and Dutch (both directions)
+goes to NLLB-200 600M with beam 4 first, with the rest of the chain behind it (+2.8 to +6.0 chrF2 with the 95 % interval above zero, 1.6 s a casual caption line against 0.4 s, 1.8 cores
+against 3.7-5.0); German and Italian tied and stay on Hy-MT2, and nothing changes on a graphics card; see "European pairs on a processor-only PC". Text-to-speech: Kokoro (local), Windows SAPI and Edge (cloud) are the defaults;
 Kokoro and SAPI work end to end and are cheap. Footprint: see the last section. Interim translations are off by default while the bundled translator runs on the processor (P7-I0, "App footprint").
 
 ## Speech-to-text accuracy
@@ -443,8 +444,9 @@ NLLB with beam 4 is 1-8 points better into French, Spanish, Portuguese and Germa
 Portuguese, Russian and Japanese (pt to en 75.5 against 68.4; en to fr 57.4 against 49.6), and the two tie into
 Russian and from Korean; beam 4 costs 4x the latency of Hy-MT2 on the CPU. The differences that decide are large
 enough that MetricX-24 or a blind A/B was not needed: the Hy-MT2-first chain keeps the audience's languages (ja,
-ko, zh) on the better engine. European pairs could go to NLLB first through `pairOverrides`; that needs a 600 MB
-download from the user and is listed under "For later".
+ko, zh) on the better engine. Whether the European pairs should go to NLLB first on a processor-only PC was measured
+afterwards, with beam 4's own latency and cost (1.6 s a casual line, 4.2 times Hy-MT2's 0.39 s; the NLLB rows of
+the table below are greedy): see "European pairs on a processor-only PC" below.
 
 Latency and cost per caption line (casual set; the engine rows run line after line, so the CPU figures are the burst
 a single caption causes, not an average):
@@ -464,6 +466,109 @@ in process takes about 2 cores for 0.9 s and 2.6 GB. The Vulkan variant costs ab
 VRAM and answers in 51 ms idle, 116 ms under the VRChat + OBS GPU stand-in. Which of them a streamer should run is
 decided by where the game has headroom: the app footprint section shows what the whole pipeline costs with captions
 arriving at speaking pace.
+
+### European pairs on a processor-only PC (MT-Europe, 2026-10-11)
+
+The question: on a PC where the bundled translator runs on the processor, should English with French, Spanish, Portuguese,
+German, Italian and Dutch go to NLLB-200 600M with **beam 4** first, instead of Hy-MT2 1.8B? The P7 tables above rank the two on
+chrF2 (NLLB 1 to 8 points ahead on some European pairs) but carry NLLB's latency and cost only for greedy decoding. This run
+measures beam 4 itself, next to Hy-MT2 on the processor, with the same release `Sigil.exe`, the same model store and the same
+below-normal 12-logical-processor slice, under the timing lock, one campaign in sequence (specs `mt_europe.json`,
+`mtspeed_nllb-beam4_none.json`, `mtspeed_nllb-beam4_h3_cpu_game.json` and the existing Hy-MT2 speed specs; the tables come from
+`campaign/mt_europe_table.py`).
+
+**Text.** The European directions of the P7 sets, 24 lines each: the casual caption lines (en to de / es, de / es to en), WMT24++
+(en to de / es / fr / pt; its social and speech domains first) and FLORES-200 (de / es / fr / pt to en). WMT24++ has no Italian or
+Dutch, so the campaign adds `flores200-eu`, built offline from the FLORES-200 archive the P7 corpus already holds: the same
+devtest sentences in the directions the first set lacks (en to de / es / fr / pt / it / nl and it / nl to en;
+`corpus/build_text_sets.py`, which reproduces the three existing sets byte for byte). 480 lines per engine. There are no casual lines
+for French, Portuguese, Italian or Dutch (nobody wrote references for them), so those pairs rest on WMT24++ and FLORES-200 text, which is
+longer and more formal than a caption. **Scoring** is the P7 rule: chrF2 per set (sacrebleu defaults, one reference per line), a
+direction is the line-weighted mean of its sets, and the interval is a paired bootstrap that resamples the lines inside every set
+(1000 resamples, the same draw for both engines). A language pair pools both of its directions with English.
+
+chrF2 per language pair (higher is better):
+
+| Pair | Lines | NLLB-600M beam 4 | Hy-MT2 1.8B (CPU) | Difference [95 % interval] | NLLB ahead in |
+|---|---:|---:|---:|---:|---:|
+| en and fr | 72 | **65.3** | 59.3 | +6.0 [+3.8, +8.5] | 100 % of resamples |
+| en and pt | 72 | **69.8** | 65.0 | +4.8 [+2.3, +7.3] | 100 % |
+| en and nl | 48 | **62.6** | 59.0 | +3.6 [+1.2, +5.7] | 100 % |
+| en and es | 120 | **64.6** | 61.7 | +2.8 [+1.1, +4.6] | 100 % |
+| en and de | 120 | 63.9 | 62.2 | +1.7 [-0.6, +3.9] | 91 % |
+| en and it | 48 | 60.8 | 60.0 | +0.8 [-2.6, +3.8] | 69 % |
+
+By direction, with the chrF2 of each set (NLLB beam 4 / Hy-MT2; a dash = the set has no such direction). The casual lines are the
+captions of the audience; the other three sets are text a streamer reads out less often:
+
+| Direction | Casual lines | WMT24++ | FLORES-200 | FLORES-200, new directions | Pooled difference [95 % interval] |
+|---|---:|---:|---:|---:|---:|
+| en to fr | - | 57.4 / 50.5 | - | 70.4 / 65.3 | +6.0 [+3.1, +9.1] |
+| fr to en | - | - | 68.1 / 62.0 | - | +6.1 [+2.8, +9.0] |
+| en to pt | - | 62.7 / 58.4 | - | 71.2 / 69.0 | +3.3 [-0.4, +6.6] |
+| pt to en | - | - | 75.5 / 67.7 | - | +7.8 [+4.6, +10.7] |
+| en to nl | - | - | - | 59.8 / 57.3 | +2.6 [-1.5, +6.5] |
+| nl to en | - | - | - | 65.4 / 60.8 | +4.6 [+2.2, +7.1] |
+| en to es | 73.5 / 68.1 | 60.1 / 59.9 | - | 54.8 / 55.1 | +1.8 [-0.3, +3.9] |
+| es to en | 73.7 / 68.1 | - | 60.6 / 57.4 | - | +4.4 [+1.4, +7.7] |
+| en to de | 67.6 / 65.9 | 50.5 / 51.7 | - | 62.5 / 60.8 | +0.8 [-2.0, +3.7] |
+| de to en | 71.5 / 70.5 | - | 67.5 / 62.1 | - | +3.2 [-0.6, +7.1] |
+| en to it | - | - | - | 57.8 / 58.7 | -0.9 [-7.2, +4.2] |
+| it to en | - | - | - | 63.8 / 61.3 | +2.4 [-0.9, +5.7] |
+
+NLLB beam 4 is never significantly behind: the worst direction is Italian from English (-0.9, interval -7.2 to +4.2, 24 lines). Its
+beam-4 output is deterministic and reproduces the P7 run to the digit (for example en to es casual 73.5, WMT24++ 60.1); Hy-MT2 samples at
+temperature 0.2, so its sets moved by up to 1.6 points between the two runs, which is the size of difference these 24-line sets
+cannot resolve (en to de and en to es on WMT24++ are ties).
+
+Speed and cost per caption line (the P7 speed spec: 10 casual lines per direction, 100 lines in all, 10 directions including the
+Asian ones; cores are the process tree's mean while a line translates, minus the game stand-in's own CPU where it ran, 2.3-2.4
+cores):
+
+| Engine | Load | Latency per line p50 / p95 ms | Cores while translating | RAM, process tree (MB) |
+|---|---|---:|---:|---:|
+| NLLB-600M beam 4, 2 threads (in process) | idle | 1641 / 2432 | 1.8 | 2649 |
+| NLLB-600M beam 4 | next to a game | 1881 / 2759 | 1.7 | 2636 |
+| NLLB-600M greedy (rerun; the P7 row above is 947 / 1344) | idle | 862 / 1231 | 1.8 | 2608 |
+| Hy-MT2 1.8B, `llama-server` on the processor with 6 threads (what the plan picks on this 8-core rig) | idle | 390 / 624 | 5.0 | 2406 |
+| Hy-MT2, 6 threads | next to a game | 414 / 680 | 4.8 | 2403 |
+| Hy-MT2, 4 threads (what the plan picks on a 6-core PC: physical cores minus 2) | idle | 373 / 613 | 3.7 | 2364 |
+| Hy-MT2, 4 threads | next to a game | 410 / 657 | 3.5 | 2352 |
+
+Beam 4 takes 1.9 times greedy's time (1.64 s against 0.86 s) for the same 1.8 cores, and 4.2 times Hy-MT2's: NLLB spends about 3.0
+core-seconds on a casual line (1.8 cores for 1.6 s), Hy-MT2 1.4 on four threads (3.7 cores for 0.37 s) or 2.0 on six, so the processor
+time of a line doubles while the burst the game sees is half as tall. The four-thread rows come from a `llama-server` started by hand
+with the flags the app uses on the processor (context 4096, no GPU layers, `-fa auto`, one slot, `--device none`, `-t 4`) on the
+same slice and driven through the `openai` backend, because the bench does not forward `threads` to the bundled server; the thread
+count changes the cores and not the latency here (373 ms against 390 ms). The quality run timed every line too: on its casual
+lines (4 directions, 96 lines) NLLB beam 4 took 1.4 s at the median (1.2 to 1.5 s per direction; p95 2.0 s) and Hy-MT2 0.37 s (p95 0.49 s);
+on the formal WMT24++ and FLORES-200 sentences (384 lines, median 140 characters against 46 for the 96 casual lines, longest 401) NLLB beam 4 took 4.4 s (4.0 to 4.8 s per
+direction; p95 8.2 s, slowest 14.5 s) and Hy-MT2 1.0 s (p95 2.1 s). The router gives a final 6 s per 120 characters; NLLB beam 4 used
+52 % of that at the median, 18 of 480 lines used more than 80 % and one overran it (8.2 s for 157 characters), so the built-in route gives
+NLLB's attempt at a final 1.5 times the budget; a line that still overruns falls through to the AI model.
+
+**Decision, per tier.**
+
+| Tier | Decision | Why |
+|---|---|---|
+| CPU only (the bundled translator runs on the processor: variant `cpu`, no GPU layers, or `auto` resolved to the processor) | **NLLB beam 4 first** for English with French, Portuguese, Dutch and Spanish, both directions; German and Italian stay on Hy-MT2 first | The 95 % interval of the pair difference is above zero for those four (+6.0, +4.8, +3.6, +2.8) and straddles zero for German (+1.7) and Italian (+0.8). NLLB spends 1.7-1.8 cores instead of 3.5-5.0 for 1.6-1.9 s instead of 0.4 s, and holds the same 2.4-2.6 GB; a caption line arrives about 1.2 s later, and the AI model still answers when the NLLB model is not installed or a line overruns |
+| Mid-range GPU (8-12 GB) | Unchanged: Hy-MT2 first | On Vulkan Hy-MT2 answers in 51 / 83 ms (116 / 195 ms under the VRChat + OBS GPU stand-in) for 0.3-0.5 cores and scores like the processor build (53.1 against 53.5 on the P7 sets), so NLLB would add 1.7-1.8 cores for 1.6-1.9 s per line for the same gain |
+| High-end GPU (16 GB or more) | Unchanged: Hy-MT2 first | Same numbers; the larger card does not change the cost side |
+| Japanese, Korean, Chinese (any tier) | Unchanged: Hy-MT2 first | Hy-MT2 wins by 5-16 chrF2 points (en to ja 36.6 against 26.4) |
+
+**How it is applied** (`translation/routingTable.ts`, read by the router): a built-in route, not a saved setting. While the host reports that
+the bundled translator is on the processor, the eight directions above (the source language the pipeline resolved for the line: your Source language setting, else the language the speech engine reported; regional spellings accepted) use the
+chain NLLB, Hy-MT2, Firefox Translations and ask NLLB for beam 4 on finals (`TranslationRequest.beam`; the slice's own **Beam** is a
+floor) with 1.5 times the router's attempt budget; a line with no known source, a line with a glossary term or any line while the context background text is filled in (NLLB uses neither), interims and every other pair are unchanged. A rule of your own for the pair under **Language pair rules**,
+or an edited chain, always wins, so the route can be turned off without a new switch. The chain members are the default chain's, so
+nothing new starts or downloads: a PC that never installed NLLB (0.9 GB, offered in Models & Runtimes) behaves exactly as before.
+The tier is read per line, so the route starts once the model server's variant is known.
+
+**Limits.** Neither engine was given the rolling context. The bench's `context: previous` takes the previous line of the same document, and the WMT24++ and FLORES-200 lines were drawn at random from their documents, so the sets have no consecutive lines to give; the app gives the AI model up to three earlier lines and NLLB cannot read them. The gain above is for a line translated alone; what the context adds to the AI model on these pairs is not measured (it would need a European set of consecutive caption lines). One reference per line and chrF2 only (no MetricX-24, no blind A/B; the P7 caveat about close engines applies to
+German and Italian, which may be better or worse than a tie). French, Portuguese, Italian and Dutch have no casual caption lines, and
+Italian and Dutch rest on one 24-line FLORES-200 set each. The campaign ran on the dev rig (a faster processor than a typical 6-core
+PC); both engines slow down together, the ratio is what carries over. The opt-in larger models (Hy-MT2 7B, NLLB 1.3B) were not tried.
+A CPU-only friend's `export.json` of `mt_europe.json` would add a second processor.
 
 ## Text-to-speech
 
@@ -526,14 +631,17 @@ mid-range card was not measured. Two of the models listed are not routable: Voxt
   worse than Parakeet Ultra on the European languages (ru 23.8 against 6.1, pt 12.3 against 3.9). The language-ID engine already names the language
   (105 of 108 right); choosing the final engine from the detected language's own row (Ultra for the 25 Parakeet languages, SenseVoice for ja / zh,
   Qwen3-ASR for ko and the rest) needs a per-utterance final in the router (Rust `speech::router`), not a table change. Until then, setting the language
-  is the single biggest accuracy step for a European-language streamer; it also saves 1 GB of RAM (footprint table).
+  is the single biggest accuracy step for a European-language streamer; it also saves 1 GB of RAM (footprint table). Sigil asks for the language rather than waiting for that router change: the setup wizard's STT step (not shown in the app yet), a hint in the STT panel, and a suggestion after three consistent detections in a session (all explicit, never a silent lock; see [Locking the STT language](../DEVELOPER_GUIDE.md#locking-the-stt-language)).
 - **Interim translations on the CPU: applied by P7-I0** (see the footprint section). The bundled translator on the CPU with the old default took 4.0 cores on average (6.7 at the peak) at speaking pace
   next to the game; final lines only take 1.5. The default is now automatic (off on the CPU variant, on elsewhere; a stored choice wins). A throttle of 1.5 s,
   `translation.partials.throttleMs`, only got to 2.7 cores, so it is not a substitute.
 - **Loopback-only Korean row.** Other players' captions share the CPU table. On the bleed conditions SenseVoice is the better Korean final (14.4 against 19.2
   over music, babble and the VRChat mix; babble 22.8 against 39.0). A separate `loopback` row set would take it; nothing measured yet says anyone needs it.
-- **European translation pairs.** NLLB with beam 4 is 1 to 8 chrF points ahead of Hy-MT2 on en to fr / es / pt / de and from de / es / fr / pt / ru / ja. Per-pair
-  chains (`pairOverrides`: NLLB first) would take it, at 4x the latency; the audience's pairs (ja, ko, zh) stay on Hy-MT2.
+- **European translation pairs: applied on the processor tier (MT-Europe, 2026-10-11).** English with French, Portuguese, Dutch and Spanish goes to NLLB beam 4 first while
+  the bundled translator runs on the processor (+2.8 to +6.0 chrF2, interval above zero); German and Italian tied and stay on Hy-MT2; the graphics-card tiers are unchanged
+  (see "European pairs on a processor-only PC"). Still open: casual caption lines for French, Portuguese, Italian and Dutch (only German and Spanish have them),
+  MetricX-24 or a blind A/B on German and Italian, a second processor (a friend's `export.json` of `mt_europe.json`), and the app offering the 0.9 GB NLLB download when a
+  processor-only PC translates one of the four pairs (the route does nothing without the model; the offer needs a new UI string).
 - **Real VRChat clips and friend exports.** The corpus is synthetic. Drop real clips into the `real` folder of the corpus and rerun the screening spec, and send
   `export.json` of the speed specs from a CPU-only PC and from an RTX 3060 / 4060 (`scripts/speech-bench/score/merge_exports.py` tabulates them).
 - **The GPU tier.** Whether the opt-in GPU finals (Cohere, Qwen3-ASR 1.7B) cost the game more than they give, on a mid-range card under VRChat and OBS, and whether
@@ -686,6 +794,7 @@ Still to record (manual, see [RELEASE_AND_ENGINEERING.md → P4 exit matrix](../
 ## Reproducing
 
 - The P7-A campaign: [`scripts/speech-bench/campaign/README.md`](../../scripts/speech-bench/campaign/README.md) (specs, drivers, the own-mic ranking `own_mic.py`, the footprint harness). One run: `pwsh scripts/speech-bench/campaign/lock-run.ps1 -Name <tag> -Spec scripts/speech-bench/campaign/specs/<spec>.json -Out bench-results/speech/<tag> -Cpu -Affinity FFF`; score with `score/score_stt.py --items`, then `campaign/own_mic.py --items .../items.jsonl ...`. A friend runs the same spec and sends `export.json` (`score/merge_exports.py` tabulates the machines).
+- MT-Europe (European pairs, NLLB beam 4 against Hy-MT2 on the processor): `python scripts/speech-bench/corpus/build_text_sets.py` once (it adds `flores200-eu.jsonl` and leaves the other sets byte for byte as they were), then `pwsh scripts/speech-bench/campaign/lock-run.ps1 -Name mt-europe -Spec scripts/speech-bench/campaign/specs/mt_europe.json -Out bench-results/speech/mt-europe -Cpu -Affinity FFF` and the two `mtspeed_nllb-beam4_*` specs the same way; `python scripts/speech-bench/campaign/mt_europe_table.py --report .../report.json --set <each set>` prints the pair, direction and per-set tables with their paired intervals. A friend with a processor-only PC sends the `export.json` of `mt_europe.json`.
 - sherpa engines: `SIGIL_APP_DATA_DIR=<store with the models> SIGIL_TEST_MODELS_DIR=<dev cache>
   cargo test --manifest-path src-tauri/Cargo.toml sherpa -- --include-ignored --test-threads=1`;
   the probe matrix script lives in `scripts/runtime-packs/sherpa/`.

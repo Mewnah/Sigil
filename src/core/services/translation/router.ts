@@ -1,6 +1,7 @@
 import i18n from "i18next";
 import { raceWithSignal } from "./abort";
 import { canonicalLanguage, sameLanguage } from "./languages";
+import { lineNeeds, TIER_ROUTES, tierRouteFor, TranslationTier, type LineNeeds } from "./routingTable";
 import { Translation_Backends, Translation_State, TranslationEngineId } from "./schema";
 import {
   ITranslationEngine,
@@ -13,7 +14,8 @@ import {
 
 /**
  * Router engine (`auto` backend, research §3.2 "language-pair router with a fallback chain"). For each line it tries
- * the pair's chain (`auto.pairOverrides`, first match, else `auto.chain`) in order:
+ * the pair's chain (`auto.pairOverrides`, first match, else the built-in route of the tier while the bundled translator
+ * runs on the processor (`routingTable.ts`: the European pairs go to NLLB beam 4 first), else `auto.chain`) in order:
  *
  * - Members are the other engines, created from the host's constructors. `start` starts every member of the
  *   configured pair's chain concurrently and resolves as soon as one is ready (the rest keep starting; members of
@@ -75,14 +77,38 @@ export function isCloudEngine(id: TranslationEngineId, state: Pick<Translation_S
   }
 }
 
-/** The chain for a pair: the first matching `pairOverrides` entry (blank side = any), else `chain`. */
-export function chainForPair(auto: Translation_State["auto"], from: string, to: string): TranslationEngineId[] {
+/** The route for a pair: its engines in order, and what a built-in route asks of NLLB (beam width, longer attempt budget). */
+export interface PairRoute {
+  chain: TranslationEngineId[];
+  nllbBeam?: number;
+  nllbBudgetFactor?: number;
+}
+
+/**
+ * The route for a pair: the first matching `pairOverrides` entry (blank side = any), else the built-in route of the tier
+ * (`routingTable.ts`: the European pairs on a processor-only PC, unless the line carries a glossary term or the
+ * background text, which only the AI model uses), else `chain`.
+ */
+export function routeForPair(
+  auto: Translation_State["auto"],
+  from: string,
+  to: string,
+  tier: TranslationTier = "default",
+  needs: LineNeeds = {},
+): PairRoute {
   for (const o of auto.pairOverrides) {
     const fromOk = !o.from.trim() || (from !== "" && sameLanguage(o.from, from));
     const toOk = !o.to.trim() || sameLanguage(o.to, to);
-    if (fromOk && toOk && o.chain.length) return [...o.chain];
+    if (fromOk && toOk && o.chain.length) return { chain: [...o.chain] };
   }
-  return [...auto.chain];
+  const builtin = tierRouteFor(auto, from, to, tier, needs);
+  if (builtin) return { chain: [...builtin.chain], nllbBeam: builtin.nllbBeam, nllbBudgetFactor: builtin.nllbBudgetFactor };
+  return { chain: [...auto.chain] };
+}
+
+/** The chain for a pair (`routeForPair` without what a built-in route asks of NLLB). */
+export function chainForPair(auto: Translation_State["auto"], from: string, to: string, tier: TranslationTier = "default"): TranslationEngineId[] {
+  return routeForPair(auto, from, to, tier).chain;
 }
 
 /** i18n name of an engine for messages. */
@@ -107,10 +133,13 @@ export function routerAttemptBudgetMs(attemptTimeoutMs: number, kind: Translatio
  * use its attempt budget (the pipeline's sequencer deadline must not cut the chain short).
  */
 export function routerLineBudgetMs(auto: Translation_State["auto"], kind: TranslationKind, text: string): number {
-  const chains = [auto.chain, ...auto.pairOverrides.map((o) => o.chain)];
+  const chains = [auto.chain, ...auto.pairOverrides.map((o) => o.chain), ...TIER_ROUTES.map((r) => r.chain)];
   const longest = Math.max(1, ...chains.map((c) => c.length));
   const members = kind === "interim" ? INTERIM_MAX_ATTEMPTS : longest + (auto.cloudFallback ? LOCAL_FALLBACKS.length : 0);
-  return members * (auto.attemptTimeoutMs + routerAttemptBudgetMs(auto.attemptTimeoutMs, kind, text));
+  const budget = routerAttemptBudgetMs(auto.attemptTimeoutMs, kind, text);
+  // A built-in route gives NLLB's attempt at a final a longer budget (`nllbBudgetFactor`); the line may use all of it.
+  const extra = kind === "final" ? Math.max(0, ...TIER_ROUTES.map((r) => Math.round(budget * (r.nllbBudgetFactor - 1)))) : 0;
+  return members * (auto.attemptTimeoutMs + budget) + extra;
 }
 
 /** Rejection reason of an attempt that exceeded its budget (`phase: "start"`: the member was still starting). */
@@ -214,6 +243,11 @@ function breakerKey(kind: TranslationKind, id: TranslationEngineId, from: string
 
 type AttemptResult = { ok: true; text: string } | { ok: false; error: unknown };
 
+/** The failure is a model that is not installed (a start that cannot succeed until the user downloads it). */
+function isMissingModel(e: unknown): boolean {
+  return e instanceof TranslationError && e.missing.length > 0;
+}
+
 function missingOf(errors: readonly unknown[]): string[] {
   const out: string[] = [];
   for (const e of errors) {
@@ -251,7 +285,7 @@ export class Translation_RouterService implements ITranslationEngine {
     const to = canonicalLanguage(state.targetLanguage);
     if (!to) throw new TranslationError(i18n.t("transl.error_target_missing"), { retryable: false });
     const from = canonicalLanguage(state.sourceLanguage);
-    const chain = chainForPair(state.auto, from, to);
+    const chain = chainForPair(state.auto, from, to, this.#tier());
     const extra = state.auto.interimEngine !== "auto" ? [state.auto.interimEngine] : [];
 
     const failures: { id: TranslationEngineId; error: unknown }[] = [];
@@ -298,11 +332,12 @@ export class Translation_RouterService implements ITranslationEngine {
     if (!to) throw new TranslationError(i18n.t("transl.error_target_missing"), { retryable: false });
 
     const kind = request.kind;
-    const chain = chainForPair(state.auto, from, to);
+    const route = routeForPair(state.auto, from, to, this.#tier(), lineNeeds(request));
+    const chain = route.chain;
     const candidates = this.#candidates(kind, chain, from, to);
     const startWaitMs = state.auto.attemptTimeoutMs;
     const budgetMs = routerAttemptBudgetMs(state.auto.attemptTimeoutMs, kind, request.text);
-    const memberRequest: TranslationRequest = { ...request, from, to, onEngine: undefined };
+    const memberRequest: TranslationRequest = { ...request, from, to, onEngine: undefined, beam: route.nllbBeam };
     const failures: { id: TranslationEngineId; error: unknown }[] = [];
     let cloudFailed = false;
     let attempts = 0;
@@ -332,17 +367,21 @@ export class Translation_RouterService implements ITranslationEngine {
       }
 
       attempts++;
-      const result = await this.#try(m, breaker, memberRequest, signal, startWaitMs, budgetMs);
+      const result = await this.#try(m, breaker, memberRequest, signal, startWaitMs, this.#budgetFor(id, route, kind, budgetMs));
       if (result.ok) return this.#answered(request, id, preferred, result.text);
       failures.push({ id, error: result.error });
       if (isCloudEngine(id, state)) cloudFailed = true;
+      // A member whose model is not installed is not part of this PC's route: the engine that answers in its place
+      // is the one the user has, and no "using X instead of Y" warning is due (the first minute after a failed start
+      // already skips such a member; this keeps the retry that comes after ROUTER_START_RETRY_MS from flashing it).
+      if (preferred === id && isMissingModel(result.error)) preferred = undefined;
     }
 
     // Finals are never dropped for an open breaker or a slow start alone: probe those members anyway.
     for (const id of deferred) {
       const m = this.#member(id);
       if (!this.#usable(m, from, to)) continue;
-      const result = await this.#try(m, this.#breaker(kind, id, from, to), memberRequest, signal, startWaitMs, budgetMs);
+      const result = await this.#try(m, this.#breaker(kind, id, from, to), memberRequest, signal, startWaitMs, this.#budgetFor(id, route, kind, budgetMs));
       if (result.ok) return this.#answered(request, id, preferred, result.text);
       failures.push({ id, error: result.error });
     }
@@ -375,7 +414,7 @@ export class Translation_RouterService implements ITranslationEngine {
     const state = this.#state;
     if (!state) return true;
     let unsettled = false;
-    for (const id of chainForPair(state.auto, from, to)) {
+    for (const id of chainForPair(state.auto, from, to, this.#tier())) {
       const m = this.#members.get(id);
       if (m?.ready && m.engine) {
         if (m.engine.supports?.(from, to) !== false) return true;
@@ -387,6 +426,17 @@ export class Translation_RouterService implements ITranslationEngine {
   }
 
   // --- internals ------------------------------------------------------------------------------------------------
+
+  /** The attempt budget of member `id`: NLLB asked for a wider beam by a built-in route gets `nllbBudgetFactor` times more for a final. */
+  #budgetFor(id: TranslationEngineId, route: PairRoute, kind: TranslationKind, budgetMs: number): number {
+    if (kind !== "final" || id !== Translation_Backends.nllb || !route.nllbBudgetFactor) return budgetMs;
+    return Math.min(ROUTER_MAX_ATTEMPT_MS * route.nllbBudgetFactor, Math.round(budgetMs * route.nllbBudgetFactor));
+  }
+
+  /** `cpu` while the bundled translator runs on the processor (the host reads the server's status), else `default`. */
+  #tier(): TranslationTier {
+    return this.#host?.translatorOnCpu?.() ? "cpu" : "default";
+  }
 
   #member(id: TranslationEngineId): Member {
     let m = this.#members.get(id);

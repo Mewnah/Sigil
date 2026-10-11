@@ -66,8 +66,10 @@ import { pushSystemLog } from "@/core/services/systemLog";
 import { PROCESS_NONCE } from "@/utils/processNonce";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "../abort";
+import { languageDisplayName } from "../languageSuggestion";
 import { SttStartLifecycle } from "../localEngineLifecycle";
 import {
+  isAutoLanguage,
   isTwoPassPlan,
   normalizeLanguage,
   planHasEngine,
@@ -333,6 +335,13 @@ export interface SmallerConsentSet extends ConsentSet {
 export interface ConsentRequest extends ConsentSet {
   /** The single-pass setup, when it downloads much less (null: not offered). */
   smaller: SmallerConsentSet | null;
+  /**
+   * The language the plan was made for. On "auto" the dialog adds a tip: the automatic route needs the language-ID
+   * model and a general model, so choosing the language first usually downloads less and is more accurate. (The
+   * setup wizard, which asks the language up front, is not shown in the app yet; this is the last moment before a
+   * first download.)
+   */
+  language?: string;
 }
 
 export type ConsentChoice = "download" | "smaller" | "cancel";
@@ -355,6 +364,9 @@ export function consentTexts(req: ConsentRequest): { title: string; message: str
     text += `\n\n${hint}`;
     smaller = size ? i18n.t("stt.local_consent_smaller", { size }) : i18n.t("stt.local_consent_smaller_free");
   }
+  if (req.language !== undefined && isAutoLanguage(req.language)) text += `
+
+${i18n.t("stt.local_consent_auto_hint")}`;
   return {
     title: i18n.t("stt.local_consent_title"),
     message: text,
@@ -1042,7 +1054,37 @@ export class STT_LocalService implements ISTTService {
     const request = buildLocalRouteRequest(params.local);
     const plan = await this.#preview(request, signal);
     if (!planHasEngine(plan)) throw new Error(i18n.t("stt.local_error_no_engine"));
+    const installed = await this.#installedRouteForAutomaticStart(plan, request, signal);
+    if (installed) return installed;
     return this.#ensureModels(plan, request, params.local?.smartTurn === true, signal);
+  }
+
+  /**
+   * An automatic start (the app launching with Start on launch, or a restart that must not ask) never downloads
+   * and never asks. If the language the profile is set to needs models that are not installed (a language locked
+   * from the suggestion before its models were downloaded, or models deleted since), it would stop with an error and
+   * leave a streamer in VR without captions. When the automatic route is fully installed it runs that instead, and
+   * says so in the system log; the next Start by hand asks and downloads as it always did. Null: not an automatic
+   * start, nothing missing, the language is automatic already, or the automatic route is not installed either (the
+   * start then fails with the usual "models are not downloaded" message).
+   */
+  async #installedRouteForAutomaticStart(
+    plan: RustSpeechRoutePlan,
+    request: Required<RustSpeechRouteRequest>,
+    signal: AbortSignal | null,
+  ): Promise<{ plan: RustSpeechRoutePlan; request: Required<RustSpeechRouteRequest> } | null> {
+    if (!this.startAutomatic || plan.missing.length === 0 || isAutoLanguage(request.language)) return null;
+    const autoRequest = { ...request, language: "auto" };
+    let autoPlan: RustSpeechRoutePlan;
+    try {
+      autoPlan = await this.#preview(autoRequest, signal);
+    } catch (e) {
+      if (isAbortError(e)) throw e;
+      return null;
+    }
+    if (!planHasEngine(autoPlan) || autoPlan.missing.length > 0) return null;
+    this.#deps.log(i18n.t("stt.local_log_auto_fallback", { language: languageDisplayName(request.language, i18n.language) }), "warning");
+    return { plan: autoPlan, request: autoRequest };
   }
 
   #preview(request: RustSpeechRouteRequest, signal: AbortSignal | null): Promise<RustSpeechRoutePlan> {
@@ -1091,7 +1133,7 @@ export class STT_LocalService implements ISTTService {
       const smaller = await this.#smallerSetup(plan, request, smartTurn, full, signal);
       this.#throwIfAborted(signal);
       this.receiver.onStatus(i18n.t("stt.local_status_consent"));
-      const choice = await this.#deps.askConsent({ ...full, smaller: smaller?.set ?? null });
+      const choice = await this.#deps.askConsent({ ...full, smaller: smaller?.set ?? null, language: request.language });
       this.#throwIfAborted(signal);
       if (choice === "cancel") throw new Error(i18n.t("stt.local_error_declined"));
       if (choice === "smaller" && smaller) {

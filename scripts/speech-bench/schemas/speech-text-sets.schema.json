@@ -15,7 +15,7 @@
         "src": { "type": "string", "minLength": 1 },
         "ref": { "type": "string", "minLength": 1 },
         "refs": { "type": "array", "items": { "type": "string" } },
-        "set": { "enum": ["wmt24pp", "flores200", "bsd", "sigil-casual", "real-captions"] },
+        "set": { "enum": ["wmt24pp", "flores200", "flores200-eu", "bsd", "sigil-casual", "real-captions"] },
         "domain": { "type": ["string", "null"], "description": "WMT24++ domain (social, speech, news, literary), BSD scene, FLORES topic." },
         "doc": { "type": ["string", "null"], "description": "Document / dialogue id (the previous line of the same doc is the context)." },
         "license": { "type": "string" }

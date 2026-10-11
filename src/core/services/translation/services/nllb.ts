@@ -63,6 +63,9 @@ interface NllbConfig {
   beam: number;
 }
 
+/** Widest beam the slice allows (`Translation_Nllb_Schema.beam`, Rust `nllb::MAX_BEAM`). */
+const NLLB_MAX_BEAM = 4;
+
 /**
  * NLLB-200 engine (`nllb` backend) over `plugin:mt-local|nllb_*` (Rust `mt_local/nllb.rs`: NLLB-200 distilled on
  * Sigil's ONNX Runtime, CPU background profile). About 200 languages in any direction, fully offline; the router
@@ -159,7 +162,8 @@ export class Translation_NllbService implements ITranslationEngine {
       kind: request.kind,
       requestId,
       model: config.model,
-      beam: request.kind === "final" ? config.beam : 1,
+      // A built-in route (`routingTable.ts`) can ask for a wider beam for a final; the slice's own width is a floor.
+      beam: request.kind === "final" ? Math.max(config.beam, Math.min(NLLB_MAX_BEAM, Math.trunc(request.beam ?? 1))) : 1,
       threads: config.threads,
     };
     const onAbort = () => {

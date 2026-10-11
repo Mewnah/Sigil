@@ -145,6 +145,19 @@ describe("Translation_NllbService", () => {
     expect(interim.requestId).toMatch(/^nllb-\d+$/);
   });
 
+  it("lets a route ask for a wider beam for finals: never narrower than the slice, never for interims, at most the model's maximum", async () => {
+    route({ "plugin:mt-local|nllb_load": () => ({}), "plugin:mt-local|nllb_translate": () => ({ text: "x" }) });
+    const engine = new Translation_NllbService();
+    await engine.start(state((s) => (s.nllb.beam = 2)), live());
+    await engine.translate({ text: "a", kind: "final", from: "en", beam: 4 }, live());
+    await engine.translate({ text: "b", kind: "final", from: "en", beam: 1 }, live());
+    await engine.translate({ text: "c", kind: "interim", from: "en", beam: 4 }, live());
+    await engine.translate({ text: "d", kind: "final", from: "en", beam: 9 }, live());
+    await engine.translate({ text: "e", kind: "final", from: "en" }, live());
+    const beams = calls("plugin:mt-local|nllb_translate").map((a) => (a.request as { beam: number }).beam);
+    expect(beams).toEqual([4, 2, 1, 4, 2]);
+  });
+
   it("guesses an unknown source from the script and passes it on", async () => {
     route({ "plugin:mt-local|nllb_load": () => ({}), "plugin:mt-local|nllb_translate": () => ({ text: "x" }) });
     const engine = new Translation_NllbService();

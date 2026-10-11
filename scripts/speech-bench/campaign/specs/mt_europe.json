@@ -1,0 +1,117 @@
+{
+ "$comment": [
+  "MT-Europe: should European pairs go to NLLB-200 600M beam 4 first on a CPU-only PC? NLLB beam 4 and Hy-MT2 1.8B on the CPU, on the European directions of the P7-A sets (casual caption lines, WMT24++, FLORES-200, 24 lines per direction) plus flores200-eu (the same FLORES sentences in the directions P7-A lacked, with Italian and Dutch; build it with corpus/build_text_sets.py)."
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "mt-europe",
+ "description": "European pairs: NLLB-600M beam 4 against Hy-MT2 1.8B, both on the CPU",
+ "seed": 20261002,
+ "engines": [
+  {
+   "id": "nllb-beam4",
+   "task": "mt",
+   "backend": "nllb",
+   "model": "mt/nllb-200-distilled-600m-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "options": {
+    "beam": 4
+   }
+  },
+  {
+   "id": "hy-mt2-1.8b-cpu",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "casual",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl",
+    "directions": [
+     "en-de",
+     "de-en",
+     "en-es",
+     "es-en"
+    ]
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  },
+  {
+   "name": "wmt24pp",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/wmt24pp.jsonl",
+    "directions": [
+     "en-de",
+     "en-es",
+     "en-fr",
+     "en-pt"
+    ],
+    "limit": 24
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  },
+  {
+   "name": "flores200",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/flores200.jsonl",
+    "directions": [
+     "de-en",
+     "es-en",
+     "fr-en",
+     "pt-en"
+    ],
+    "limit": 24
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  },
+  {
+   "name": "flores200-eu",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/flores200-eu.jsonl",
+    "limit": 24
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": false,
+   "include_items": true
+  }
+ }
+}

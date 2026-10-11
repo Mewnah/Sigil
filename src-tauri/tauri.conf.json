@@ -37,7 +37,7 @@
     }
   },
   "build": {
-    "beforeDevCommand": "pnpm dev --host",
+    "beforeDevCommand": "pnpm dev --host 127.0.0.1",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"

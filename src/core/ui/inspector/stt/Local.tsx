@@ -4,12 +4,11 @@ import {
   isTwoPassPlan,
   planRoles,
   requiredModelIds,
-  routedLanguages,
   specOnGpu,
   type PlanRole,
 } from "@/core/services/stt/router";
 import { buildLocalRouteRequest, localSpeechState } from "@/core/services/stt/services/local";
-import { WHISPER_LANGUAGES } from "@/core/services/stt/whisperModels";
+import { lockableLanguages } from "@/core/services/stt/languageSuggestion";
 import { entryTitle } from "@/core/services/models/format";
 import { formatBytes } from "@/core/services/diagnostics/format";
 import { ServiceNetworkState, type RustCatalogEntry, type RustSpeechEngineSpec, type RustSpeechRoutePlan } from "@/types";
@@ -32,18 +31,11 @@ import { MusicGateRequirement } from "@/core/services/readings/ReadingsSection";
  * (`plugin:speech|preview_route`; while running, the plan in use) and `<ModelRequirement>` for consent and downloads.
  */
 
-/** Whisper-only languages already covered under another code by the router (`no` → `nb`, `tl` → `fil`). */
-const WHISPER_ALIASED = new Set(["no", "tl"]);
-
 /** How often the preview is refreshed while the panel is open (GPU memory and the voice changer change). */
 const PREVIEW_REFRESH_MS = 30_000;
 
 /** Languages offered: every language the router has a row for, plus the ones Whisper handles well. */
-function languageCodes(): string[] {
-  const codes = new Set(routedLanguages());
-  for (const code of WHISPER_LANGUAGES) if (!WHISPER_ALIASED.has(code)) codes.add(code);
-  return [...codes];
-}
+const languageCodes = (): string[] => [...lockableLanguages()];
 
 interface PreviewState {
   plan: RustSpeechRoutePlan | null;

@@ -719,6 +719,18 @@ describe("automatic interim switch (P7: off while the bundled translator runs on
     expect(interimCalls()).toHaveLength(1);
   });
 
+  it("hands the engine the processor fact for the router's CPU-tier routes (read when asked, false without an option)", async () => {
+    let onCpu = false;
+    const h = await started(undefined, { translatorOnCpu: () => onCpu });
+    expect(engine().host?.translatorOnCpu?.()).toBe(false);
+    onCpu = true;
+    expect(engine().host?.translatorOnCpu?.()).toBe(true);
+    h.pipeline.stop();
+    const plain = await started();
+    expect(engine().host?.translatorOnCpu?.()).toBe(false);
+    plain.pipeline.stop();
+  });
+
   it("holds interims off on the processor but still translates the final", async () => {
     const h = await started(undefined, { translatorOnCpu: () => true });
     h.push(I, "hello", seg(1, 0));

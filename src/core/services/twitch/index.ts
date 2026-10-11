@@ -7,6 +7,7 @@ import { proxy } from "valtio";
 import { subscribeKey } from "valtio/utils";
 import i18n from "i18next";
 import { toast } from "react-toastify";
+import { postableFinal } from "../postText";
 import {
   serviceSubscibeToInput,
   serviceSubscibeToSource,
@@ -90,11 +91,11 @@ class Service_Twitch implements IServiceInterface {
         this.state.liveStatus !== ServiceNetworkState.connected
       )
         return;
+      const text = postableFinal(data);
       this.#state.data.chatEnable &&
         this.#state.data.chatPostEnable &&
-        data?.value &&
-        data?.type === TextEventType.final &&
-        this.chat.post(this.emotes.remapOutgoingChatText(data.value));
+        text &&
+        this.chat.post(this.emotes.remapOutgoingChatText(text));
     }));
 
     this.eventDisposers.push(serviceSubscibeToInput(this.#state.data, "chatPostInput", (data) => {

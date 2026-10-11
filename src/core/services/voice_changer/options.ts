@@ -10,6 +10,7 @@
 import {
     DENOISERS,
     effectivePitchExtractor,
+    effectiveRvcEp,
     GPU_ONLY_PITCH_EXTRACTORS,
     PITCH_EXTRACTORS,
     PRECISIONS,
@@ -219,4 +220,58 @@ export function leverViews(
 export function generalLeverNotes(running: VcEffectiveLevers | null, levers: readonly VcLever[]): string[] {
     if (!running) return [];
     return running.notes.filter((n) => !levers.some((l) => n.startsWith(`${l}:`)));
+}
+
+/**
+ * Physical cores at or under which the Streamer preset on the processor falls behind while a game is
+ * running. The headless benchmark of the final build (`docs/benchmarks/VC_BENCHMARKS.md` -> "The CPU
+ * Streamer on 4, 5 and 6 physical cores") with the game stand-in (4 threads at 60 %): on 6 cores the voice
+ * skipped 7-10 % of the audio, on 5 cores 14 %, on 4 cores 19-20 % (3 passes each); an 8-core PC skipped none.
+ */
+export const STREAMER_FEW_CORES_MAX = 6;
+
+/**
+ * The Block size (ms) from which the Streamer kept up under that stand-in on a 6-core slice: 160 ms dropped nothing
+ * in one run, and so did 200 ms.
+ */
+export const STREAMER_KEEPS_UP_BLOCK_MS = 160;
+
+/**
+ * The same for 5 cores and fewer: 200 ms is the only longer block that was run on 4 cores (nothing dropped under the
+ * stand-in, one run; its paced run missed the 98 % played requirement with 2 s of dry output a minute), and 5 cores
+ * were never run on a longer block, so they take the 4-core figure. 160 ms is not measured on those PCs and
+ * must not hide the note. 1 to 3 cores were not measured at all and are treated like 4.
+ */
+export const STREAMER_KEEPS_UP_BLOCK_MS_FEW = 200;
+
+/** Cores from which {@link STREAMER_KEEPS_UP_BLOCK_MS} (160 ms) is the measured remedy; fewer take the 200 ms figure. */
+export const STREAMER_CORES_FOR_160_MS = 6;
+
+/** The Block size (ms) from which the note hides on a PC with `cores` physical cores. */
+export function streamerKeepsUpBlockMs(cores: number): number {
+    return cores >= STREAMER_CORES_FOR_160_MS ? STREAMER_KEEPS_UP_BLOCK_MS : STREAMER_KEEPS_UP_BLOCK_MS_FEW;
+}
+
+/**
+ * Whether the Streamer preset runs on a processor with so few physical cores that it does not keep up while a
+ * game is running: the Streamer preset on the CPU rung (an unset EP follows the preset), a known core count of
+ * 1 to [`STREAMER_FEW_CORES_MAX`], and a Block size under [`streamerKeepsUpBlockMs`] for that core count (0 is
+ * Auto, which the Streamer on the processor turns into 120 ms). Returns the core count and the Block size that
+ * kept up, for the note, or `null` for no note.
+ */
+export function streamerFewCoresNote(input: {
+    profile: RvcProfileId;
+    ep: RvcExecutionProviderId | "";
+    /** `null` / `undefined` / 0 while the system probe has not answered. */
+    physicalCores: number | null | undefined;
+    blockMs: number;
+}): { cores: number; blockMs: number } | null {
+    if (input.profile !== "streamer") return null;
+    if (rvcBaseEp(effectiveRvcEp(input.ep, input.profile)) !== "cpu") return null;
+    const cores = input.physicalCores;
+    if (typeof cores !== "number" || !Number.isFinite(cores) || cores < 1 || cores > STREAMER_FEW_CORES_MAX) return null;
+    const whole = Math.trunc(cores);
+    const blockMs = streamerKeepsUpBlockMs(whole);
+    if (input.blockMs >= blockMs) return null;
+    return { cores: whole, blockMs };
 }

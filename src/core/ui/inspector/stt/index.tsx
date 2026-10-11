@@ -19,6 +19,7 @@ import { OpenAIAudio } from "./OpenAIAudio";
 import { Vosk } from "./Vosk";
 import { Whisper } from "./Whisper";
 import { GeminiLive } from "./GeminiLive";
+import { LanguageOfferPanel } from "./LanguageOffer";
 import { ReadingsSection } from "@/core/services/readings/ReadingsSection";
 import "../../stt-replacements-modal";
 
@@ -148,6 +149,9 @@ const Inspector_STT: FC = () => {
         {backend === STT_Backends.geminiLive && <GeminiLive />}
         {(backend === STT_Backends.native || backend === STT_Backends.browser) && <Native />}
       </Inspector.Deactivatable>
+
+      {/* Outside the part that greys out while STT runs: "Lock to <language>" works with captions running. */}
+      <LanguageOfferPanel />
 
       {!external && (
         <div className="pt-4 flex flex-col gap-2">

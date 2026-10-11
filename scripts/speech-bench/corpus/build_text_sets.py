@@ -12,6 +12,8 @@ MT sets (``<out>/mt/<set>.jsonl``; the mt-bench corpus format plus ``set``, ``do
   ``--per-direction`` lines per direction; ``doc`` = document id (previous segment = context);
 - ``flores200.jsonl``: ja, zh, ko, de, fr, es, ru, pt -> English from FLORES-200 devtest (the same
   sentences in every direction);
+- ``flores200-eu.jsonl``: the same devtest sentences as ``flores200.jsonl`` in the directions it lacks for the European
+  pairs (English -> de, es, fr, pt, it, nl and it, nl -> English), so Italian and Dutch have a row (WMT24++ has neither);
 - ``bsd.jsonl``: Japanese <-> English business dialogues (BSD test), whole dialogues;
 - ``sigil-casual.jsonl``: the 24-line stream / VRChat smoke corpus of P4 (scripts/mt-bench), both
   directions (a smoke check, not a quality benchmark).
@@ -42,8 +44,9 @@ from corpus.sources import read_fleurs_tsv, seeded_key  # noqa: E402
 DEFAULT_P7 = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "sigil-dev-cache", "p7")
 WMT = {"ja_JP": "ja", "zh_CN": "zh", "zh_TW": "zh-Hant", "ko_KR": "ko", "de_DE": "de", "fr_FR": "fr", "es_MX": "es", "ru_RU": "ru", "pt_BR": "pt"}
 FLORES = {"ja": "jpn_Jpan", "zh": "zho_Hans", "ko": "kor_Hang", "de": "deu_Latn", "fr": "fra_Latn", "es": "spa_Latn", "ru": "rus_Cyrl", "pt": "por_Latn"}
+FLORES_EU = {"de": "deu_Latn", "es": "spa_Latn", "fr": "fra_Latn", "pt": "por_Latn", "it": "ita_Latn", "nl": "nld_Latn"}
 TTS_LANGS = {"en": "en_us", "ja": "ja_jp", "zh": "cmn_hans_cn", "ko": "ko_kr", "es": "es_419", "de": "de_de", "fr": "fr_fr", "ru": "ru_ru", "pt": "pt_br"}
-LICENSES = {"wmt24pp": "Apache-2.0", "flores200": "CC-BY-SA-4.0", "bsd": "CC BY-NC-SA 4.0", "sigil-casual": "AGPL-3.0-or-later (Sigil)",
+LICENSES = {"wmt24pp": "Apache-2.0", "flores200": "CC-BY-SA-4.0", "flores200-eu": "CC-BY-SA-4.0", "bsd": "CC BY-NC-SA 4.0", "sigil-casual": "AGPL-3.0-or-later (Sigil)",
             "fleurs": "CC-BY-4.0"}
 
 
@@ -108,6 +111,41 @@ def flores200(p7: str, n: int, seed: int) -> list[dict]:
             topic = (meta[i].get("topic") if i < len(meta) else None) or None
             out.append({"id": f"flores200:{lang}-en:{k}", "source": lang, "target": "en", "src": src[i], "ref": eng[i], "set": "flores200",
                         "domain": topic, "doc": f"devtest#{i}", "license": LICENSES["flores200"]})
+    return out
+
+
+def flores200_eu(p7: str, n: int, seed: int) -> list[dict]:
+    """European directions of FLORES-200 devtest: the sentences ``flores200()`` picks (same seed, same ranking), English ->
+    de / es / fr / pt / it / nl and it / nl -> English (the other ``X -> en`` directions are in ``flores200.jsonl``)."""
+    path = os.path.join(p7, "eval", "flores200", "flores200_dataset.tar.gz")
+    if not os.path.isfile(path):
+        return []
+    want = {"eng_Latn", *FLORES_EU.values()}
+    texts, meta = {}, []
+    with tarfile.open(path) as tar:
+        for m in tar.getmembers():
+            base = os.path.basename(m.name)
+            if m.isfile() and base.endswith(".devtest") and base[: -len(".devtest")] in want:
+                texts[base[: -len(".devtest")]] = tar.extractfile(m).read().decode("utf-8").splitlines()
+            elif m.isfile() and base == "metadata_devtest.tsv":
+                meta = list(csv.DictReader(io.TextIOWrapper(tar.extractfile(m), encoding="utf-8"), delimiter="\t"))
+    eng = texts.get("eng_Latn", [])
+    idx = sorted(range(len(eng)), key=lambda i: seeded_key(seed, "flores200", i))[:n]  # the same pick as flores200()
+    idx.sort()
+    out = []
+
+    def rows(source: str, target: str, src_lines: list[str], ref_lines: list[str]) -> None:
+        for k, i in enumerate(idx, 1):
+            topic = (meta[i].get("topic") if i < len(meta) else None) or None
+            out.append({"id": f"flores200-eu:{source}-{target}:{k}", "source": source, "target": target, "src": src_lines[i], "ref": ref_lines[i],
+                        "set": "flores200-eu", "domain": topic, "doc": f"devtest#{i}", "license": LICENSES["flores200-eu"]})
+
+    for lang, code in FLORES_EU.items():
+        if texts.get(code):
+            rows("en", lang, eng, texts[code])
+    for lang in ("it", "nl"):
+        if texts.get(FLORES_EU[lang]):
+            rows(lang, "en", texts[FLORES_EU[lang]], eng)
     return out
 
 
@@ -206,6 +244,7 @@ def main(argv=None) -> int:
     sets = {
         "wmt24pp": wmt24pp(args.p7_root, args.per_direction, args.seed),
         "flores200": flores200(args.p7_root, args.per_direction, args.seed),
+        "flores200-eu": flores200_eu(args.p7_root, args.per_direction, args.seed),
         "bsd": bsd(args.p7_root, args.per_direction, args.seed),
         "sigil-casual": sigil_casual(),
     }

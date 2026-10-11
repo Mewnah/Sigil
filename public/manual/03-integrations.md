@@ -210,7 +210,7 @@ Sidebar → **VRChat**.
 ### Chatbox, mute sync and tags
 
 - **Chatbox pacing:** messages are queued at least **Time between chatbox messages** apart (default 1.5 s) because VRChat drops faster ones. **Split long text into pages** sends text over 144 characters as numbered pages instead of cutting it.
-- **Mute captions when I mute in VRChat:** captions stop the moment you mute in VRChat and resume when you unmute. Sigil uses OSCQuery by default, so there is no port to set up. The first start may show a Windows Firewall prompt.
+- **Mute captions when I mute in VRChat:** captions stop the moment you mute in VRChat and resume when you unmute; the sentence you were still saying is dropped, not shown afterwards. It is off until you turn it on, so a profile that stays muted in the game (talking only to the stream, or using speech as the chatbox voice) keeps its captions. Sigil uses OSCQuery by default, so there is no port to set up. The first start may show a Windows Firewall prompt.
 - **Emotion and sound tags** (with the SenseVoice model) can drive two avatar parameters and optional emoji in the chatbox.
 - **Wait until I finish speaking** (needs Smart Turn in speech-to-text) holds a sentence you leave unfinished and sends it together with the rest.
 

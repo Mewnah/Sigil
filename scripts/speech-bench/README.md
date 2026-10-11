@@ -12,7 +12,7 @@ voice engine; the runner itself, `Sigil.exe --headless speech-bench`, is P7-A's
 | `schemas/` | The frozen JSON Schemas (draft 2020-12): spec, report, export, corpus manifest, corpus recipe, text-set lines |
 | `examples/` | One spec per mode, plus a report and its export (format examples: their numbers are made up) |
 | `corpus/build_corpus.py` | Builds the STT corpus from the prefetched FLEURS / FMA / ESC-50 (and real drop-in clips) |
-| `corpus/build_text_sets.py` | Builds the MT sets (WMT24++, FLORES-200, BSD, the P4 casual lines) and the TTS prompts |
+| `corpus/build_text_sets.py` | Builds the MT sets (WMT24++, FLORES-200 and its European directions `flores200-eu`, BSD, the P4 casual lines) and the TTS prompts |
 | `corpus/recipe.json` | The frozen corpus recipe (languages, selection, levels, conditions, subsets) |
 | `score/score_stt.py` | WER / CER per engine, language and condition, bootstrap intervals, paired comparisons |
 | `score/score_mt.py` | chrF2 (sacrebleu), BLEU, MetricX merge, paired bootstrap, A/B pair export |

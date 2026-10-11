@@ -6,6 +6,7 @@ import { getKickClientId, getKickClientSecret, getKickRedirectUri } from "@/util
 import { generateOAuthCodeChallenge, generateOAuthRandomString } from "@/utils/oauthPkce";
 import { isOAuthTauri, listenOAuthPayload } from "@/utils/oauthPopup";
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
+import { postableFinal } from "../postText";
 import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
@@ -128,11 +129,11 @@ class Service_Kick implements IServiceInterface {
                 this.state.liveStatus !== ServiceNetworkState.connected
             )
                 return;
+            const text = postableFinal(data);
             this.#state.data.chatEnable &&
                 this.#state.data.chatPostEnable &&
-                data?.value &&
-                data?.type === TextEventType.final &&
-                this.chat.post(data.value);
+                text &&
+                this.chat.post(text);
         }));
 
         this.eventDisposers.push(serviceSubscibeToInput(this.#state.data, "chatPostInput", (data) => {

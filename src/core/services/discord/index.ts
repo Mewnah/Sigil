@@ -1,6 +1,7 @@
 import { pushSystemLog } from "@/core/services/systemLog";
 import { IServiceInterface, ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
 import { serviceSubscibeToInput, serviceSubscibeToSource } from "@/utils";
+import { postableFinal } from "../postText";
 import {
   buildDiscordExecuteUrl,
   buildDiscordWebhookJsonBody,
@@ -56,10 +57,8 @@ class Service_Discord implements IServiceInterface {
     this.eventDisposers.push(
       serviceSubscibeToSource(this.#state.data, "postSource", (data) => {
         if (this.#blockBecauseNotLive) return;
-        this.#state.data.postEnable &&
-          data?.value &&
-          data?.type === TextEventType.final &&
-          this.say(data.value);
+        const text = postableFinal(data);
+        this.#state.data.postEnable && text && this.say(text);
       }),
     );
     this.eventDisposers.push(

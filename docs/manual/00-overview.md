@@ -31,7 +31,7 @@ This starts the Vite dev server and the Tauri shell. The app listens on a local 
 
 ### First launch and onboarding
 
-On first run you may see the **setup wizard** (welcome, audio, STT, integrations, accessibility). You can complete it step by step or use **Skip setup**; you can configure everything later in **Settings** and each service inspector.
+A **setup wizard** (welcome, audio, STT, integrations, accessibility) is part of the app's code but is not shown in this version yet; you configure everything in **Settings** and each service inspector. (Once it is shown you can complete it step by step or use **Skip setup**.)
 
 ### Projects
 

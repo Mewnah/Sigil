@@ -9,6 +9,7 @@ import { initializeUIShortcuts, cleanupUIShortcuts } from "../shortcuts";
 import OverlayInput from "../overlay-input";
 import BackgroundInput from "../background-input";
 import { SigilLayout } from "./SigilLayout";
+import { LanguageOfferToastHost } from "../inspector/stt/LanguageOffer";
 import "../file-modal";
 
 // Shortcut Recorder (Inline for now or import if extracted)
@@ -34,6 +35,7 @@ export const SigilRoot: FC = () => {
             </AnimatePresence>
 
             <BackgroundInput />
+            <LanguageOfferToastHost />
             <ToastContainer className="toasts" draggable={false} closeOnClick limit={3} hideProgressBar theme="colored" />
         </NiceModal.Provider>
     );

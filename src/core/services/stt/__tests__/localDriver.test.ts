@@ -612,6 +612,14 @@ describe("local backend settings → Rust", () => {
     expect(await askConsentDialog({ ...req, smaller: null })).toBe("download");
     expect(consentTexts({ ...req, smaller: null }).smaller).toBeNull();
   });
+
+  it("tips a profile on Detect automatically to choose its language before the first download", () => {
+    const req: ConsentRequest = { items: [{ title: "Qwen3-ASR", bytes: 879_000_000 }], bytes: 879_000_000, exact: true, smaller: null };
+    expect(consentTexts({ ...req, language: "auto" }).message).toContain("stt.local_consent_auto_hint");
+    expect(consentTexts({ ...req, language: "" }).message).toContain("stt.local_consent_auto_hint");
+    expect(consentTexts({ ...req, language: "fr" }).message).not.toContain("stt.local_consent_auto_hint");
+    expect(consentTexts(req).message).not.toContain("stt.local_consent_auto_hint");
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -709,6 +717,8 @@ interface Harness {
   calls: (cmd: string) => Record<string, unknown>[];
   emit: (event: string, payload: unknown) => void;
   askConsent: ReturnType<typeof vi.fn>;
+  /** The driver's system-log lines (`deps.log`). */
+  systemLog: ReturnType<typeof vi.fn>;
   patched: STT_State["local"];
   startResults: (RustSpeechPipelineStarted | Error | (() => Promise<RustSpeechPipelineStarted>))[];
   epoch: number;
@@ -740,6 +750,7 @@ function harness(opts: { installed?: string[]; consent?: ConsentChoice; automati
   });
   const askConsent = vi.fn(async () => opts.consent ?? "download");
   const patched = { ...Service_STT_Schema.parse({}).local };
+  const systemLog = vi.fn();
   const deps: Partial<LocalDriverDeps> = {
     available: () => true,
     invoke: invoke as LocalDriverDeps["invoke"],
@@ -752,7 +763,7 @@ function harness(opts: { installed?: string[]; consent?: ConsentChoice; automati
     askConsent,
     patchLocal: (fn) => fn(patched),
     resolveDevice: (d) => (d ? d : null),
-    log: vi.fn(),
+    log: systemLog,
   };
   const receiver = {
     onStart: vi.fn(),
@@ -770,6 +781,7 @@ function harness(opts: { installed?: string[]; consent?: ConsentChoice; automati
     models,
     invoke,
     askConsent,
+    systemLog,
     patched,
     calls: (cmd: string) => log.filter((c) => c.cmd === cmd).map((c) => c.args),
     emit: (event: string, payload: unknown) => handlers.get(event)?.(payload),
@@ -932,6 +944,15 @@ describe("STT_LocalService", () => {
     await h.svc.stop();
   });
 
+  it("passes the automatic language on to the consent dialog", async () => {
+    const h = harness({ installed: [] });
+    const run = h.svc.start(params({ language: "auto" }));
+    await flush();
+    expect((h.askConsent.mock.calls[0][0] as ConsentRequest).language).toBe("auto");
+    await h.svc.stop();
+    await run;
+  });
+
   it("asks before downloading, downloads with progress, then starts", async () => {
     const h = harness({ installed: [] });
     const run = h.svc.start(params());
@@ -939,6 +960,8 @@ describe("STT_LocalService", () => {
     expect(h.askConsent).toHaveBeenCalledTimes(1);
     const req = h.askConsent.mock.calls[0][0] as ConsentRequest;
     expect(req.items.map((i) => i.title)).toEqual(["sherpa-onnx", "nemotron-3.5-streaming-560ms-int8", "parakeet-ultra-int8"]);
+    // The dialog knows the language of the plan (it tips an automatic one to choose its language first).
+    expect(req.language).toBe("en");
     expect(req.bytes).toBe(8_000_000 + 475_000_000 + 630_000_000);
     // The single-pass setup (Nemotron alone) downloads far less: offered, with live captions.
     expect(req.smaller?.bytes).toBe(8_000_000 + 475_000_000);
@@ -976,6 +999,76 @@ describe("STT_LocalService", () => {
     expect(h.askConsent).not.toHaveBeenCalled();
     expect(h.models.install).not.toHaveBeenCalled();
     expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+  });
+
+  describe("an automatic start whose language needs models that are not installed", () => {
+    /**
+     * The harness plans every language alike; here French needs Parakeet (not installed) and the automatic route
+     * needs nothing more than what is installed.
+     */
+    function frenchNeedsParakeet(h: Harness) {
+      const base = h.invoke.getMockImplementation()!;
+      h.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown> = {}) => {
+        const out = await base(cmd, args);
+        const language = ((args.request ?? (args.config as RustSpeechPipelineConfig | undefined)?.route) as RustSpeechRouteRequest | undefined)?.language;
+        if (cmd === "plugin:speech|preview_route" && language === "auto") return { ...(out as RustSpeechRoutePlan), missing: [] };
+        return out;
+      });
+    }
+
+    it("runs the installed automatic route instead of stopping, says so, and downloads nothing", async () => {
+      const h = harness({ installed: [SHERPA, NEMOTRON], automatic: true });
+      frenchNeedsParakeet(h);
+      await h.svc.start(params({ language: "fr" }));
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      expect(h.askConsent).not.toHaveBeenCalled();
+      expect(h.models.install).not.toHaveBeenCalled();
+      expect(h.calls("plugin:speech|preview_route").map((c) => (c.request as RustSpeechRouteRequest).language)).toEqual(["fr", "auto"]);
+      expect(h.calls("plugin:speech|start_pipeline")[0].config).toMatchObject({ language: "auto", route: { language: "auto" } });
+      expect(h.systemLog).toHaveBeenCalledWith("stt.local_log_auto_fallback", "warning");
+      // The profile's language is untouched: this only decides what an unattended start can run.
+      expect(h.patched.language).toBe("auto");
+      await h.svc.stop();
+    });
+
+    it("keeps the automatic route when the session restarts after an error", async () => {
+      const h = harness({ installed: [SHERPA, NEMOTRON], automatic: true });
+      frenchNeedsParakeet(h);
+      await h.svc.start(params({ language: "fr" }));
+      const first = h.epoch;
+      h.emit("speech:status", { pipelineId: "mic", epoch: first, state: "error", code: "capture_error", detail: "device lost", progress: null, level: "error", modelId: null, engine: null, device: null });
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2);
+      expect(h.calls("plugin:speech|start_pipeline")[1].config).toMatchObject({ route: { language: "auto" } });
+      await h.svc.stop();
+    });
+
+    it("still stops with the models-missing message when the automatic route is not installed either", async () => {
+      const h = harness({ installed: [], automatic: true });
+      await h.svc.start(params({ language: "fr" }));
+      expect(h.askConsent).not.toHaveBeenCalled();
+      expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(0);
+      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+      expect(h.systemLog).not.toHaveBeenCalledWith("stt.local_log_auto_fallback", "warning");
+    });
+
+    it("does not look for another route when the language is automatic already", async () => {
+      const h = harness({ installed: [], automatic: true });
+      await h.svc.start(params({ language: "auto" }));
+      expect(h.calls("plugin:speech|preview_route")).toHaveLength(1);
+      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+    });
+
+    it("a Start by hand still asks and downloads: nothing is swapped behind the user's back", async () => {
+      const h = harness({ installed: [SHERPA, NEMOTRON], consent: "cancel" });
+      frenchNeedsParakeet(h);
+      await h.svc.start(params({ language: "fr" }));
+      expect(h.askConsent).toHaveBeenCalledTimes(1);
+      expect(h.calls("plugin:speech|preview_route").map((c) => (c.request as RustSpeechRouteRequest).language)).toEqual(["fr", "fr"]);
+      expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(0);
+      expect(h.systemLog).not.toHaveBeenCalledWith("stt.local_log_auto_fallback", "warning");
+    });
   });
 
   it("the smaller setup turns two-pass off and downloads only its models", async () => {

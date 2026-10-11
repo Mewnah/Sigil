@@ -1,4 +1,4 @@
-import { FC, useState, memo } from "react";
+import { FC, useMemo, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnapshot } from "valtio";
@@ -15,6 +15,15 @@ import { SiTwitch, SiDiscord } from "react-icons/si";
 import classNames from "classnames";
 import { useTranslation } from "react-i18next";
 import { STT_Backends } from "@/core/services/stt/schema";
+import {
+    ONBOARDING_AUTO,
+    lockableLanguages,
+    onboardingLanguageDefault,
+    pickSystemLanguage,
+    planOnboardingSttSave,
+    systemLanguageTags,
+} from "@/core/services/stt/languageSuggestion";
+import { useLanguageName } from "@/core/ui/inspector/stt/common";
 
 // Kick logo
 const KickIcon: FC = () => (
@@ -134,10 +143,50 @@ const AudioStep: FC<StepProps> = ({ onNext, onBack }) => {
 // Step 3: STT Selection
 type SttChoice = "local" | "whisper" | "vosk";
 
-const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
+/**
+ * "What language do you speak?" for the automatic engine. Starts on the Windows language when Sigil can route it
+ * (so most people only press Continue) and otherwise on "Detect automatically"; both stay choices in the list, and
+ * nothing is stored until Continue.
+ */
+const SttLanguageQuestion: FC<{ value: string; onChange: (code: string) => void; fromWindows: boolean }> = ({ value, onChange, fromWindows }) => {
+    const { t } = useTranslation();
+    const languageName = useLanguageName();
+    const options = useMemo(
+        () => [...lockableLanguages()].map((code) => ({ code, label: languageName(code) })).sort((a, b) => a.label.localeCompare(b.label)),
+        [languageName],
+    );
+    return (
+        <div className="form-control w-full space-y-1" data-testid="onboarding-language">
+            <label className="label" htmlFor="onboarding-stt-language">
+                <span className="label-text font-semibold">{t("stt.onboarding_language_title")}</span>
+            </label>
+            <select
+                id="onboarding-stt-language"
+                className="select select-bordered w-full"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                aria-label={t("stt.onboarding_language_label")}
+            >
+                <option value={ONBOARDING_AUTO}>{t("stt.local_language_auto")}</option>
+                {options.map((o) => (
+                    <option key={o.code} value={o.code}>{o.label}</option>
+                ))}
+            </select>
+            <p className="text-xs text-base-content/60">
+                {t("stt.onboarding_language_hint")}
+                {fromWindows && value !== ONBOARDING_AUTO ? ` ${t("stt.onboarding_language_system")}` : ""}
+            </p>
+        </div>
+    );
+};
+
+export const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
     const { t } = useTranslation();
     // New desktop installs default to "On this PC (automatic)" (the P2 desktop default in stt/migrate.ts).
     const [selected, setSelected] = useState<SttChoice | "">("local");
+    const windowsTags = useMemo(() => systemLanguageTags(), []);
+    const windowsLanguage = useMemo(() => pickSystemLanguage(windowsTags), [windowsTags]);
+    const [language, setLanguage] = useState<string>(() => onboardingLanguageDefault(windowsTags));
 
     const options: { id: SttChoice; name: string; desc: string; icon: JSX.Element }[] = [
         { id: "local", name: t("stt.provider_local"), desc: t("stt.local_onboarding_desc"), icon: <RiRocketFill /> },
@@ -148,11 +197,13 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
     const saveAndContinue = () => {
         // Keep the choice; marking the desktop default migration done stops it from overriding this pick.
         if (selected) {
+            const save = planOnboardingSttSave(selected, language, Date.now());
             window.ApiServer.patchService("stt", s => {
-                s.data.backend = selected === "vosk" ? STT_Backends.vosk
-                    : selected === "whisper" ? STT_Backends.whisper
-                    : STT_Backends.local;
+                s.data.backend = save.backend;
                 s.data.desktopDefaultMigrated = true;
+                // The language is only ever set by this answer: "Detect automatically" is stored as an explicit choice.
+                if (save.localLanguage !== undefined) s.data.local.language = save.localLanguage;
+                if (save.decision) s.data.local.languageDecision = save.decision;
             });
         }
         onNext();
@@ -187,6 +238,10 @@ const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
                     </button>
                 ))}
             </div>
+
+            {selected === "local" && (
+                <SttLanguageQuestion value={language} onChange={setLanguage} fromWindows={windowsLanguage !== null && language === windowsLanguage} />
+            )}
 
             <div className="flex gap-3 w-full">
                 <button onClick={onBack} className="btn btn-ghost flex-1 gap-2">

@@ -1,6 +1,22 @@
 import { zSafe } from "@/utils";
 import { z } from "zod";
 
+/** How the user answered the "lock the language?" question (`services/stt/languageSuggestion.ts`). */
+export const LANGUAGE_DECISION_OUTCOMES = ["none", "locked", "kept", "never"] as const;
+
+/**
+ * The answer to the one-time "lock captions to your language?" question, persisted so Sigil never asks twice for
+ * the same reason: `none` = never answered, `locked` = the user chose a language (onboarding or the suggestion),
+ * `kept` = "Keep automatic" (asked again after a week at the earliest), `never` = "Don't ask again".
+ */
+export const STT_LanguageDecision_Schema = z.object({
+  outcome: zSafe(z.enum(LANGUAGE_DECISION_OUTCOMES), "none"),
+  /** The language the answer was about (normalized code; "" = none). */
+  language: zSafe(z.coerce.string(), ""),
+  /** When it was answered (epoch ms; 0 = never). */
+  at: zSafe(z.coerce.number().finite().nonnegative(), 0),
+});
+
 /**
  * Settings of the `local` backend: Sigil's in-process speech pipeline (Rust `speech` plugin) with automatic model
  * routing by language and hardware (P2-E). Sent to Rust as `RustSpeechPipelineConfig` / `RustSpeechRouteRequest`
@@ -9,8 +25,13 @@ import { z } from "zod";
 export const STT_Local_Schema = z.object({
   /** Capture device (cpal name); "" = the default microphone. */
   device: zSafe(z.coerce.string(), ""),
-  /** "auto" (spoken language ID) or a language code (normalized by the router: `ja-JP` → `ja`). */
+  /**
+   * "auto" (spoken language ID) or a language code (normalized by the router: `ja-JP` → `ja`). A language is never set
+   * without the user's say-so: onboarding asks, and the in-session suggestion asks (`languageDecision`).
+   */
   language: zSafe(z.coerce.string(), "auto"),
+  /** Answer to the "lock the language?" question (onboarding, the in-session suggestion, the panel's hint). */
+  languageDecision: zSafe(STT_LanguageDecision_Schema, { outcome: "none", language: "", at: 0 }),
   /** Hardware tier for the router: auto ("Best for my PC"), cpu or gpu. */
   tier: zSafe(z.enum(["auto", "cpu", "gpu"]), "auto"),
   /**

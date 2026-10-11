@@ -46,6 +46,12 @@ export interface TranslationRequest {
   onPartial?: (text: string) => void;
   /** Router (P4-C): called with the chain member whose result is returned, before `translate` resolves. */
   onEngine?: (engine: TranslationEngineId) => void;
+  /**
+   * Router (`routingTable.ts`): decoding beam width a built-in route asks of the engine for a final (NLLB; the
+   * larger of this and the engine's own setting is used). Engines without beam search ignore it; absent = the
+   * engine's own setting.
+   */
+  beam?: number;
 }
 
 /** Engine preparation status for the UI (model download or load, server start, a fallback in use); never a caption. */
@@ -65,6 +71,11 @@ export interface TranslationEngineHost {
   readonly engines: Readonly<Record<TranslationEngineId, ITranslationEngineConstructor>>;
   /** Reports preparation status; the pipeline shows the latest one. */
   status(update: TranslationStatusUpdate): void;
+  /**
+   * The bundled llama-server translator runs on the processor right now (`interimPolicy.bundledTranslatorOnCpu`,
+   * read per line). The router's CPU-tier routes (`routingTable.ts`) apply only while this is true; absent = false.
+   */
+  translatorOnCpu?(): boolean;
 }
 
 /**

@@ -14,7 +14,7 @@ import {
 } from "@/core/services/voice_changer/contract";
 import { showsControl } from "@/core/services/voice_changer/families";
 import type { VcFamilyControl, VcSlotInfo } from "@/core/services/voice_changer/ipc";
-import { pitchExtractorOptions, profileOptions } from "@/core/services/voice_changer/options";
+import { pitchExtractorOptions, profileOptions, streamerFewCoresNote } from "@/core/services/voice_changer/options";
 import { voiceModelIds } from "@/core/services/voice_changer/requirements";
 import { isTemplateSlot } from "@/core/services/voice_changer/slots";
 import { FC } from "react";
@@ -35,8 +35,16 @@ const PresetSelect: FC = () => {
     const { t } = useTranslation();
     const snap = useSnapshot(window.ApiServer.voiceChanger.state);
     const vc = snap.voiceChanger;
+    const sysinfo = useSnapshot(window.ApiServer.sysinfo.state);
     const options = profileOptions(snap.capabilities as typeof window.ApiServer.voiceChanger.state.capabilities, vc.rvcProfile);
     const current = options.find((o) => o.value === vc.rvcProfile);
+    // The Streamer runs on the processor: with 6 or fewer physical cores it falls behind while a game runs.
+    const fewCores = streamerFewCoresNote({
+        profile: vc.rvcProfile,
+        ep: vc.rvcExecutionProvider,
+        physicalCores: sysinfo.info?.cpu.physical_cores,
+        blockMs: vc.blockMs,
+    });
     return (
         <>
             <VcChoiceSelect
@@ -56,6 +64,11 @@ const PresetSelect: FC = () => {
             />
             {vc.rvcProfile === "quality" || vc.rvcProfile === "studio_trt" ? (
                 <div className="alert alert-info alert-soft text-xs leading-snug">{t("voice_changer.rvc_quality_banner")}</div>
+            ) : null}
+            {fewCores ? (
+                <div className="alert alert-warning alert-soft text-xs leading-snug">
+                    {t("voice_changer.rvc_streamer_few_cores_note", { cores: fewCores.cores, block: fewCores.blockMs })}
+                </div>
             ) : null}
         </>
     );

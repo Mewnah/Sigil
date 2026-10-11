@@ -29,6 +29,7 @@ vi.mock("../services/moonshine", () => ({ STT_MoonshineService: class {} }));
 vi.mock("../services/openaiAudio", () => ({ STT_OpenAI_AudioService: class {} }));
 vi.mock("../services/externalMic", () => ({ STT_ExternalMicService: class {} }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
 import { useAppUIStore } from "@/core/ui/store";
@@ -460,5 +461,145 @@ describe("Service_STT desktop default migration", () => {
     expect(ask).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
     expect(FakeEngine.instances).toHaveLength(0);
+  });
+});
+
+describe("Service_STT language suggestion (the automatic backend on automatic language)", () => {
+  const FRENCH = "Je voudrais essayer ce nouveau micro ce soir";
+  const plan = (missing: string[]) => ({
+    language: "fr",
+    tier: "auto",
+    streaming: null,
+    final: { engine: "sherpa-offline", model: "stt/parakeet-ultra" },
+    fallback: null,
+    languageId: null,
+    models: ["stt/parakeet-ultra"],
+    missing,
+    vramMb: 0,
+    notes: [],
+  });
+  let n = 0;
+  const say = (engine: FakeEngine, lang = "fr", text = FRENCH) =>
+    engine.receiver.onFinal(text, { segmentId: `local-x:1:${++n}`, revision: 2, lang });
+
+  async function running(overrides: Partial<STT_State> = {}) {
+    isApp = true;
+    const ctx = makeService({ backend: STT_Backends.local, desktopDefaultMigrated: true, ...overrides });
+    await ctx.service.init();
+    ctx.service.start();
+    await flush();
+    last().receiver.onStart();
+    return { ...ctx, engine: last() };
+  }
+
+  it("offers the detected language after three consistent finals and publishes them as usual", async () => {
+    const { service, engine } = await running();
+    say(engine);
+    say(engine);
+    expect(service.languageOffer.view.language).toBeNull();
+    say(engine);
+    await flush();
+    expect(service.languageOffer.view).toMatchObject({ language: "fr", source: "detected" });
+    expect(publishText).toHaveBeenCalledTimes(3);
+    expect(publishText).toHaveBeenLastCalledWith(TextEventSource.stt, expect.objectContaining({ value: FRENCH, type: TextEventType.final, lang: "fr" }));
+  });
+
+  it("never lets the suggestion get in the way of a caption", async () => {
+    const { service, engine } = await running();
+    const failing = vi.spyOn(service.languageOffer, "noteFinal").mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    say(engine);
+    await flush();
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalled();
+    expect(publishText).toHaveBeenCalledWith(TextEventSource.stt, expect.objectContaining({ value: FRENCH, type: TextEventType.final }));
+  });
+
+  it("starts counting again with each Start", async () => {
+    const { service, engine } = await running();
+    say(engine);
+    say(engine);
+    service.start();
+    await flush();
+    const next = last();
+    expect(next).not.toBe(engine);
+    next.receiver.onStart();
+    say(next);
+    expect(service.languageOffer.view.language).toBeNull();
+  });
+
+  it("counts the finals of the current session only", async () => {
+    const { service, engine } = await running();
+    service.start();
+    await flush();
+    say(engine);
+    say(engine);
+    say(engine);
+    expect(service.languageOffer.view.language).toBeNull();
+  });
+
+  it("does not count another backend, or a language that is already set", async () => {
+    const other = await running({ backend: STT_Backends.whisper });
+    for (let i = 0; i < 4; i++) say(other.engine);
+    expect(other.service.languageOffer.view.language).toBeNull();
+
+    const set = await running({ local: { ...Service_STT_Schema.parse({}).local, language: "fr" } });
+    for (let i = 0; i < 4; i++) say(set.engine);
+    expect(set.service.languageOffer.view.language).toBeNull();
+  });
+
+  it("withdraws the offer when the language is set in the settings", async () => {
+    const { service, engine, data } = await running();
+    for (let i = 0; i < 3; i++) say(engine);
+    expect(service.languageOffer.view.language).toBe("fr");
+    data.local.language = "de";
+    await flush();
+    expect(service.languageOffer.view.language).toBeNull();
+  });
+
+  it("Lock stores the language and restarts the running session when no model has to be downloaded", async () => {
+    const { service, engine, data } = await running();
+    for (let i = 0; i < 3; i++) say(engine);
+    vi.mocked(invoke).mockResolvedValueOnce(plan([]));
+    expect(await service.languageOffer.lock("fr")).toBe("restarted");
+    await flush();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("plugin:speech|preview_route", { request: expect.objectContaining({ language: "fr" }) });
+    expect(data.local.language).toBe("fr");
+    expect(data.local.languageDecision).toMatchObject({ outcome: "locked", language: "fr" });
+    expect(engine.stopped).toBe(1);
+    expect(FakeEngine.instances).toHaveLength(2);
+    // An automatic start: it must never open a download question for a viewer who is live.
+    expect((last() as unknown as { startAutomatic?: boolean }).startAutomatic).toBe(true);
+    expect(service.languageOffer.view.result).toEqual({ language: "fr", outcome: "restarted" });
+  });
+
+  it("Lock leaves a running session alone when the new route needs a download", async () => {
+    const { service, engine, data } = await running();
+    for (let i = 0; i < 3; i++) say(engine);
+    vi.mocked(invoke).mockResolvedValueOnce(plan(["stt/parakeet-ultra"]));
+    expect(await service.languageOffer.lock("fr")).toBe("download");
+    await flush();
+    expect(data.local.language).toBe("fr");
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(engine.stopped).toBe(0);
+  });
+
+  it("Keep automatic and Don't ask again are stored in the profile", async () => {
+    const kept = await running();
+    for (let i = 0; i < 3; i++) say(kept.engine);
+    kept.service.languageOffer.keepAutomatic();
+    expect(kept.data.local.languageDecision).toMatchObject({ outcome: "kept", language: "fr" });
+    expect(kept.data.local.language).toBe("auto");
+
+    const never = await running();
+    for (let i = 0; i < 3; i++) say(never.engine);
+    never.service.languageOffer.neverAsk();
+    expect(never.data.local.languageDecision).toMatchObject({ outcome: "never", language: "fr" });
+    // Persisted answers survive a new launch: nothing is offered.
+    const again = await running({ local: never.data.local });
+    for (let i = 0; i < 6; i++) say(again.engine);
+    expect(again.service.languageOffer.view.language).toBeNull();
   });
 });
