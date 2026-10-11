@@ -12,40 +12,39 @@ There is a lot under the hood; mix local models, cloud APIs, and browser fallbac
 
 ### Speech-to-text (STT)
 
-- **Whisper** (Rust plugin) — local inference; models downloaded on first use
+- **On this PC (automatic)** — the default for new desktop installs: Sigil picks local models for your language and PC (live partials from Nemotron streaming, a more accurate final per sentence from Parakeet, Qwen3-ASR, SenseVoice or Whisper), asks before it downloads anything and runs them inside the app, on the processor by default so the game keeps the GPU. Opt-in GPU models (Qwen3-ASR 1.7B, Cohere Transcribe, Voxtral) need a runtime pack.
+- **Whisper** (Rust plugin) — local inference; models downloaded on first use through the model store
 - **Vosk** — local models via Tauri + browser loader
-- **Moonshine** — HTTP server integration (e.g. Useful Sensors container)
-- **OpenAI-style HTTP** — `POST …/audio/transcriptions` for local sidecars (Parakeet, speaches, etc.)
-- **Azure** / **Deepgram** — cloud APIs where configured
-- **Native / Web Speech** — browser speech recognition where available
+- **OpenAI-style HTTP** — `POST …/audio/transcriptions` for local servers (speaches and others), plus a **Groq** free-cloud preset that stays inside Groq's limits
+- **Moonshine** — an external Moonshine HTTP server (legacy backend); Moonshine base also exists inside Sigil's speech engine
+- **Azure** / **Deepgram** / **Gemini Live** — cloud APIs where configured
+- **Native / Web Speech** — browser speech recognition where available (not inside the desktop app)
 
-STT is configured on the **desktop host**. The lightweight **`/client`** page does not run Tauri; it syncs with the host over PeerJS (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+STT is configured on the **desktop host**. The lightweight **`/client`** page does not run Tauri; it syncs with the host over PeerJS (see [ARCHITECTURE.md](ARCHITECTURE.md)). A Silero voice detector keeps silence and keyboard noise away from every engine in Sigil's own speech pipeline (automatic, Whisper, Moonshine, local HTTP, Groq; the cloud engines, Vosk and Web Speech do not use it). [Which engine for which PC](docs/OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
 
 ### Text-to-speech (TTS)
 
-- **Windows** — system SAPI voices (Rust plugin)
-- **Azure** — cloud voices
-- **Uberduck** — API-backed voices (Rust plugin)
-- **VOICEVOX** — HTTP to a local VOICEVOX engine
-- **Native / Web Speech** — browser synthesis where available
-- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#local-speech-package-onnx)); the inspector's **execution provider** choice is saved, but local speech currently always runs on the CPU
-- **HTTP server** — your own service with `GET /health` and `POST /speech` (example: [scripts/neural-sidecar/](scripts/neural-sidecar/))
-- **Kokoro** — HTTP to a Kokoro FastAPI–compatible server (e.g. `ghcr.io/remsky/kokoro-fastapi-cpu` on port 8880)
-- **MeloTTS** — HTTP to a MeloTTS instance (e.g. Docker on port 8888)
-- **Chatterbox** — HTTP to a Chatterbox TTS server (common default port 5555)
-- **Fish Speech** — HTTP to [Fish Speech](https://github.com/fishaudio/fish-speech)–style API
+- **Kokoro / Piper / Kitten (local)** — in-process neural voices on the processor, the default for new desktop installs
+- **Edge** (keyless) and **Gemini TTS** (your free key) — cloud voices that fall back to the local Kokoro voice within about a second when the service fails
+- **Windows** — system SAPI voices, played through Sigil's output like every other voice
+- **Azure**, **Uberduck**, **VOICEVOX** / **AivisSpeech**, **Style-Bert-VITS2** (`.aivmx` voices, in process), **GPT-SoVITS**
+- **OpenAI-compatible HTTP** — presets for Kokoro-FastAPI, Chatterbox, vLLM-Omni voices and qwentts, plus **Fish Speech** and your own services (example: [scripts/neural-sidecar/](scripts/neural-sidecar/))
+- **Cloning and GPU voices (opt-in)** — Pocket TTS and Chatterbox Multilingual in process, Qwen3-TTS, and experimental Magpie, Breeze, OmniVoice and Fish S2 Pro helpers
+- **ONNX (local)** — in-process neural speech from a **Hugging Face** repo id or a local **speech package** folder (`speech_package_v1`; see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#local-speech-package-onnx)); always runs on the CPU
 
-Neural ONNX / HTTP sidecar can **route synthesized audio into the voice changer** when that option is enabled and the voice changer is running.
+Speech plays sentence by sentence, with Skip and Stop, and can be **routed into the voice changer** (or both outputs).
 
 ### Translation
 
-- **Azure** — cloud translator when configured
-- **LibreTranslate** — self-hosted or public LibreTranslate URL; optional API key
+- **Automatic (best available)** — an ordered chain with fallbacks: a local AI model (Hy-MT2 on a `llama-server` helper that Sigil starts and stops itself) → Firefox Translations (Bergamot, no video memory) → NLLB-200
+- **DeepL API Free**, **Gemini** (free tier), **Azure**, **LibreTranslate** — cloud or self-hosted
 - **On-device** — Chromium **WebView Translator / Language Detector** APIs when the runtime exposes them
+
+Partial captions translate without flicker (LocalAgreement), and final translations are never dropped.
 
 ### AI transform
 
-Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** LLM endpoints (configured in the inspector).
+Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, **Google Gemini** (free tier) or **local** LLM endpoints (configured in the inspector).
 
 ### Streaming and chat
 
@@ -56,8 +55,10 @@ Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, or **local** 
 
 ### VRChat and audio
 
-- **OSC** — captions and related control from the **Tauri** build (not from the in-browser preview alone); configurable host/port, chatbox limits, optional KillFrenzy-style targets
-- **Voice changer** — real-time **built-in** phase vocoder, optional **WebSocket** neural sidecar (binary PCM), or **local ONNX** model; **processing chunk** sizes use a shared allowlist from small blocks up to **~1 s @ 48 kHz** for very slow hosts, **pitch** (and formant) through the post-DSP chain in **all** modes, **buffer / latency** presets (**low latency** / **stable** / **custom**), silence-based queue trim, optional **second output** for monitoring, and **ONNX execution provider** selection (CPU / CUDA / DirectML when the build supports it); see [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#voice-changer) and [scripts/neural-sidecar/README.md](scripts/neural-sidecar/README.md)
+- **OSC** — captions and related control from the **Tauri** build (not from the in-browser preview alone): paced chatbox messages with numbered pages, mute sync with VRChat (captions stop when you mute in VRChat), and avatar parameters for emotion and sound tags
+- **Other players' captions** — transcribe what others say in VRChat (only the game's sound on Windows 11), kept apart from your own captions and optionally translated
+- **Caption window and SteamVR overlay** — an always-on-top click-through caption window (pinnable in XSOverlay / OVR Toolkit) and a native SteamVR overlay; both off until you turn them on
+- **Voice changer (Sigil Voice Engine)** — import the RVC voices you already have (`.pth` / `.zip`, with their `.index`) and run them on Sigil's own real-time engine on the processor (**Streamer** preset), CUDA or DirectML, with a stale-audio latency budget and an autotuner; zero-shot (Sigil-ZS), singing (DDSP-SVC) and experimental voice families run on the same engine. The older modes remain: **built-in** phase vocoder, **WebSocket** sidecar (binary PCM) and **local ONNX**. See [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md#voice-changer) and [scripts/neural-sidecar/README.md](scripts/neural-sidecar/README.md)
 - **Sound effects** — host-side playback for SFX tied to the canvas
 
 ### Editor and collaboration
@@ -107,9 +108,9 @@ SIGIL_KICK_CLIENT_SECRET=your_client_secret
 Consolidated guides (fewer files, same depth):
 
 - [docs/manual/README.md](docs/manual/README.md) — **user manual** (chapters under `docs/manual/`); **`pnpm dev`** / **`pnpm build`** run **`scripts/sync-manual.mjs`** so **`public/manual/`** and **`public/docs/`** stay in sync for the in-app **Help** reader (**book** icon in the header)
-- [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md) — STT/TTS backends, STT reliability, voice changer, local speech package
-- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) — architecture, host services, connectivity audit, `src/client` rules
-- [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md) — release smoke tests, threat model, dependency audits, performance, upgrade backlog
+- [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md) — choosing engines for your PC, STT/TTS backends, STT reliability, voice changer, streamer features, local speech package
+- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) — architecture, host services, the `--headless` commands, the speech benchmark, connectivity audit, `src/client` rules
+- [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md) — release smoke tests, optional VR / two-PC checks, exit matrices, threat model, dependency audits, performance, upgrade backlog
 - [ARCHITECTURE.md](ARCHITECTURE.md) — short pointer to the developer guide
 - [docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md](docs/DOCUMENTATION_GAPS_AND_RECOMMENDATIONS.md) — resolved follow-ups and future backlog; manual screenshots use `scripts/write-manual-placeholder-pngs.mjs` until real captures replace them
 - **i18n:** `pnpm i18n:check` / `pnpm i18n:sync`; new UI strings from parallel work are staged in `scripts/i18n-staging/<WS-ID>.json` and merged with `node scripts/merge-i18n-staging.mjs` (the older `merge-http-tts-i18n.mjs` / `merge-neural-i18n.mjs` scripts are retired). See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md#plugin-commands-capabilities-and-i18n-staging).

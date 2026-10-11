@@ -43,12 +43,14 @@ Pick a **backend** in the inspector. Minimum requirements per engine are in [OPE
 | **Azure / Deepgram** | Cloud; keys in settings (Deepgram uses Nova-3 by default) |
 | **Native / Web Speech** | Browser speech APIs where available (does not work inside the desktop app; desktop users on it are asked once to switch to the automatic backend, else they move to Whisper) |
 | **Chrome / Edge** | Optional path to open a **mic helper** page (`mic.html`) for browser-based capture |
-| **Moonshine server (legacy)** | An external Moonshine HTTP server; the automatic backend now runs Moonshine inside Sigil |
+| **Moonshine server (legacy)** | An external Moonshine HTTP server (Moonshine also exists as a built-in English model in Sigil's speech engine) |
+
+**Which one for my PC?** Start with **On this PC (automatic)**: it runs on the processor by default, so the game keeps the graphics card, and with fewer than 6 physical cores it uses one lighter pass. Models for the graphics card (a more accurate final line, more languages) are opt-in. What each engine downloads and costs, by kind of PC: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
 
 ### First start with "On this PC (automatic)"
 
 1. In the STT inspector, pick **On this PC (automatic)** and your **language** (an explicit language gives the best live captions; **Detect automatically** also works).
-2. The panel shows which models Sigil will use on this PC and why. Leave **Hardware** on **Best for my PC** unless you want to force the CPU or share the GPU with the voice changer.
+2. The panel shows which models Sigil will use on this PC and why. Leave **Hardware** on **Best for my PC** unless you want to force **Processor only** or let speech recognition share the graphics card with the voice changer (**Graphics card**).
 3. Press **Start**. Sigil asks once before downloading (for English about 1.1 GB; **Smaller setup** downloads less and uses one model). Progress shows under the Start button and in **Models & Runtimes**; you can stop and resume later.
 4. Speak: live words appear, then each sentence is replaced by its final, more accurate version on the same line.
 
@@ -66,11 +68,12 @@ Details: [Input device resolution](../OPERATOR_REFERENCE.md#input-device-resolut
 
 The automatic backend, Whisper, Moonshine, local HTTP and Groq only hear you when the built-in voice detector (Silero VAD) decides you are speaking, so silence, keyboard noise and game audio are never transcribed. Adjust it under **Voice detection** in the STT inspector: **Speech sensitivity** (lower catches quiet speech), **Pause that ends speech** (shorter feels faster but can split sentences), audio kept before speech, shortest speech kept, and the longest sentence. **Reset to defaults** restores them.
 
-Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait. The automatic backend has **Two passes** (the accurate final line), **Smart Turn** (lets translation, TTS and the chatbox react sooner when you finish talking; captions are unchanged), **hotwords** and the hallucination filter.
+Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait. The automatic backend has **Two-pass accuracy** (the accurate final line), **Enable interim results** (words while you are still speaking; turn it off to get each sentence once it is finished, which also saves the live model's processor time and memory, about 0.3-0.4 cores and 0.8 GB, and applies at the next start), **Smart Turn** (lets translation, TTS and the chatbox react sooner when you finish talking; captions are unchanged), **hotwords** and the hallucination filter.
 
 ### Tips
 
 - Prefer **local** engines for latency-sensitive VRChat or game audio; **On this PC (automatic)** needs no server.
+- If frames drop in the game while captions run, see [Keeping Sigil light next to VRChat](../OPERATOR_REFERENCE.md#keeping-sigil-light-next-to-vrchat) (a smaller model, one pass instead of two; for the voice changer, **Protect game FPS** together with a graphics-card preset, because on the processor Streamer preset it makes the voice changer fall behind).
 - For **OpenAI-compatible** servers, confirm they accept **non-streaming multipart** uploads (one upload per sentence).
 - Use **mute** (or its shortcut) to pause captions without stopping the service. The Rust engines and Deepgram do not hear or send muted speech at all.
 
@@ -175,7 +178,7 @@ These apply to the next line while translation runs; no restart is needed.
 
 ### What to expect
 
-- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one, which may reword the line once because it sees the whole sentence.
+- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one, which may reword the line once because it sees the whole sentence. While the local AI model runs on your processor, interim translations are off by default (they would take about 4 cores next to the game, final lines only 1.5): tick **Interim results** in the Automatic or AI model panel to turn them on. On a graphics card they stay on.
 - A line that fails to translate shows a short notice and is written to the **System log**; untranslated text is never passed off as a translation.
 - **Azure:** the **Region** field is optional (only regional or multi-service resources need it). Leave the source language empty to auto-detect.
 
@@ -280,6 +283,16 @@ Field-by-field reference: [RVC voices (Sigil Voice Engine)](../OPERATOR_REFERENC
 - **Sidecar** (experimental): research engines (X-VC, StreamVoiceAnon, seed-vc-realtime) or your own server, run as a separate program on this PC; a late block is dropped, so a stalled engine never stalls your voice.
 
 Some of these need models you import under **Models & Runtimes** first; the voice shows what is missing. Details and measured delays: [Zero-shot, singing and sidecar voices](../OPERATOR_REFERENCE.md#zero-shot-singing-and-sidecar-voices-voice-families).
+
+### Which preset for my PC
+
+- **Processor only:** the default **Streamer** preset (it keeps the graphics card free for the game). It runs on all your physical processor cores but two, never fewer than 4 threads and never more than 6, at below-normal priority. On an 8-core processor Sigil measured it converting each block faster than the block lasts (6 threads, and 4 threads) while nothing else was running. It is not yet shown to play out in real time: with the default output buffer the benchmark played only about half to two thirds of the converted audio, and with a game running the 6-thread preset fell behind in the test. If the voice stutters, run **Autotune** or choose a graphics-card preset (the larger **Stable** output buffer may also help, but it was not measured with this preset). Leave **Voice changer priority** on **Automatic**: **Protect game FPS** holds the Streamer to one thread, which falls behind.
+  - With 6 or more physical cores you keep two cores for the game (a 6-core processor runs 4 threads, an 8-core one 6).
+  - With 4 or 5 physical cores there is no core to spare: the Streamer still takes 4 threads, which is every core of a 4-core processor and all but one of a 5-core one, because fewer threads cannot keep up. This was not measured on such a processor, so watch the game's frame rate; if it drops, run **Autotune** or choose a graphics-card preset.
+  - On a slower processor of any size, run **Autotune** to find a longer block that keeps up.
+- **Mid-range graphics card (8–12 GB):** **Low latency** on CUDA (NVIDIA, with the NVIDIA GPU runtime from **Models & Runtimes**) or DirectML.
+- **16 GB or more:** **Quality**, or **Studio-TRT** on NVIDIA RTX.
+- **Prefer another voice changer?** Run it beside Sigil over a virtual audio cable and keep Sigil's speech-to-text on your real microphone: [Using another voice changer over a virtual cable](../OPERATOR_REFERENCE.md#using-another-voice-changer-over-a-virtual-cable). What each preset costs and which engine paths are on or off by default: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#voice-changer-by-tier) and [Defaults and opt-ins at a glance](../OPERATOR_REFERENCE.md#defaults-and-opt-ins-at-a-glance).
 
 ### Status, latency and priority
 

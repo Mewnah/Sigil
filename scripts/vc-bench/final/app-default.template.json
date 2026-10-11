@@ -1,0 +1,29 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P7-B final scorecard, the voice changer as the app starts it: the Low-latency preset on ${EP} as the preset button applies it (RMVPE, ${EXTRA_MS} ms extra context) and the default stream (512-frame device block, 20 ms crossfade, 35 / 70 ms output cushion, 300 ms budget) with block_ms 0, i.e. the engine block follows the device block (the engine rounds it up to 20 ms) instead of the plan's 40 ms reference config of the sve-* rows. Offline compute (T2 idle), a wall-clock paced run (T1 and its decomposition, T4), the out-of-process 70 % load (T2 under load) and the H1 simulation (T7). Materialized by run-perf-gate.ps1 -Profile final.",
+  "seed": 20261009,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 0,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "vram": { "sample_ms": ${VRAM_SAMPLE_MS_JSON} },
+  "runs": [
+    { "mode": "offline", "name": "offline", "repeat": ${OFFLINE_REPEAT_JSON} },
+    { "mode": "paced", "name": "paced", "seconds": ${PACED_S_JSON}, "clock": "wall", "warmup_s": 1 },
+    { "mode": "contention", "name": "h2-load70-oop", "profile": "h2_load70_oop", "seconds": ${PACED_S_JSON}, "warmup_s": 1 },
+    { "mode": "contention", "name": "h1-sim", "profile": "h1_vrchat_obs", "seconds": ${PACED_S_JSON}, "warmup_s": 1 }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

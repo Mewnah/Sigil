@@ -180,10 +180,13 @@ pub(crate) fn plan(spec: &RvcSpec, stream: &StreamSpec, priority: WorkerPriority
     }
     let precision = PrecisionMode::from_str_lossy(&spec.precision);
     let levers = resolve_levers(&request, preset, &requested_ep, precision);
+    // The same thread settings as the voice changer worker: the Streamer preset on the CPU runs the P7-I0
+    // thread policy unless the spec pins a count.
+    let threads = crate::services::neural_audio::ort_session::vc_threads(preset, ep, priority, spec.intra_threads);
     let session = VcSessionOptions {
         cuda_device_index: spec.gpu_device_index,
-        streamer_profile: preset == RvcPresetProfile::Streamer,
-        intra_threads: spec.intra_threads.or((priority == WorkerPriority::ProtectGame).then_some(2)),
+        streamer_profile: threads.streamer_profile,
+        intra_threads: threads.intra_threads,
         thread_priority: Some(priority),
         vram_cap_mb: if ep == "cuda" { spec.vram_cap_mb } else { None },
         component_prefix: Some(BENCH_COMPONENT_PREFIX),

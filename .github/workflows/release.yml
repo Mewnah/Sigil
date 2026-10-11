@@ -8,9 +8,16 @@
 #
 # GPU execution providers: the release build uses scripts/release/tauri.release.conf.json, which
 # stages onnxruntime_providers_shared.dll, onnxruntime_providers_cuda.dll and DirectML.dll (copied by
-# ort-sys next to Sigil.exe) into both installers, next to Sigil.exe. The NVIDIA CUDA 12 / cuDNN 9
-# runtime is NOT bundled: users install it from Settings → GPU & diagnostics. See
-# docs/adr/0003-gpu-ep-delivery.md and scripts/release/verify-bundle.ps1.
+# ort-sys next to Sigil.exe) into both installers, next to Sigil.exe. NVIDIA's CUDA 13 / cuDNN 9
+# runtime is NOT bundled: it is the opt-in "runtime/nvidia-cuda13" pack (Models & Runtimes, or
+# Settings → GPU & diagnostics). See docs/adr/0003-gpu-ep-delivery.md, docs/adr/0007-native-runtime-packs.md
+# and scripts/release/verify-bundle.ps1.
+#
+# Release gates (scripts/release/README.md): the catalog pin check runs before the compile (every
+# published model and runtime hash-pinned, the release set immutable); verify-bundle.ps1 checks both
+# installers; packaged-smoke-all.ps1 then installs the NSIS setup on this clean runner (no GPU, no
+# packs) and starts it. Publishing stays manual: the job only creates a DRAFT release for the user to
+# review.
 name: 'release'
 
 on:
@@ -65,6 +72,13 @@ jobs:
             ort-dist-${{ runner.os }}-
       - name: setup pnpm deps
         run: pnpm install --frozen-lockfile
+      # Offline and fast (Node only): fails on a published catalog file without a size and sha256 / git_oid,
+      # on a mutable source URL, and on a release-set entry that is unpublished or not covered by
+      # scripts/release/release-set.json. build.rs repeats the pin rule at compile time.
+      - name: Catalog pins (release set)
+        run: node scripts/release/check-catalog-pins.mjs
+      - name: Docs (links, anchors, tables, no TODO placeholders)
+        run: node docs/check-docs.mjs --no-todo
       - name: i18n key parity
         run: pnpm i18n:check
       - name: Typecheck
@@ -88,6 +102,24 @@ jobs:
       - name: Verify bundle (provider DLLs in both installers, no new load-time imports, EP probe)
         shell: pwsh
         run: ./scripts/release/verify-bundle.ps1
+
+      # The hosted runner has no GPU and no Sigil data: install the NSIS setup silently, check the headless
+      # entry points, start the app on a fresh profile (server, page, Models & Runtimes empty, log, clean
+      # exit), install the tiny catalog entry and the sherpa-onnx pack through the model store. This gate must
+      # not pass on a check it never ran: -RequireGui turns a skipped app check (no WebView2 runtime, no
+      # DevTools page) into a failure and -RequireOnline does the same for the downloads, which also fail on
+      # their own whenever a host answers with a hash or size that disagrees with the catalog (a stale pin).
+      # Only a host that cannot be reached at all is a skip, and -RequireOnline makes that a failure too.
+      - name: Packaged smoke (clean runner, no GPU, no packs)
+        shell: pwsh
+        run: ./scripts/release/packaged-smoke-all.ps1 -Mode Installed -ExpectNoGpu -Online -RequireOnline -RequireGui -ResultsDir "$env:RUNNER_TEMP/packaged-smoke"
+      - name: Upload smoke result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke
+          path: ${{ runner.temp }}/packaged-smoke/smoke-result.json
+          if-no-files-found: ignore
 
       # Portable build: Sigil.exe alone cannot load the GPU providers, so ship it with them.
       - name: Portable zip

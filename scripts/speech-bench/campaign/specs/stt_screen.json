@@ -1,0 +1,161 @@
+{
+ "$comment": [
+  "P7-A STT screening: every light / mid-weight candidate on the quick subset (clean + vrchat_mix), 10 utterances per language, whole-utterance feed. Accuracy only; speed is measured in the later runs under the game-load simulator."
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-stt-screen",
+ "description": "STT screening: light and mid-weight engines, clean and vrchat_mix, 10 utterances per language",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 10
+  }
+ },
+ "engines": [
+  {
+   "id": "nemotron-560",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-560ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt",
+    "ja",
+    "ko"
+   ]
+  },
+  {
+   "id": "parakeet-ultra",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "parakeet-v3",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-tdt-0.6b-v3-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "qwen3-asr-0.6b",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 2
+  },
+  {
+   "id": "sensevoice",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/sense-voice-small-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "zh",
+    "ja",
+    "ko",
+    "en"
+   ]
+  },
+  {
+   "id": "moonshine-base-en",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/moonshine-base-en-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en"
+   ]
+  },
+  {
+   "id": "whisper-base",
+   "task": "stt",
+   "backend": "whisper",
+   "model": "${APPDATA}/com.sigil.app/whisper/ggml-base.bin",
+   "execution_provider": "cpu",
+   "threads": 4
+  },
+  {
+   "id": "granite-cpu",
+   "task": "stt",
+   "backend": "transcribe",
+   "model": "stt/granite-speech-5.0-turboctc-q8_0",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "ja"
+   ]
+  },
+  {
+   "id": "granite-gpu",
+   "task": "stt",
+   "backend": "transcribe",
+   "model": "stt/granite-speech-5.0-turboctc-q8_0",
+   "execution_provider": "cuda",
+   "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "ja"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "screen",
+   "mode": "accuracy",
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

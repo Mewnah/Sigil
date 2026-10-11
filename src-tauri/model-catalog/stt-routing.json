@@ -3,7 +3,7 @@
   "$comment": [
     "STT routing table (owned by P2-C): the top-level 'routing' object is read by speech::router with include_str! (build.rs checks only that it is an object). It adds no catalog entries: every id it names is a model or runtime of another fragment (stt-sherpa, stt-gguf, stt-legacy, runtime-*), and the router never plans an id the catalog in effect does not have (or an unpublished one that is not installed).",
     "Algorithm (speech::router, mirrored in TS by src/core/services/stt/router.ts; shared cases in src-tauri/test-fixtures/routing.json): pick the row whose 'languages' holds the normalized language ('auto' row for auto, '*' row otherwise); streaming = first usable 'streaming' model, CPU final = first usable 'cpuFinal', GPU final = first usable 'gpuFinal' that fits the VRAM the resource governor grants (vramMb, minTotalVramMb) when the tier allows the GPU. Two passes (streaming partials + the final re-decode) when asked for and the PC allows it (GPU final, or at least cpuTwoPassMinCores physical cores and no voice changer that runs, or may run, on the CPU: a running one whose device is not known yet counts as on the CPU); a single pass uses the streaming model when 'streamFinal' (its own finals are caption quality) on the CPU, else the final. A GPU final gets the row's CPU final as its fallback, except next to a stream on a PC whose CPU may not run two engines (then the first-pass finals stand after a GPU failure). Never-route rules are enforced in code on top of this table (Cohere never for ja/zh/ko/ru/yue or auto; a model that needs a language always gets one; in auto mode the stream opens only for detected languages whose own row streams with it, carried as the streaming spec's options.streamLanguages, so never zh/yue).",
-    "detectsLanguage follows what the engine reports, not what the model hears: Qwen3-ASR-0.6B through sherpa-onnx 1.13.8 returns no language (speech_rt::sherpa::catalog Family::detects_language), so an auto plan with it as the final also runs the languageId engine; the transcribe.cpp Qwen3-ASR-1.7B finals report it. Rows follow research 2026-09 section 1.1 and the plan's rules: en: Nemotron streaming, Parakeet Ultra re-decode on the CPU, Cohere on the GPU; European languages: Parakeet Ultra finals (Cohere on the GPU where it beats Parakeet on FLEURS: pl, el; Qwen3-ASR-1.7B and Cohere both beat it for de/es/fr/it/pt/nl); zh/yue: SenseVoice on the CPU, Qwen3-ASR-1.7B on the GPU, no Nemotron partials (Mandarin CER ~19); ja/ko/ru: Nemotron partials + Qwen3-ASR finals; ar/hi/tr: Nemotron's own finals beat Qwen3-ASR-0.6B on FLEURS (15.9/8.6/15.4 vs 24.5/12.7/16.7 WER), so the CPU runs Nemotron alone; other Qwen3-ASR languages: Qwen3-ASR finals; everything else: Whisper. Per-language numbers are transcribe.cpp's FLEURS validation tables (Q8_0); P7-A replaces them with Sigil's own measurements.",
+    "detectsLanguage follows what the engine reports, not what the model hears: Qwen3-ASR-0.6B through sherpa-onnx 1.13.8 returns no language (speech_rt::sherpa::catalog Family::detects_language), so an auto plan with it as the final also runs the languageId engine; the transcribe.cpp Qwen3-ASR-1.7B finals report it. CPU rows (the tier a streamer plays next to the game on) follow Sigil's own P7-A campaign (docs/benchmarks/SPEECH_BENCHMARKS.md): FLEURS speech, the own-microphone ranking only (clean plus the mic-side conditions room_light and mic_codec, 30 utterances per language and condition, 100 for Korean; pooled error rate, paired utterance bootstrap; an engine within the interval and 1.5 points of the best ties it and the cheaper one wins); the bleed conditions (music, babble, the VRChat mix) take no part because a streamer's own microphone hears no game audio through headphones. en and every Parakeet language incl. ru: Nemotron partials + a Parakeet Ultra final (own-mic WER 6-10 %; ru 7.3 against 22.1 for Qwen3-ASR-0.6B; Parakeet v3 is level or behind everywhere and collapses under babble); ja: Nemotron partials + a SenseVoice final (CER 6.8 against 10.0 for Qwen3-ASR-0.6B, 5.5x less CPU and RAM); ko: Nemotron partials + a Qwen3-ASR-0.6B final (CER 5.1 against 7.9 for SenseVoice on 100 utterances per condition; the bleed conditions would pick SenseVoice and are not used); zh/yue: SenseVoice, no Nemotron partials (a tie with Qwen3-ASR-0.6B, 5.5x cheaper); vi/id/ms/th/fil/fa/mk: Qwen3-ASR-0.6B (nothing else covers them; not measured, FLEURS rows only for the nine corpus languages); ar/hi/tr/nb: Nemotron's own finals (transcribe.cpp's FLEURS table: they beat Qwen3-ASR-0.6B, 15.9/8.6/15.4 vs 24.5/12.7/16.7 WER; not re-measured); everything else: Whisper. The GPU rows (Cohere, Qwen3-ASR 1.7B) keep their P2 order and are opt-in and unbenchmarked in P7 (they are the heavy models; the campaign measured no GPU row); the CPU final behind a GPU final is the CPU row above.",
     "vramMb: process VRAM while loaded and running, including the ~0.38 GB CUDA context (measured on CUDA by P2-D: Qwen3-ASR-1.7B Q8_0 3.47-3.5 GB, BF16 5.9 GB, Cohere Q4_K_M 1.95 GB). Keep them in step with resources::policy."
   ],
   "entries": [],
@@ -121,10 +121,24 @@
         "gpuFinal": []
       },
       {
-        "name": "ja-ko-ru",
-        "languages": ["ja", "ko", "ru"],
+        "name": "russian",
+        "languages": ["ru"],
         "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
-        "cpuFinal": ["stt/qwen3-asr-0.6b-int8"],
+        "cpuFinal": ["stt/parakeet-ultra-int8", "stt/parakeet-tdt-0.6b-v3-int8"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "japanese",
+        "languages": ["ja"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/sense-voice-small-int8", "stt/qwen3-asr-0.6b-int8"],
+        "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
+      },
+      {
+        "name": "korean",
+        "languages": ["ko"],
+        "streaming": ["stt/nemotron-3.5-streaming-560ms-int8"],
+        "cpuFinal": ["stt/qwen3-asr-0.6b-int8", "stt/sense-voice-small-int8"],
         "gpuFinal": ["stt/qwen3-asr-1.7b-bf16", "stt/qwen3-asr-1.7b-q8_0"]
       },
       {

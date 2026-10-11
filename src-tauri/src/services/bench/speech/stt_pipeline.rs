@@ -16,8 +16,10 @@
 //! pace says ([`effective_pace`]): the pipeline drops the live text of a stream more than 3 s behind.
 //!
 //! Item timings: `final_latency_ms` is the pipeline's own VAD-close-to-final latency of the item's
-//! last final; `first_partial_ms` runs from the item's first fed sample to its first partial;
-//! `compute_ms` (asap pace only) is the wall time from the item's first fed sample to its last final.
+//! last final; `first_partial_ms` runs from the item's first fed sample to its first partial (the lead
+//! silence is fed at once and takes no wall time, so at real-time pace this is also the time from the
+//! clip's start: the lead is not subtracted); `compute_ms` (asap pace only) is the wall time from the
+//! item's first fed sample to its last final.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -381,6 +383,9 @@ pub struct PipelineDriver {
     info: DriverInfo,
     notes: Vec<String>,
     loaded_info: bool,
+    /// Pipeline sessions started so far: one per group of same-language items (model loading is
+    /// inside the engine's timed window, so the report says how many there were).
+    sessions: u32,
 }
 
 /// The pipeline configuration of a spec engine: its router request (tier from the execution
@@ -441,6 +446,7 @@ impl PipelineDriver {
             },
             notes: Vec::new(),
             loaded_info: false,
+            sessions: 0,
         }
     }
 
@@ -479,6 +485,14 @@ impl PipelineDriver {
         ));
     }
 
+    /// Count a started session in the engine row's facts (`extra.sessions`).
+    fn count_session(&mut self) {
+        self.sessions += 1;
+        if let Some(Value::Object(extra)) = self.info.extra.as_mut() {
+            extra.insert("sessions".into(), json!(self.sessions));
+        }
+    }
+
     fn run_group(&mut self, reqs: &[SttRequest<'_>]) -> Vec<Result<SttOutput, String>> {
         let fail_all = |msg: String| reqs.iter().map(|_| Err(msg.clone())).collect::<Vec<_>>();
         let tracker = Arc::new(Tracker::new());
@@ -495,6 +509,7 @@ impl PipelineDriver {
         };
         tracker.set_plan(&started.plan);
         self.record_plan(&registry, &started);
+        self.count_session();
         if started.plan.streaming.is_none() && started.plan.final_engine.is_none() {
             tauri::async_runtime::block_on(stop_session(&registry, PIPELINE_ID));
             return fail_all(format!(
@@ -674,17 +689,16 @@ fn assemble(state: &TrackerState, span: &Span, req: &SttRequest<'_>, timed_out: 
     }
     let no_gap = req.language.as_deref().is_some_and(|l| matches!(l, "ja" | "zh" | "yue"));
     let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(if no_gap { "" } else { " " });
-    let lead = Duration::from_millis(u64::from(req.feed.lead_silence_ms));
     Ok(SttOutput {
         text,
         language,
         tags,
         segments,
         partials: Some(partials),
-        first_partial_ms: first_partial.map(|t| {
-            let d = t.saturating_duration_since(span.started_at);
-            (if realtime { d.saturating_sub(lead) } else { d }).as_secs_f64() * 1000.0
-        }),
+        // From the item's first fed sample. The lead silence is pushed at once (it takes no wall
+        // time) and the clip is paced from the same instant, so this is also the time from the
+        // clip's start; subtracting the lead here would understate the latency by exactly that much.
+        first_partial_ms: first_partial.map(|t| t.saturating_duration_since(span.started_at).as_secs_f64() * 1000.0),
         final_latency_ms: last_latency,
         compute_ms: if realtime { None } else { last_event.map(|t| t.saturating_duration_since(span.started_at).as_secs_f64() * 1000.0) },
     })
@@ -833,6 +847,73 @@ mod tests {
         assert!(driver.info().runtime.as_deref().unwrap().contains("fake-model"));
         assert_eq!(driver.info().device, "cpu");
         assert!(driver.grouped());
+        // The group was one session; the engine row says so, and counts the next one.
+        assert_eq!(driver.info().extra.as_ref().unwrap()["sessions"], 1);
+        let again = driver.transcribe_group(&[req("en/4/clean", &a, &f)]);
+        assert!(again[0].is_ok());
+        assert_eq!(driver.info().extra.as_ref().unwrap()["sessions"], 2, "model loading is inside the engine window, so the report counts the sessions");
+    }
+
+    /// A tracker state with one closed segment whose first partial came `first_partial_ms` after the item started.
+    fn state_with_partial(started_at: Instant, first_partial_ms: u64) -> TrackerState {
+        let mut state = TrackerState::default();
+        state.segs.insert(
+            1,
+            SegRec {
+                started: true,
+                closed: true,
+                dropped: None,
+                start_ms: 500,
+                end_ms: 2500,
+                partials: 3,
+                first_partial_at: Some(started_at + Duration::from_millis(first_partial_ms)),
+                finals: vec![FinalRec {
+                    revision: 1,
+                    pass: FinalPass::First,
+                    text: "hello there".into(),
+                    lang: Some("en".into()),
+                    engine: "whisper".into(),
+                    model: "fake-model".into(),
+                    start_ms: 500,
+                    end_ms: 2500,
+                    latency_ms: 300,
+                    tags: Vec::new(),
+                    at: started_at + Duration::from_millis(2900),
+                }],
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn first_partial_runs_from_the_clip_start_whatever_the_lead_silence() {
+        // The lead silence is pushed at once and the clip is paced from the same instant, so the wall
+        // time from the item's start is the time from the clip's start: nothing is subtracted.
+        let started_at = Instant::now();
+        let span = Span {
+            window_start_ms: 0.0,
+            window_end_ms: 4000.0,
+            clip_start_ms: 500.0,
+            started_at,
+        };
+        let audio = clip(2000);
+        let mut f = feed_cfg(Pace::Realtime);
+        f.lead_silence_ms = 500;
+        let r = req("en/1/clean", &audio, &f);
+        for realtime in [true, false] {
+            let out = assemble(&state_with_partial(started_at, 800), &span, &r, false, realtime, None).unwrap();
+            let got = out.first_partial_ms.unwrap();
+            assert!((got - 800.0).abs() < 1.0, "realtime {realtime}: an 800 ms partial reads 800 ms, not 300: {got}");
+            // A partial sooner than the lead is long is no longer clamped to zero.
+            let out = assemble(&state_with_partial(started_at, 300), &span, &r, false, realtime, None).unwrap();
+            let got = out.first_partial_ms.unwrap();
+            assert!((got - 300.0).abs() < 1.0, "realtime {realtime}: {got}");
+        }
+        // Real-time runs report no compute time; asap runs the time to the last final.
+        let rt = assemble(&state_with_partial(started_at, 800), &span, &r, false, true, None).unwrap();
+        let asap = assemble(&state_with_partial(started_at, 800), &span, &r, false, false, None).unwrap();
+        assert!(rt.compute_ms.is_none());
+        assert!((asap.compute_ms.unwrap() - 2900.0).abs() < 1.0);
     }
 
     #[test]

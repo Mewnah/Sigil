@@ -1,0 +1,91 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "seed": 20261002,
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ },
+ "name": "p7a-check-speed",
+ "description": "first-run check of the pipeline backend and the stream feed",
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "conditions": [
+    "clean"
+   ],
+   "languages": [
+    "en"
+   ],
+   "limit_per_language": 2
+  }
+ },
+ "engines": [
+  {
+   "id": "nemotron-560",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-560ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1
+  },
+  {
+   "id": "pipeline-cpu",
+   "task": "stt",
+   "backend": "pipeline",
+   "execution_provider": "cpu",
+   "language_mode": "given",
+   "options": {
+    "route": {
+     "language": "",
+     "tier": "cpu",
+     "twoPass": true
+    }
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "stream",
+   "mode": "cpu_speed",
+   "engines": [
+    "nemotron-560"
+   ],
+   "feed": {
+    "kind": "stream",
+    "chunk_ms": 100,
+    "pace": "realtime",
+    "tail_silence_ms": 1000
+   },
+   "load_profile": "h3_cpu_game",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   }
+  },
+  {
+   "name": "pipe",
+   "mode": "cpu_speed",
+   "engines": [
+    "pipeline-cpu"
+   ],
+   "feed": {
+    "kind": "pipeline",
+    "pace": "asap",
+    "lead_silence_ms": 500,
+    "tail_silence_ms": 1200
+   },
+   "load_profile": "none",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   }
+  }
+ ]
+}

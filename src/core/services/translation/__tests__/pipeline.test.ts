@@ -79,6 +79,7 @@ interface Harness {
 interface MakeOptions {
   pair?: () => { from?: string; to?: string };
   engines?: Partial<TranslationEngineMap>;
+  translatorOnCpu?: () => boolean;
 }
 
 function make(patch: (s: Translation_State) => void = () => {}, options: MakeOptions = {}): Harness {
@@ -94,6 +95,7 @@ function make(patch: (s: Translation_State) => void = () => {}, options: MakeOpt
     engines: { ...engines, ...options.engines },
     publish: (e) => events.push(e),
     pair: options.pair,
+    translatorOnCpu: options.translatorOnCpu,
   });
   return {
     pipeline,
@@ -704,5 +706,78 @@ describe("property: no dropped finals, ordered, interims never flicker", () => {
     expect(coverage.merged).toBeGreaterThan(10);
     expect(coverage.givenUp).toBeGreaterThan(5);
     expect(coverage.streamed).toBeGreaterThan(20);
+  });
+});
+
+describe("automatic interim switch (P7: off while the bundled translator runs on the processor)", () => {
+  const interimCalls = () => engine().calls.filter((c) => c.request.kind === "interim");
+
+  it("translates interims by default (the translator is not on the processor)", async () => {
+    const h = await started();
+    expect(h.settings.llm.interim).toBe("auto");
+    h.push(I, "hello there", seg(1, 0));
+    expect(interimCalls()).toHaveLength(1);
+  });
+
+  it("holds interims off on the processor but still translates the final", async () => {
+    const h = await started(undefined, { translatorOnCpu: () => true });
+    h.push(I, "hello", seg(1, 0));
+    h.push(I, "hello there", seg(1, 1));
+    expect(interimCalls()).toHaveLength(0);
+    h.push(F, "Hello there.", seg(1, 2, { turnEnd: true }));
+    expect(engine().call("Hello there.").request.onPartial).toBeUndefined();
+    engine().call("Hello there.").resolve("Hola.");
+    await flush();
+    expect(h.out()).toEqual(["final:Hola."]);
+  });
+
+  it("a stored explicit true wins on the processor, an explicit false wins everywhere", async () => {
+    const on = await started((s) => (s.llm.interim = true), { translatorOnCpu: () => true });
+    on.push(I, "hello", seg(1, 0));
+    expect(interimCalls()).toHaveLength(1);
+    const off = await started((s) => (s.llm.interim = false), { translatorOnCpu: () => false });
+    off.push(I, "hello", seg(1, 0));
+    expect(interimCalls()).toHaveLength(0);
+  });
+
+  it("follows the translator while it runs (the governor's choice shows once the server is up)", async () => {
+    let onCpu = false;
+    const h = await started(undefined, { translatorOnCpu: () => onCpu });
+    h.push(I, "one", seg(1, 0));
+    expect(interimCalls()).toHaveLength(1);
+    engine().call("one").resolve("uno");
+    await flush();
+    onCpu = true;
+    h.push(I, "one two", seg(1, 1));
+    await flush();
+    expect(interimCalls()).toHaveLength(1);
+    onCpu = false;
+    h.push(I, "one two three", seg(1, 2));
+    await flush();
+    expect(interimCalls()).toHaveLength(2);
+  });
+
+  it("the automatic router follows the same rule when its chain uses the bundled translator", async () => {
+    const withLlm = await started((s) => (s.backend = Translation_Backends.auto), { translatorOnCpu: () => true });
+    withLlm.push(I, "hello", seg(1, 0));
+    expect(interimCalls()).toHaveLength(0);
+    const without = await started(
+      (s) => {
+        s.backend = Translation_Backends.auto;
+        s.auto.chain = [Translation_Backends.nllb];
+      },
+      { translatorOnCpu: () => true },
+    );
+    without.push(I, "hello", seg(1, 0));
+    expect(interimCalls()).toHaveLength(1);
+    const explicit = await started(
+      (s) => {
+        s.backend = Translation_Backends.auto;
+        s.auto.interim = true;
+      },
+      { translatorOnCpu: () => true },
+    );
+    explicit.push(I, "hello", seg(1, 0));
+    expect(interimCalls()).toHaveLength(1);
   });
 });

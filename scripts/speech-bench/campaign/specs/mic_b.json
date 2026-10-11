@@ -1,0 +1,50 @@
+{
+ "$comment": [
+  "mic-side conditions (room_light, mic_codec), 30 utterances per language: Qwen3-ASR 0.6B"
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mic-b",
+ "description": "mic-side conditions (room_light, mic_codec), 30 utterances per language: Qwen3-ASR 0.6B",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "conditions": [
+    "room_light",
+    "mic_codec"
+   ],
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 30
+  }
+ },
+ "engines": [
+  {
+   "id": "qwen3-asr-0.6b",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 2
+  }
+ ],
+ "runs": [
+  {
+   "name": "finals",
+   "mode": "accuracy",
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

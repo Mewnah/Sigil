@@ -268,7 +268,7 @@
       }
     },
     {
-      "name": "ja on CPU: Nemotron partials with ja, Qwen3-ASR-0.6B final",
+      "name": "ja on CPU: Nemotron partials with ja, SenseVoice final",
       "request": {
         "language": "ja",
         "tier": "auto",
@@ -282,14 +282,14 @@
       "expect": {
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
         "streamingLanguage": "ja",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "neverModels": [
           "stt/cohere-transcribe-q4_k"
         ]
       }
     },
     {
-      "name": "ko on CPU: Qwen3-ASR-0.6B final",
+      "name": "ko on CPU: Nemotron partials with ko, Qwen3-ASR-0.6B final",
       "request": {
         "language": "ko",
         "tier": "auto",
@@ -301,6 +301,8 @@
         "physicalCores": 8
       },
       "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "ko",
         "finalModel": "stt/qwen3-asr-0.6b-int8",
         "neverModels": [
           "stt/cohere-transcribe-q4_k"
@@ -308,7 +310,7 @@
       }
     },
     {
-      "name": "ru on CPU: Qwen3-ASR-0.6B final",
+      "name": "ru on CPU: Nemotron partials, Parakeet Ultra final",
       "request": {
         "language": "ru-RU",
         "tier": "auto",
@@ -322,6 +324,27 @@
       "expect": {
         "language": "ru",
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "finalModel": "stt/parakeet-ultra-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "vi on CPU: Nemotron partials with vi, Qwen3-ASR-0.6B final",
+      "request": {
+        "language": "vi",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": false,
+        "gpuReason": "no_gpu",
+        "physicalCores": 8
+      },
+      "expect": {
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "vi",
         "finalModel": "stt/qwen3-asr-0.6b-int8",
         "neverModels": [
           "stt/cohere-transcribe-q4_k"
@@ -329,7 +352,7 @@
       }
     },
     {
-      "name": "ja on a 4-core CPU: Qwen3-ASR finals only",
+      "name": "ja on a 4-core CPU: SenseVoice finals only",
       "request": {
         "language": "ja",
         "tier": "auto",
@@ -342,7 +365,7 @@
       },
       "expect": {
         "streamingModel": null,
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "few_cores_single_pass",
           "finals_only"
@@ -542,7 +565,7 @@
       }
     },
     {
-      "name": "ja on a 12 GB GPU: Qwen3-ASR-1.7B Q8_0, Qwen3-ASR-0.6B fallback",
+      "name": "ja on a 12 GB GPU: Qwen3-ASR-1.7B Q8_0, SenseVoice fallback",
       "request": {
         "language": "ja",
         "tier": "auto",
@@ -559,6 +582,31 @@
         "tier": "gpu",
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
         "streamingLanguage": "ja",
+        "finalModel": "stt/qwen3-asr-1.7b-q8_0",
+        "fallbackModel": "stt/sense-voice-small-int8",
+        "neverModels": [
+          "stt/cohere-transcribe-q4_k"
+        ]
+      }
+    },
+    {
+      "name": "vi on a 12 GB GPU: Qwen3-ASR-1.7B Q8_0, Qwen3-ASR-0.6B fallback",
+      "request": {
+        "language": "vi",
+        "tier": "auto",
+        "twoPass": true
+      },
+      "context": {
+        "gpu": true,
+        "gpuVariant": "cuda13",
+        "vramAvailableMb": 6600,
+        "vramTotalMb": 12288,
+        "physicalCores": 8
+      },
+      "expect": {
+        "tier": "gpu",
+        "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
+        "streamingLanguage": "vi",
         "finalModel": "stt/qwen3-asr-1.7b-q8_0",
         "fallbackModel": "stt/qwen3-asr-0.6b-int8",
         "neverModels": [
@@ -583,7 +631,7 @@
       "expect": {
         "tier": "gpu",
         "finalModel": "stt/qwen3-asr-1.7b-bf16",
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+        "fallbackModel": "stt/sense-voice-small-int8"
       }
     },
     {
@@ -740,7 +788,7 @@
       },
       "expect": {
         "tier": "cpu",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "gpu_denied_vc_running",
           "vc_unknown_single_pass"
@@ -812,7 +860,7 @@
       },
       "expect": {
         "streamingModel": null,
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "vc_running_single_pass"
         ]
@@ -860,7 +908,7 @@
       },
       "expect": {
         "tier": "cpu",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "gpu_full"
         ]
@@ -885,7 +933,7 @@
       },
       "expect": {
         "tier": "cpu",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "gpu_runtime_unavailable"
         ]
@@ -930,7 +978,7 @@
       },
       "expect": {
         "tier": "cpu",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "fallbackModel": null
       }
     },
@@ -999,7 +1047,7 @@
           "stt/qwen3-asr-1.7b-q8_0",
           "runtime/sigil-transcribe-cuda13",
           "runtime/nvidia-cuda13",
-          "stt/qwen3-asr-0.6b-int8",
+          "stt/sense-voice-small-int8",
           "runtime/sherpa-onnx"
         ]
       }
@@ -1148,7 +1196,7 @@
         "tier": "gpu",
         "streamingModel": null,
         "finalModel": "stt/qwen3-asr-1.7b-q8_0",
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "fallbackModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "single_pass",
           "finals_only"
@@ -1173,7 +1221,7 @@
         "tier": "gpu",
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
         "finalModel": "stt/qwen3-asr-1.7b-q8_0",
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+        "fallbackModel": "stt/sense-voice-small-int8"
       }
     },
     {
@@ -1192,7 +1240,7 @@
         "tier": "cpu",
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
         "streamingLanguage": "ja",
-        "finalModel": "stt/qwen3-asr-0.6b-int8"
+        "finalModel": "stt/sense-voice-small-int8"
       }
     },
     {
@@ -1214,7 +1262,7 @@
       },
       "expect": {
         "tier": "cpu",
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "gpu_runtime_unavailable"
         ],
@@ -1240,7 +1288,7 @@
       "expect": {
         "tier": "cpu",
         "streamingModel": null,
-        "finalModel": "stt/qwen3-asr-0.6b-int8",
+        "finalModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "vc_unknown_single_pass",
           "finals_only"
@@ -1314,7 +1362,7 @@
         "tier": "gpu",
         "streamingModel": null,
         "finalModel": "stt/qwen3-asr-1.7b-q8_0",
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "fallbackModel": "stt/sense-voice-small-int8",
         "notesInclude": [
           "single_pass",
           "finals_only"
@@ -1340,7 +1388,7 @@
       "expect": {
         "tier": "gpu",
         "streamingModel": "stt/nemotron-3.5-streaming-560ms-int8",
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8"
+        "fallbackModel": "stt/sense-voice-small-int8"
       }
     },
     {
@@ -1388,7 +1436,7 @@
       "expect": {
         "tier": "gpu",
         "streamingModel": null,
-        "fallbackModel": "stt/qwen3-asr-0.6b-int8",
+        "fallbackModel": "stt/sense-voice-small-int8",
         "neverModels": [
           "stt/nemotron-3.5-streaming-560ms-int8"
         ],

@@ -1,0 +1,22 @@
+{
+  "schema": "sigil-speech-bench-spec/1",
+  "name": "p7a-check-stt",
+  "description": "2-item first-run check of every STT backend used by the campaign",
+  "seed": 20261002,
+  "corpus": { "manifest": "${SIGIL_P7_CORPUS}/corpus.json", "select": { "subset": "quick", "kinds": ["synthetic"], "conditions": ["clean"], "languages": ["en", "ja"], "limit_per_language": 2 } },
+  "engines": [
+    { "id": "nemotron-560", "task": "stt", "backend": "sherpa-online", "model": "stt/nemotron-3.5-streaming-560ms-int8", "execution_provider": "cpu", "threads": 1 },
+    { "id": "parakeet-ultra", "task": "stt", "backend": "sherpa-offline", "model": "stt/parakeet-ultra-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en"] },
+    { "id": "parakeet-v3", "task": "stt", "backend": "sherpa-offline", "model": "stt/parakeet-tdt-0.6b-v3-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en"] },
+    { "id": "qwen3-asr-0.6b", "task": "stt", "backend": "sherpa-offline", "model": "stt/qwen3-asr-0.6b-int8", "execution_provider": "cpu", "threads": 2 },
+    { "id": "sensevoice", "task": "stt", "backend": "sherpa-offline", "model": "stt/sense-voice-small-int8", "execution_provider": "cpu", "threads": 2 },
+    { "id": "moonshine-base-en", "task": "stt", "backend": "sherpa-offline", "model": "stt/moonshine-base-en-int8", "execution_provider": "cpu", "threads": 2, "languages": ["en"] },
+    { "id": "whisper-base", "task": "stt", "backend": "whisper", "model": "${APPDATA}/com.sigil.app/whisper/ggml-base.bin", "execution_provider": "cpu", "threads": 4 },
+    { "id": "granite-cpu", "task": "stt", "backend": "transcribe", "model": "stt/granite-speech-5.0-turboctc-q8_0", "execution_provider": "cpu", "threads": 4, "languages": ["en"] },
+    { "id": "granite-gpu", "task": "stt", "backend": "transcribe", "model": "stt/granite-speech-5.0-turboctc-q8_0", "execution_provider": "cuda", "languages": ["en"] }
+  ],
+  "runs": [
+    { "name": "check", "mode": "accuracy", "feed": { "kind": "utterance" }, "warmup": 0, "timeout_s": 120 }
+  ],
+  "output": { "write_hypotheses": true, "export": { "include_text": true, "include_items": true } }
+}

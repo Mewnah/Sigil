@@ -10,7 +10,7 @@ import {
   type BuiltPrompt,
   type ResolvedPromptFormat,
 } from "@/core/services/translation/prompt";
-import { TRANSLATION_PROMPT_FORMATS, type Translation_State, type TranslationPromptFormat } from "@/core/services/translation/schema";
+import { TRANSLATION_PROMPT_FORMATS, Translation_Backends, type Translation_State, type TranslationPromptFormat } from "@/core/services/translation/schema";
 import { llmConnection, servedModelInfo } from "@/core/services/translation/services/llm";
 import { isTauri } from "@tauri-apps/api/core";
 import { FC, memo, useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import Inspector from "../components";
 import { InputBaseText, InputCheckbox, InputCode, InputSelect, type InputSelectOption } from "../components/input";
-import { Details, Hint, LiveArea, NumberField, sliceSetter, TextField, translationData } from "./common";
+import { Details, Hint, LiveArea, NumberField, sliceSetter, TextField, translationData, useInterimSwitch } from "./common";
 import { LanguagePair } from "./LanguagePair";
 import { LlmServer } from "./LlmServer";
 import {
@@ -70,6 +70,7 @@ export const Llm: FC = memo(() => {
   const pr = useSnapshot(window.ApiServer.state.services.translation.data.llm);
   const up = sliceSetter("llm");
   const provider = pr.provider;
+  const interim = useInterimSwitch(Translation_Backends.llm);
 
   const providerOptions: InputSelectOption[] = LLM_PROVIDERS.map((p) => ({ value: p, label: t(`transl.llm_provider_${p}`) }));
 
@@ -118,8 +119,9 @@ export const Llm: FC = memo(() => {
       <Hint>{t("transl.llm_timeout_hint")}</Hint>
       <InputCheckbox label="transl.llm_field_stream" value={pr.stream} onChange={(v) => up("stream", v)} />
       <Hint>{t("transl.llm_stream_hint")}</Hint>
-      <InputCheckbox label="common.field_interim_results" onChange={(v) => up("interim", v)} value={pr.interim} />
+      <InputCheckbox label="common.field_interim_results" onChange={(v) => up("interim", v)} value={interim.on} />
       <Hint>{t("transl.llm_interim_hint")}</Hint>
+      {interim.heldOff && <Hint tone="warning">{t("transl.interim_cpu_hint")}</Hint>}
 
       <Details title={t("transl.llm_advanced")}>
         <InputSelect

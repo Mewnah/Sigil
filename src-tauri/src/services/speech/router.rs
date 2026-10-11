@@ -1209,9 +1209,10 @@ mod tests {
         assert!(RoutingTable::from_document("not json").is_err());
     }
 
-    /// The plan's rules as data: zh / yue → SenseVoice, ja / ko / ru → Qwen3-ASR, European
-    /// languages → a Parakeet Ultra final on the CPU, Cohere never for ja / zh / ko / ru, the
-    /// Nemotron language rule.
+    /// The plan's rules as data, with the P7-A own-microphone measurements: zh / yue / ja →
+    /// SenseVoice, ru and the European languages → a Parakeet Ultra final on the CPU, ko and the
+    /// languages nothing else covers (vi) → Qwen3-ASR-0.6B, Cohere never for ja / zh / ko / ru,
+    /// the Nemotron language rule.
     #[test]
     fn shipped_table_encodes_the_plan_rules() {
         let table = t();
@@ -1220,15 +1221,14 @@ mod tests {
             assert_eq!(row(l).cpu_final.first().map(String::as_str), Some(SENSE_VOICE), "{l}");
             assert!(row(l).streaming.is_empty(), "{l}: no Nemotron partials (Mandarin CER ~19)");
         }
-        for l in ["ja", "ko", "ru"] {
+        assert_eq!(row("ja").cpu_final.first().map(String::as_str), Some(SENSE_VOICE));
+        for l in ["ko", "vi"] {
             assert_eq!(row(l).cpu_final.first().map(String::as_str), Some(QWEN3_0_6B), "{l}");
+        }
+        for l in ["ja", "ko", "ru", "vi"] {
             assert_eq!(row(l).gpu_final.last().map(String::as_str), Some(QWEN3_Q8), "{l}");
         }
-        for l in table.models[PARAKEET_ULTRA]
-            .languages
-            .iter()
-            .filter(|l| l.as_str() != "ru")
-        {
+        for l in table.models[PARAKEET_ULTRA].languages.iter() {
             assert_eq!(row(l).cpu_final.first().map(String::as_str), Some(PARAKEET_ULTRA), "{l}");
         }
         let cohere = &table.models[COHERE];
@@ -1440,7 +1440,8 @@ mod tests {
                             let fin = model(&plan.final_engine);
                             match norm.as_deref() {
                                 Some("zh" | "yue") => assert_eq!(fin, Some(SENSE_VOICE), "{what}"),
-                                Some("ja" | "ko" | "ru") => assert_eq!(fin, Some(QWEN3_0_6B), "{what}"),
+                                Some("ja") => assert_eq!(fin, Some(SENSE_VOICE), "{what}"),
+                                Some("ko") => assert_eq!(fin, Some(QWEN3_0_6B), "{what}"),
                                 Some(code)
                                     if code != "en"
                                         && table.models[PARAKEET_ULTRA]
@@ -1688,7 +1689,7 @@ mod tests {
         };
         // 8 cores, no voice changer: two-pass with the fallback.
         let plan = fallback_of(&pc(12_288, 6_600, 8), "ja");
-        assert_eq!((model(&plan.streaming), model(&plan.fallback)), (Some(NEMOTRON), Some(QWEN3_0_6B)));
+        assert_eq!((model(&plan.streaming), model(&plan.fallback)), (Some(NEMOTRON), Some(SENSE_VOICE)));
         assert!(!plan.notes.iter().any(|n| n == notes::NO_CPU_FALLBACK));
         // 4 cores, a voice changer on the CPU, or one whose device is not known yet: no fallback.
         let mut vc_cpu = pc(12_288, 6_600, 8);
@@ -1700,19 +1701,19 @@ mod tests {
             let plan = fallback_of(&ctx, "ja");
             assert_eq!(model(&plan.streaming), Some(NEMOTRON), "{plan:?}");
             assert_eq!(model(&plan.fallback), None, "{plan:?}");
-            assert!(!plan.models.iter().any(|m| m == QWEN3_0_6B), "not downloaded: {plan:?}");
+            assert!(!plan.models.iter().any(|m| m == SENSE_VOICE), "not downloaded: {plan:?}");
             assert!(plan.notes.iter().any(|n| n == notes::NO_CPU_FALLBACK), "{plan:?}");
             // Finals-only GPU plans keep it (zh has no stream; single pass has none).
             let zh = fallback_of(&ctx, "zh");
             assert_eq!((model(&zh.streaming), model(&zh.fallback)), (None, Some(SENSE_VOICE)), "{zh:?}");
             let single = plan_with(&req("ja", Tier::Auto, false), &ctx);
-            assert_eq!(model(&single.fallback), Some(QWEN3_0_6B), "{single:?}");
+            assert_eq!(model(&single.fallback), Some(SENSE_VOICE), "{single:?}");
         }
         // A voice changer on the GPU does not load the CPU.
         let mut vc_gpu = pc(24_576, 15_000, 16);
         vc_gpu.vc_running = true;
         vc_gpu.vc_gpu = Some(true);
-        assert_eq!(model(&fallback_of(&vc_gpu, "ja").fallback), Some(QWEN3_0_6B));
+        assert_eq!(model(&fallback_of(&vc_gpu, "ja").fallback), Some(SENSE_VOICE));
     }
 
     /// A running voice changer whose device is not known yet counts as on the CPU for the CPU
@@ -1723,7 +1724,7 @@ mod tests {
         ctx.vc_running = true;
         let ja = plan_with(&req("ja", Tier::Auto, true), &ctx);
         assert_eq!(ja.tier, Tier::Cpu, "{ja:?}");
-        assert_eq!((model(&ja.streaming), model(&ja.final_engine)), (None, Some(QWEN3_0_6B)), "{ja:?}");
+        assert_eq!((model(&ja.streaming), model(&ja.final_engine)), (None, Some(SENSE_VOICE)), "{ja:?}");
         for n in [notes::GPU_DENIED_VC_RUNNING, notes::VC_UNKNOWN_SINGLE_PASS, notes::FINALS_ONLY] {
             assert!(ja.notes.iter().any(|x| x == n), "{n}: {ja:?}");
         }
@@ -1736,7 +1737,7 @@ mod tests {
         assert_eq!(ja.tier, Tier::Cpu, "{ja:?}");
         assert_eq!(
             (model(&ja.streaming), model(&ja.final_engine)),
-            (Some(NEMOTRON), Some(QWEN3_0_6B)),
+            (Some(NEMOTRON), Some(SENSE_VOICE)),
             "{ja:?}"
         );
         // On a CPU-only PC the note says which case it is.
@@ -1788,7 +1789,7 @@ mod tests {
         let on = plan_with(&req("ja", Tier::Auto, true), &gpu);
         assert_eq!((on.tier, model(&on.streaming), model(&on.fallback)), (Tier::Gpu, Some(NEMOTRON), None), "{on:?}");
         let off = plan_with(&req_quiet("ja", Tier::Auto, true), &gpu);
-        assert_eq!((off.tier, model(&off.streaming), model(&off.fallback)), (Tier::Gpu, None, Some(QWEN3_0_6B)), "{off:?}");
+        assert_eq!((off.tier, model(&off.streaming), model(&off.fallback)), (Tier::Gpu, None, Some(SENSE_VOICE)), "{off:?}");
         assert_eq!(off.final_engine, on.final_engine);
         assert_eq!(off.vram_mb, on.vram_mb);
 
@@ -1890,19 +1891,19 @@ mod tests {
                 QWEN3_Q8,
                 "runtime/sigil-transcribe-cuda13",
                 "runtime/nvidia-cuda13",
-                QWEN3_0_6B
+                SENSE_VOICE
             ]
         );
         assert_eq!(
             plan.missing,
-            [QWEN3_Q8, "runtime/sigil-transcribe-cuda13", "runtime/nvidia-cuda13", QWEN3_0_6B]
+            [QWEN3_Q8, "runtime/sigil-transcribe-cuda13", "runtime/nvidia-cuda13", SENSE_VOICE]
         );
         assert_eq!(plan.vram_mb, 3500);
         let f = plan.final_engine.as_ref().unwrap();
         assert_eq!((f.engine, f.variant.as_deref()), (EngineKind::Transcribe, Some("cuda13")));
         assert!(f.options.is_null(), "transcribe specs get the language through DecodeOptions");
         let fb = plan.fallback.as_ref().unwrap();
-        assert_eq!((fb.engine, fb.model.as_str()), (EngineKind::SherpaOffline, QWEN3_0_6B));
+        assert_eq!((fb.engine, fb.model.as_str()), (EngineKind::SherpaOffline, SENSE_VOICE));
         assert_eq!(fb.options["language"], "ja");
         // The same request on 16 GB takes BF16.
         let big = plan_with(&req("ja", Tier::Gpu, true), &pc(16_376, 11_400, 8));

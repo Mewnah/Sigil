@@ -1,0 +1,103 @@
+{
+  "schema": "sigil-release-set/1",
+  "$comment": [
+    "The release set (P7-D): the catalog entries a new Sigil install fetches without the user choosing anything (defaults), and the light options the app offers next to them. scripts/release/check-catalog-pins.mjs holds every member to a stricter rule than build.rs applies to the rest of the catalog: published, hash-pinned, every source immutable, every digest independent of the download (no trust-on-first-use), and the same for everything the member requires.",
+    "Heavy and GPU-only models (Cohere, Qwen3-ASR 1.7B, Voxtral, the 7B+ translators, Qwen3-TTS, Magpie, Breeze, OmniVoice, Fish S2, Chatterbox) are opt-in and unbenchmarked in P7. They are still published, so build.rs and the global check require them to be hash-pinned, but they are not in this set.",
+    "Selectors: 'ids' are exact catalog ids (each must exist); 'prefixes' match every catalog id that starts with the text (each must match at least one). The CPU speech models and runtimes of src-tauri/model-catalog/stt-routing.json must all be in 'defaults' (the check reads the routing table), so changing the routing table without this file fails the check.",
+    "Edit this file when a default or a light option changes, then run: node scripts/release/check-catalog-pins.mjs"
+  ],
+  "defaults": {
+    "stt-cpu": {
+      "why": "Local speech-to-text on the processor: Nemotron streaming partials, Parakeet Ultra finals (Parakeet v3 behind it), SenseVoice (ja, zh), Qwen3-ASR 0.6B (ko and the languages nothing else covers), spoken-language ID for auto mode, Whisper for everything else. Rows of stt-routing.json after the P7-A campaign.",
+      "ids": [
+        "runtime/sherpa-onnx",
+        "stt/nemotron-3.5-streaming-560ms-int8",
+        "stt/parakeet-ultra-int8",
+        "stt/parakeet-tdt-0.6b-v3-int8",
+        "stt/sense-voice-small-int8",
+        "stt/qwen3-asr-0.6b-int8",
+        "stt/lid-whisper-base-int8",
+        "whisper/small-q5_1",
+        "whisper/base-q5_1"
+      ]
+    },
+    "translation": {
+      "why": "The bundled translator chain: Hy-MT2 1.8B on llama-server (Vulkan, or the CPU build), then NLLB-200 600M. Firefox Translations (Bergamot) sits between them when its pack is imported (see allowUnpublished).",
+      "ids": [
+        "runtime/llama-server-vulkan",
+        "runtime/llama-server-cpu",
+        "mt/hy-mt2-1.8b-q4_k_m",
+        "mt/nllb-200-distilled-600m-int8"
+      ]
+    },
+    "tts": {
+      "why": "The local voice a new desktop install offers: Kokoro v1.0 through Sigil's own ONNX Runtime session (Windows SAPI needs nothing).",
+      "ids": ["tts/kokoro-v1.0"]
+    },
+    "voice-changer": {
+      "why": "What the RVC voice changer needs apart from the content encoder: the MIT default voice and the pitch models its presets use (the encoder is a Sigil export and stays import-only).",
+      "ids": ["vc/voice-default", "vc/pitch-rmvpe", "vc/pitch-swiftf0", "vc/pitch-crepe-tiny"]
+    }
+  },
+  "light": {
+    "stt-light": {
+      "why": "Cheaper speech options: the 160 ms Nemotron, Moonshine (English), every Whisper size up to small (and their quantizations), the Vosk small models, Smart Turn (commit hints) and the music gate.",
+      "ids": ["stt/nemotron-3.5-streaming-160ms-int8", "stt/moonshine-base-en-int8", "vad/smart-turn-v3.2", "vad/firered-aed"],
+      "prefixes": ["whisper/tiny", "whisper/base", "whisper/small", "vosk/"]
+    },
+    "translation-light": {
+      "why": "The 1.25-bit Hy-MT2 for PCs that cannot spare 1.1 GB, and the 106 Firefox Translations (Bergamot) directions (36-70 MB each, no graphics memory), which run on the Sigil-built helper pack that is imported, not downloaded.",
+      "ids": ["mt/hy-mt2-1.8b-1.25bit"],
+      "prefixes": ["mt-bergamot/"]
+    },
+    "tts-light": {
+      "why": "Small local voices: Kitten, Piper (36 voices), Pocket TTS, the Mandarin Kokoro and the shared Japanese dictionary Kokoro and the readings use.",
+      "ids": ["tts/kokoro-v1.1-zh", "tts/pocket-tts-en-int8", "text/jpreprocess-naist-jdic"],
+      "prefixes": ["tts/kitten-", "tts/piper-"]
+    },
+    "voice-changer-light": {
+      "why": "Noise suppression for the voice changer's conditioned copy.",
+      "ids": ["vc/denoise-gtcrn", "vc/denoise-dfn3", "vc/denoise-dpdfnet"]
+    },
+    "vr": {
+      "why": "The SteamVR overlay's OpenVR runtime (loaded lazily, never launches SteamVR).",
+      "ids": ["runtime/openvr"]
+    },
+    "gpu-packs": {
+      "why": "The opt-in GPU runtimes: NVIDIA's CUDA 13 / cuDNN 9 libraries and the CUDA llama-server. Large (1.9 GB and 0.6 GB), so never part of the defaults.",
+      "ids": ["runtime/nvidia-cuda13", "runtime/llama-server-cuda13"]
+    }
+  },
+  "allowUnpublished": [
+    {
+      "id": "runtime/bergamot",
+      "why": "Firefox Translations needs a Sigil-built helper (ADR 0008) that is built by scripts/runtime-packs/bergamot/build.ps1 and imported; asset hosting is local only. Without the pack the translator chain skips it and falls through to NLLB."
+    }
+  ],
+  "tofu": [
+    {
+      "prefix": "vosk/",
+      "why": "alphacephei.com publishes only md5 digests, so the sha256 of each Vosk model was taken from one download (pin-catalog --hash-by-download). Legacy engine. vosk/small-en-us-0.15 matches a copy the app downloaded in April 2026, long before the pin; the other ten come from one download each (re-hash them with --hash-by-download --max-download-mb 90 when convenient)."
+    }
+  ],
+  "attested": [
+    {
+      "prefix": "mt-bergamot/",
+      "by": "The sha256 of each Firefox Translations model is the one Mozilla's model registry (Remote Settings, translations-models) publishes with the attachment. Re-check with: node scripts/runtime-packs/bergamot/gen-catalog.mjs --check. The check here cannot read it."
+    }
+  ],
+  "rollingTags": [
+    {
+      "tag": "k2-fsa/sherpa-onnx@asr-models",
+      "why": "k2-fsa keeps adding assets to this release. Pinned by sha256, so a replaced asset fails the hash check instead of installing; a removed asset needs a mirror (a 'github-release' source on Mewnah/Sigil assets-v1, uploaded by the user)."
+    },
+    {
+      "tag": "k2-fsa/sherpa-onnx@tts-models",
+      "why": "Same rolling release (Pocket TTS, sherpa-packaged Piper/Kitten/Kokoro archives)."
+    },
+    {
+      "tag": "k2-fsa/sherpa-onnx@speaker-recongition-models",
+      "why": "Same rolling release (benchmark-only CAM++)."
+    }
+  ]
+}

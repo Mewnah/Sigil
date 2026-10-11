@@ -44,9 +44,10 @@ $stagingDir = Join-Path $RepoRoot 'src-tauri\target\native-bundle'
 $manifestPath = Join-Path $RepoRoot 'src-tauri\target\native-bundle.json'
 $expectedImportsPath = Join-Path $PSScriptRoot 'expected-imports.txt'
 $providerDlls = @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'DirectML.dll')
-# Shipped but never loaded: the WiX bundler adds every *.dll next to the built exe (ort-sys copies the
-# TensorRT provider there too); Sigil never registers the TensorRT EP.
-$knownExtraDlls = @('onnxruntime_providers_tensorrt.dll')
+# Shipped by the MSI only: the WiX bundler adds every *.dll next to the built exe, and ort-sys copies both TensorRT
+# providers there. They are small, load nothing at start-up and need TensorRT runtime DLLs the installer does not
+# carry (the TensorRT-RTX route takes them from the opt-in runtime/tensorrt-rtx pack, neural_audio/gpu/trt.rs).
+$knownExtraDlls = @('onnxruntime_providers_tensorrt.dll', 'onnxruntime_providers_nv_tensorrt_rtx.dll')
 
 $script:failures = New-Object System.Collections.Generic.List[string]
 $script:warnings = New-Object System.Collections.Generic.List[string]

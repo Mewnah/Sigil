@@ -14,8 +14,8 @@ import { Translation_Router_Schema } from "./router";
 // One slice per backend (P4-S0 split of the former translation/schema.ts). Owned by P4-C after the scaffold; the
 // keys and defaults below are frozen for P4-D / P4-E / P4-F (add keys, never rename or retype them).
 // Imports stay leaf-only (zod, utils, llm/types): src/core/schema.ts loads this module at startup.
-export { keepObjects, SHARED_PAIR_BACKENDS, TRANSLATION_ENGINE_IDS, Translation_Backends } from "./backends";
-export type { TranslationEngineId } from "./backends";
+export { keepObjects, SHARED_PAIR_BACKENDS, TRANSLATION_ENGINE_IDS, Translation_Backends, zInterimSwitch } from "./backends";
+export type { InterimSwitch, TranslationEngineId } from "./backends";
 export { Translation_Azure_Schema } from "./azure";
 export { Translation_Bergamot_Schema } from "./bergamot";
 export { Translation_Deepl_Schema } from "./deepl";

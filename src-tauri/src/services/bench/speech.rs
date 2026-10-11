@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! <out>/report.json                 sigil-speech-bench-report/1   the measurement (no scores)
-//! <out>/report.md                   one table per run
+//! <out>/report.md                   one table per task of each run
 //! <out>/hyps/<run>.<engine>.jsonl   one report item per line
 //! <out>/audio/<engine>/<id>.wav     TTS renderings (16-bit PCM at the engine's rate)
 //! <out>/export.json                 sigil-speech-bench-export/1   what a friend sends back
@@ -39,7 +39,9 @@
 //!   that ran, with the engine's reason.
 //! - **Privacy**: `export.json` is derived from the report by [`export::make_export`]; the runner
 //!   verifies it with [`export::privacy_errors`] before it writes it, and writes nothing when a leak is
-//!   found.
+//!   found. Besides paths (folders with spaces included), audio, text and host or user names, the
+//!   export carries no names of other programs (a run state's other GPU users become a count) and no
+//!   custom power-plan names.
 //!
 //! The contract (`headless_speech_bench` and the file formats) is frozen; fields may be added, never
 //! renamed.
@@ -81,6 +83,24 @@ use crate::services::mt_local::bench::{chrf_score, chrf_stats_multi, ChrfStats};
 
 /// Items per pipeline session (a session carries consecutive items of one language).
 const GROUP_SIZE: usize = 40;
+
+/// `items` with the items of one key together: keys in the order they first appear, the order inside
+/// a key unchanged. A grouped STT driver (the pipeline) starts a session, and so loads its models,
+/// for every run of consecutive same-language items; a shuffled order would make that nearly every item.
+pub(crate) fn regroup<T: Copy, K: PartialEq>(items: &[T], key: impl Fn(&T) -> K) -> Vec<T> {
+    let mut keys: Vec<K> = Vec::new();
+    for it in items {
+        let k = key(it);
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for k in &keys {
+        out.extend(items.iter().filter(|it| key(it) == *k).copied());
+    }
+    out
+}
 
 fn unix_ms_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -445,6 +465,12 @@ impl<'a> Runner<'a> {
         };
         let speed = run.mode.is_speed();
         let passes = if speed { run.repeat.max(1) } else { 1 };
+
+        // A grouped driver (the pipeline) starts one session per run of consecutive same-language
+        // items, and a session loads the models: keep each language's items together (the order
+        // inside a language, shuffled or not, is kept) so a real-time run does not start a session
+        // per item.
+        let mine: Vec<&SttInput<'_>> = if driver.grouped() { regroup(&mine, |i| language_of(i.item)) } else { mine };
 
         // Warm-up (not in the report).
         if !driver.grouped() {

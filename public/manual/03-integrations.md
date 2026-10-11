@@ -195,7 +195,7 @@ Sidebar → **OBS Studio**.
 
 ### Purpose
 
-Send **OSC** messages for captions and related control into **VRChat** from the **Tauri** host. OSC is **not** available from the in-browser preview alone—use the desktop app.
+Send **OSC** messages for captions and related control into **VRChat** from the **Tauri** host, follow your mute in VRChat, caption other players, and show captions in VR. OSC is **not** available from the in-browser preview alone—use the desktop app. All of these extras are off until you turn them on.
 
 ### Open the inspector
 
@@ -206,6 +206,26 @@ Sidebar → **VRChat**.
 1. Enable OSC in **VRChat** settings and note the receive port.  
 2. In Sigil, match host/port and options in the inspector.  
 3. Test with short phrases from STT or manual send paths if exposed.
+
+### Chatbox, mute sync and tags
+
+- **Chatbox pacing:** messages are queued at least **Time between chatbox messages** apart (default 1.5 s) because VRChat drops faster ones. **Split long text into pages** sends text over 144 characters as numbered pages instead of cutting it.
+- **Mute captions when I mute in VRChat:** captions stop the moment you mute in VRChat and resume when you unmute. Sigil uses OSCQuery by default, so there is no port to set up. The first start may show a Windows Firewall prompt.
+- **Emotion and sound tags** (with the SenseVoice model) can drive two avatar parameters and optional emoji in the chatbox.
+- **Wait until I finish speaking** (needs Smart Turn in speech-to-text) holds a sentence you leave unfinished and sends it together with the rest.
+
+Details: [VRChat chatbox, mute sync and tags](../OPERATOR_REFERENCE.md#vrchat-chatbox-mute-sync-and-tags).
+
+### Other players' captions
+
+The **Other players** tab captions what other players say (by default only VRChat's sound, on Windows 11), optionally translated into your language. They stay apart from your own captions: never in the chatbox, text to speech or history. Show them with a text element, the caption window or the VR overlay and the source **Other players: speech** or **Other players: translation**. Keep the hardware tier on **Processor** so the game stays smooth. Details: [Other players' captions](../OPERATOR_REFERENCE.md#other-players-captions).
+
+### Caption window and SteamVR overlay
+
+- **Caption window:** an always-on-top, click-through window that never takes focus from a game; pin it in XSOverlay or OVR Toolkit by its title "Sigil captions". Turn click-through off to move or resize it.
+- **SteamVR overlay:** captions on your head, a hand or in the world. It needs the OpenVR runtime (**Models & Runtimes**); Sigil never starts SteamVR.
+
+Details: [Caption window and SteamVR overlay](../OPERATOR_REFERENCE.md#caption-window-and-steamvr-overlay-vrchat-tab). A light setup for all of it: [VRChat streamer quick start](../OPERATOR_REFERENCE.md#vrchat-streamer-quick-start).
 
 ### Tips
 

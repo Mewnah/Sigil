@@ -1,0 +1,65 @@
+{
+ "$comment": [
+  "P7-A auto-language mode (the default setting of a new install): engines get no language hint; the pipeline row runs Silero VAD, the language-ID engine, the Qwen3-ASR final and Nemotron partials for detected languages."
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-stt-auto-pipeline",
+ "description": "STT with no language hint",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 10
+  }
+ },
+ "engines": [
+  {
+   "id": "pipeline-auto",
+   "task": "stt",
+   "backend": "pipeline",
+   "execution_provider": "cpu",
+   "language_mode": "auto",
+   "options": {
+    "route": {
+     "language": "auto",
+     "tier": "cpu",
+     "twoPass": true
+    }
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "auto-pipeline",
+   "mode": "accuracy",
+   "engines": [
+    "pipeline-auto"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "limit_per_language": 6
+   },
+   "feed": {
+    "kind": "pipeline",
+    "pace": "asap",
+    "lead_silence_ms": 500,
+    "tail_silence_ms": 1200
+   },
+   "timeout_s": 240
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

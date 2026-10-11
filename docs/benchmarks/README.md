@@ -262,7 +262,8 @@ EP and then across EPs:
    that falls back drops only its F0 method; another component that falls back (e.g. the content
    encoder) is measured as it runs, with a note.
    On the CPU, the thread policy comes next: the reference configuration with one ONNX Runtime
-   thread (the Streamer preset), two (`worker_priority: protect_game`) and the default pool (one
+   thread (pinned explicitly: the Streamer preset under `protect_game` also runs one, but on `auto` it
+   takes its own 4-6 thread policy since P7-I0), two (`worker_priority: protect_game`) and the default pool (one
    per physical core, below-normal priority); the fewest threads that meet the limit win (least
    load next to a game), else the fastest. An explicit priority is kept: `protect_game` never
    gets the pool, `protect_voice` is never demoted to two threads. The result then carries

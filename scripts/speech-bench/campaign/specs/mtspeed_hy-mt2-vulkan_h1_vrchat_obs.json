@@ -1,0 +1,47 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mtspeed-hy-mt2-vulkan-h1_vrchat_obs",
+ "description": "MT latency and process-tree cost of one engine on the casual caption lines",
+ "seed": 20261002,
+ "engines": [
+  {
+   "id": "hy-mt2-vulkan",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "vulkan",
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "mt",
+   "mode": "gpu_under_load",
+   "engines": [
+    "hy-mt2-vulkan"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl",
+    "limit": 10
+   },
+   "warmup": 3,
+   "load_profile": "h1_vrchat_obs",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 120
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": false,
+   "include_items": true
+  }
+ }
+}

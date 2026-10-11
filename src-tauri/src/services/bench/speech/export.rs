@@ -6,9 +6,13 @@
 //! `examples/report.example.json` with both), and [`privacy_errors`] the twin of
 //! `scripts/speech-bench/validate.py::privacy_errors`. The rules:
 //! - no audio paths and no `files`;
-//! - every absolute path inside a string becomes `<path>/<file name>`;
+//! - every absolute path inside a string becomes `<path>/<file name>` (folders may hold spaces, as in
+//!   `C:\Users\Jane Doe\...` or `C:\Program Files\...`; a bare profile folder leaves no name at all);
 //! - a bring-your-own model (anything but a catalog id) is `byo`;
 //! - host and user names never leave the environment block;
+//! - no names of other programs: a run state's other GPU users (`other_top_process`,
+//!   `other_top_processes` and the run warning that lists them) shrink to a count / the share, and a
+//!   power plan that is not one of Windows' built-in ones reads `custom`;
 //! - item text (hypotheses, translations, back-transcriptions, segment text) is kept only when the
 //!   spec's `output.export.include_text` is true, and never for real clips (ids `real/...`);
 //! - `include_items = false` keeps aggregates and groups only.
@@ -23,26 +27,112 @@ use super::spec::is_catalog_id;
 /// Schema id of the export.
 pub const EXPORT_SCHEMA: &str = "sigil-speech-bench-export/1";
 
-/// Absolute paths inside a string: a drive, a UNC prefix, or a Unix home / mount folder.
-static ABS_PATH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)[^\s"'|;,]*"#).expect("path pattern"));
-/// The privacy check's looser test: a string that starts like a path, or runs through a home folder.
-static LOOKS_LIKE_PATH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)|[\\/](?:Users|home)[\\/][^\\/]+[\\/]"#).expect("path pattern"));
+/// A user's profile folder: the drive form (`C:\Users\<name>`) and the Unix forms (`/Users/<name>`,
+/// `/home/<name>`); the name may hold spaces. Group 1 is what follows the name when the path goes on
+/// (a separator and one more character). A profile folder that is the path's end is replaced whole
+/// (the user name must not survive as the "file name"); one that goes on is left to [`ABS_PATH`].
+static PROFILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?:\b[A-Za-z]:[\\/](?i:Users)[\\/]|/Users/|/home/)[^\\/:*?"'<>|\r\n;,]+(?:([\\/][^\s"'|;,\\/])|[\\/])?"#).expect("path pattern")
+});
+/// Absolute paths inside a string: a drive, a UNC prefix, or a Unix home / mount folder, then the
+/// folders up to the last separator (a folder may hold spaces: `Jane Doe`, `Program Files (x86)`), then
+/// the file name up to the next space or delimiter. The drive letter must start a word, so
+/// `http://host/x` is not a path.
+static ABS_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?:\b[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)(?:[^\\/:*?"'<>|\r\n;,]*[\\/])*[^\s"'|;,]*"#).expect("path pattern")
+});
+/// The privacy check's looser test: a string that starts like a path, runs through a home folder,
+/// still holds a Windows `\Users\` or `\AppData\` folder, or is a scrubbed `<path>/` that goes on
+/// with a Windows folder (the sign of a path that was only partly replaced).
+static LOOKS_LIKE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)|[\\/](?:Users|home)[\\/][^\\/]+[\\/]|(?i:\\(?:Users|AppData)\\)|<path>/[^/\\]*\\"#).expect("path pattern")
+});
+/// The run warning that names the other GPU users (`bench::gpu_state::state_warnings`).
+static OTHER_GPU_WARNING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^another process used the GPU \(up to ([0-9.]+) % SM").expect("warning pattern"));
 
 /// Environment members that name the machine or the user.
 const PRIVATE_ENV_KEYS: [&str; 6] = ["hostname", "host", "computer_name", "user", "username", "user_name"];
 
+/// Windows' built-in power plans (the names an English Windows gives them). Any other name, an OEM's
+/// or the user's own, is not exported.
+const BUILTIN_POWER_PLANS: [&str; 4] = ["balanced", "high performance", "power saver", "ultimate performance"];
+
 /// `text` with every absolute path replaced by `<path>/<file name>`.
 pub fn scrub_str(text: &str) -> String {
+    let profiles = PROFILE_PATH.replace_all(text, |m: &regex::Captures<'_>| {
+        if m.get(1).is_some() {
+            m.get(0).map_or("", |m| m.as_str()).to_string()
+        } else {
+            "<path>/".to_string()
+        }
+    });
     ABS_PATH
-        .replace_all(text, |m: &regex::Captures<'_>| {
+        .replace_all(&profiles, |m: &regex::Captures<'_>| {
             let whole = m.get(0).map_or("", |m| m.as_str());
             let trimmed = whole.trim_end_matches(['\\', '/']);
             let name = trimmed.rsplit(['\\', '/']).next().unwrap_or("");
             format!("<path>/{name}")
         })
         .into_owned()
+}
+
+/// A power plan name as the export keeps it: Windows' built-in plans as they are, anything else `custom`.
+pub fn power_plan_label(name: &str) -> String {
+    if BUILTIN_POWER_PLANS.contains(&name.trim().to_ascii_lowercase().as_str()) {
+        name.to_string()
+    } else {
+        "custom".to_string()
+    }
+}
+
+/// A run warning without the names of the programs that used the GPU.
+pub fn redact_warning(warning: &str) -> String {
+    match OTHER_GPU_WARNING.captures(warning) {
+        Some(c) => format!("another process used the GPU (up to {} % SM)", &c[1]),
+        None => warning.to_string(),
+    }
+}
+
+/// One state sample without the other program's name and with a shareable power plan.
+fn redact_sample(sample: &mut Value) {
+    let Some(obj) = sample.as_object_mut() else { return };
+    obj.remove("other_top_process");
+    if let Some(plan) = obj.get("power_plan").and_then(Value::as_str).map(power_plan_label) {
+        obj.insert("power_plan".into(), json!(plan));
+    }
+}
+
+fn redact_warnings(warnings: &mut Value) {
+    if let Some(list) = warnings.as_array_mut() {
+        for w in list {
+            if let Some(redacted) = w.as_str().map(redact_warning) {
+                *w = json!(redacted);
+            }
+        }
+    }
+}
+
+/// A run's `state` (`bench::gpu_state::RunState`) for the export: the names of the programs that
+/// used the GPU become a count, power plans follow [`power_plan_label`].
+fn redact_state(state: &mut Value) {
+    let Some(obj) = state.as_object_mut() else { return };
+    for key in ["start", "end"] {
+        if let Some(sample) = obj.get_mut(key) {
+            redact_sample(sample);
+        }
+    }
+    if let Some(series) = obj.get_mut("series").and_then(Value::as_array_mut) {
+        series.iter_mut().for_each(redact_sample);
+    }
+    if let Some(summary) = obj.get_mut("summary").and_then(Value::as_object_mut) {
+        if let Some(Value::Array(names)) = summary.remove("other_top_processes") {
+            summary.insert("other_top_processes_count".into(), json!(names.len()));
+        }
+    }
+    if let Some(w) = obj.get_mut("warnings") {
+        redact_warnings(w);
+    }
 }
 
 /// [`scrub_str`] over every string of `value`, recursively.
@@ -120,7 +210,10 @@ pub fn make_export(report: &Value, include_text: bool, include_items: bool, note
         .map(|m| {
             m.iter()
                 .filter(|(k, _)| !PRIVATE_ENV_KEYS.contains(&k.to_ascii_lowercase().as_str()))
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| match (k.as_str(), v.as_str()) {
+                    ("power_plan", Some(plan)) => (k.clone(), json!(power_plan_label(plan))),
+                    _ => (k.clone(), v.clone()),
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -149,6 +242,12 @@ pub fn make_export(report: &Value, include_text: bool, include_items: bool, note
         .map(|mut run| {
             if let Some(obj) = run.as_object_mut() {
                 obj.remove("files");
+                if let Some(state) = obj.get_mut("state") {
+                    redact_state(state);
+                }
+                if let Some(warnings) = obj.get_mut("warnings") {
+                    redact_warnings(warnings);
+                }
                 if let Some(results) = obj.get_mut("results").and_then(Value::as_array_mut) {
                     for res in results {
                         let Some(res) = res.as_object_mut() else { continue };
@@ -326,6 +425,108 @@ mod tests {
         assert_eq!(model_label(r"C:\models\x.gguf"), "byo");
         assert_eq!(model_label(""), "");
         assert_eq!(model_label("whisper/small-q5_1"), "whisper/small-q5_1");
+    }
+
+    #[test]
+    fn folders_with_spaces_are_scrubbed_whole() {
+        // The profile of a user with a space in the name: nothing of it, or of the folders below, survives.
+        let msg = r"cannot read the corpus manifest C:\Users\Jane Doe\AppData\Local\sigil-dev-cache\p7\corpus\corpus.json: The system cannot find the file specified. (os error 2)";
+        let got = scrub_str(msg);
+        assert_eq!(got, "cannot read the corpus manifest <path>/corpus.json: The system cannot find the file specified. (os error 2)");
+        assert!(!got.contains("Jane") && !got.contains("Doe") && !got.contains("AppData"));
+        // Program Files, with parentheses and a file name.
+        assert_eq!(
+            scrub_str(r"LoadLibrary failed for C:\Program Files (x86)\NVIDIA Corporation\cudart64_13.dll (126)"),
+            "LoadLibrary failed for <path>/cudart64_13.dll (126)"
+        );
+        // Quotes end a path with spaces in it; so do semicolons and commas between paths. (A file
+        // name is kept as written, so its own spaces only matter to what follows it.)
+        assert_eq!(scrub_str(r#"cannot open "C:\Users\Jane Doe\My Models\a.gguf" now"#), r#"cannot open "<path>/a.gguf" now"#);
+        assert_eq!(scrub_str(r"C:\Users\Jane Doe\a.wav, D:\My Stuff\b.wav"), "<path>/a.wav, <path>/b.wav");
+        // Unix homes and UNC shares with spaces.
+        assert_eq!(scrub_str("/home/Jane Doe/models/x.gguf failed"), "<path>/x.gguf failed");
+        assert_eq!(scrub_str(r"\\NAS 1\Shared Models\f.bin"), "<path>/f.bin");
+        // A profile folder on its own leaves no name, with or without spaces and a trailing separator.
+        assert_eq!(scrub_str(r"home is C:\Users\Jane Doe"), "home is <path>/");
+        assert_eq!(scrub_str(r"home is C:\Users\jane"), "home is <path>/");
+        assert_eq!(scrub_str(r"home is C:\Users\jane\"), "home is <path>/");
+        assert_eq!(scrub_str("home is /Users/jane"), "home is <path>/");
+        // Names and folders that are not paths stay.
+        assert_eq!(scrub_str("connect to http://127.0.0.1:8080/v1 failed"), "connect to http://127.0.0.1:8080/v1 failed");
+        assert_eq!(scrub_str("see a/b and 5/6"), "see a/b and 5/6");
+    }
+
+    #[test]
+    fn the_privacy_check_flags_a_path_that_was_only_partly_replaced() {
+        let leftovers = [
+            // What the old scrubber left of a profile with a space in the name.
+            r"cannot read the corpus manifest <path>/Jane Doe\AppData\Local\p7\corpus\corpus.json: missing",
+            r"x <path>/Doe\AppData\Local\x.json",
+            r"fragment of a profile \Users\Jane\x",
+            r"fragment \appdata\local\x",
+        ];
+        for l in leftovers {
+            let doc = json!({ "failures": [l] });
+            assert!(privacy_errors(&doc).iter().any(|e| e.contains("looks like a local path")), "{l}");
+        }
+        // The scrubbed forms are clean, and so are plain sentences with a slash.
+        for ok in ["<path>/corpus.json: missing", "<path>/", "1/2 done", "http://localhost:8080/pubsub"] {
+            assert!(privacy_errors(&json!({ "failures": [ok] })).is_empty(), "{ok}");
+        }
+        // The old regexes' bug, end to end: the export of an error with a spaced profile folder is clean.
+        let mut r = report();
+        r["failures"] = json!([r"cannot read the corpus manifest C:\Users\Jane Doe\AppData\Local\p7\corpus\corpus.json: missing"]);
+        let exp = make_export(&r, false, true, None, 5);
+        assert_eq!(exp["failures"][0], "cannot read the corpus manifest <path>/corpus.json: missing");
+        assert_eq!(privacy_errors(&exp), Vec::<String>::new());
+    }
+
+    #[test]
+    fn other_programs_and_custom_power_plans_do_not_leave_the_machine() {
+        use crate::services::bench::gpu_state::{state_warnings, StateSummary};
+        // The real warning of the state probe, with two programs named in it.
+        let summary = StateSummary {
+            other_gpu_util_max_pct: Some(37.0),
+            other_top_processes: vec!["GameName.exe".into(), "obs64.exe".into()],
+            ..StateSummary::default()
+        };
+        let warnings = state_warnings(&summary, Some("cuda"));
+        let who = warnings.iter().find(|w| w.starts_with("another process used the GPU")).expect("the warning").clone();
+        assert!(who.contains("GameName.exe"), "{who}");
+        let mut r = report();
+        r["environment"]["power_plan"] = json!("My Gaming Plan");
+        r["runs"][0]["warnings"] = json!([who.clone(), "the GPU throttled during the run (power)"]);
+        r["runs"][0]["state"] = json!({
+            "start": {"power_plan": "Balanced", "other_top_process": "GameName.exe (pid 7, 37 % SM)", "sm_clock_mhz": 2100},
+            "end": {"power_plan": "Dell Optimized", "other_top_process": null},
+            "series": [{"other_top_process": "obs64.exe (pid 9, 12 % SM)", "power_plan": "High performance"}],
+            "summary": {"samples": 3, "other_gpu_util_max_pct": 37.0, "other_top_processes": ["GameName.exe", "obs64.exe"]},
+            "warnings": [who]
+        });
+        let exp = make_export(&r, false, true, None, 5);
+        let text = exp.to_string();
+        for needle in ["GameName", "obs64", "My Gaming Plan", "Dell Optimized"] {
+            assert!(!text.contains(needle), "{needle} leaked:\n{text}");
+        }
+        assert_eq!(exp["environment"]["power_plan"], "custom");
+        let state = &exp["runs"][0]["state"];
+        assert_eq!(state["start"]["power_plan"], "Balanced", "a built-in plan stays");
+        assert_eq!(state["series"][0]["power_plan"], "High performance");
+        assert_eq!(state["end"]["power_plan"], "custom");
+        assert_eq!(state["start"]["sm_clock_mhz"], 2100, "the rest of the sample stays");
+        assert!(state["start"].get("other_top_process").is_none() && state["series"][0].get("other_top_process").is_none());
+        assert!(state["summary"].get("other_top_processes").is_none());
+        assert_eq!(state["summary"]["other_top_processes_count"], 2);
+        assert_eq!(state["summary"]["other_gpu_util_max_pct"], 37.0);
+        assert_eq!(state["warnings"][0], "another process used the GPU (up to 37 % SM)");
+        assert_eq!(exp["runs"][0]["warnings"][0], "another process used the GPU (up to 37 % SM)");
+        assert_eq!(exp["runs"][0]["warnings"][1], "the GPU throttled during the run (power)");
+        assert_eq!(privacy_errors(&exp), Vec::<String>::new());
+        // Windows' own plans keep their name in any case; the report itself is not touched.
+        for plan in ["Balanced", "high performance", "Power saver", "Ultimate Performance"] {
+            assert_eq!(power_plan_label(plan), plan);
+        }
+        assert_eq!(r["environment"]["power_plan"], "My Gaming Plan");
     }
 
     #[test]

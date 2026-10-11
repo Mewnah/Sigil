@@ -42,11 +42,13 @@ This file tracks **remaining documentation work** after the consolidation (sprin
 
 ## Open gaps and recommendations
 
-None at this time; file new items here as they appear.
+- **Real VRChat clips, friends' exports and the unbenchmarked tiers.** The P7 numbers are filled ([SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md), [VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md)), but they come from one dev rig, a synthetic corpus and a game stand-in. Still open: real VRChat clips in the corpus' `real` folder, `export.json` files from a CPU-only PC and from an RTX 3060 / 4060 (`scripts/speech-bench/score/merge_exports.py`), the heavy GPU models (opt-in, not benchmarked), Bergamot (pack unbuilt), Edge TTS timing, an H3 / H1 voice-changer record, and the competitor head-to-head (T6). Screenshots in the manual are still placeholders.
 
 ## Changelog (this document)
 
 - **2026-04-17:** Initial version after doc consolidation; gaps list above.
 - **2026-04-18:** Sidecar TOC in operator reference; CHANGELOG intro for pre-2026 doc paths; renumbered open gaps.
 - **2026-04-18:** Resolved packaged smoke Phase A, i18n policy, dependency cadence, screenshot structure/placeholders.
+- **2026-10-09:** P7 documentation pass: engine choice by hardware tier, the speech benchmark, the headless command list, optional VR / two-PC checks, the Moonshine long-utterance behaviour; open gap for the P7 numbers.
+- **2026-10-10:** P7 integrate: every `TODO(P7-numbers)` placeholder filled from the benchmark reports, the changed defaults (Japanese and Russian CPU finals, interim translations on the processor, the CPU Streamer thread policy), the release tooling and the exit guard documented; the P7 numbers gap replaced by the open real-data items.
 

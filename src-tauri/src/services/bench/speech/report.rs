@@ -719,6 +719,83 @@ fn md_escape(s: &str) -> String {
     s.replace('|', "/").replace(['\r', '\n'], " ")
 }
 
+/// The task of an engine's result: from its items, else from the engine's row in the report, else from
+/// the run mode's only task, else STT (a speed run's default).
+fn result_task(report: &Report, run: &RunReport, r: &EngineResult) -> Task {
+    if let Some(item) = r.items.first() {
+        return match item {
+            ReportItem::Stt(_) => Task::Stt,
+            ReportItem::Mt(_) => Task::Mt,
+            ReportItem::Tts(_) => Task::Tts,
+        };
+    }
+    if let Some(e) = report.engines.iter().find(|e| e.id == r.engine) {
+        return e.task;
+    }
+    match run.mode.tasks() {
+        [only] => *only,
+        _ => Task::Stt,
+    }
+}
+
+/// The Markdown table of one task's results.
+fn task_table(task: Task, rows: &[&EngineResult]) -> String {
+    let mut md = String::new();
+    match task {
+        Task::Stt => md.push_str("| Engine | Device | Items | Errors | Audio s | RTF p50 | RTF p95 | Compute p50 ms | Compute p95 ms | Final p95 ms | CPU cores | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"),
+        Task::Mt => md.push_str("| Engine | Device | Lines | Errors | chrF | Latency p50 ms | p95 ms | p99 ms | chars/s | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"),
+        Task::Tts => md.push_str("| Engine | Device | Prompts | Errors | Audio s | TTFA p50 ms | TTFA p95 ms | RTF p50 | RTF p95 | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"),
+    }
+    for r in rows {
+        let a = &r.aggregate;
+        let device = r.execution_provider_used.as_deref().unwrap_or("-");
+        match task {
+            Task::Stt => md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                r.engine,
+                device,
+                a.items,
+                a.errors,
+                cell(a.get("audio_s"), 1),
+                cell(a.get("rtf_p50"), 3),
+                cell(a.get("rtf_p95"), 3),
+                cell(a.get("compute_ms_p50"), 0),
+                cell(a.get("compute_ms_p95"), 0),
+                cell(a.get("final_latency_ms_p95"), 0),
+                cell(a.get("cpu_cores_mean"), 2),
+                cell(a.get("vram_peak_mb"), 0),
+            )),
+            Task::Mt => md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                r.engine,
+                device,
+                a.items,
+                a.errors,
+                cell(a.get("chrf"), 1),
+                cell(a.get("latency_ms_p50"), 0),
+                cell(a.get("latency_ms_p95"), 0),
+                cell(a.get("latency_ms_p99"), 0),
+                cell(a.get("chars_per_s"), 1),
+                cell(a.get("vram_peak_mb"), 0),
+            )),
+            Task::Tts => md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                r.engine,
+                device,
+                a.items,
+                a.errors,
+                cell(a.get("audio_s"), 1),
+                cell(a.get("ttfa_ms_p50"), 0),
+                cell(a.get("ttfa_ms_p95"), 0),
+                cell(a.get("rtf_p50"), 3),
+                cell(a.get("rtf_p95"), 3),
+                cell(a.get("vram_peak_mb"), 0),
+            )),
+        }
+    }
+    md
+}
+
 /// `report.md`: one table per run.
 pub fn markdown(report: &Report) -> String {
     let mut md = String::new();
@@ -771,66 +848,19 @@ pub fn markdown(report: &Report) -> String {
         if !run.warnings.is_empty() {
             md.push('\n');
         }
-        let stt = run.results.iter().any(|r| r.items.iter().any(|i| matches!(i, ReportItem::Stt(_))));
-        let mt = run.results.iter().any(|r| r.items.iter().any(|i| matches!(i, ReportItem::Mt(_))));
-        if stt {
-            md.push_str("| Engine | Device | Items | Errors | Audio s | RTF p50 | RTF p95 | Compute p50 ms | Compute p95 ms | Final p95 ms | CPU cores | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
-            for r in &run.results {
-                let a = &r.aggregate;
-                md.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-                    r.engine,
-                    r.execution_provider_used.as_deref().unwrap_or("-"),
-                    a.items,
-                    a.errors,
-                    cell(a.get("audio_s"), 1),
-                    cell(a.get("rtf_p50"), 3),
-                    cell(a.get("rtf_p95"), 3),
-                    cell(a.get("compute_ms_p50"), 0),
-                    cell(a.get("compute_ms_p95"), 0),
-                    cell(a.get("final_latency_ms_p95"), 0),
-                    cell(a.get("cpu_cores_mean"), 2),
-                    cell(a.get("vram_peak_mb"), 0),
-                ));
+        // One table per task that has results, in the order STT, MT, TTS (a speed run mixes tasks, and
+        // an engine that never loaded has no items, so the task comes from the engine, not the items).
+        let tasks: Vec<(Task, &EngineResult)> = run.results.iter().map(|r| (result_task(report, run, r), r)).collect();
+        let several = [Task::Stt, Task::Mt, Task::Tts].into_iter().filter(|t| tasks.iter().any(|(k, _)| k == t)).count() > 1;
+        for task in [Task::Stt, Task::Mt, Task::Tts] {
+            let rows: Vec<&EngineResult> = tasks.iter().filter(|(k, _)| *k == task).map(|(_, r)| *r).collect();
+            if rows.is_empty() {
+                continue;
             }
-            md.push('\n');
-        } else if mt {
-            md.push_str("| Engine | Device | Lines | Errors | chrF | Latency p50 ms | p95 ms | p99 ms | chars/s | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
-            for r in &run.results {
-                let a = &r.aggregate;
-                md.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-                    r.engine,
-                    r.execution_provider_used.as_deref().unwrap_or("-"),
-                    a.items,
-                    a.errors,
-                    cell(a.get("chrf"), 1),
-                    cell(a.get("latency_ms_p50"), 0),
-                    cell(a.get("latency_ms_p95"), 0),
-                    cell(a.get("latency_ms_p99"), 0),
-                    cell(a.get("chars_per_s"), 1),
-                    cell(a.get("vram_peak_mb"), 0),
-                ));
+            if several {
+                md.push_str(&format!("{}\n\n", task.as_str().to_ascii_uppercase()));
             }
-            md.push('\n');
-        } else {
-            md.push_str("| Engine | Device | Prompts | Errors | Audio s | TTFA p50 ms | TTFA p95 ms | RTF p50 | RTF p95 | VRAM peak MB |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
-            for r in &run.results {
-                let a = &r.aggregate;
-                md.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-                    r.engine,
-                    r.execution_provider_used.as_deref().unwrap_or("-"),
-                    a.items,
-                    a.errors,
-                    cell(a.get("audio_s"), 1),
-                    cell(a.get("ttfa_ms_p50"), 0),
-                    cell(a.get("ttfa_ms_p95"), 0),
-                    cell(a.get("rtf_p50"), 3),
-                    cell(a.get("rtf_p95"), 3),
-                    cell(a.get("vram_peak_mb"), 0),
-                ));
-            }
+            md.push_str(&task_table(task, &rows));
             md.push('\n');
         }
         for r in &run.results {

@@ -1,0 +1,103 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "seed": 20261002,
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ },
+ "name": "p7a-check-mt-tts",
+ "description": "first-run check of the MT backends and Kokoro",
+ "engines": [
+  {
+   "id": "nllb-greedy",
+   "task": "mt",
+   "backend": "nllb",
+   "model": "mt/nllb-200-distilled-600m-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "options": {
+    "beam": 1
+   }
+  },
+  {
+   "id": "hy-mt2-cpu4",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  },
+  {
+   "id": "hy-mt2-vulkan",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "vulkan",
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  },
+  {
+   "id": "kokoro-cpu",
+   "task": "tts",
+   "backend": "local-tts",
+   "model": "tts/kokoro-v1.0",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "languages": [
+    "en",
+    "ja"
+   ],
+   "options": {
+    "voices": {
+     "en": "af_heart",
+     "ja": "jf_alpha"
+    }
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "mt",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-greedy",
+    "hy-mt2-cpu4",
+    "hy-mt2-vulkan"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl",
+    "directions": [
+     "en-ja",
+     "ja-en"
+    ],
+    "limit": 3
+   },
+   "warmup": 1,
+   "timeout_s": 120
+  },
+  {
+   "name": "tts",
+   "mode": "tts_listening",
+   "engines": [
+    "kokoro-cpu"
+   ],
+   "tts": {
+    "prompts": "${SIGIL_P7_CORPUS}/tts/prompts.jsonl",
+    "limit_per_language": 2,
+    "write_audio": true
+   },
+   "timeout_s": 120
+  }
+ ]
+}

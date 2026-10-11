@@ -1,13 +1,19 @@
 # Sigil Local AI Voice-Changer — Plan of Record
 
-> **SUPERSEDED (2026-09-28).** This plan is replaced by the voice-changer parts of
-> [SPEECH_STACK_IMPLEMENTATION_PLAN.md](SPEECH_STACK_IMPLEMENTATION_PLAN.md) (the Sigil Voice
-> Engine: "VC best engine", decisions, phases P0/P3/P5) and the research in
-> [SPEECH_STACK_RESEARCH_2026-09.md](SPEECH_STACK_RESEARCH_2026-09.md) §4. It is kept for its
-> history and rationale only; where the two disagree, the implementation plan wins. The P0
-> real-time fixes (latency budget, park/unpark wake, MMCSS on callbacks, aux back-pressure,
-> Rust-side persistence, EP reporting) are shipped; see
-> [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md#voice-changer).
+> **SUPERSEDED (2026-09-28; refreshed 2026-10-09).** This plan is replaced by the Sigil Voice Engine
+> (SVE) documentation:
+> [OPERATOR_REFERENCE.md → Voice changer](OPERATOR_REFERENCE.md#voice-changer) (voices, presets, engine
+> levers, defaults and opt-ins, voice families, using another voice changer over a virtual cable),
+> [DEVELOPER_GUIDE.md → Sigil Voice Engine](DEVELOPER_GUIDE.md#sigil-voice-engine-p3) (contracts and
+> internals), [benchmarks/VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md) (the scorecard against the
+> targets), [ADR 0004](adr/0004-rvc-templates.md), [ADR 0006](adr/0006-vc-zero-shot-singing.md) and
+> [ADR 0010](adr/0010-sve-optimization-p3b.md), with the plan behind them in the voice-changer parts of
+> [SPEECH_STACK_IMPLEMENTATION_PLAN.md](SPEECH_STACK_IMPLEMENTATION_PLAN.md) ("VC best engine", phases
+> P0, P3, P3B, P5) and the research in [SPEECH_STACK_RESEARCH_2026-09.md](SPEECH_STACK_RESEARCH_2026-09.md)
+> §4. It is kept for its history and rationale only; where it disagrees with those documents, they
+> win. The real-time fixes it called for (latency budget, park/unpark wake, MMCSS on callbacks, aux
+> back-pressure, Rust-side persistence, EP reporting) are shipped, and the CPU-first, VRChat-streamer
+> design goal of its 2026-07-13 revision lives on in the **Streamer** preset.
 
 > **Status (original):** PLAN ONLY — not yet implemented. Decisions locked 2026-07-08.
 > This is the agreed design + phased roadmap for completing the local AI voice
@@ -257,7 +263,7 @@ hard-coded `device=0`).
 | **RVC v1** (256-dim, HuBERT L9 + final_proj) | Same engine; differs only in emb dim / layer / final_proj (from manifest) | Same | **S** on v2 | P1 | Same |
 | **RVC Nono** (f0-less, 3-input) | Same engine; skip F0, 3-input tensor layout | Same | **S** | P1 | Same |
 | **RVC "Streamer" (CPU profile)** | **The default** — same `RvcModel`, CPU EP: `fcpe` F0 + int8 content encoder + fp32 vocoder | Same as RVC | **incremental on RVC** | **P0 (default)** | Same as RVC |
-| **Plain ONNX** (single-tensor identity/effect) | **Already works** — `OnnxVoiceBridge` unchanged | Existing | **0 (done)** | User file |
+| **Plain ONNX** (single-tensor identity/effect) | **Already works** — `OnnxVoiceBridge` unchanged | Existing | **0 (done)** | Done | User file |
 | **QuickVC** (VITS + HuBERT-Soft + iSTFT) | Optional "lightweight mode" secondary; sub-100 ms on CPU | Self-authored 2-graph export | **M** | P2 (deferrable) | **MIT** — any-to-many (must train per target set; no BYO voice library) |
 | **LLVC** (single-target, causal) | **Deferred** — not a shipped mode | **Blocked** — no production ONNX streaming export; any-to-one; per-voice GPU training; 16 kHz | **L (blocked)** | Deferred | MIT (not viable as BYO default — see revision notes) |
 

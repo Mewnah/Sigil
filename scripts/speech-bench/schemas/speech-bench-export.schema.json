@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sigil.local/schemas/sigil-speech-bench-export-1.json",
   "title": "sigil-speech-bench-export/1",
-  "description": "<out>/export.json of `Sigil.exe --headless speech-bench`: the subset of report.json a friend sends back (P7 friend exports). Never holds audio, file paths, host or user names, or API keys. Item text (hypotheses, translations) is kept only for synthetic corpus items and only when the spec's output.export.include_text is true; real drop-in clips never carry text in an export. `spec` is replaced by `spec_summary` (engine and run names, backends, models, providers, modes, load profiles; no paths). Merge several exports with scripts/speech-bench/score/merge_exports.py.",
+  "description": "<out>/export.json of `Sigil.exe --headless speech-bench`: the subset of report.json a friend sends back (P7 friend exports). Never holds audio, file paths, host or user names, names of other programs (a run state's other GPU users are reduced to a count), custom power-plan names, or API keys. Item text (hypotheses, translations) is kept only for synthetic corpus items and only when the spec's output.export.include_text is true; real drop-in clips never carry text in an export. `spec` is replaced by `spec_summary` (engine and run names, backends, models, providers, modes, load profiles; no paths). Merge several exports with scripts/speech-bench/score/merge_exports.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "report_schema", "name", "spec_sha256", "spec_summary", "started_unix_ms", "duration_ms", "passed", "environment", "engines", "runs", "export"],

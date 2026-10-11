@@ -11,8 +11,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::corpus::{MtLine, TtsPrompt};
-use super::report::{ReportItem, Report, ResultStatus, RunStatus};
-use super::spec::{canonical_json, canonical_sha256, spec_sha256, EngineDef, Feed, SpeechSpec};
+use super::report::{markdown, EngineResult, ReportItem, Report, ResultStatus, RunStatus};
+use super::spec::{canonical_json, canonical_sha256, spec_sha256, EngineDef, Feed, Mode, SpeechSpec};
 use super::stt::{DriverInfo, SttDriver, SttOutput, SttRequest};
 use super::tts::{TtsDriver, TtsOutput};
 use super::{export, mt, run_spec_with, runtime_pack_ids, utc_stamp, Drivers};
@@ -880,4 +880,146 @@ fn empty_hypotheses_for_clips_with_speech_raise_a_warning() {
     assert_eq!(item.text.as_deref(), Some(""), "the empty hypothesis stays in the report for the scorer");
     assert!(item.error.is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Review fixes: grouped drivers, the Markdown tables
+// ---------------------------------------------------------------------------------------------
+
+/// The groups a grouped driver was handed: each one's language and item ids.
+type SeenGroups = std::sync::Arc<Mutex<Vec<(Option<String>, Vec<String>)>>>;
+
+/// A grouped STT driver (like the pipeline) that records every group it is handed.
+struct FakeGroupedStt {
+    info: DriverInfo,
+    groups: SeenGroups,
+}
+
+impl SttDriver for FakeGroupedStt {
+    fn info(&self) -> &DriverInfo {
+        &self.info
+    }
+    fn transcribe(&mut self, req: &SttRequest<'_>) -> Result<SttOutput, String> {
+        self.transcribe_group(std::slice::from_ref(req)).pop().unwrap()
+    }
+    fn grouped(&self) -> bool {
+        true
+    }
+    fn transcribe_group(&mut self, reqs: &[SttRequest<'_>]) -> Vec<Result<SttOutput, String>> {
+        self.groups
+            .lock()
+            .unwrap()
+            .push((reqs[0].language.clone(), reqs.iter().map(|r| r.item.to_string()).collect()));
+        reqs.iter()
+            .map(|r| {
+                Ok(SttOutput {
+                    text: format!("text of {}", r.item),
+                    language: r.language.clone(),
+                    final_latency_ms: Some(10.0),
+                    ..SttOutput::default()
+                })
+            })
+            .collect()
+    }
+}
+
+/// A real-time run is shuffled; a grouped driver still gets one group per language (a pipeline session
+/// per group loads the models, so a shuffled order must not make one session per item).
+#[test]
+fn a_real_time_run_keeps_each_languages_items_together_for_a_grouped_driver() {
+    let dir = temp_dir("grouped");
+    let manifest = corpus(&dir);
+    let spec_file = dir.join("spec.json");
+    // Four English items and one Japanese one: a shuffle leaves English contiguous only when the
+    // Japanese item lands at an end, so several seeds make an unfixed run fail for sure.
+    for seed in 1..=12u64 {
+        let spec_json = json!({
+            "schema": "sigil-speech-bench-spec/1", "name": "grouped", "seed": seed,
+            "corpus": {"manifest": manifest.to_string_lossy(), "select": {"kinds": ["synthetic"]}},
+            "engines": [{"id": "p", "task": "stt", "backend": "pipeline", "execution_provider": "cpu"}],
+            "runs": [{"name": "rt", "mode": "accuracy", "warmup": 0, "feed": {"kind": "pipeline", "pace": "realtime"}}]
+        });
+        let (spec, raw) = SpeechSpec::parse(&spec_json.to_string()).unwrap();
+        let groups = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let seen = groups.clone();
+        let drivers = FakeDrivers::new(Box::new(move |_def: &EngineDef| {
+            Ok(Box::new(FakeGroupedStt {
+                info: cpu_info(),
+                groups: seen.clone(),
+            }) as Box<dyn SttDriver>)
+        }));
+        let out = dir.join(format!("out{seed}"));
+        run_spec_with(&spec, &raw, &spec_file, &out, &drivers).expect("passes");
+        let groups = groups.lock().unwrap();
+        assert_eq!(groups.len(), 2, "seed {seed}: one session per language, not per run of the shuffle: {groups:?}");
+        for (lang, items) in groups.iter() {
+            let prefix = format!("{}/", lang.as_deref().unwrap());
+            assert!(items.iter().all(|i| i.starts_with(&prefix)), "seed {seed}: a group holds one language: {groups:?}");
+        }
+        assert_eq!(groups.iter().map(|g| g.1.len()).sum::<usize>(), 5);
+        // The report still holds every item, whatever the order.
+        let report = read_report(&out);
+        assert_eq!(report.runs[0].results[0].items.len(), 5);
+        assert!(report.runs[0].results[0].items.iter().all(|i| i.error().is_none()));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn regroup_keeps_first_appearance_order_and_the_order_inside_a_key() {
+    let items = ["en1", "ja1", "en2", "de1", "ja2", "en3"];
+    let got = super::regroup(&items, |i| i[..2].to_string());
+    assert_eq!(got, ["en1", "en2", "en3", "ja1", "ja2", "de1"]);
+    assert_eq!(super::regroup(&items, |_| 0), items.to_vec(), "one key: nothing moves");
+    assert!(super::regroup::<&str, u8>(&[], |_| 0).is_empty());
+}
+
+#[test]
+fn the_markdown_has_one_table_per_task_and_covers_engines_that_never_loaded() {
+    let mut report: Report = serde_json::from_str(&example_text("report.example.json")).unwrap();
+    // A speed run that mixed an STT, an MT and a TTS engine; the TTS engine did not load (no items).
+    let mut run = report.runs[0].clone();
+    run.name = "mixed".into();
+    run.mode = Mode::GpuUnderLoad;
+    let (stt, mt) = (run.results[0].clone(), report.runs[1].results[0].clone());
+    run.results = vec![stt, mt, EngineResult::failed_to_load("kokoro", "not installed: tts/kokoro")];
+    // A run in which the only engine failed to load: the table follows the engine's task, not the items.
+    let mut broken = report.runs[1].clone();
+    broken.name = "broken-mt".into();
+    broken.results = vec![EngineResult::failed_to_load("hy-mt2-1.8b", "not installed: mt/hy-mt2")];
+    // An engine the report knows nothing about: the run mode's only task decides.
+    let mut unknown = report.runs[2].clone();
+    unknown.name = "unknown-tts".into();
+    unknown.results = vec![EngineResult::failed_to_load("ghost", "no voice")];
+    report.runs = vec![run, broken, unknown];
+    let md = markdown(&report);
+    let section = |name: &str| {
+        let at = md.find(&format!("## {name} (")).unwrap_or_else(|| panic!("{name} in\n{md}"));
+        let rest = &md[at + 3..];
+        rest[..rest.find("\n## ").unwrap_or(rest.len())].to_string()
+    };
+    let (stt_h, mt_h, tts_h) = (
+        "| Engine | Device | Items | Errors | Audio s | RTF p50",
+        "| Engine | Device | Lines | Errors | chrF",
+        "| Engine | Device | Prompts | Errors | Audio s | TTFA",
+    );
+    let mixed = section("mixed");
+    for header in [stt_h, mt_h, tts_h] {
+        assert!(mixed.contains(header), "a table for each task: {header} missing in\n{mixed}");
+    }
+    assert!(mixed.contains("| qwen3-asr-0.6b |") && mixed.contains("| hy-mt2-1.8b |") && mixed.contains("| kokoro |"), "{mixed}");
+    // Every engine sits under the table of its own task.
+    let (at_stt, at_mt, at_tts) = (mixed.find(stt_h).unwrap(), mixed.find(mt_h).unwrap(), mixed.find(tts_h).unwrap());
+    let (row_stt, row_mt, row_tts) = (mixed.find("| qwen3-asr-0.6b |").unwrap(), mixed.find("| hy-mt2-1.8b |").unwrap(), mixed.find("| kokoro |").unwrap());
+    assert!(at_stt < row_stt && row_stt < at_mt, "{mixed}");
+    assert!(at_mt < row_mt && row_mt < at_tts, "{mixed}");
+    assert!(at_tts < row_tts, "{mixed}");
+    let broken = section("broken-mt");
+    assert!(broken.contains(mt_h) && !broken.contains(tts_h) && !broken.contains(stt_h), "{broken}");
+    assert!(broken.contains("| hy-mt2-1.8b |") && broken.contains("not installed: mt/hy-mt2"), "{broken}");
+    let unknown = section("unknown-tts");
+    assert!(unknown.contains(tts_h) && !unknown.contains(stt_h), "{unknown}");
+    // Only a run with several tasks labels its tables.
+    assert!(mixed.contains("\nSTT\n") && mixed.contains("\nMT\n") && mixed.contains("\nTTS\n"), "{mixed}");
+    assert!(!broken.contains("\nMT\n"), "{broken}");
 }

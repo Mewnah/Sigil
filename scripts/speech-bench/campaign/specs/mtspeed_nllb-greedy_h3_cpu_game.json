@@ -1,0 +1,46 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mtspeed-nllb-greedy-h3_cpu_game",
+ "description": "MT latency and process-tree cost of one engine on the casual caption lines",
+ "seed": 20261002,
+ "engines": [
+  {
+   "id": "nllb-greedy",
+   "task": "mt",
+   "backend": "nllb",
+   "model": "mt/nllb-200-distilled-600m-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "options": {
+    "beam": 1
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "mt",
+   "mode": "cpu_speed",
+   "engines": [
+    "nllb-greedy"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl",
+    "limit": 10
+   },
+   "warmup": 3,
+   "load_profile": "h3_cpu_game",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 120
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": false,
+   "include_items": true
+  }
+ }
+}

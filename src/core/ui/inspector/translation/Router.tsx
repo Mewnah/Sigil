@@ -4,6 +4,7 @@ import {
   type Translation_State,
   type TranslationEngineId,
   type TranslationInterimEngine,
+  Translation_Backends,
 } from "@/core/services/translation/schema";
 import { FC, memo } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,7 +13,7 @@ import { useSnapshot } from "valtio";
 import Inspector from "../components";
 import { InputCheckbox, InputSelect } from "../components/input";
 import { ChainEditor } from "./ChainEditor";
-import { Hint, LanguageSelect, NumberField, sliceSetter, translationData } from "./common";
+import { Hint, LanguageSelect, NumberField, sliceSetter, translationData, useInterimSwitch } from "./common";
 import { LanguagePair } from "./LanguagePair";
 import { backendLabelKey, languageDisplayName } from "./logic";
 
@@ -32,6 +33,7 @@ export const Router: FC = memo(() => {
   const up = sliceSetter("auto");
   const state = data as Translation_State;
   const uiLang = i18n.language || "en";
+  const interim = useInterimSwitch(Translation_Backends.auto);
 
   const setChain = (chain: TranslationEngineId[]) => {
     translationData().auto.chain = chain;
@@ -134,7 +136,8 @@ export const Router: FC = memo(() => {
       <Hint>{t("transl.route_timeout_hint")}</Hint>
       <InputCheckbox label="transl.route_field_cloud_fallback" value={pr.cloudFallback} onChange={(v) => up("cloudFallback", v)} />
       <Hint>{t("transl.route_cloud_fallback_hint")}</Hint>
-      <InputCheckbox label="common.field_interim_results" onChange={(v) => up("interim", v)} value={pr.interim} />
+      <InputCheckbox label="common.field_interim_results" onChange={(v) => up("interim", v)} value={interim.on} />
+      {interim.heldOff && <Hint tone="warning">{t("transl.interim_cpu_hint")}</Hint>}
     </>
   );
 });

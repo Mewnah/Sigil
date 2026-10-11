@@ -1,0 +1,95 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-tts-speed",
+ "description": "Kokoro on the CPU: time to first audio and cost, idle and next to a game",
+ "seed": 20261002,
+ "engines": [
+  {
+   "id": "kokoro-cpu4",
+   "task": "tts",
+   "backend": "local-tts",
+   "model": "tts/kokoro-v1.0",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "languages": [
+    "en",
+    "ja",
+    "zh"
+   ],
+   "options": {
+    "voices": {
+     "en": "af_heart",
+     "ja": "jf_alpha"
+    }
+   }
+  },
+  {
+   "id": "kokoro-cpu2",
+   "task": "tts",
+   "backend": "local-tts",
+   "model": "tts/kokoro-v1.0",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "ja",
+    "zh"
+   ],
+   "options": {
+    "voices": {
+     "en": "af_heart",
+     "ja": "jf_alpha"
+    }
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "tts-idle",
+   "mode": "cpu_speed",
+   "engines": [
+    "kokoro-cpu4",
+    "kokoro-cpu2"
+   ],
+   "tts": {
+    "prompts": "${SIGIL_P7_CORPUS}/tts/prompts.jsonl",
+    "limit_per_language": 10,
+    "write_audio": false
+   },
+   "warmup": 2,
+   "load_profile": "none",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 120
+  },
+  {
+   "name": "tts-game",
+   "mode": "cpu_speed",
+   "engines": [
+    "kokoro-cpu4",
+    "kokoro-cpu2"
+   ],
+   "tts": {
+    "prompts": "${SIGIL_P7_CORPUS}/tts/prompts.jsonl",
+    "limit_per_language": 10,
+    "write_audio": false
+   },
+   "warmup": 2,
+   "load_profile": "h3_cpu_game",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 120
+  }
+ ],
+ "output": {
+  "write_hypotheses": false,
+  "export": {
+   "include_text": false,
+   "include_items": true
+  }
+ }
+}

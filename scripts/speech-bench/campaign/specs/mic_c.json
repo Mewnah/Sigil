@@ -1,0 +1,120 @@
+{
+ "$comment": [
+  "P7-A: the contested Korean pair on 100 utterances (own-mic conditions) and Nemotron's English finals on the mic-side conditions"
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mic-c",
+ "description": "ko: Qwen3-ASR 0.6B against SenseVoice on clean + room_light + mic_codec, 100 utterances; Nemotron en on room_light + mic_codec, 30 utterances",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "conditions": [
+    "clean",
+    "room_light",
+    "mic_codec"
+   ],
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 100
+  }
+ },
+ "engines": [
+  {
+   "id": "qwen3-asr-0.6b",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "ko"
+   ]
+  },
+  {
+   "id": "sensevoice",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/sense-voice-small-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "ko"
+   ]
+  },
+  {
+   "id": "nemotron-560",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-560ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1,
+   "languages": [
+    "en"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "ko-extended",
+   "mode": "accuracy",
+   "engines": [
+    "qwen3-asr-0.6b",
+    "sensevoice"
+   ],
+   "select": {
+    "languages": [
+     "ko"
+    ],
+    "conditions": [
+     "clean",
+     "room_light",
+     "mic_codec"
+    ],
+    "kinds": [
+     "synthetic"
+    ],
+    "limit_per_language": 100
+   },
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 240
+  },
+  {
+   "name": "nemotron-en",
+   "mode": "accuracy",
+   "engines": [
+    "nemotron-560"
+   ],
+   "select": {
+    "languages": [
+     "en"
+    ],
+    "conditions": [
+     "clean",
+     "room_light",
+     "mic_codec"
+    ],
+    "kinds": [
+     "synthetic"
+    ],
+    "limit_per_language": 30
+   },
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 240
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

@@ -1,9 +1,10 @@
 @import "simplebar-react/dist/simplebar.min.css";
 @import "tailwindcss";
-/* Tailwind scans the project for class names; scripts/ and src-tauri/ hold no UI, and a backslash path or a
+/* Tailwind scans the project for class names; scripts/, tools/ and src-tauri/ hold no UI, and a backslash path or a
    bracketed token there can read as an invalid CSS escape or arbitrary property and break the build (P6-I0). */
 @source not "../scripts";
 @source not "../src-tauri";
+@source not "../tools";
 
 @plugin "daisyui" {
   themes: all;

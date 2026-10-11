@@ -26,6 +26,7 @@ import { pushSystemLog } from "../systemLog";
 import { raceWithSignal } from "./abort";
 import { filterGlossary } from "./glossary";
 import { canonicalLanguage, guessLanguage, languageName, sameLanguage, TRANSLATION_LANGUAGES } from "./languages";
+import { interimTranslationsOn } from "./interimPolicy";
 import { completeTokens, LocalAgreement } from "./localAgreement";
 import { withOneRetry } from "./retry";
 import { engineLabel, routerLineBudgetMs } from "./router";
@@ -95,6 +96,11 @@ export interface TranslationPipelineOptions {
   logSource?: string;
   /** Show toasts for start failures and throttled line errors (default true). */
   toasts?: boolean;
+  /**
+   * The bundled llama-server translator runs on the processor (read per partial). With `interim: "auto"` that
+   * turns interim translations off (`interimPolicy.ts`); default: never.
+   */
+  translatorOnCpu?: () => boolean;
 }
 
 export interface TranslationPipeline {
@@ -418,8 +424,11 @@ class TranslationPipelineImpl implements TranslationPipeline {
   }
 
   #interimEnabled(): boolean {
+    const settings = this.#settings();
     const backend = this.#backend;
-    return backend !== null && this.#settings()[backend]?.interim !== false;
+    // Only the automatic value looks at where the translator runs.
+    const onCpu = backend !== null && settings[backend]?.interim === "auto" && (this.#o.translatorOnCpu?.() ?? false);
+    return interimTranslationsOn(settings, backend, onCpu);
   }
 
   /** Canonical pair of a line; both undefined for the legacy backends (they use their own slice). */

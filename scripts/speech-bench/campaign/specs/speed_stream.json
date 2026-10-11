@@ -1,0 +1,223 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "conditions": [
+    "clean"
+   ],
+   "limit_per_language": 6
+  }
+ },
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ },
+ "name": "p7a-speed-stream",
+ "description": "Nemotron streaming partials and finals at real time, idle and next to a game",
+ "engines": [
+  {
+   "id": "nemotron-560",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-560ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt",
+    "ja",
+    "ko"
+   ]
+  },
+  {
+   "id": "nemotron-160",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-160ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1,
+   "languages": [
+    "en"
+   ]
+  },
+  {
+   "id": "parakeet-ultra",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "parakeet-v3",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-tdt-0.6b-v3-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "qwen3-asr-0.6b-t2",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 2
+  },
+  {
+   "id": "qwen3-asr-0.6b-t4",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 4
+  },
+  {
+   "id": "sensevoice",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/sense-voice-small-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "ja",
+    "ko",
+    "zh"
+   ]
+  },
+  {
+   "id": "moonshine-base-en",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/moonshine-base-en-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en"
+   ]
+  },
+  {
+   "id": "whisper-base",
+   "task": "stt",
+   "backend": "whisper",
+   "model": "${APPDATA}/com.sigil.app/whisper/ggml-base.bin",
+   "execution_provider": "cpu",
+   "threads": 4
+  },
+  {
+   "id": "granite-cpu",
+   "task": "stt",
+   "backend": "transcribe",
+   "model": "stt/granite-speech-5.0-turboctc-q8_0",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "languages": [
+    "en"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "stream-idle",
+   "mode": "cpu_speed",
+   "engines": [
+    "nemotron-560",
+    "nemotron-160"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "conditions": [
+     "clean"
+    ],
+    "languages": [
+     "en",
+     "ja"
+    ],
+    "limit_per_language": 6
+   },
+   "feed": {
+    "kind": "stream",
+    "chunk_ms": 100,
+    "pace": "realtime",
+    "tail_silence_ms": 1500
+   },
+   "warmup": 0,
+   "repeat": 1,
+   "load_profile": "none",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 240
+  },
+  {
+   "name": "stream-game",
+   "mode": "cpu_speed",
+   "engines": [
+    "nemotron-560",
+    "nemotron-160"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "conditions": [
+     "clean"
+    ],
+    "languages": [
+     "en",
+     "ja"
+    ],
+    "limit_per_language": 6
+   },
+   "feed": {
+    "kind": "stream",
+    "chunk_ms": 100,
+    "pace": "realtime",
+    "tail_silence_ms": 1500
+   },
+   "warmup": 0,
+   "repeat": 1,
+   "load_profile": "h3_cpu_game",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 240
+  }
+ ]
+}

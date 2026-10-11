@@ -2,7 +2,9 @@ import { IServiceInterface, TextEventSource } from "@/types";
 import { serviceSubscibeToInput } from "@/utils";
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { proxy } from "valtio";
+import { llmServerUi } from "../llm_server";
 import { i18nReady } from "../stt/statusMessages";
+import { bundledTranslatorOnCpu } from "./interimPolicy";
 import { createTranslationPipeline, TranslationEngineMap, TranslationPipeline, TranslationServiceState } from "./pipeline";
 import { Translation_RouterService } from "./router";
 import { Translation_Backends } from "./schema";
@@ -16,6 +18,7 @@ import { Translation_NllbService } from "./services/nllb";
 import { Translation_OnDeviceService } from "./services/onDevice";
 
 export { createTranslationPipeline } from "./pipeline";
+export { bundledTranslatorOnCpu, interimHeldOffByCpu, interimTranslationsOn } from "./interimPolicy";
 export type {
   TranslationEngineMap,
   TranslationOutputEvent,
@@ -36,6 +39,14 @@ export const TRANSLATION_ENGINES: TranslationEngineMap = {
   [Translation_Backends.nllb]: Translation_NllbService,
   [Translation_Backends.auto]: Translation_RouterService,
 };
+
+/**
+ * `TranslationPipelineOptions.translatorOnCpu` for the live settings: the bundled llama-server translator runs on
+ * the processor (its status once it is up, else the `llm` slice), which turns `interim: "auto"` off.
+ */
+export function translatorOnCpuNow(): boolean {
+  return bundledTranslatorOnCpu(window.ApiServer.state.services.translation.data.llm, llmServerUi.status);
+}
 
 /** Input streams, sequenced independently: speech and typed text are separate utterance streams. */
 type TranslationStream = "stt" | "textfield";
@@ -60,6 +71,7 @@ class Service_Translation implements IServiceInterface {
       settings: () => this.data,
       engines,
       publish: (event) => window.ApiShared.pubsub.publishText(TextEventSource.translation, event),
+      translatorOnCpu: translatorOnCpuNow,
     });
   }
 

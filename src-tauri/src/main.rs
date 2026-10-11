@@ -14,6 +14,7 @@ use windows::{
 
 use crate::services::AppConfiguration;
 
+mod exit_guard;
 mod services;
 
 #[derive(Parser, Debug)]
@@ -109,6 +110,10 @@ fn main() {
         .setup(move |app| {
             let window = app.get_webview_window("main").expect("Failed to get main window");
             window.set_shadow(true).expect("Unsupported platform!");
+            if let Ok(hwnd) = window.hwnd() {
+                // For the exit guard's diagnostics line only.
+                exit_guard::set_main_window(hwnd.0 as isize);
+            }
             if start_minimized {
                 show_minimized_without_focus(&window);
             }
@@ -176,20 +181,29 @@ fn main() {
         // Secondary windows (the caption window, P6-B) close with the main window, so Sigil never
         // keeps running with only them open (Tauri exits when the last window is gone).
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                close_secondary_windows(window.app_handle());
+            if window.label() != "main" {
+                return;
+            }
+            match event {
+                // Closing the main window must end the process: the exit guard (P7-D) makes sure it does.
+                tauri::WindowEvent::CloseRequested { .. } => exit_guard::arm(),
+                tauri::WindowEvent::Destroyed => close_secondary_windows(window.app_handle()),
+                _ => {}
             }
         })
         .build(context)
         .expect("error while building tauri application")
-        .run(|_app, event| {
-            if let tauri::RunEvent::Exit = event {
+        .run(|_app, event| match event {
+            // The app was asked to exit (last window destroyed, `app.exit`): same guard, started once.
+            tauri::RunEvent::ExitRequested { .. } => exit_guard::arm(),
+            tauri::RunEvent::Exit => {
                 // Helper processes (llama-server, TTS servers, sidecars) die with Sigil. The Job
                 // Object also kills them if the process is terminated without this event.
                 services::process_host::shutdown_all();
                 // Release OpenVR before the process exits (P6-B; a no-op when it never started).
                 services::vr_overlay::shutdown();
             }
+            _ => {}
         });
 }
 

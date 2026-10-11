@@ -59,7 +59,9 @@
 //! ([`VcSessionOptions::streamer_profile`]); [`VcSessionOptions::intra_threads`] sets another
 //! intra-op count, and [`VcSessionOptions::thread_priority`] starts ONNX Runtime's pool threads
 //! with the voice-changer worker priority policy. Without them a session keeps ONNX Runtime's
-//! default pool.
+//! default pool. The voice changer worker and the benchmark take the pair from [`vc_threads`]:
+//! the Streamer preset on the CPU rung runs [`streamer_threads_for`] threads (P7-I0; one thread
+//! cannot convert a 120 ms block in 120 ms, RTF 2.7), everything else as above.
 //!
 //! # GPU extras (P3-C2, voice-engine session plans)
 //! [`build_session_ext`] runs the same ladder with [`GpuExtras`], applied per rung and reported
@@ -344,6 +346,83 @@ pub fn vc_dynamic_block_base_default(_profile: crate::services::neural_audio::Rv
 
 /// `SIGIL_VC_DYNAMIC_BLOCK_BASE=<n>` ([`vc_dynamic_block_base_default`]).
 pub const VC_DYNAMIC_BLOCK_BASE_ENV: &str = "SIGIL_VC_DYNAMIC_BLOCK_BASE";
+
+/// `SIGIL_VC_STREAMER_THREADS=<n>` (1-16): the intra-op thread count of the CPU Streamer preset instead of
+/// [`streamer_threads_for`]'s (P7-I0). `1` restores the one-thread Streamer of 0.4.0 and earlier builds.
+pub const VC_STREAMER_THREADS_ENV: &str = "SIGIL_VC_STREAMER_THREADS";
+
+/// Fewest threads that convert a 120 ms block in 120 ms: P3B-G's sweep at below-normal priority measured RTF p99
+/// 1.39 on two threads and 1.14 on three, 0.89 on four (paced 0.96), 0.83 on six and 0.80 on the default pool
+/// of eight (`scripts/bench/specs/p3b/g/README.md`).
+pub const STREAMER_MIN_THREADS: usize = 4;
+/// Scaling stops at six threads: the default pool of eight costs 0.5-0.6 more cores for no RTF gain.
+pub const STREAMER_MAX_THREADS: usize = 6;
+/// Physical cores left to the game and OBS (the same spare as the bundled llama-server's plan).
+pub const STREAMER_SPARE_CORES: u32 = 2;
+
+/// Intra-op threads of the CPU Streamer preset on a CPU with `physical_cores`: all but
+/// [`STREAMER_SPARE_CORES`], within [`STREAMER_MIN_THREADS`]-[`STREAMER_MAX_THREADS`] (P7-I0, from P7-B's final
+/// scorecard: the one-thread preset ran at RTF 2.7, 4 to 6 threads below normal priority run in real time at
+/// 2.6-2.9 cores while paced). A 4-core CPU gets all four threads: nothing smaller keeps up, and the
+/// autotuner's longer block is the way to lighten it.
+pub fn streamer_threads_for(physical_cores: u32) -> usize {
+    (physical_cores.saturating_sub(STREAMER_SPARE_CORES) as usize).clamp(STREAMER_MIN_THREADS, STREAMER_MAX_THREADS)
+}
+
+/// The thread settings of one voice-engine session set (the pair `VcSessionOptions` takes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VcThreads {
+    /// [`VcSessionOptions::streamer_profile`] (one thread per pool).
+    pub streamer_profile: bool,
+    /// [`VcSessionOptions::intra_threads`].
+    pub intra_threads: Option<usize>,
+}
+
+/// [`vc_threads`] with the Streamer thread count given (`streamer_threads`: the environment override or the
+/// physical-core policy), so the rule can be tested without the machine.
+///
+/// - Not the Streamer preset: no profile; `explicit`, else 2 under `protect_game` (the worker's existing rule).
+/// - The Streamer preset on the CPU rung, no explicit count, not `protect_game`: no profile and `streamer_threads`
+///   threads (more than one) on the below-normal pool of the worker priority policy. The output does not change
+///   with the thread count (rule R6 of P3B does not apply).
+/// - Everything else keeps the one-thread Streamer profile: a GPU rung (its CPU part is tiny), an explicit count
+///   (the profile wins, as documented on `streamer_profile`), `protect_game` (the user asked for the least
+///   load), and a thread count of 1 (the kill switch).
+pub fn vc_threads_with(
+    preset: crate::services::neural_audio::RvcPresetProfile,
+    ep: &str,
+    priority: WorkerPriority,
+    explicit: Option<usize>,
+    streamer_threads: usize,
+) -> VcThreads {
+    let streamer = preset == crate::services::neural_audio::RvcPresetProfile::Streamer;
+    let protect_game = priority == WorkerPriority::ProtectGame;
+    let base = explicit.or(protect_game.then_some(2));
+    if streamer && ep == EP_CPU && explicit.is_none() && !protect_game && streamer_threads > 1 {
+        return VcThreads { streamer_profile: false, intra_threads: Some(streamer_threads) };
+    }
+    VcThreads { streamer_profile: streamer, intra_threads: base }
+}
+
+/// The thread settings of the voice engine's sessions for a preset on the rung `ep` ([`vc_threads_with`]).
+/// The worker and the benchmark both read it, so they keep building identical sessions.
+pub fn vc_threads(
+    preset: crate::services::neural_audio::RvcPresetProfile,
+    ep: &str,
+    priority: WorkerPriority,
+    explicit: Option<usize>,
+) -> VcThreads {
+    vc_threads_with(preset, ep, priority, explicit, vc_streamer_threads())
+}
+
+/// [`streamer_threads_for`] this CPU's physical cores, or `SIGIL_VC_STREAMER_THREADS` ([`VC_STREAMER_THREADS_ENV`]).
+pub fn vc_streamer_threads() -> usize {
+    if let Some(n) = std::env::var(VC_STREAMER_THREADS_ENV).ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| (1..=16).contains(n)) {
+        return n;
+    }
+    static PHYSICAL: OnceLock<u32> = OnceLock::new();
+    streamer_threads_for(*PHYSICAL.get_or_init(|| crate::services::sysinfo::cpu::probe().physical_cores))
+}
 
 /// `SIGIL_VC_DENORMAL_ZERO=0|1`: ONNX Runtime's `session.set_denormal_as_zero` (flush-to-zero and
 /// denormals-are-zero on the session's threads) for the voice engine's CPU sessions (P3B-G).
@@ -1559,6 +1638,62 @@ pub(crate) fn preload_test_cuda_runtime_quiet() {
 mod tests {
     use super::*;
     use crate::services::diagnostics::{canary, ep_outcome};
+
+    #[test]
+    fn streamer_thread_policy_follows_the_physical_cores() {
+        // All but two physical cores, four at least (3 threads are not real time at 120 ms), six at most.
+        let policy: Vec<usize> = [0, 1, 2, 4, 6, 8, 10, 12, 16, 32].iter().map(|&c| streamer_threads_for(c)).collect();
+        assert_eq!(policy, [4, 4, 4, 4, 4, 6, 6, 6, 6, 6]);
+        assert_eq!((STREAMER_MIN_THREADS, STREAMER_MAX_THREADS, STREAMER_SPARE_CORES), (4, 6, 2));
+        // The dev rig's 8 cores measured best at 6 (RTF p99 0.83 offline / 0.74 paced, 2.8 paced cores).
+        assert_eq!(streamer_threads_for(8), 6);
+    }
+
+    #[test]
+    fn vc_threads_pin_the_streamer_policy() {
+        use crate::services::neural_audio::RvcPresetProfile::{LowLatency, Quality, Streamer};
+        use WorkerPriority::{Auto, ProtectGame, ProtectVoice};
+        let t = |profile, intra| VcThreads { streamer_profile: profile, intra_threads: intra };
+        // The CPU Streamer preset leaves the one-thread cap: n threads on the worker priority policy's pool.
+        assert_eq!(vc_threads_with(Streamer, "cpu", Auto, None, 6), t(false, Some(6)));
+        assert_eq!(vc_threads_with(Streamer, "cpu", ProtectVoice, None, 4), t(false, Some(4)));
+        // Kill switch (SIGIL_VC_STREAMER_THREADS=1): the one-thread Streamer of earlier builds.
+        assert_eq!(vc_threads_with(Streamer, "cpu", Auto, None, 1), t(true, None));
+        // protect_game keeps its 2-thread request under the one-thread profile (the user asked for the least load).
+        assert_eq!(vc_threads_with(Streamer, "cpu", ProtectGame, None, 6), t(true, Some(2)));
+        // An explicit count is the spec's (the profile wins, as before); a GPU rung keeps the profile.
+        assert_eq!(vc_threads_with(Streamer, "cpu", Auto, Some(3), 6), t(true, Some(3)));
+        assert_eq!(vc_threads_with(Streamer, "cuda", Auto, None, 6), t(true, None));
+        assert_eq!(vc_threads_with(Streamer, "dml", ProtectGame, None, 6), t(true, Some(2)));
+        // Other presets never take the Streamer policy.
+        assert_eq!(vc_threads_with(LowLatency, "cpu", Auto, None, 6), t(false, None));
+        assert_eq!(vc_threads_with(LowLatency, "cpu", ProtectGame, None, 6), t(false, Some(2)));
+        assert_eq!(vc_threads_with(Quality, "cuda", Auto, Some(4), 6), t(false, Some(4)));
+    }
+
+    #[test]
+    fn the_streamer_policy_builds_a_multi_thread_cpu_session() {
+        // What the worker passes for the Streamer preset on the CPU: profile off, `intra_threads` set, pool
+        // threads on the worker priority policy. The session builds and computes the right result.
+        use crate::services::neural_audio::RvcPresetProfile::Streamer;
+        let th = vc_threads_with(Streamer, "cpu", WorkerPriority::Auto, None, STREAMER_MIN_THREADS);
+        let opts = VcSessionOptions {
+            streamer_profile: th.streamer_profile,
+            intra_threads: th.intra_threads,
+            thread_priority: Some(WorkerPriority::Auto),
+            ..VcSessionOptions::default()
+        };
+        assert!(!opts.streamer_profile && opts.intra_threads == Some(4));
+        let (mut session, outcome) = build_session(None, "cpu", &opts, ModelSource::Memory(canary::model_bytes()))
+            .expect("CPU session with the Streamer policy");
+        assert_eq!(outcome, EpOutcome::granted("cpu"));
+        let input: Vec<f32> = (0..canary::CANARY_IN).map(|i| i as f32).collect();
+        let x = ort::value::Tensor::from_array(([1usize, 1, canary::CANARY_IN], input)).unwrap();
+        let outputs = session.run(ort::inputs!["X" => &x]).expect("inference");
+        let (_, y) = outputs["Y"].try_extract_tensor::<f32>().unwrap();
+        let expected = canary::expected_output();
+        assert!(y.iter().zip(expected.iter()).all(|(a, b)| (a - b).abs() < 1e-3), "{y:?}");
+    }
 
     #[test]
     fn ep_normalization_and_ladder() {

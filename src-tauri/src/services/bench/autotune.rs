@@ -658,9 +658,12 @@ pub const CPU_THREADS_PARAM: Option<&str> = None;
 const CPU_THREAD_COUNTS: [u8; 5] = [1, 2, 3, 4, 6];
 
 /// ONNX Runtime thread policy of a CPU configuration (P3B-G: count and priority are separate
-/// choices). Through the voice changer's own params: one thread is the Streamer preset, two below
-/// normal is `protect_game`, the pool is any other preset with `auto` (below normal on the CPU EP)
-/// or `protect_voice` (normal, out of EcoQoS); another count needs [`CPU_THREADS_PARAM`].
+/// choices). Through the voice changer's own params: one thread below normal is the Streamer preset
+/// under `protect_game` (since P7-I0 the Streamer preset on `auto` / `protect_voice` runs its own
+/// 4-6 thread policy, `ort_session::vc_threads`, so one thread at normal priority has no params any
+/// more), two below normal is `protect_game`, the pool is any other preset with `auto` (below normal
+/// on the CPU EP) or `protect_voice` (normal, out of EcoQoS); another count needs
+/// [`CPU_THREADS_PARAM`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Threads {
     /// The request's preset and priority (GPU rungs, and the CPU before the thread stage).
@@ -699,7 +702,7 @@ impl Threads {
     fn expressible(self, threads_param: Option<&str>) -> bool {
         match self {
             Threads::AsRequested | Threads::Pool { .. } => true,
-            Threads::Count { n: 1, .. } | Threads::Count { n: 2, normal: false } => true,
+            Threads::Count { n: 1, normal: false } | Threads::Count { n: 2, normal: false } => true,
             Threads::Count { .. } => threads_param.is_some(),
         }
     }
@@ -713,10 +716,12 @@ impl Threads {
         }
     }
 
-    /// ONNX Runtime intra-op threads the benchmark builds the voice with (`None`: the preset's).
+    /// ONNX Runtime intra-op threads the benchmark builds the voice with (`None`: the preset's). A
+    /// count is always explicit, one thread included: the Streamer preset's own thread policy (P7-I0)
+    /// must not turn the one-thread candidate into a multi-thread run.
     fn intra_threads(self) -> Option<usize> {
         match self {
-            Threads::Count { n, .. } if n >= 2 => Some(usize::from(n)),
+            Threads::Count { n, .. } if n >= 1 => Some(usize::from(n)),
             _ => None,
         }
     }
@@ -730,7 +735,10 @@ impl Threads {
         let prio = |normal: bool| if normal { "protect_voice" } else { "auto" };
         match self {
             Threads::AsRequested => (None, None),
-            Threads::Count { n: 1, normal } => (Some("streamer".into()), Some(prio(normal))),
+            // One thread below normal is the Streamer under `protect_game` (the one-thread profile); the
+            // measurement pins one thread whatever the priority.
+            Threads::Count { n: 1, normal: false } => (Some("streamer".into()), Some("protect_game")),
+            Threads::Count { n: 1, normal: true } => (Some("streamer".into()), Some(prio(true))),
             Threads::Count { n: 2, normal: false } => (pooled(), Some("protect_game")),
             Threads::Count { normal, .. } | Threads::Pool { normal } => (pooled(), Some(prio(normal))),
         }
@@ -739,7 +747,7 @@ impl Threads {
     /// The thread count for [`CPU_THREADS_PARAM`] (`None`: the preset / priority express it).
     fn count_param(self) -> Option<u8> {
         match self {
-            Threads::Count { n, normal } if n >= 3 || (n == 2 && normal) => Some(n),
+            Threads::Count { n, normal } if n >= 3 || (n >= 1 && normal) => Some(n),
             _ => None,
         }
     }
@@ -2536,7 +2544,7 @@ mod tests {
             params_of(&c, true, preset, None)
         };
         let one = cpu(Threads::Count { n: 1, normal: false }, "low_latency");
-        assert_eq!((one["rvc_preset"].as_str(), one["worker_priority"].as_str()), (Some("streamer"), Some("auto")));
+        assert_eq!((one["rvc_preset"].as_str(), one["worker_priority"].as_str()), (Some("streamer"), Some("protect_game")));
         let one_normal = cpu(Threads::Count { n: 1, normal: true }, "low_latency");
         assert_eq!(one_normal["worker_priority"], "protect_voice", "priority is its own choice");
         let two = cpu(Threads::Count { n: 2, normal: false }, "streamer");
@@ -2580,11 +2588,16 @@ mod tests {
         // Four logical CPUs: 1, 2, 3 threads and the pool.
         assert_eq!(Threads::sweep("auto", 4)[0], vec![c(1, false), c(2, false), c(3, false), Threads::Pool { normal: false }]);
         assert_eq!(Threads::sweep("auto", 1)[0], vec![c(1, false), Threads::Pool { normal: false }]);
-        // The benchmark builds counts of 2+ with explicit intra-op threads.
-        assert_eq!((c(1, true).intra_threads(), c(4, false).intra_threads(), Threads::Pool { normal: true }.intra_threads()), (None, Some(4), None));
-        assert!(c(1, true).expressible(None) && c(2, false).expressible(None) && Threads::Pool { normal: true }.expressible(None));
+        // The benchmark builds every count with explicit intra-op threads (one included: the Streamer
+        // preset's own 4-6 thread policy must not run in the one-thread candidate's place).
+        assert_eq!((c(1, true).intra_threads(), c(4, false).intra_threads(), Threads::Pool { normal: true }.intra_threads()), (Some(1), Some(4), None));
+        // One thread below normal is the Streamer under `protect_game`; at normal priority the params
+        // cannot say "one thread" any more (the Streamer preset runs its thread policy there).
+        assert!(c(1, false).expressible(None) && c(2, false).expressible(None) && Threads::Pool { normal: true }.expressible(None));
+        assert!(!c(1, true).expressible(None) && c(1, true).expressible(Some("rvc_cpu_threads")));
         assert!(!c(2, true).expressible(None) && !c(4, false).expressible(None) && c(4, false).expressible(Some("x")));
         assert_eq!((c(2, true).count_param(), c(2, false).count_param(), c(6, false).count_param()), (Some(2), None, Some(6)));
+        assert_eq!((c(1, true).count_param(), c(1, false).count_param()), (Some(1), None), "one thread at normal priority needs the count param since P7-I0");
         assert_eq!(c(1, true).label(), "1@normal");
         assert_eq!(Threads::Pool { normal: false }.label(), "pool@below_normal");
     }

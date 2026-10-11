@@ -1,14 +1,558 @@
 # Speech benchmarks
 
 Sigil's own speech measurements. Defaults and routing come from these numbers (speech-stack plan,
-Principles and §8), not from vendor figures. This page starts with the P2 dev-rig numbers; P7-A's
-campaign (word error rates per language, CPU speed on H1 / H3 rigs, GPU under load) replaces and
-extends them.
+Principles and §8), not from vendor figures. The first half is the **P7-A campaign** (2026-10-09/10):
+light speech-to-text, translation and text-to-speech engines measured for the streamer who runs
+captions into OBS while playing VRChat, plus Sigil's own footprint. The second half keeps the earlier
+probe numbers (P2 speech engines, P4 translation) that the campaign did not redo. Reproduce everything
+with [`scripts/speech-bench/campaign/`](../../scripts/speech-bench/campaign/README.md).
 
-**Dev rig:** Ryzen 7 7800X3D (8 cores), RTX 4090 24 GB (driver 616.56), Windows 11. Unless noted,
-timings come from the debug `sigil.exe` with the release runtime DLLs (sherpa-onnx 1.13.8,
-transcribe.cpp 0.2.4), median of 3 runs, 2026-09-29. RTF = processing time / audio time (lower is
-faster; below 1 is faster than real time). Raw reports live in the git-ignored `bench-results/`.
+**What was and was not measured.** User scope (2026-10-09): the main audience streams STT captions
+into OBS while in VR, so the question for every engine is "good captions without taking the game's CPU
+or GPU". Light and mid-weight engines were screened first and only the finalists got the full test.
+**Heavy GPU models are opt-in and were not benchmarked or tuned**: Cohere Transcribe, Qwen3-ASR 1.7B,
+Voxtral, Confucius4-R2T2, Hy-MT2 7B, MiLMMT, TranslateGemma, Qwen3-TTS 1.7B, Magpie, Breeze, OmniVoice,
+Fish S2. Nothing here ran in VR or inside VRChat; the game is stood in for by the benchmark's load
+simulator. There are no real VRChat clips yet: the corpus is synthetic (FLEURS read speech with
+simulated room, codec and bleed), and the real-clip drop-in is the authority once it exists.
+
+## How it was measured
+
+- **Rig.** Ryzen 7 7800X3D (8 cores, 16 threads), RTX 4090 24 GB, Windows 11 (build 26200), release
+  build (LTO) of `Sigil.exe` with the shipped ggml flags, process at below-normal priority, the PC otherwise
+  quiet (the campaign's runs took the dev rig's GPU timing lock, so no other measurement overlapped them). The dev CPU is faster than a typical 6-core
+  gaming PC, so absolute times are optimistic; ratios are meaningful.
+- **A mid-range CPU.** CPU rows ran on a 12-logical-processor slice of the 16 (six cores with SMT, "6C")
+  and, for one question, on 8 logical processors ("4C"), selected by processor affinity. The slice does
+  not change what the engines plan (thread counts, llama-server's threads come from the real 8 cores).
+- **The game.** `h3_cpu_game` of the benchmark: four busy-loop threads at 60 % duty (about 2.4 cores, VRChat's
+  main, render and OBS threads on a 6-core PC). "Idle" rows run without it. The GPU hammer (`h1_vrchat_obs`: a
+  convolution load at 70 % duty on a 16.7 ms frame, plus 3 CPU threads at 50 %) was used for the one light
+  GPU row (the Vulkan translator). For the whole app the game is four Node processes spinning 60 % of every
+  100 ms beside it.
+- **Corpus.** FLEURS test speech (en, de, es, fr, pt, ru, ja, ko, zh; read speech, CC-BY-4.0), 9
+  languages x 14 conditions, `content_sha256` `459c2ff05c92...`, scored with `sigil-norm/1` (WER; CER for
+  ja / ko / zh; Whisper's English normalizer). Digits against number words outside English count as errors
+  for every engine alike. Conditions used:
+
+  | Group | Conditions | What it stands for |
+  |---|---|---|
+  | **Own microphone** | `clean`; `room_light` (synthetic reverb tail, RT60 0.35 s); `mic_codec` (200-3800 Hz band, 8-bit mu-law, hiss: a bad headset or a Bluetooth link) | The streamer's own captions. Headphones keep the game out of this microphone. **These alone choose the defaults.** |
+  | **Bleed** | `music_snr10` (FMA tracks 10 dB under the speech), `babble_snr10` (three other talkers 10 dB under), `vrchat_mix` (speech in a light room with music, effects and two talkers, about 12 dB combined, mic band 100 Hz-7 kHz) | Speakers instead of headphones, and the "other players' captions" feature, whose input is VRChat's own audio. Tabulated apart; they play no part in the own-microphone choice (user decision 2026-10-09). |
+
+  **Screening** = `quick` (clean, vrchat_mix), 10 utterances per language; **finals** = 30 utterances per
+  language and condition on `core` (clean, music, babble, vrchat_mix) plus the two mic-side conditions
+  (Nemotron outside English: 12 utterances, on `core` only; Korean: 100 utterances on the own-mic conditions). Intervals are paired percentile bootstraps over
+  utterances (1,000 resamples, seed 20261002); the own-microphone intervals resample whole utterances (all
+  conditions of an utterance together).
+- **Limits to state next to any number.** Read speech, not VRChat chatter; the bleed is mixed digitally, not
+  played through a speaker; a babble talker may be the target's own speaker; one machine; 30 utterances per
+  cell, so intervals of a few points.
+- **Spec identities** (`spec_sha256`, first 12 hex): screening `d8d85d450786`, finals `82aab70317b1` /
+  `486c0fe2f8d2` / `06ff7a6a5151` / `5e3bef68870c`, mic-side `37fc946c3a8c` / `f30bdd706e97` / `7d6d71607a6e`, auto mode `5b74b52815b3`, decode speed
+  `855225650a1d`, streaming `077ffa8b00d8`, pipeline 6C `6fcca72e66f2`, pipeline 4C `2a3b31a36d34`, translation
+  `ea478c95198d`, Kokoro `26ebc77e6b80`.
+
+## How the defaults are chosen
+
+A streamer's own captions come from their own microphone, and with headphones the game's audio does not
+reach it. So **the own-microphone STT defaults are chosen only on the clean results plus the mic-side
+conditions (`room_light`, `mic_codec`)**; the bleed conditions (`music`, `babble`, `vrchat_mix`) play no part in
+that choice, not even as a tie-breaker. They are tabulated apart because the "other players' captions" (loopback)
+feature hears VRChat's own audio, and a streamer on speakers hears the game in the microphone.
+
+The rule is code ([`campaign/own_mic.py`](../../scripts/speech-bench/campaign/own_mic.py), unit-tested):
+
+1. Per language, pool the error counts of every own-mic condition and rank the engines on that rate. The
+   interval and the paired differences resample whole utterances.
+2. An engine **ties** the best one when the paired interval of the difference contains zero and its point
+   estimate is at most 1.5 points (WER or CER) above the best.
+3. Among tied engines the **cheapest** (CPU and RAM per audio second) takes the language. An engine that is
+   significantly worse, or more than the margin behind, is out whatever it costs.
+4. Granite TurboCTC (it writes lower case without punctuation) and Nemotron (a streaming partials engine) are
+   **never a caption final**, whatever they score or cost: `--exclude-finals` (default `granite-cpu,nemotron-560`)
+   keeps them in the tables and in the comparison, but removes them from the tie set, so Granite's 6.1 in English
+   can be the reference the others are measured against and still never be the default. Nemotron outside English has
+   12 utterances per language and only the `core` conditions, so there it is listed but not ranked.
+5. **Incomplete data gives no default.** If the files for a language lack an own-mic condition for an engine that
+   could be a final (for example Qwen3-ASR 0.6B without its `mic-b` / `mic-c` runs), the language gets no winner,
+   the tool says so on stderr and exits 2 (`--allow-incomplete` keeps a flagged provisional winner). With the
+   `finals-all` and `mic-a` files alone an earlier version printed SenseVoice as the Korean winner, the reverse of
+   the result with all four files.
+
+## The defaults this campaign sets
+
+CPU tier (the recommendation for streamers; `src-tauri/model-catalog/stt-routing.json`, the shared fixture
+`src-tauri/test-fixtures/routing.json` and both router test suites are updated to match):
+
+| Language | Live partials | Final (second pass) | Basis (own mic: clean + room_light + mic_codec, WER / CER %) |
+|---|---|---|---|
+| English | Nemotron 3.5 streaming 560 ms | Parakeet Ultra int8 | Ultra 6.2 [4.4, 8.3], within 0.1 points of the best engine (Granite 6.1, which is never a final: no casing or punctuation); Qwen3-ASR 0.6B (6.9) ties; Parakeet v3 (7.4, +1.3 [+0.2, +2.5] behind the best) and SenseVoice (8.7, +2.5 [+0.4, +4.7]) are behind; Ultra needs 2.3x less CPU and 2.6x less RAM than Qwen3-ASR |
+| de, es, fr, pt, it, nl and the other 17 Parakeet languages | Nemotron | Parakeet Ultra int8 | Ultra is the best engine in every language: de 10.1, es 7.2, fr 8.5, pt 9.1 against v3 11.2 / 8.9 / 11.9 / 10.7 and Qwen3-ASR 12.4 / 10.2 / 15.8 / 14.2 |
+| **Russian** (was Qwen3-ASR 0.6B) | Nemotron | **Parakeet Ultra int8** | Ultra 7.3 [4.1, 11.2] against 22.1 [17.1, 27.2] for Qwen3-ASR 0.6B (+14.8 [+10.4, +19.1] points behind) |
+| **Japanese** (was Qwen3-ASR 0.6B) | Nemotron | **SenseVoice small int8** | SenseVoice 6.8 [4.7, 9.2] against 10.0 [7.9, 12.3] for Qwen3-ASR 0.6B (+3.2 [+1.5, +4.9] points behind); 5.5x less CPU and 5.6x less RAM |
+| Korean (unchanged) | Nemotron | Qwen3-ASR 0.6B int8 | Qwen3-ASR 0.6B 5.1 [3.8, 6.5] against 7.9 [5.9, 9.9] for SenseVoice on 100 utterances per condition (SenseVoice is +2.8 [+1.4, +4.4] points behind); SenseVoice is 5.5x cheaper but behind on the own microphone (under babble it wins; that does not count here) |
+| Chinese, Cantonese (unchanged) | none | SenseVoice small int8 | SenseVoice 4.5 [2.9, 6.3] against 3.8 for Qwen3-ASR 0.6B: a tie (SenseVoice +0.7 [-1.0, +2.3] behind), so the 5.5x cheaper engine keeps the language |
+| vi, id, ms, th, fil, fa, mk | Nemotron (vi) | Qwen3-ASR 0.6B int8 | the only CPU engine that covers them; not measured (no corpus language), unchanged |
+| ar, hi, tr, nb | Nemotron alone | - | unchanged (transcribe.cpp's FLEURS table: Nemotron's own finals beat Qwen3-ASR 0.6B); not re-measured |
+| anything else | - | Whisper small (6+ cores) / base | unchanged; Whisper was not re-measured (see below) |
+| `auto` (language not set) | Nemotron for the detected languages it streams | Qwen3-ASR 0.6B + language ID | unchanged; see "Auto mode" for what not setting a language costs |
+
+What stays: Nemotron 560 ms is the live-partial engine everywhere (the 160 ms variant needs a full core and
+falls behind next to a game); two passes stay the default from 6 physical cores (`cpuTwoPassMinCores`, see the
+4-core row below); the GPU rows (Cohere, Qwen3-ASR 1.7B) keep their P2 order, opt-in and unbenchmarked.
+
+**Other players' captions (loopback; low priority).** The feature shares this table, so its default is the
+same: its audio is VRChat's own, and the bleed numbers below pick the same engine for every language but
+Korean (SenseVoice beats Qwen3-ASR 0.6B under babble, 22.8 against 39.0, and ties in the VRChat mix). No separate
+row was added; a loopback-only Korean row is listed under "For later".
+
+Translation: the default chain **[bundled Hy-MT2 1.8B, Bergamot, NLLB-200 600M] is confirmed**, no router
+change (Hy-MT2 takes the ja, ko and zh targets by 5-16 chrF points over the better NLLB setting; NLLB beam 4 is ahead on some European
+pairs; see "Translation"). Text-to-speech: Kokoro (local), Windows SAPI and Edge (cloud) are the defaults;
+Kokoro and SAPI work end to end and are cheap. Footprint: see the last section. Interim translations are off by default while the bundled translator runs on the processor (P7-I0, "App footprint").
+
+## Speech-to-text accuracy
+
+### Screening (`quick`: clean and VRChat mix, 10 utterances per language)
+
+WER in % (CER for ja, ko, zh); lower is better; the bold figure is the lowest clean rate of the language.
+The VRChat-mix column is for reference only (bleed).
+
+| Language | Engine | Clean | VRChat mix (bleed, for reference) | Utterances |
+|---|---|---:|---:|---:|
+| en (WER) | Parakeet Ultra int8 | 8.1 | 8.6 | 10 |
+| en (WER) | Parakeet TDT v3 int8 | 9.1 | 9.6 | 10 |
+| en (WER) | Qwen3-ASR 0.6B int8 | 10.0 | 10.0 | 10 |
+| en (WER) | SenseVoice small int8 | 11.0 | 15.8 | 10 |
+| en (WER) | Nemotron 3.5 streaming 560 ms | 11.0 | 18.2 | 10 |
+| en (WER) | Granite TurboCTC Q8_0 (CPU, 4 threads) | **6.7** | 8.1 | 10 |
+| en (WER) | Moonshine base-en int8 | 13.4 | 26.3 | 10 |
+| en (WER) | Whisper base (ggml fp16) | 25.8 | 26.8 | 10 |
+| de (WER) | Parakeet Ultra int8 | **6.7** | 13.9 | 10 |
+| de (WER) | Parakeet TDT v3 int8 | 7.9 | 23.6 | 10 |
+| de (WER) | Qwen3-ASR 0.6B int8 | 12.1 | 19.4 | 10 |
+| de (WER) | Nemotron 3.5 streaming 560 ms | 13.9 | 24.8 | 10 |
+| de (WER) | Whisper base (ggml fp16) | 27.3 | 52.1 | 10 |
+| es (WER) | Parakeet Ultra int8 | **6.1** | 8.4 | 10 |
+| es (WER) | Parakeet TDT v3 int8 | 9.3 | 9.8 | 10 |
+| es (WER) | Qwen3-ASR 0.6B int8 | 7.0 | 9.8 | 10 |
+| es (WER) | Nemotron 3.5 streaming 560 ms | 12.6 | 18.7 | 10 |
+| es (WER) | Whisper base (ggml fp16) | 19.2 | 28.0 | 10 |
+| fr (WER) | Parakeet Ultra int8 | **8.8** | 18.8 | 10 |
+| fr (WER) | Parakeet TDT v3 int8 | 16.7 | 44.4 | 10 |
+| fr (WER) | Qwen3-ASR 0.6B int8 | 14.6 | 28.0 | 10 |
+| fr (WER) | Nemotron 3.5 streaming 560 ms | 17.6 | 31.4 | 10 |
+| fr (WER) | Whisper base (ggml fp16) | 36.0 | 84.9 | 10 |
+| pt (WER) | Parakeet Ultra int8 | **3.9** | 5.9 | 10 |
+| pt (WER) | Parakeet TDT v3 int8 | 3.9 | 7.8 | 10 |
+| pt (WER) | Qwen3-ASR 0.6B int8 | 6.9 | 11.8 | 10 |
+| pt (WER) | Nemotron 3.5 streaming 560 ms | 11.8 | 16.2 | 10 |
+| pt (WER) | Whisper base (ggml fp16) | 12.3 | 20.1 | 10 |
+| ru (WER) | Parakeet Ultra int8 | **6.1** | 9.9 | 10 |
+| ru (WER) | Parakeet TDT v3 int8 | 8.8 | 14.9 | 10 |
+| ru (WER) | Qwen3-ASR 0.6B int8 | 25.4 | 30.9 | 10 |
+| ru (WER) | Nemotron 3.5 streaming 560 ms | 14.4 | 26.0 | 10 |
+| ru (WER) | Whisper base (ggml fp16) | 27.6 | 39.2 | 10 |
+| ja (CER) | Qwen3-ASR 0.6B int8 | **10.2** | 34.5 | 10 |
+| ja (CER) | SenseVoice small int8 | 10.8 | 19.4 | 10 |
+| ja (CER) | Nemotron 3.5 streaming 560 ms | 14.2 | 28.4 | 10 |
+| ja (CER) | Whisper base (ggml fp16) | 28.4 | 41.3 | 10 |
+| ko (CER) | Qwen3-ASR 0.6B int8 | **5.8** | 18.3 | 10 |
+| ko (CER) | SenseVoice small int8 | 7.6 | 9.7 | 10 |
+| ko (CER) | Nemotron 3.5 streaming 560 ms | 7.2 | 11.3 | 10 |
+| ko (CER) | Whisper base (ggml fp16) | 12.8 | 20.4 | 10 |
+| zh (CER) | Qwen3-ASR 0.6B int8 | **1.3** | 6.1 | 10 |
+| zh (CER) | SenseVoice small int8 | 2.2 | 14.0 | 10 |
+| zh (CER) | Whisper base (ggml fp16) | 28.7 | 46.2 | 10 |
+
+What screening decided: **Parakeet TDT v3** matches Ultra on clean speech but collapses with other talkers
+(the finals confirm it: babble WER en 53 %, fr 39 %, de 35 %), and on the finals' clean and mic-side conditions
+it is level with or behind Ultra everywhere, so it is nowhere the final (it stays the table's second
+candidate). **Moonshine base-en** (the lightest English engine) is 5 points behind Ultra on clean speech (6 of its 10 utterances run over 9.27 s and were decoded in cut pieces, see [Moonshine and long utterances](#moonshine-and-long-utterances-the-9-s-cut)).
+**Whisper base** (the fp16 ggml model) is 2 to 20 times worse than the best sherpa engine of every language.
+**Granite TurboCTC** (English only; 4 CPU threads or 0.9 GB of VRAM) matches Ultra but writes lower case
+without punctuation and is no cheaper, so it is not routed.
+
+### Finals: the own microphone (30 utterances per language and condition)
+
+WER in % (CER for ja, ko, zh). "Own mic, pooled" is the rate over `clean`, `room_light` and `mic_codec` with its
+95 % interval; "gap" is the paired difference to the best engine of the language. Korean ran on 100 utterances per
+condition (the contested pair), English Nemotron on 30; Nemotron elsewhere has 12 utterances and no mic-side run, so it is
+listed, not ranked.
+
+| Language | Engine | clean | room_light | mic_codec | Own mic, pooled (95 % interval) | Gap to the best (95 % interval) |
+|---|---|---:|---:|---:|---:|---:|
+| de (WER) | Parakeet Ultra int8 | 8.4 | 10.1 | 11.7 | **10.1 [6.4, 14.8]** | best |
+| de (WER) | Parakeet TDT v3 int8 | 9.4 | 11.2 | 12.9 | 11.2 [7.3, 15.8] | +1.1 [-0.3, +2.6], tie |
+| de (WER) | Qwen3-ASR 0.6B int8 | 11.5 | 12.2 | 13.5 | 12.4 [8.7, 16.6] | +2.3 [-0.6, +5.3], behind by more than the margin |
+| de (WER) | Nemotron 3.5 streaming 560 ms | 13.1 | - | - | 13.1 [6.1, 21.8] | not ranked (no room_light, mic_codec) |
+| en (WER) | SenseVoice small int8 | 8.3 | 8.9 | 8.8 | 8.7 [5.9, 11.5] | +2.5 [+0.4, +4.7], worse |
+| en (WER) | Parakeet Ultra int8 | 6.1 | 6.3 | 6.3 | **6.2 [4.4, 8.3]** | +0.1 [-1.4, +1.5], tie |
+| en (WER) | Parakeet TDT v3 int8 | 6.9 | 6.9 | 8.4 | 7.4 [5.2, 9.9] | +1.3 [+0.2, +2.5], worse |
+| en (WER) | Granite TurboCTC Q8_0 (CPU, 4 threads) | 6.3 | 6.0 | 6.1 | 6.1 [3.9, 8.7] | best, never a final |
+| en (WER) | Qwen3-ASR 0.6B int8 | 6.9 | 7.4 | 6.4 | 6.9 [4.9, 9.3] | +0.8 [-0.6, +2.5], tie |
+| en (WER) | Nemotron 3.5 streaming 560 ms | 9.4 | 10.7 | 10.7 | 10.3 [7.1, 13.8] | +4.2 [+1.7, +6.6], worse |
+| es (WER) | Parakeet Ultra int8 | 7.0 | 7.5 | 7.2 | **7.2 [2.5, 13.5]** | best |
+| es (WER) | Parakeet TDT v3 int8 | 8.3 | 8.5 | 9.9 | 8.9 [3.9, 14.7] | +1.7 [+0.6, +3.0], worse |
+| es (WER) | Qwen3-ASR 0.6B int8 | 8.8 | 10.6 | 11.1 | 10.2 [4.9, 16.8] | +2.9 [+1.3, +4.7], worse |
+| es (WER) | Nemotron 3.5 streaming 560 ms | 11.8 | - | - | 11.8 [3.5, 23.0] | not ranked (no room_light, mic_codec) |
+| fr (WER) | Parakeet Ultra int8 | 8.1 | 8.5 | 8.8 | **8.5 [5.6, 11.8]** | best |
+| fr (WER) | Parakeet TDT v3 int8 | 12.6 | 10.6 | 12.5 | 11.9 [8.6, 15.9] | +3.4 [+1.8, +5.3], worse |
+| fr (WER) | Qwen3-ASR 0.6B int8 | 13.6 | 16.9 | 17.0 | 15.8 [11.6, 20.5] | +7.4 [+3.7, +10.9], worse |
+| fr (WER) | Nemotron 3.5 streaming 560 ms | 15.8 | - | - | 15.8 [8.9, 26.1] | not ranked (no room_light, mic_codec) |
+| ja (CER) | SenseVoice small int8 | 6.9 | 7.0 | 6.6 | **6.8 [4.7, 9.2]** | best |
+| ja (CER) | Qwen3-ASR 0.6B int8 | 8.3 | 10.8 | 11.0 | 10.0 [7.9, 12.3] | +3.2 [+1.5, +4.9], worse |
+| ja (CER) | Nemotron 3.5 streaming 560 ms | 12.3 | - | - | 12.3 [8.1, 17.9] | not ranked (no room_light, mic_codec) |
+| ko (CER) | SenseVoice small int8 | 7.2 | 8.4 | 7.9 | 7.9 [5.9, 9.9] | +2.8 [+1.4, +4.4], worse |
+| ko (CER) | Qwen3-ASR 0.6B int8 | 4.0 | 5.2 | 6.1 | **5.1 [3.8, 6.5]** | best |
+| ko (CER) | Nemotron 3.5 streaming 560 ms | 8.7 | - | - | 8.7 [2.3, 19.0] | not ranked (no room_light, mic_codec) |
+| pt (WER) | Parakeet Ultra int8 | 8.8 | 9.2 | 9.4 | **9.1 [4.8, 14.1]** | best |
+| pt (WER) | Parakeet TDT v3 int8 | 10.3 | 11.2 | 10.6 | 10.7 [5.8, 16.5] | +1.6 [+0.6, +2.6], worse |
+| pt (WER) | Qwen3-ASR 0.6B int8 | 12.8 | 14.8 | 15.1 | 14.2 [9.6, 20.0] | +5.1 [+3.5, +6.9], worse |
+| pt (WER) | Nemotron 3.5 streaming 560 ms | 15.0 | - | - | 15.0 [6.0, 24.6] | not ranked (no room_light, mic_codec) |
+| ru (WER) | Parakeet Ultra int8 | 7.7 | 7.5 | 6.6 | **7.3 [4.1, 11.2]** | best |
+| ru (WER) | Parakeet TDT v3 int8 | 11.4 | 11.6 | 9.6 | 10.8 [6.7, 15.7] | +3.6 [+1.7, +5.6], worse |
+| ru (WER) | Qwen3-ASR 0.6B int8 | 22.8 | 19.3 | 24.3 | 22.1 [17.1, 27.2] | +14.8 [+10.4, +19.1], worse |
+| ru (WER) | Nemotron 3.5 streaming 560 ms | 13.9 | - | - | 13.9 [7.4, 20.8] | not ranked (no room_light, mic_codec) |
+| zh (CER) | SenseVoice small int8 | 4.1 | 4.8 | 4.5 | **4.5 [2.9, 6.3]** | +0.7 [-1.0, +2.3], tie |
+| zh (CER) | Qwen3-ASR 0.6B int8 | 4.4 | 4.1 | 2.7 | 3.8 [2.1, 5.8] | best |
+
+Reading: Parakeet Ultra is the best (or tied-best) engine in every language it covers (own-mic WER en 6.2, es 7.2, ru 7.3, fr 8.5, pt 9.1, de 10.1), and the two mic-side conditions cost it at most 3.3 points over clean speech (de); the reverb of `room_light` and the band-limited mu-law of `mic_codec` are not where engines separate. Parakeet v3 is level with Ultra in German and behind it everywhere else. Qwen3-ASR 0.6B is 2-15 points behind Ultra on the European languages (de 12.4, es 10.2, fr 15.8, pt 14.2, ru 22.1). Japanese: SenseVoice leads Qwen3-ASR 0.6B by +3.2 [+1.5, +4.9] points. Korean is the contested pair, so it got 100 utterances per condition instead of 30 (the table's Korean rows): Qwen3-ASR 0.6B leads SenseVoice by +2.8 [+1.4, +4.4]; the 30-utterance run said +2.8 [+0.1, +6.0]. Chinese is a tie (4.5 for SenseVoice against 3.8). English: Granite (6.1), Ultra (6.2) and Qwen3-ASR (6.9) are indistinguishable, and Nemotron alone, the one-pass route of a 4-core PC, is at 10.3 (9.4 clean).
+
+### The two rankings
+
+The first pass of the campaign ranked on every condition including the bleed ones; the user's decision
+(2026-10-09) removes the bleed conditions from the own-mic choice. Both orders, best to worst:
+
+| Language | Own mic (clean + mic-side): best to worst | All conditions incl. bleed: best to worst | Default |
+|---|---|---|---|
+| en | Granite TurboCTC Q8_0 (CPU, 4 threads) > Parakeet Ultra int8 > Qwen3-ASR 0.6B int8 > Parakeet TDT v3 int8 > SenseVoice small int8 > Nemotron 3.5 streaming 560 ms | Parakeet Ultra int8 > Granite TurboCTC Q8_0 (CPU, 4 threads) > Qwen3-ASR 0.6B int8 > SenseVoice small int8 > Parakeet TDT v3 int8 | Parakeet Ultra int8 |
+| de | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 > Qwen3-ASR 0.6B int8 > Parakeet TDT v3 int8 | Parakeet Ultra int8 |
+| es | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 > Qwen3-ASR 0.6B int8 > Parakeet TDT v3 int8 | Parakeet Ultra int8 |
+| fr | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 |
+| pt | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 |
+| ru | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 > Parakeet TDT v3 int8 > Qwen3-ASR 0.6B int8 | Parakeet Ultra int8 |
+| ja | SenseVoice small int8 > Qwen3-ASR 0.6B int8 | SenseVoice small int8 > Qwen3-ASR 0.6B int8 | SenseVoice small int8 |
+| ko | Qwen3-ASR 0.6B int8 > SenseVoice small int8 | SenseVoice small int8 > Qwen3-ASR 0.6B int8 | Qwen3-ASR 0.6B int8 |
+| zh | Qwen3-ASR 0.6B int8 > SenseVoice small int8 | Qwen3-ASR 0.6B int8 > SenseVoice small int8 | SenseVoice small int8 |
+
+The orders differ in three places. **Korean flips**: Qwen3-ASR 0.6B is better on clean speech and the mic-side conditions,
+SenseVoice under babble, so the first pass of the campaign had put SenseVoice there and the own-mic ruling puts Qwen3-ASR 0.6B
+back. Parakeet v3 stands ahead of Qwen3-ASR 0.6B on the own microphone in German and Spanish and falls behind it once babble
+counts (its babble collapse). In English Granite and Ultra swap places (a tie either way). Chinese is Qwen3-ASR 0.6B first in both
+orders, by under a point; SenseVoice takes the language because the two tie and it costs 5.5 times less. The default of every language
+follows the first order and the tie rule.
+
+### Bleed: the VRChat mix, music and babble (other players' captions, speaker setups)
+
+These rows play no part in the own-microphone choice. Music and babble at 10 dB under the speech, and the VRChat
+mix (music, effects and two talkers about 12 dB under, microphone band 100 Hz-7 kHz).
+
+| Language | Engine | music_snr10 | babble_snr10 | vrchat_mix | All bleed |
+|---|---|---:|---:|---:|---:|
+| de (WER) | Parakeet Ultra int8 | 12.6 | 11.4 | 16.3 | 13.4 |
+| de (WER) | Parakeet TDT v3 int8 | 15.6 | 35.3 | 24.3 | 25.1 |
+| de (WER) | Qwen3-ASR 0.6B int8 | 19.9 | 26.9 | 22.6 | 23.1 |
+| de (WER) | Nemotron 3.5 streaming 560 ms | 23.5 | 34.7 | 24.9 | 27.7 |
+| en (WER) | SenseVoice small int8 | 11.2 | 14.7 | 12.9 | 12.9 |
+| en (WER) | Parakeet Ultra int8 | 8.8 | 10.6 | 9.1 | 9.5 |
+| en (WER) | Parakeet TDT v3 int8 | 13.6 | 53.4 | 10.7 | 25.9 |
+| en (WER) | Granite TurboCTC Q8_0 (CPU, 4 threads) | 7.3 | 10.9 | 10.7 | 9.6 |
+| en (WER) | Qwen3-ASR 0.6B int8 | 9.9 | 14.7 | 7.3 | 10.6 |
+| en (WER) | Nemotron 3.5 streaming 560 ms | 15.2 | 17.7 | 17.5 | 16.8 |
+| es (WER) | Parakeet Ultra int8 | 8.3 | 8.6 | 8.9 | 8.6 |
+| es (WER) | Parakeet TDT v3 int8 | 10.6 | 29.6 | 12.7 | 17.6 |
+| es (WER) | Qwen3-ASR 0.6B int8 | 10.7 | 19.1 | 12.0 | 13.9 |
+| es (WER) | Nemotron 3.5 streaming 560 ms | 12.2 | 23.6 | 17.1 | 17.6 |
+| fr (WER) | Parakeet Ultra int8 | 15.2 | 17.3 | 21.7 | 18.1 |
+| fr (WER) | Parakeet TDT v3 int8 | 19.5 | 38.5 | 34.7 | 30.9 |
+| fr (WER) | Qwen3-ASR 0.6B int8 | 21.4 | 34.7 | 29.9 | 28.7 |
+| fr (WER) | Nemotron 3.5 streaming 560 ms | 23.6 | 35.6 | 32.2 | 30.5 |
+| ja (CER) | SenseVoice small int8 | 6.9 | 20.5 | 12.0 | 13.1 |
+| ja (CER) | Qwen3-ASR 0.6B int8 | 10.9 | 34.0 | 18.8 | 21.2 |
+| ja (CER) | Nemotron 3.5 streaming 560 ms | 15.0 | 39.1 | 24.1 | 26.1 |
+| ko (CER) | SenseVoice small int8 | 8.7 | 22.8 | 11.8 | 14.4 |
+| ko (CER) | Qwen3-ASR 0.6B int8 | 6.1 | 39.0 | 12.5 | 19.2 |
+| ko (CER) | Nemotron 3.5 streaming 560 ms | 10.2 | 19.3 | 12.9 | 14.1 |
+| pt (WER) | Parakeet Ultra int8 | 11.2 | 19.2 | 14.5 | 15.0 |
+| pt (WER) | Parakeet TDT v3 int8 | 16.8 | 35.6 | 18.3 | 23.6 |
+| pt (WER) | Qwen3-ASR 0.6B int8 | 17.1 | 37.0 | 23.3 | 25.8 |
+| pt (WER) | Nemotron 3.5 streaming 560 ms | 15.4 | 29.5 | 18.5 | 21.1 |
+| ru (WER) | Parakeet Ultra int8 | 9.6 | 12.5 | 12.1 | 11.4 |
+| ru (WER) | Parakeet TDT v3 int8 | 11.6 | 16.0 | 16.0 | 14.5 |
+| ru (WER) | Qwen3-ASR 0.6B int8 | 32.4 | 34.0 | 29.0 | 31.8 |
+| ru (WER) | Nemotron 3.5 streaming 560 ms | 20.8 | 33.2 | 25.2 | 26.4 |
+| zh (CER) | SenseVoice small int8 | 4.4 | 40.3 | 12.8 | 19.2 |
+| zh (CER) | Qwen3-ASR 0.6B int8 | 2.0 | 46.3 | 7.8 | 18.7 |
+
+Parakeet Ultra is the most robust engine for the languages it covers; Parakeet v3 and Qwen3-ASR 0.6B lose far more to
+babble (WER en 53 % and 15 % against 11 %, fr 39 % and 35 % against 17 %); for Japanese and Chinese SenseVoice and Qwen3-ASR 0.6B trade places by condition, and
+for Korean SenseVoice holds up where Qwen3-ASR 0.6B does not (babble 22.8 against 39.0).
+
+### Auto mode (no language set, the default of a new install)
+
+Engines given no language hint on `quick` (10 utterances per language, the shipped pipeline 6): the offline
+engines detect the language themselves; the shipped pipeline adds Silero VAD, the language-ID engine and
+Nemotron partials for the languages it streams. Clean WER / CER in %, the VRChat mix in brackets.
+
+| Language | Qwen3-ASR 0.6B alone | Parakeet Ultra alone | SenseVoice alone | Shipped auto pipeline |
+|---|---:|---:|---:|---:|
+| en | 11.5 (13.9) | 8.1 (8.6) | 11.0 (15.8) | **6.2** (11.6) |
+| de | 15.2 (19.4) | **6.7** (13.9) | - | 11.5 (20.8) |
+| es | 7.5 (11.2) | **6.1** (8.4) | - | 13.1 (16.9) |
+| fr | 15.1 (24.3) | **8.8** (18.8) | - | 17.3 (35.3) |
+| pt | 12.3 (10.3) | **3.9** (5.9) | - | 5.5 (17.4) |
+| ru | 23.8 (32.6) | **6.1** (9.9) | - | 22.0 (25.4) |
+| ja | 12.2 (26.0) | - | 10.8 (19.4) | **8.9** (20.6) |
+| ko | 5.6 (16.3) | - | 7.6 (9.7) | **1.8** (9.7) |
+| zh | **1.3** (5.4) | - | 2.2 (14.0) | 1.4 (5.3) |
+
+The language-ID engine named the right language for 105 of 108 utterances (the three misses were de heard as ko,
+fr as ja and pt as en). Parakeet Ultra transcribes its 25 languages without a hint just as well as with one, but
+the auto route has one final engine, Qwen3-ASR 0.6B, which alone is 1.2 to 4 times worse than Ultra on the
+European languages (ru 23.8 against 6.1). An auto user therefore gets noticeably worse captions in those
+languages than a user who sets the language; recommendation under "For later".
+
+### Moonshine and long utterances (the 9 s cut)
+
+The lightest English engine has one defect, which the P7 smoke run of the speech benchmark found and commit `f8eedb8` fixed. sherpa-onnx 1.13.8 returns an empty result, with no error, when the Moonshine v2 model decodes 148,351 samples (9.272 s at 16 kHz) or more in one call; 148,350 samples decode, and every longer length fails (checked up to 52 s). Before the fix every caption longer than that came back empty. Sigil now cuts an utterance over 9.0 s at quiet points (a 140 ms span around the quietest frame, 0.27 s of margin below the limit), decodes the pieces and joins the texts; a piece that still comes back empty is decoded again as two halves, and the engine option `moonshineMaxSegmentMs` can only lower the limit (`0` never cuts). The engine's behaviour is in [Moonshine inside Sigil](../OPERATOR_REFERENCE.md#moonshine-inside-sigil-sherpa-onnx); the runner that found it is in the [developer guide](../DEVELOPER_GUIDE.md#speech-benchmark---headless-speech-bench-p7).
+
+| English utterances of the benchmark corpus (`p7-synthetic-v1`, `content_sha256` `459c2ff05c92...`) | Word error rate before the fix | After the fix |
+|---|---:|---:|
+| Over 9.3 s: 56 of the corpus's 100 English utterances (up to 19.7 s) | 100 % (empty result) | about 19-20 % (19.9 % in the fix's own check; 19.2 % with the shipped 140 ms span, 19.1 to 19.9 % for the other spans tried) |
+| 8 to 9 s | 11 % (decoded whole) | 11 % (decoded whole, as before); cut at 8 s instead they scored 19 %, which is why the limit sits at 9 s |
+
+How to read it: the first row is the cut-span study on the 7 recording conditions it used (432 cuts; 9.6 % of the cuts fell inside a word with the quietest single frame, 5.1 % with the 140 ms span), and the second row is the same corpus's 8 to 9 s utterances. These figures come from the development runs of the fix (the commit message and the doc comments of `long_utterance.rs` and `sherpa_offline.rs`), not from a campaign spec. The ignored real-model tests reproduce them (`SIGIL_APP_DATA_DIR` with `runtime/sherpa-onnx` and `stt/moonshine-base-en-int8`, `SIGIL_TEST_MODELS_DIR` with the corpus, then `cargo test real_moonshine -- --ignored`), and a sherpa-onnx upgrade has to re-measure the limit (`real_moonshine_sherpa_length_limit_is_still_where_the_split_assumes`). The screening row for Moonshine (13.4 %) includes the cut: 6 of its 10 English utterances run from 10.0 to 14.9 s, and their hypotheses in the screening run are not empty, so it is not a whole-utterance figure.
+
+## Speech-to-text cost and caption latency
+
+CPU rows on the 6-core slice; "next to a game" adds `h3_cpu_game`. RTF = decode time / audio time.
+
+### Decoding a whole utterance (the second pass)
+
+| Engine | Threads | RTF idle | RTF next to a game | decode p50 / p95 ms (idle) | CPU ms per audio second | RAM peak MB |
+|---|---:|---:|---:|---:|---:|---:|
+| Parakeet Ultra int8 | 2 | 0.085 | 0.084 | 774 / 1326 | 182 | 898 |
+| Parakeet TDT v3 int8 | 2 | 0.086 | 0.089 | 776 / 1334 | 183 | 938 |
+| Qwen3-ASR 0.6B int8 | 2 | 0.219 | 0.225 | 2095 / 3645 | 415 | 2368 |
+| Qwen3-ASR 0.6B int8 | 4 | 0.166 | 0.166 | 1610 / 2989 | 616 | 2374 |
+| SenseVoice small int8 | 2 | 0.038 | 0.038 | 390 / 764 | 76 | 421 |
+| Moonshine base-en int8 (en only) | 2 | 0.020 | 0.021 | 175 / 285 | 51 | 286 |
+| Granite TurboCTC Q8_0 (en only) | 4 | 0.059 | 0.077 | 472 / 698 | 227 | 621 |
+| Whisper base, ggml fp16 | 4 | 1.087 | 1.184 | 10261 / 11027 | 3795 | 422 |
+
+Next to the game the offline engines barely change (the burners take cores that the 6C slice has to spare).
+Per audio second the lightest is Moonshine (51 ms CPU), then SenseVoice (76), Parakeet (182), Granite (227),
+Qwen3-ASR (415 on 2 threads) and Whisper base (3.8 s: that row is the fp16 base model; the quantized models of
+the catalog use integer kernels and were not available to measure under the 50 MB download limit, so the
+Whisper figure is an upper bound, not a verdict). Qwen3-ASR 0.6B is the only engine that holds 2.4 GB of RAM, and
+on the 14 s Korean clips it needs 2.9 s on 2 threads (3.0 s next to a game), against 0.56 s for SenseVoice: the
+Korean default trades final-caption speed (the live partials come from Nemotron meanwhile) for 2.8 CER points.
+
+### Live partials (Nemotron, real-time stream feed)
+
+| Engine | RTF idle | RTF game | final latency after the end of speech p50 / p95 ms (idle) | (game) | CPU cores while speaking (idle / game) |
+|---|---:|---:|---:|---:|---:|
+| Nemotron 3.5 streaming 560 ms | 0.37 | 0.52 | 204 / 330 | 372 / 504 | 0.31 / 0.44 |
+| Nemotron 3.5 streaming 160 ms | 0.98 | 1.39 | 380 / 401 | 1695 / 3187 | 0.80 / 0.98 |
+
+First partial after the first spoken word (clip onset at -40 dBFS): 1.34 s idle / 1.42 s next to a game (p50; p90
+3.3 s) for the 560 ms model. The 160 ms variant is faster to a first word (0.93 / 1.23 s) but needs a whole core
+(RTF 0.98), falls behind real time next to a game (RTF 1.39, final after 1.7 s) and should not be offered on 6-core
+PCs.
+
+### The whole caption pipeline (Silero VAD, router, two passes) at real time
+
+| Route (6 cores; en, de, ru, ja, zh, 3 clips each) | Load | Final after speech ends p50 / p95 ms | CPU cores while speaking |
+|---|---|---:|---:|
+| Partials + final (two pass) | idle | 677 / 1119 | 0.39 |
+| Partials + final (two pass) | game | 903 / 1383 | 0.48 |
+| One pass (Nemotron's own finals in English, the final engine alone elsewhere) | idle | 319 / 691 | 0.18 |
+| One pass (Nemotron's own finals in English, the final engine alone elsewhere) | game | 404 / 831 | 0.22 |
+| Final only (Interim results off; Parakeet Ultra) | idle | 587 / 965 | 0.24 |
+| Final only (Interim results off; Parakeet Ultra) | game | 800 / 1244 | 0.28 |
+
+| Route (4 cores; en, ja, 3 clips each) | Load | Final after speech ends p50 / p95 ms | CPU cores while speaking |
+|---|---|---:|---:|
+| Partials + final (two pass) | game | 815 / 1410 | 0.50 |
+| One pass (Nemotron's own finals in English, the final engine alone elsewhere) | game | 307 / 439 | 0.25 |
+| Final only (Interim results off; Parakeet Ultra) | game | 845 / 1299 | 0.21 |
+
+Per language, idle / next to a game (p50 ms from the end of speech to the final):
+
+| Language | Partials + final | One pass | Final only (Interim results off) |
+|---|---:|---:|---:|
+| en | 873 / 1140 | 161 / 256 | 685 / 863 |
+| de | 679 / 957 | 375 / 497 | 380 / 494 |
+| ru | 764 / 1068 | 691 / 831 | 609 / 835 |
+| ja | 421 / 670 | 254 / 323 | - |
+| zh | 238 / 308 | 277 / 367 | - |
+
+Reading: a streamer who talks continuously costs the CPU 0.4-0.5 cores for the two-pass English route, 0.2 for one
+pass, 0.2-0.3 for finals only; with Silero VAD gating the engines, the average over real speech (a third of the time)
+is a few hundredths of a core and the models' RAM (Nemotron 0.8 GB + Parakeet Ultra 0.9 GB for English, 1.2 GB for ja
+with SenseVoice, 3.2 GB for ko with Qwen3-ASR) is the larger cost. Final captions arrive 0.2-1.1 s after the speech
+ends in the languages of the table above; the game adds 0.1-0.3 s. **Korean is the exception**: its Qwen3-ASR 0.6B final
+comes about one decode after the end of speech, 2.2 s and 3.7 s on the two 10-18 s clips of the route check below (RTF 0.2),
+so a Korean streamer should expect final lines roughly 2-4 s after a long sentence, with Nemotron's partials on screen meanwhile.
+The 4-core slice (8 logical processors) next to the same game keeps the two-pass
+English final at 1.2 s (6C: 1.1 s) and 0.50 cores: two passes work on 4 cores with SMT too, so the
+`cpuTwoPassMinCores` threshold of 6 is conservative; it was left at 6 because 4 cores without SMT could not be
+emulated.
+
+**Route check of the final tree (P7-I0, 2026-10-10).** The release `Sigil.exe` built from the final tree (it embeds `stt-routing.json` as committed) ran the shipped pipeline (Silero VAD, router, two passes, tier `cpu`, the 6-core slice, idle) on two clips each of ko, ja and ru (`quick` subset, clean): the planned engines were Nemotron 3.5 streaming 560 ms partials with a **Qwen3-ASR 0.6B final for Korean** (`stt/qwen3-asr-0.6b-int8`), a **SenseVoice final for Japanese** (`stt/sense-voice-small-int8`) and a **Parakeet Ultra final for Russian** (`stt/parakeet-ultra-int8`), all on the CPU with nothing missing; no error and no empty hypothesis. Korean's finals arrived 3.7 s after the end of a 17.6 s utterance (two segments, RTF 0.21) and 2.2 s after a 10.3 s one (RTF 0.22); Japanese 1.0 s (10.4 s and 15.6 s clips), Russian 1.4 s and 1.7 s (8.6 s and 12.8 s clips). Six clips, one run: it confirms the routes, not a latency table. Report `p7i0-route-check` (spec `a74f74efa78c`, corpus `459c2ff05c92`).
+
+Korean: the pipeline table above measured the Korean route when it still had a SenseVoice final (0.4 s idle / 0.6 s next to a game for a two-pass final). The own-microphone ruling puts the Qwen3-ASR 0.6B final back, and the route check just above is the pipeline evidence for it: finals 2.2 s and 3.7 s after the end of speech on a 10.3 s and a 17.6 s clip (idle, six clips in all, so a confirmation and not a latency table). That matches one decode of the last segment, 2.9 s for a 14 s utterance on 2 threads idle (3.0 s next to a game) in the decode-speed table, roughly 1.2 s for a 5 s sentence (RTF 0.2), with Nemotron's partials on screen meanwhile. The latency columns of the pipeline tables above leave the three Korean clips out for that reason; the CPU column is the run's mean, which includes them.
+
+## Translation
+
+`Sigil.exe --headless speech-bench` `mt_quality` on three sets: 240 casual caption lines (10 directions, 24 each),
+WMT24++ and FLORES-200 (24 lines per direction), chrF2 (sacrebleu-equal). The light translators: NLLB-200
+distilled 600M int8 (in process, 2 threads; greedy and beam 4) and Hy-MT2 1.8B Q4_K_M in the bundled llama-server on
+the CPU and on Vulkan. Bergamot is **not built** (its sources are about ten archives of unknown size and the build
+was not attempted under the 50 MB download limit; ADR 0008 and `scripts/runtime-packs/bergamot/README.md` keep the
+steps), so NLLB is the zero-VRAM fallback.
+
+chrF2, lines pooled over the three sets (higher is better; bold = best of the direction):
+
+| Direction | Hy-MT2 1.8B (CPU) | Hy-MT2 1.8B (Vulkan) | NLLB-600M beam 4 | NLLB-600M greedy |
+|---|---:|---:|---:|---:|
+| de-en | 65.9 | 64.3 | **69.5** | 69.4 |
+| en-de | 57.9 | 57.8 | **59.1** | 56.0 |
+| en-es | 64.0 | 64.0 | **66.8** | 62.4 |
+| en-fr | 49.6 | 49.5 | **57.4** | 55.1 |
+| en-ja | 36.6 | **36.8** | 26.4 | 20.5 |
+| en-ko | **35.3** | 33.9 | 30.4 | 24.2 |
+| en-pt | 59.3 | 59.2 | 62.7 | **63.2** |
+| en-ru | **40.4** | 40.1 | 40.3 | 35.7 |
+| en-zh | **41.3** | 41.0 | 25.1 | 22.4 |
+| en-zh-Hant | **37.0** | 36.7 | 28.4 | 10.9 |
+| es-en | 62.8 | 62.8 | **67.2** | 66.8 |
+| fr-en | 61.9 | 61.6 | **68.1** | 67.1 |
+| ja-en | 54.5 | 54.6 | **56.9** | 55.8 |
+| ko-en | 54.1 | 54.0 | 54.8 | **55.0** |
+| pt-en | 68.4 | 68.0 | **75.5** | 73.7 |
+| ru-en | 59.2 | 58.9 | **62.8** | 60.6 |
+| zh-en | **61.5** | 61.1 | 57.0 | 56.4 |
+| **all lines** | 53.5 | 53.1 | 52.7 | 49.8 |
+
+Hy-MT2 1.8B wins by 5-16 points into Japanese, Korean and Chinese over the better NLLB setting (en to ja 36.6
+against 26.4 for beam 4 and 20.5 for greedy; en to zh 41.3 against 25.1 / 22.4) and by 4.5 points from Chinese.
+NLLB with beam 4 is 1-8 points better into French, Spanish, Portuguese and German and from German, Spanish, French,
+Portuguese, Russian and Japanese (pt to en 75.5 against 68.4; en to fr 57.4 against 49.6), and the two tie into
+Russian and from Korean; beam 4 costs 4x the latency of Hy-MT2 on the CPU. The differences that decide are large
+enough that MetricX-24 or a blind A/B was not needed: the Hy-MT2-first chain keeps the audience's languages (ja,
+ko, zh) on the better engine. European pairs could go to NLLB first through `pairOverrides`; that needs a 600 MB
+download from the user and is listed under "For later".
+
+Latency and cost per caption line (casual set; the engine rows run line after line, so the CPU figures are the burst
+a single caption causes, not an average):
+
+| Engine | Load | Latency per line p50 / p95 ms | CPU while translating (cores, minus the load stand-in) | RAM, process tree (MB) | VRAM (MB) |
+|---|---|---:|---:|---:|---:|
+| NLLB-200 600M greedy (in process) | idle | 947 / 1344 | 1.9 | 2609 | - |
+| NLLB-200 600M greedy (in process) | next to a game | 957 / 1337 | 1.6 | 2624 | - |
+| Hy-MT2 1.8B, llama-server on the CPU | idle | 379 / 633 | 5.4 | 2418 | - |
+| Hy-MT2 1.8B, llama-server on the CPU | next to a game | 422 / 641 | 4.7 | 2410 | - |
+| Hy-MT2 1.8B, llama-server on Vulkan | idle | 51 / 83 | 0.5 | 1597 | 1507 |
+| Hy-MT2 1.8B, llama-server on Vulkan | GPU load (VRChat + OBS stand-in) | 116 / 195 | 0.3 | 1759 | 1568 |
+
+The translator that runs on the CPU is not light: llama-server takes every core it plans (physical cores minus 2,
+clamped to 2-8: four on a 6-core PC, six on the dev rig) for 0.4 s per caption line and holds 2.4 GB of RAM. NLLB
+in process takes about 2 cores for 0.9 s and 2.6 GB. The Vulkan variant costs about half a core and 1.5 GB of
+VRAM and answers in 51 ms idle, 116 ms under the VRChat + OBS GPU stand-in. Which of them a streamer should run is
+decided by where the game has headroom: the app footprint section shows what the whole pipeline costs with captions
+arriving at speaking pace.
+
+## Text-to-speech
+
+`tts_listening` / `cpu_speed` on the casual prompts (10 per language: en, ja, zh), no listening study.
+
+| Engine | Time to first audio p50 / p95 ms | Real-time factor | CPU while speaking | RAM |
+|---|---:|---:|---:|---:|
+| Kokoro v1.0, 4 threads, idle | 737 / 891 | 0.36 | 3.0 cores | 682 MB |
+| Kokoro v1.0, 4 threads, next to a game | 792 / 954 | 0.39 | 2.8 cores | 687 MB |
+| Kokoro v1.0, 2 threads, idle | 1118 / 1345 | 0.55 | 1.8 cores | 683 MB |
+| Kokoro v1.0, 2 threads, next to a game | 1205 / 1466 | 0.59 | 1.7 cores | 691 MB |
+| Windows SAPI, Zira / David Desktop (en, whole sentence rendered) | 15 / 37 and 10 / 28 | 0.004 / 0.003 | 3.3 / 2.1 ms per audio second | 134 / 128 MB |
+
+All 30 prompts of every Kokoro run rendered without an error (English, Japanese and Mandarin voices). Kokoro is the local default and costs a burst of 2-3 cores for the length of a sentence (first sentence audible
+after 0.7-0.8 s on 4 threads, 1.1-1.2 s on 2); the plan's "400 ms" target holds only when the opening clause is
+short (P2), so the first-clause split was left as it is (shorter splits trade prosody and no listening study
+was run). SAPI is essentially free but the voices are the two English ones Windows ships. Edge TTS is a cloud
+service reached through an unofficial protocol; the runner has no Edge backend and no request was sent to the
+service from the campaign, so it was not timed (its client is covered by the mock-server tests of P6-G; manual check:
+Settings, TTS, Edge, speak a line).
+
+## App footprint
+
+What the whole app costs, measured on the real release `Sigil.exe` (frontend embedded) in a scratch Windows profile: the process tree (WebView2 and the translation server included) sampled every 2 s for two minutes after a one-minute warm-up, pinned to the 6-core slice at below-normal priority, with the game stand-in ('next to a game': four Node processes spinning 60 % of every 100 ms) beside it. The captions are the real engines listening to the dev PC's headset microphone in an ordinary room, so with nobody speaking they idle between the voice detector's hits; the cost of speech itself is the pipeline table above. The OBS and translation rows add a driver that opens `obs-captions.html` in headless Chromium (the stand-in for OBS's browser source) and feeds the host about six interim captions a second for 40 % of the time, a final after each sentence, over the host's own pubsub socket (in the OBS row the page changed its caption 208 times in two minutes and ended on the last sentence; the translation rows delivered 242 `text.translation` events for 314 caption events). RAM is the private memory of the whole tree (working sets add up shared WebView2 pages and read about 20 % higher). The release exe behind these rows was built before the `SIGIL_START_MINIMIZED` switch existed, so the harness minimized its window itself a few seconds after it appeared (the window was minimized for the whole measured part, as it is now); the scripts start the app minimized from the first frame and refuse an exe that predates the switch (campaign README, "Footprint of the real app").
+
+| Scenario | Load | Sigil CPU (cores, mean / p95 / max) | Sigil RAM, private (MB) | Sigil GPU memory (MB) | OBS page (Chromium) CPU / RAM |
+|---|---|---:|---:|---:|---:|
+| App open, speech-to-text off | quiet PC | 0.00 / 0.01 / 0.02 | 336 | 64 | - |
+| Captions on (English, Nemotron + Parakeet Ultra), nobody speaking | quiet PC | 0.02 / 0.03 / 0.07 | 1750 | 48 | - |
+| Captions on (English, Nemotron + Parakeet Ultra), nobody speaking | next to a game | 0.03 / 0.04 / 0.31 | 1765 | 49 | - |
+| Captions on, language auto (the new-install default: Nemotron + Qwen3-ASR + language ID) | next to a game | 0.09 / 0.36 / 0.74 | 2756 | 48 | - |
+| Captions on, interim results off | next to a game | 0.05 / 0.19 / 0.23 | 1003 | 38 | - |
+| Captions + OBS caption page open (headless Chromium) + caption traffic | next to a game | 0.14 / 0.41 / 0.51 | 1823 | 46 | 0.02 / 356 MB |
+| Captions + OBS page + Hy-MT2 translation en to ja, CPU llama-server, interim translations forced on (the policy before P7-I0) | next to a game | 4.00 / 6.29 / 6.72 | 4553 | 52 | 0.03 / 361 MB |
+| The same, final lines only (interim translations off) | next to a game | 1.53 / 3.22 / 3.78 | 4487 | 51 | 0.02 / 356 MB |
+| The same, interim translations throttled to one per 1.5 s | next to a game | 2.70 / 4.27 / 5.30 | 4500 | 51 | 0.03 / 359 MB |
+| Captions + OBS page + Hy-MT2 translation, Vulkan llama-server, interim translations forced on | next to a game | 0.43 / 1.16 / 1.20 | 5223 | 1532 | 0.02 / 358 MB |
+| Captions + OBS page + Hy-MT2 translation, server variant `auto` (the default) | next to a game | 0.24 / 0.42 / 0.74 | 5762 | 1832 | 0.02 / 356 MB |
+
+- **The app by itself is light.** Open with speech-to-text off it uses 0.00 cores and 336 MB (WebView2's seven processes included); with English captions running it adds 1414 MB (Nemotron + Parakeet Ultra) and 0.02 cores while nobody speaks (0.03 next to the game), and it touches no GPU memory beyond the WebView's own (49 MB).
+- **The new-install default (language auto) costs a gigabyte more** than a set language: 2756 MB against 1765 MB, because it also holds Qwen3-ASR 0.6B and the language-ID engine, and 0.09 cores (p95 0.36). Turning interim results off drops to 1003 MB (one engine less).
+- **The OBS caption feed is cheap:** with caption traffic at speaking pace Sigil used 0.14 cores in total and the page's Chromium 0.02 cores and 356 MB (OBS's own browser source costs about the same).
+- **Flagged heavy: translation on the CPU.** With the bundled Hy-MT2 on the CPU and interim translations forced on (the default before P7-I0; a request every 300 ms while the speaker talks) the process tree used 4.0 cores on average (llama-server 3.7; p95 6.3, peak 6.7) and 4553 MB next to the game: that competes with the game's own threads on a 6-core PC. Final lines only: 1.53 cores (llama-server 1.43); interims throttled to one per 1.5 s: 2.70 cores. On Vulkan the same translator takes 0.43 cores and 1532 MB of GPU memory (5 % GPU utilization on average); the tree's private memory is not lower than on the CPU (5223 MB). With the server variant left on `auto` (the default) the governor picked a GPU variant here and the tree used 0.24 cores and 1832 MB of GPU memory.
+- **What follows.** A PC with a GPU should leave the translator on `auto` (it takes a GPU variant: 0.2-0.4 cores and 1.5-1.8 GB of video memory, which the game has to be able to spare). On a CPU-only PC, or when the card is full, interim translations should be off: that is the finals-only row (1.5 cores on average, bursts of 3-4), and the lightest CPU setting in this table. **Applied by P7-I0:** the `interim` switch of the AI model (`llm`) and Automatic (`auto`) translation slices is now `true`, `false` or `"auto"` (the default); `"auto"` is on except while the bundled server runs on the processor (variant `cpu`, or `auto` resolved to the processor, read from the running server's status), where interim translations are off and the finals are translated as before. A boolean stored in a profile always wins, the checkbox stays in both panels (with a note while the automatic rule holds it off), and nothing else changes: the other engines keep their own switches (Bergamot on, NLLB and DeepL off). Not re-measured: the footprint rows above are the evidence (finals only 1.5 cores, interims 4.0).
+
+## Opt-in and not benchmarked
+
+The heavy GPU models are installable but unmeasured here: Cohere Transcribe (1.9 GB VRAM),
+Qwen3-ASR 1.7B (3.5 GB Q8_0, 5.9 GB BF16), Voxtral Mini 4B Realtime, Confucius4-R2T2, Hy-MT2 7B, MiLMMT-4B,
+TranslateGemma, Qwen3-TTS 1.7B / 0.6B, Magpie, Breeze, OmniVoice and Fish S2. Their P2 and P6 probe figures (VRAM,
+single-clip latency) are in the earlier tables below; none was run under the game-load simulator in P7. With the
+`tier` setting on "Best for my PC" (the default) a PC with a GPU is offered the GPU final models once they are
+installed (the governor keeps 30 % of the card, at least 2 GB, for Windows, the game and OBS); the CPU tier keeps
+the GPU entirely to the game and costs the CPU figures above. Which of the two is better next to VRChat on a
+mid-range card was not measured. Two of the models listed are not routable: Voxtral Mini 4B Realtime is installable, but no row of `stt-routing.json` lists it, so no route plans it (only the speech benchmark and the developer probes run it), and Confucius4-R2T2 has no catalog entry (the pinned transcribe.cpp has no architecture for it). The GPU final models a route can offer are Cohere Transcribe and Qwen3-ASR 1.7B.
+
+## For later (findings the campaign could not apply from its own files)
+
+- **Auto mode.** A new install has the language on `auto`, so its final engine is Qwen3-ASR 0.6B for every language, which alone is 1.2 to 4 times
+  worse than Parakeet Ultra on the European languages (ru 23.8 against 6.1, pt 12.3 against 3.9). The language-ID engine already names the language
+  (105 of 108 right); choosing the final engine from the detected language's own row (Ultra for the 25 Parakeet languages, SenseVoice for ja / zh,
+  Qwen3-ASR for ko and the rest) needs a per-utterance final in the router (Rust `speech::router`), not a table change. Until then, setting the language
+  is the single biggest accuracy step for a European-language streamer; it also saves 1 GB of RAM (footprint table).
+- **Interim translations on the CPU: applied by P7-I0** (see the footprint section). The bundled translator on the CPU with the old default took 4.0 cores on average (6.7 at the peak) at speaking pace
+  next to the game; final lines only take 1.5. The default is now automatic (off on the CPU variant, on elsewhere; a stored choice wins). A throttle of 1.5 s,
+  `translation.partials.throttleMs`, only got to 2.7 cores, so it is not a substitute.
+- **Loopback-only Korean row.** Other players' captions share the CPU table. On the bleed conditions SenseVoice is the better Korean final (14.4 against 19.2
+  over music, babble and the VRChat mix; babble 22.8 against 39.0). A separate `loopback` row set would take it; nothing measured yet says anyone needs it.
+- **European translation pairs.** NLLB with beam 4 is 1 to 8 chrF points ahead of Hy-MT2 on en to fr / es / pt / de and from de / es / fr / pt / ru / ja. Per-pair
+  chains (`pairOverrides`: NLLB first) would take it, at 4x the latency; the audience's pairs (ja, ko, zh) stay on Hy-MT2.
+- **Real VRChat clips and friend exports.** The corpus is synthetic. Drop real clips into the `real` folder of the corpus and rerun the screening spec, and send
+  `export.json` of the speed specs from a CPU-only PC and from an RTX 3060 / 4060 (`scripts/speech-bench/score/merge_exports.py` tabulates them).
+- **The GPU tier.** Whether the opt-in GPU finals (Cohere, Qwen3-ASR 1.7B) cost the game more than they give, on a mid-range card under VRChat and OBS, and whether
+  `tier: auto` should keep proposing them to a streamer, is the open question of the heavy-model benchmarks.
+- **Whisper.** The long-tail languages stay on Whisper small / base (quantized q5_1). The campaign measured the fp16 base model only (its quantized siblings are over the
+  50 MB download limit): Whisper's rows are an upper bound on cost and a lower bound on quality.
+- **Bergamot.** Build the pack (`scripts/runtime-packs/bergamot/build.ps1 -FetchOnly -PinArchives`, then `-SelfTest`) and add the `bergamot` rows to `mt_screen.json`; it
+  would also be the first choice for interim translations (the router's cheapest-first order puts it ahead of the LLM).
+- **Four physical cores without SMT.** `cpuTwoPassMinCores` stays at 6; the 4C slice (4 cores with SMT) held two passes at 0.5 cores, a 4-core PC without SMT was not
+  emulated.
+- **Edge TTS** was not timed (no backend in the runner, no cloud request from the campaign): speak a line with Edge in Settings, Text-to-speech.
+- **In VR.** Everything here ran outside VR with the load simulator; the footprint rows are what the app costs next to a CPU-bound stand-in for the game, not a
+  measurement inside SteamVR.
+
+---
+
+# Earlier probe numbers (P2 speech engines, P4 translation)
+
+Dev rig: Ryzen 7 7800X3D (8 cores), RTX 4090 24 GB (driver 616.56), Windows 11. Unless noted, timings come from the debug `sigil.exe` with the release runtime DLLs (sherpa-onnx 1.13.8, transcribe.cpp 0.2.4), median of 3 runs, 2026-09-29. RTF = processing time / audio time (lower is faster; below 1 is faster than real time). Raw reports live in the git-ignored `bench-results/`. The CPU STT table below was measured before the campaign (single clips, the debug build for the Rust side); where it disagrees with the campaign above, the campaign's numbers are the current ones.
 
 ## Speech-to-text on the CPU (sherpa-onnx)
 
@@ -141,6 +685,7 @@ Still to record (manual, see [RELEASE_AND_ENGINEERING.md → P4 exit matrix](../
 
 ## Reproducing
 
+- The P7-A campaign: [`scripts/speech-bench/campaign/README.md`](../../scripts/speech-bench/campaign/README.md) (specs, drivers, the own-mic ranking `own_mic.py`, the footprint harness). One run: `pwsh scripts/speech-bench/campaign/lock-run.ps1 -Name <tag> -Spec scripts/speech-bench/campaign/specs/<spec>.json -Out bench-results/speech/<tag> -Cpu -Affinity FFF`; score with `score/score_stt.py --items`, then `campaign/own_mic.py --items .../items.jsonl ...`. A friend runs the same spec and sends `export.json` (`score/merge_exports.py` tabulates the machines).
 - sherpa engines: `SIGIL_APP_DATA_DIR=<store with the models> SIGIL_TEST_MODELS_DIR=<dev cache>
   cargo test --manifest-path src-tauri/Cargo.toml sherpa -- --include-ignored --test-threads=1`;
   the probe matrix script lives in `scripts/runtime-packs/sherpa/`.

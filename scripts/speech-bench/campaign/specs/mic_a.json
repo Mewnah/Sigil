@@ -1,0 +1,99 @@
+{
+ "$comment": [
+  "mic-side conditions (room_light, mic_codec), 30 utterances per language: Parakeet Ultra and v3, SenseVoice, Granite (en); the own-mic defaults are chosen on clean plus these two (user decision 2026-10-09)"
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mic-a",
+ "description": "mic-side conditions (room_light, mic_codec), 30 utterances per language: Parakeet Ultra and v3, SenseVoice, Granite (en)",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "conditions": [
+    "room_light",
+    "mic_codec"
+   ],
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 30
+  }
+ },
+ "engines": [
+  {
+   "id": "parakeet-ultra",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "parakeet-v3",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-tdt-0.6b-v3-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "sensevoice",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/sense-voice-small-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "zh",
+    "ja",
+    "ko",
+    "en"
+   ]
+  },
+  {
+   "id": "granite-cpu",
+   "task": "stt",
+   "backend": "transcribe",
+   "model": "stt/granite-speech-5.0-turboctc-q8_0",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "languages": [
+    "en"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "finals",
+   "mode": "accuracy",
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

@@ -1,0 +1,56 @@
+{
+ "$comment": [
+  "core subset, 12 utterances per language: Nemotron outside English"
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-finals-d",
+ "description": "core subset, 12 utterances per language: Nemotron outside English",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "core",
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 12
+  }
+ },
+ "engines": [
+  {
+   "id": "nemotron-560",
+   "task": "stt",
+   "backend": "sherpa-online",
+   "model": "stt/nemotron-3.5-streaming-560ms-int8",
+   "execution_provider": "cpu",
+   "threads": 1,
+   "languages": [
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt",
+    "ja",
+    "ko"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "finals",
+   "mode": "accuracy",
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

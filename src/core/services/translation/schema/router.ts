@@ -1,6 +1,6 @@
 import { zSafe } from "@/utils";
 import { z } from "zod";
-import { keepObjects, TRANSLATION_ENGINE_IDS, Translation_Backends, TranslationEngineId } from "./backends";
+import { keepObjects, TRANSLATION_ENGINE_IDS, Translation_Backends, TranslationEngineId, zInterimSwitch } from "./backends";
 
 const zEngineId = z.enum(TRANSLATION_ENGINE_IDS);
 
@@ -51,5 +51,9 @@ export const Translation_Router_Schema = z.object({
   attemptTimeoutMs: zSafe(z.coerce.number().int().min(500).max(60_000), 6000),
   /** When a cloud engine fails, also try local engines that are not in the chain. */
   cloudFallback: zSafe(z.coerce.boolean(), true),
-  interim: zSafe(z.coerce.boolean(), true),
+  /**
+   * Live partial translations: a boolean is the user's choice; `"auto"` (default) = on, except while the bundled
+   * llama-server runs on the processor and the chain uses it (`interimPolicy.ts`).
+   */
+  interim: zInterimSwitch(),
 }).default({});

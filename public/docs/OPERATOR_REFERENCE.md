@@ -1,9 +1,10 @@
 # Operator reference
 
-Detailed reference for **STT/TTS backends**, **reliability**, **voice changer** behavior, and **local ONNX speech packages**. User-facing walkthroughs live in the [user manual](manual/README.md).
+Detailed reference for **choosing engines for your PC**, **STT/TTS backends**, **reliability**, **voice changer** behavior, the **streamer features** and **local ONNX speech packages**. User-facing walkthroughs live in the [user manual](manual/README.md).
 
 ## Table of contents
 
+- [Choosing engines for your PC](#choosing-engines-for-your-pc)
 - [STT / TTS backend minimum configuration](#stt--tts-backend-minimum-configuration)
 - [Remote client](#remote-client)
 - [Speech on this PC (automatic STT and local voices)](#speech-on-this-pc-automatic-stt-and-local-voices)
@@ -17,6 +18,120 @@ Detailed reference for **STT/TTS backends**, **reliability**, **voice changer** 
 - [Local web server and LAN pages](#local-web-server-and-lan-pages)
 - [Local speech package (ONNX)](#local-speech-package-onnx)
 - [Sidecar scripts (repo)](#sidecar-scripts-repo)
+
+---
+
+## Choosing engines for your PC
+
+Sigil is built for VRChat streamers who run captions into OBS while the game is running. Its defaults are **local, CPU-first and light**: no GPU is needed, the voice detector keeps silence away from every engine that runs in Sigil's own speech pipeline (automatic, Whisper, Moonshine, local HTTP, Groq; Azure, Deepgram, Gemini Live, Vosk and Web Speech do not use it), and models download only after you agree. The heavier engines (the GPU speech models, the larger translation models, voices that run on the GPU) are **opt-in**: switch them on when you have the hardware and have checked that the game still runs well.
+
+This section says what to pick for your PC and what each choice costs; the detail of every engine follows in the sections after it. Numbers are Sigil's own measurements on the dev rig (Ryzen 7 7800X3D, RTX 4090 24 GB), taken outside VR with the benchmark's game-load simulator standing in for a running game ([benchmarks/SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md), [benchmarks/VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md)). A slower processor needs proportionally more time, so check your own PC: **Benchmark this PC** in the voice changer, and Task Manager with the game running. RTF is processing time divided by audio time (below 1 is faster than real time).
+
+**How to read the numbers.** Speech-to-text error rates are for **your own microphone** (clean speech plus a reverberant room and a poor headset link): the case where headphones keep the game out of the microphone. The "other players' captions" feature hears VRChat's own audio, and its figures (music, other talkers, the game mix) are in the [bleed tables](benchmarks/SPEECH_BENCHMARKS.md#bleed-the-vrchat-mix-music-and-babble-other-players-captions-speaker-setups). The corpus is read speech with simulated rooms and bleed, 30 utterances per cell, so differences of a point or two are noise, and nothing ran inside VR.
+
+### Pick your tier
+
+| Tier | Typical PC | What Sigil does by default | What you can switch on |
+|---|---|---|---|
+| **CPU only** | No NVIDIA GPU, an old GPU, or a gaming PC whose GPU must stay free for the game | Speech-to-text and local voices run on the processor (**Hardware → Processor only** pins speech-to-text there). With fewer than 6 physical cores the automatic speech-to-text uses one pass (the route preview says so). **Translation is the exception:** the default AI model (**Runs on → Automatic**) loads on the graphics card when one has room (1.5–1.8 GB of video memory); to keep it off the card choose **Runs on → Processor** (1.5 cores for final lines), Firefox Translations or NLLB, see [Translation by tier](#translation-by-tier). The voice changer's default preset is **Streamer** (CPU) | Nothing needed: this is the default route |
+| **Mid-range GPU** (8–12 GB, for example RTX 3060 / 4060) | A gaming PC that renders VRChat on the same card | Speech-to-text stays on the processor unless the GPU speech runtime pack is installed and a GPU model fits next to everything else; while the voice changer runs on the GPU, 8–12 GB cards are kept for it | The voice changer's **Low latency** preset (CUDA with the NVIDIA GPU runtime pack, else DirectML); a GPU final model (**Hardware → Graphics card**); a bigger translation model when the plan box says it fits next to the voice changer |
+| **High-end GPU** (16 GB or more) | A strong PC, or a second PC that does the streaming | The GPU tier of the automatic route may share the card with the voice changer | GPU speech and translation models, the voice changer's **Quality** / **Studio-TRT** presets, the GPU voices |
+
+The tier names are this guide's shorthand: the speech-to-text inspector's **Hardware** setting offers **Best for my PC**, **Processor only** and **Graphics card**. The shipped **Best for my PC** route is the processor route unless you installed the GPU speech runtime pack and a GPU model that fits next to everything else; it downloads nothing without asking. The heavy GPU models (Cohere Transcribe, Qwen3-ASR 1.7B) are **opt-in and were not benchmarked in P7**: whether one costs the game more than it gives on a mid-range card is unmeasured. If frame rate comes first, set **Hardware → Processor only**.
+
+### Speech-to-text by tier
+
+Pick **On this PC (automatic)** unless you have a reason not to: it chooses the models for your language and PC (see [Speech on this PC](#speech-on-this-pc-automatic-stt-and-local-voices)). The table is what each model costs; the footprint columns are measured under the game-load simulator.
+
+| Model | Role | Download | Speed (RTF, dev rig CPU) | Error rate, own microphone (WER; CER for Japanese, Korean, Chinese) | CPU and memory next to a game |
+|---|---|---|---|---|---|
+| Nemotron 3.5 streaming 560 ms | Live partials; its own finals for Arabic, Hindi, Turkish, Norwegian | 475 MB | 0.30–0.35 on 1 thread; first partial 1.1–1.7 s into speech | English 10.3 (9.4 on clean speech); other languages 8.7–15.8 on clean speech (12 utterances each) | 0.31 cores idle, 0.44 next to a game, while speaking; about 0.8 GB |
+| Parakeet Ultra (Parakeet TDT v3 as fallback) | Accurate finals, 25 European languages | 630 MB (487 MB) | 0.063–0.075 on 2 threads | English 6.2, Spanish 7.2, Russian 7.3, French 8.5, Portuguese 9.1, German 10.1 | 0.18 cores while a sentence decodes (182 CPU ms per second of audio); 0.9 GB |
+| Qwen3-ASR 0.6B | Finals for Korean and the 30 languages nothing else covers; detects the language | 879 MB | 0.16–0.27 on 2 threads | Korean 5.1, Chinese 3.8, English 6.9; Japanese 10.0, German 12.4, Russian 22.1 | 0.42 cores (415 CPU ms per second of audio); 2.4 GB |
+| SenseVoice small | Japanese, Chinese and Cantonese finals, emotion and sound tags | 163 MB | 0.03–0.04 | Japanese 6.8, Chinese 4.5, Korean 7.9, English 8.7 | 0.08 cores (76 CPU ms per second of audio); 0.4 GB |
+| Moonshine base | English finals, the lightest recognizer; not used by the automatic route ([long utterances](#moonshine-inside-sigil-sherpa-onnx)) | 111 MB | 0.017; a final 132 ms after the end of speech | English 13.4 on clean speech (10-utterance screening) | 0.05 cores (51 CPU ms per second of audio); 0.3 GB |
+| Whisper (Rust, ggml) | Any language, one final per sentence; `base` / `small` Q5_1 on the processor | per model (the panel shows it) | the fp16 `base` model: RTF 1.09 on 4 threads, 1.18 next to a game (the quantized models should be cheaper; not measured) | the fp16 `base` model: English 25.8 on clean speech (10-utterance screening) | the fp16 `base` model: 3.8 CPU seconds per second of audio, 0.4 GB; the quantized models should cost less |
+
+Opt-in GPU models that the route can plan (the transcribe.cpp runtime pack; **Hardware → Graphics card**, or **Best for my PC** when one fits). They are not part of the P7 campaign; the figures are the P2 measurements.
+
+| Model | Download | Video memory | Notes |
+|---|---|---|---|
+| Qwen3-ASR 1.7B Q8_0 | 2.2 GB | about 3.5 GB | Finals for Chinese, Japanese, Korean, Russian and the multilingual languages; a final about 0.2 s after an 8 s sentence on the RTX 4090 |
+| Qwen3-ASR 1.7B BF16 | 4.1 GB | about 6 GB | Cards with 16 GB or more |
+| Cohere Transcribe Q4_K | 1.6 GB | about 2 GB | English and European languages only; never Chinese, Japanese, Korean or Russian |
+
+Voxtral Mini 4B Realtime Q4_K_M (2.8 GB download, about 4.1 GB of video memory; streaming, append-only partials) can be installed from **Models & Runtimes**, but **no route plans it**: no row of the routing table lists it, so **Hardware** never selects it and no inspector field does. Only the speech benchmark and the developer probes run it.
+
+Cloud engines (Groq, Deepgram, Azure, Gemini Live) cost no processor time here but send your speech to the service; see their rows in [STT / TTS backend minimum configuration](#speech-to-text).
+
+**Defaults:** new desktop installs start on **On this PC (automatic)** with **Hardware → Best for my PC**; the route per language is the table under [Speech on this PC](#automatic-speech-to-text-on-this-pc-automatic). The P7 campaign set the processor route from the own-microphone results (clean speech plus the two microphone-side conditions; the game-audio conditions play no part): English is Nemotron partials with a Parakeet Ultra final; the other Parakeet languages and **Russian** are Ultra finals (Russian moved off Qwen3-ASR 0.6B: 7.3 against 22.1); **Japanese** is a SenseVoice final (6.8 against 10.0, moved off Qwen3-ASR 0.6B); Korean stays on Qwen3-ASR 0.6B (5.1 against 7.9); Chinese and Cantonese stay on SenseVoice. Moonshine does not join English: it is the lightest recognizer but about 5 points behind Ultra on clean speech. A saved profile keeps its language and hardware choices; only the table that maps a language to models changed, so the next start of a Japanese or Russian profile plans the new final and asks before downloading it. **Setting the spoken language** matters more than any engine choice: with **Detect automatically** (the default of a new install) every language gets Qwen3-ASR 0.6B finals, which are 1.2 to 4 times worse than Ultra on the European languages and hold 1 GB more memory.
+
+### Translation by tier
+
+| Engine | Runs on | Download | Quality (chrF2, three sets pooled) | Speed per caption line | Footprint next to a game |
+|---|---|---|---|---|---|
+| Firefox Translations (Bergamot) | Processor, no video memory | 17–60 MB per direction plus the runtime pack | not measured: the runtime pack is not built or published yet ([build steps](../scripts/runtime-packs/bergamot/README.md)) | — | — |
+| NLLB-200 600M int8 | Processor, 2 threads | 0.9 GB | 49.8 greedy, 52.7 beam 4 | 0.95 s greedy (p95 1.3 s), about 1.5 s with beam 4 | 1.6–1.9 cores while a line translates; 2.6 GB |
+| Hy-MT2 1.8B Q4 (the default AI model) | `llama-server`: Vulkan on the GPU, or the processor pack | 1.1 GB; about 1.5 GB video memory on the GPU | 53.5 (processor), 53.1 (Vulkan) | Vulkan: 51 ms idle, 116 ms under the VRChat + OBS GPU stand-in; processor: 0.38 s | Vulkan: about 0.5 core, 1.6 GB memory, 1.5 GB video memory; processor: 4.7–5.4 cores in bursts, 2.4 GB |
+| DeepL API Free, Gemini Flash-Lite (free tier) | Cloud | — | — | — | no local cost; text goes to the service |
+
+Opt-in larger models (not part of the P7 campaign): Hy-MT2 7B (4.6 GB, about 5.3 GB video memory), MiLMMT-46 4B and TranslateGemma 4B (2.5 GB, about 3 GB each). They run on `llama-server`, and the plan box refuses one that does not fit next to a running voice changer. chrF2 pools 240 casual caption lines, WMT24++ and FLORES-200 (24 lines per direction each): Hy-MT2 beats NLLB by 5–16 points into Japanese, Korean and Chinese, and NLLB with beam 4 is 1–8 points ahead on some European pairs. chrF scores Chinese and Japanese targets low for every engine, and one reference per line cannot rank close engines.
+
+**Defaults:** **Automatic (best available)** with the chain default AI model → Firefox Translations → NLLB; the campaign confirmed it (the audience's targets ja, ko and zh stay on the better engine, and a PC without the Firefox Translations pack falls through to NLLB). **Interim (partial) translations are off by default while the default AI model runs on the processor**: they took 4.0 cores next to the game (6.7 at the peak) against 1.5 with final lines only, and the finals are always translated. On a GPU variant (the model server's default `auto` picks one when the card has room) they stay on at 0.2–0.4 cores. Tick **Interim results** in the Automatic or AI model panel to turn them on; a choice made earlier is kept.
+
+### Text-to-speech by tier
+
+| Voice | Runs on | Download | Speed | Footprint next to a game |
+|---|---|---|---|---|
+| Kokoro v1.0 (**Kokoro / Piper (local)**, the default) | Processor, 2–4 threads | 350 MB (+ 8 MB runtime) | RTF 0.36 on 4 threads, 0.55 on 2; first audio 0.74 s (1.1 s on 2 threads) | 3.0 cores on 4 threads and 1.8 on 2, for the length of a sentence; 0.7 GB while loaded |
+| Piper voices | Processor | 67–129 MB per voice | RTF 0.04 idle, 0.15–0.16 under load | not re-measured in P7 |
+| Kitten nano / micro / mini (English) | Processor | 44–68 MB | not re-measured in P7 | not re-measured in P7 |
+| Edge voices | Cloud, keyless | none | not timed (the benchmark has no cloud backend) | falls back to Kokoro when the service fails |
+| Windows voices (SAPI) | System | none | a sentence renders in 10–15 ms (p50) | 2–3 ms of processor time per second of audio; about 130 MB |
+
+Opt-in GPU and cloning voices (Qwen3-TTS, Magpie, Breeze, OmniVoice, Fish S2, Chatterbox, Pocket) run as helpers or in process and are not part of the P7 campaign; their downloads and video memory are listed in [Local cloning and GPU voices](#local-cloning-and-gpu-voices).
+
+**Defaults:** new desktop installs start on **Kokoro / Piper (local)**, and the campaign kept it. Windows voices (SAPI) are the free option that needs no download and costs next to nothing, with only the voices Windows ships; Edge is the optional cloud voice and falls back to Kokoro. Kokoro is the one speech engine that takes real processor time (a burst of 2–3 cores for the length of each sentence); on a busy PC set its **Threads** to 2.
+
+### Voice changer by tier
+
+The voice changer is optional and used less than captions. The preset follows your tier; the figures are the P7-B final scorecard of the shipped defaults and P3B's thread sweep (dev rig; [benchmarks/VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults)).
+
+| Tier | Preset | Provider | What it costs |
+|---|---|---|---|
+| CPU only | **Streamer** | CPU | Converts fast enough on 4 to 6 threads at below-normal priority, but is not yet shown to play out in real time (P7: the preset takes all physical cores but two, but never fewer than 4 and never more than 6 threads, so a PC with 6 or more physical cores keeps two cores for the game, a 5-core PC keeps one and a 4-core PC none; the one-thread preset it replaces ran at RTF 2.7 and fell behind). On the 8-core dev rig at 120 ms blocks, with the PC idle: RTF p99 0.83 offline and 0.74 paced on 6 threads (2.8 cores paced), 0.89 and 0.96 on 4 threads (2.6 cores). Three things are still open: (1) at the default 35 / 70 ms output queue the benchmark plays only about 50-63 % of the converted audio ([CPU rows lose audio at the shipped output queue](benchmarks/VC_BENCHMARKS.md#cpu-rows-lose-audio-at-the-shipped-output-queue)); (2) under the game stand-in the 6-thread policy reads RTF p99 1.13-1.31 and 345 ms end to end (p99); (3) the shipped preset runs FCPE, which adds 6-9 % to the call. The queue is to be sized for 120 ms blocks and the CPU rows re-run before the Streamer is called real time. The speeds were measured on the 8-core rig only (4 and 6 threads). A slower processor, or one with 4 or 5 physical cores, needs more time: **Autotune** finds a longer block that stays real time, and a graphics-card preset takes the load off the processor. Leave **Voice changer priority** on **Automatic** (below normal on the processor); **Protect game FPS** keeps the Streamer on one thread, which cannot keep up |
+| Mid-range GPU | **Low latency** | CUDA, else DirectML | Per-block compute p95 8.0 ms on CUDA, and 8.9 ms (full GPU clock) to 13.8 ms (idle clock) on DirectML; under a 70 % load from another process 11.1 ms (CUDA) and 12.4–25.7 ms (DirectML, depending on the clock). Engine-added delay p99 115–143 ms (115 ms with the app's own 20 ms blocks; target 85, missed). Video memory about 1.3 GB on CUDA (including the CUDA context) and 0.85 GB on DirectML; a second hot voice adds 131–142 MB; 0.04–0.05 cores while converting and 0.009 while silent; a voice loads in 1.0–1.2 s; a 30-minute soak under a game-like load had 0 underruns |
+| High-end GPU | **Quality**, **Studio-TRT** | CUDA, TensorRT-RTX | Adds a retrieval index and 20 ms of lookahead; see [Presets](#presets) |
+
+See [Defaults and opt-ins at a glance](#defaults-and-opt-ins-at-a-glance) for what the engine does on its own and what stays a switch.
+
+### What Sigil itself costs
+
+Measured on the release app (frontend embedded) next to the benchmark's game stand-in (four busy processes at 60 % duty), with the OBS captions page open in a headless browser and caption text arriving at speaking pace; averages over two minutes, memory is the private memory of the whole process tree (WebView2 and the translation server included). The captions listened to a real microphone in an ordinary room, so with nobody speaking they idle; the cost of speech itself is in [the pipeline table](benchmarks/SPEECH_BENCHMARKS.md#the-whole-caption-pipeline-silero-vad-router-two-passes-at-real-time) (0.2–0.5 cores while talking continuously, a few hundredths over a normal stream). Details: [benchmarks/SPEECH_BENCHMARKS.md → App footprint](benchmarks/SPEECH_BENCHMARKS.md#app-footprint).
+
+| Scenario | Processor (cores) | Memory | GPU / video memory |
+|---|---|---|---|
+| Idle, app open, nothing started | 0.00 cores | 336 MB | 64 MB (the window's own) |
+| Captions into OBS (English, automatic speech-to-text, OBS page open, caption traffic) | 0.14 cores; the OBS page's browser 0.02 cores | 1.8 GB; the browser 0.36 GB more | 46 MB |
+| Captions only, nobody speaking (English) | 0.02–0.03 cores | 1.75 GB | 48 MB |
+| Captions with **Detect automatically** (the new-install default) | 0.09 cores (p95 0.36) | 2.8 GB | 48 MB |
+| Captions with **Enable interim results** off | 0.05 cores | 1.0 GB | 38 MB |
+| Captions and translation (en to ja), default AI model on the GPU (server variant `auto`) | 0.24 cores | 5.8 GB | 1.8 GB video memory |
+| The same on Vulkan | 0.43 cores | 5.2 GB | 1.5 GB video memory |
+| The same on the processor, final lines only (the default since P7) | 1.5 cores (p95 3.2) | 4.5 GB | 51 MB |
+| The same on the processor with interim translations (opt-in) | 4.0 cores (p95 6.3, peak 6.7) | 4.6 GB | 52 MB |
+
+### Keeping Sigil light next to VRChat
+
+- **Speech-to-text:** leave **Hardware** on **Best for my PC** (or **Processor only**); pick the spoken language instead of **Detect automatically**; turn **Two-pass accuracy** off if the processor is busy (fewer than 6 physical cores already means one pass). The voice detector means silence and keyboard noise cost almost nothing (about 0.3 % of one core). **Smart Turn** is off by default; turn it on only for TTS, translation or the chatbox that should wait for the end of your turn.
+- **Whisper:** use a smaller or quantized model, and set **CPU threads** (default about half the logical processors, at most 4) and **Waiting sentences** so a slow model drops old sentences instead of showing them late.
+- **Translation:** Firefox Translations and NLLB need no video memory. The local AI model's default variant (`auto`) uses the GPU when the card has room (0.2–0.4 cores, 1.5–1.8 GB of video memory); on the processor it takes 1.5 cores for final lines, so interim translations are off by default there (4.0 cores with them). The local model server ends itself 10 s after translation stops using it and is always ended with Sigil. A 7B model on an 8 GB card next to the voice changer is refused unless you start it anyway.
+- **Voice changer:** **Voice changer priority → Protect game FPS** (below-normal priority, at most 2 ONNX Runtime threads) is for the GPU presets: on the Streamer preset on the processor it holds the voice changer to one thread, which is not real time; the **Streamer** preset on the processor (all physical cores but two, never fewer than 4 threads nor more than 6, at below-normal priority on **Automatic**; 2.6–2.8 cores on the 8-core rig, so a PC with 6 or more physical cores keeps two cores for the game, a 5-core PC keeps one and a 4-core PC none: on those run **Autotune** for a longer block and watch the frame rate), or **Low latency** on the GPU; set the **Quality governor** lever to **On** (Auto leaves it off) to let the engine step quality down under load instead of stuttering; the **Latency budget** (default 300 ms) drops stale audio instead of piling it up. Sigil never asks for administrator rights.
+- **OBS:** lower the browser source's frame rate and keep **Shutdown source when not visible** on; use the `http://localhost:<port>/…` URL.
+
+### Paid cloud services
+
+Azure and Deepgram (speech-to-text) and Azure Translator are the paid services Sigil already integrates. ElevenLabs Scribe, AssemblyAI and Soniox are not integrated; the research's published numbers for them are in [SPEECH_STACK_RESEARCH_2026-09.md → Appendix A](SPEECH_STACK_RESEARCH_2026-09.md#appendix-a-paid-cloud-low-priority).
 
 ---
 
@@ -55,7 +170,7 @@ For **timeouts, wrong microphone, and “connected but no text”** behavior acr
 | **On this PC (automatic)** | Nothing to set up: pick the spoken **language** (or **Detect automatically**) and press **Start**; Sigil shows which models it will use and asks once before downloading them. The default for new desktop installs. See [Speech on this PC](#speech-on-this-pc-automatic-stt-and-local-voices). |
 | **Whisper (Rust)** | First run downloads the chosen GGML **`.bin`** into **`app_data/whisper/`** through Sigil's model store: pinned to a fixed revision and checksum, resumable (a cancelled download resumes next time), with mirror fallback, and listed in [Models & Runtimes](#models--runtimes) (also `Sigil.exe --headless fetch whisper/<id>`). Files already in `whisper/` are adopted without downloading again; a local `.bin` you pick is hashed while it is copied in. You can also drop a matching `.bin` into that folder manually. Model ids: `tiny`, `base`, `small`, `medium` (each also `.en`), their `-q5_1` / `-q8_0` builds (`medium` uses `-q5_0`), `large-v3-turbo` (plus `-q5_0` / `-q8_0`) and `large-v3` (plus `-q5_0`). The old `medium-q5_1` ids never existed upstream and load `-q5_0`; an unknown id is an error instead of silently loading `base.en`. **Anime-Whisper** is bring-your-own: convert `litagin/anime-whisper` with whisper.cpp's `models/convert-h5-to-ggml.py` and select the `.bin` as a local model (Japanese is forced and no prompt is used). |
 | **Vosk** | The catalog is served from the **Rust** plugin (`get_vosk_models`). The app downloads **`{app_data}/vosk-models/{model_id}.zip`** through Sigil's model store (official Alpha Cephei URLs unless you set **Custom model URL**): one download at a time, resumed after a break (Stop keeps the partial file), a 30 s no-data limit, HTML pages rejected, and a full zip check before an existing model is replaced. The default `small-en-us-0.15` is pinned to a checksum; importing a local zip is checked the same way. **vosk-browser** loads the zip from AppData via Tauri **`convertFileSrc`** (asset protocol, scoped to **`$APPDATA/vosk-models/**`** only); repeat use does not re-fetch the CDN. Custom URL must point to a full **`.zip`**; it overrides the catalog URL but the on-disk name still follows the selected **model id**. |
-| **Moonshine server (legacy)** | **Moonshine server** reachable at the configured URL (default `http://localhost:8090`). Must expose `GET /health` and `POST /transcribe` (JSON body with base64 WAV), as in Useful Sensors’ published container (`moonshine-onnx-server`). Set **language** to what the server expects (e.g. `en`). Moonshine now also runs inside Sigil (the **On this PC (automatic)** backend can use Moonshine base for English), so a server is no longer needed. |
+| **Moonshine server (legacy)** | **Moonshine server** reachable at the configured URL (default `http://localhost:8090`). Must expose `GET /health` and `POST /transcribe` (JSON body with base64 WAV), as in Useful Sensors’ published container (`moonshine-onnx-server`). Set **language** to what the server expects (e.g. `en`). Moonshine base also exists inside Sigil as a model of its speech engine (see [Moonshine inside Sigil](#moonshine-inside-sigil-sherpa-onnx)); this legacy backend is only for an external server. |
 | **Local HTTP API (OpenAI-style)** | **Base URL** including `/v1` (e.g. `http://127.0.0.1:8000/v1`). Sigil sends one `POST …/audio/transcriptions` per spoken sentence (multipart `file` as 16 kHz mono WAV, `model`, optional `language`, `prompt`, `temperature=0`, `response_format=json`), matching the [OpenAI transcription API](https://platform.openai.com/docs/api-reference/audio/createTranscription) shape. You must set **model id** in the inspector to whatever your **local** server expects (field defaults empty). **API key** is optional for localhost; it is sent only in the `Authorization` header. The request is sent by Sigil's Rust side, so servers elsewhere on the LAN work too. |
 | **Groq Whisper (free cloud)** | A free API key from [console.groq.com/keys](https://console.groq.com/keys). Model `whisper-large-v3-turbo` (default) or `whisper-large-v3`. Speech is sent to Groq. See [Groq preset](#groq-whisper-preset). |
 | **Deepgram** | **API key** and **language**. Model: Nova-3 (default) or Nova-2. |
@@ -84,7 +199,9 @@ Pick the spoken **language** and press **Start**. Sigil plans which models to us
 | German, Spanish, French, Italian, Portuguese, Dutch | Parakeet Ultra finals | Cohere or Qwen3-ASR 1.7B final |
 | Polish, Greek and other European languages | Parakeet Ultra finals | Cohere final (pl, el) |
 | Chinese, Cantonese | SenseVoice finals (no live partials) | Qwen3-ASR 1.7B final |
-| Japanese, Korean, Russian | Nemotron partials + Qwen3-ASR 0.6B final | Qwen3-ASR 1.7B final |
+| Japanese | Nemotron partials + SenseVoice final | Qwen3-ASR 1.7B final |
+| Korean | Nemotron partials + Qwen3-ASR 0.6B final | Qwen3-ASR 1.7B final |
+| Russian | Nemotron partials + Parakeet Ultra final | Qwen3-ASR 1.7B final |
 | Arabic, Hindi, Turkish | Nemotron (its own finals) | — |
 | Detect automatically | Qwen3-ASR detects the language, Nemotron follows it | Qwen3-ASR 1.7B |
 | Other languages | Whisper | — |
@@ -96,16 +213,17 @@ Pick the spoken **language** and press **Start**. Sigil plans which models to us
 | Parakeet Ultra (Parakeet TDT v3 as fallback) | 630 MB (487 MB) | 25 European languages | 0.063–0.075 on 2 threads |
 | Qwen3-ASR 0.6B | 879 MB | 30 languages + dialects | 0.16–0.27 on 2 threads |
 | SenseVoice | 163 MB | zh, yue, en, ja, ko (+ emotion and sound-event tags) | 0.03–0.04 |
-| Moonshine base | 111 MB | English | 0.017 |
+| Moonshine base | 111 MB | English (utterances over 9 s are [cut at quiet points](#moonshine-inside-sigil-sherpa-onnx)) | 0.017 |
 | Spoken-language ID (Whisper base) | 160 MB | 99 languages | 0.03 |
 | CPU speech runtime (sherpa-onnx) | 8 MB | — | installed automatically with the first model |
 
 On the dev PC, finals arrived 130–300 ms after the end of speech (Qwen3-ASR about 1.2 s). The first download for English with two passes is about 1.1 GB (Nemotron plus Parakeet Ultra); the consent dialog shows the exact size and offers a **smaller setup** (one pass) when it saves at least a fifth.
 
 - **Language:** an explicit language gives the best live captions. Nemotron always needs one: with **Detect automatically** it runs only next to a model that detects the language.
-- **Hardware → Best for my PC** (default) uses the GPU tier only when a GPU model fits next to everything else, and keeps 8–12 GB cards for the voice changer while it runs on the GPU; **GPU** shares the card anyway; **CPU only** never uses the GPU. Fewer than 6 physical cores, or the voice changer running on the CPU, means one pass. The GPU tier needs the transcribe.cpp runtime pack (imported locally until it is published) and, on NVIDIA, the NVIDIA GPU runtime pack; without them, or when the GPU is busy, Sigil uses the CPU route and says why.
-- **GPU tier models:** Qwen3-ASR 1.7B Q8_0 (2.2 GB download, about 3.5 GB of video memory), Qwen3-ASR 1.7B BF16 (4.1 GB, about 6 GB, cards with 16 GB or more), Cohere Transcribe Q4_K (1.6 GB, about 2 GB; English and European languages only, never Chinese, Japanese, Korean or Russian), Voxtral Mini 4B Realtime (2.8 GB, about 4.1 GB, streaming). Granite Speech TurboCTC is available as a model but writes lower-case text without punctuation, so it is never picked for captions.
-- **Two passes** (default on): the live partial is replaced by the final under the same caption line (on the dev GPU about 0.2 s after the end of an 8 s sentence). With two passes off Sigil runs one model.
+- **Hardware → Best for my PC** (default) uses the GPU tier only when a GPU model fits next to everything else, and keeps 8–12 GB cards for the voice changer while it runs on the GPU; **Graphics card** shares the card anyway; **Processor only** never uses the GPU. Fewer than 6 physical cores, or the voice changer running on the CPU, means one pass. The GPU tier needs the transcribe.cpp runtime pack (imported locally until it is published) and, on NVIDIA, the NVIDIA GPU runtime pack; without them, or when the GPU is busy, Sigil uses the CPU route and says why.
+- **GPU tier models:** Qwen3-ASR 1.7B Q8_0 (2.2 GB download, about 3.5 GB of video memory), Qwen3-ASR 1.7B BF16 (4.1 GB, about 6 GB, cards with 16 GB or more), Cohere Transcribe Q4_K (1.6 GB, about 2 GB; English and European languages only, never Chinese, Japanese, Korean or Russian); these three are the only GPU models the router plans. Voxtral Mini 4B Realtime (2.8 GB, about 4.1 GB, streaming) is installable but not routed (no row of the routing table lists it). Granite Speech TurboCTC is available as a model but writes lower-case text without punctuation, so it is never picked for captions.
+- **Two-pass accuracy** (default on): the live partial is replaced by the final under the same caption line (on the dev GPU about 0.2 s after the end of an 8 s sentence). With it off Sigil runs one model.
+- **Enable interim results** (default on; applies the next time speech-to-text starts): shows words while you are still speaking. Off, each sentence appears once, when it is finished, and Sigil does not run the live model whenever a more accurate one also runs, which saves its processor time (0.3–0.4 cores while speaking) and memory (about 0.8 GB; English on 8 cores becomes Parakeet Ultra alone, 0.24–0.28 cores). A language whose only engine is a live model keeps it and still shows its finished sentences. With interim results off there is no second pass to run, because there is no live caption to replace.
 - **Smart Turn** (off by default, 9 MB): detects when you finished your turn. It only lets translation, TTS and the VRChat chatbox commit sooner; it never changes captions.
 - **Hotwords:** names and terms to recognize reliably. Qwen3-ASR and Parakeet use them (modestly); Nemotron cannot.
 - **Hallucination filter** and **Voice detection** work as for Whisper.
@@ -118,7 +236,7 @@ On the dev PC, finals arrived 130–300 ms after the end of speech (Qwen3-ASR ab
 |---|---|---|
 | Kokoro v1.0 (default) | 350 MB (+ 8 MB runtime) | English, Japanese, Chinese, Spanish, French, Hindi, Italian, Brazilian Portuguese (54 voices) |
 | Kokoro v1.1-zh | 365 MB | Mandarin (103 voices, with English) |
-| Piper | 20–120 MB per voice | 36 voices, including Russian and Arabic and many more languages |
+| Piper | 67–129 MB per voice | 36 voices, including Russian and Arabic and many more languages |
 | Kitten 0.8 mini / micro / nano | 44–68 MB | English |
 
 - Everything runs on the CPU (the UI never waits for it). **Threads**: automatic (half the physical cores, 2–4) or 2–4. Kokoro on 4 threads speaks about 3.4× faster than real time (RTF 0.29 on a Ryzen 7 7800X3D); the first clause of a long first sentence is synthesized on its own so speech starts sooner (0.65 s for a two-second opening clause; shorter clauses start faster). Piper runs at RTF 0.04–0.16.
@@ -150,9 +268,10 @@ Sigil.exe --headless fetch --list          # catalog, install states and sizes
 Sigil.exe --headless sysinfo [--out f]     # GPUs, drivers, VRAM budget, suggested model sizes (JSON)
 Sigil.exe --headless engine-probe <sherpa|transcribe|echo> [model] [wav]   # load a native runtime and run a smoke test
 Sigil.exe --headless mt-bench <spec.json> [--out <dir>]   # translation benchmark (chrF, latency) on a local corpus
+Sigil.exe --headless speech-bench <spec.json> [--out <dir>]   # speech benchmark: STT accuracy, CPU / GPU speed under load, MT quality, TTS renderings (developer tool)
 ```
 
-`SIGIL_APP_DATA_DIR=<folder>` points any of these at a scratch profile instead of `%APPDATA%\com.sigil.app`.
+`SIGIL_APP_DATA_DIR=<folder>` points any of these at a scratch profile instead of `%APPDATA%\com.sigil.app`. The full list of headless commands is in the [developer guide](DEVELOPER_GUIDE.md#native-ipc).
 
 ### CPU speech runtime pack (sherpa-onnx)
 
@@ -278,9 +397,19 @@ These engines run inside Sigil's Rust speech pipeline (voice detection, request 
 - A sentence that waited more than **20 s** (for example while Groq's limit is exhausted) is dropped with a warning on the status line instead of being sent late.
 - In-flight requests are cancelled when STT stops. Settings are read at start, so edits apply on the next start.
 
+#### Moonshine inside Sigil (sherpa-onnx)
+
+`stt/moonshine-base-en-int8` (111 MB, English) is the lightest recognizer in Sigil: RTF 0.017 on the dev rig, and a final 132 ms after the end of speech through the speech pipeline. It runs on the sherpa-onnx CPU runtime pack like the other CPU models. The automatic route does not plan it (on clean speech it is about 5 points behind Parakeet Ultra: WER 13.4 against 8.1 in the 10-utterance screening), so nothing in the inspector selects it by itself; it stays in the catalog and in the benchmark.
+
+- **Utterances over 9 s are cut at quiet points.** The Moonshine v2 model inside sherpa-onnx 1.13.8 returns an empty result, without any error, for one decode of 148,351 samples (9.272 s at 16 kHz) or more, and the speech pipeline closes utterances at up to 18 s, so long unbroken speech used to lose its whole caption (found by the P7 benchmark's smoke run, fixed in commit f8eedb8). An utterance longer than 9.0 s is now cut at its quietest moment (judged over about 140 ms in the back half of the 9 s window, never closer than a third of the limit to either end), every piece is decoded on its own and the texts are joined: no space between pieces in Chinese, Japanese, Thai, Lao, Khmer or Burmese, and none before closing punctuation. A clearly voiced piece that still decodes to nothing is decoded again as two halves. Shorter utterances are decoded whole, exactly as before.
+- **Option `moonshineMaxSegmentMs`.** An engine option (camelCase, in the engine's options of a speech-bench spec or an explicit pipeline engine; there is no inspector field). It can only **lower** the limit: values from 2000 to 9000 are used as given, a smaller non-zero value becomes 2000, a larger one becomes 9000, and **`0` never splits** (utterances over 9 s then come back empty, and the log warns about it). A bring-your-own Moonshine v1 folder (preprocessor with two decoders) is split only when this option is set.
+- **What the cut costs.** On the P7 English corpus, utterances over 9.3 s now return captions with a word error rate of 19.9 % (they returned nothing before: 100 %). Utterances of 8–9 s are decoded whole at 11 %, which is why the limit sits at 9 s and not 8 s (cut at 8 s they scored 19 %). Words at a seam can come out doubled, split or wrong. The measurement, its sample and how to reproduce it: [SPEECH_BENCHMARKS.md → Moonshine and long utterances](benchmarks/SPEECH_BENCHMARKS.md#moonshine-and-long-utterances-the-9-s-cut).
+- **A warning in the log** (target `sigil::sherpa`, at most one a minute, with the number it skipped): audio of 3 s or more with at least half of its frames voiced decoded to no text, so the model may have failed inside sherpa-onnx (sherpa swallows that error and answers with an empty result). Only Moonshine raises this warning: the other models answer non-speech such as music or applause with no text on purpose.
+- **A sherpa-onnx upgrade must re-measure the limit.** The ignored real-model test `real_moonshine_sherpa_length_limit_is_still_where_the_split_assumes` pins the 148,350 / 148,351 sample threshold.
+
 #### Moonshine server (legacy) ([`moonshine.ts`](../src/core/services/stt/services/moonshine.ts))
 
-- Server down: the start fails with a message naming the endpoint and the reason. Prefer **On this PC (automatic)**, which runs Moonshine and better models inside Sigil.
+- Server down: the start fails with a message naming the endpoint and the reason. Prefer **On this PC (automatic)**, which runs its models inside Sigil with no server.
 - Transcribe failures follow the utterance-engine retry rules above.
 
 #### Groq Whisper preset
@@ -336,12 +465,14 @@ Chrome/Edge **mic.html** sends `text.stt` over the host’s **pubsub WebSocket**
 | STT “on” but no text (Whisper) | Voice detection too strict (lower **Speech sensitivity**), no-speech cutoff too low, or the wrong physical mic (check **Settings → Audio → Default input device** and the inspector’s input device). |
 | Many short “final” lines | One final per sentence by design; raise **Pause that ends speech** to join sentences. |
 | Sentences skipped under load (Whisper) | The model is slower than real time and the backlog dropped the oldest waiting sentence, or one waited more than 20 s (`whisper:utterance_dropped` in the log). Pick a smaller or quantized model, or more CPU threads. |
+| A long sentence (over about 9 s) gets no caption, and the log says audio "decoded to no text" (Moonshine) | The model inside sherpa-onnx 1.13.8 returns nothing for one decode of 9.27 s or more. Current builds cut such utterances at quiet points ([Moonshine inside Sigil](#moonshine-inside-sigil-sherpa-onnx)); an engine option `moonshineMaxSegmentMs` of `0` turns the cutting off |
 | Automatic backend: "The live model is guessing the spoken language" | Nemotron needs the spoken language: choose it instead of **Detect automatically**. |
-| Automatic backend uses the CPU although there is a GPU | The route preview notes say why: the voice changer runs on a card under 16 GB (choose **GPU** to share it), the card is full, no runtime pack, or no GPU model for the language. |
+| Automatic backend uses the CPU although there is a GPU | The route preview notes say why: the voice changer runs on a card under 16 GB (choose **Graphics card** to share it), the card is full, no runtime pack, or no GPU model for the language. |
 | Groq session stopped | Daily cap reached, or a rejected key (4xx). The status line and toast say which. |
 | Stuck “connecting” ~45s | Backend never called `onStart` (e.g. Deepgram before `getUserMedia` catch; reduced after fix). |
 | Wrong microphone | Rust engines: per-engine **Input device**, else the native **Settings → Audio** default (see [Input device resolution](#input-device-resolution-srcutilsrustaudioinputts)). Azure / Deepgram: their own browser-device picker. |
 | "Audio device … stopped" toast | The microphone was unplugged, disabled or stopped delivering audio. Sigil reconnects it by itself; STT stays running. If it never recovers, check the device in Windows sound settings; a saved device shown as "(not connected)" needs replugging or another choice. |
+| Sigil is still in Task Manager after I closed it | It ends itself within 20 s of the first close request: an exit guard (`src-tauri/src/exit_guard.rs`) writes one `exit guard:` warning to `%LOCALAPPDATA%\com.sigil.app\logs\sigil.log` and ends the process. A script that closes every window of the process (`taskkill` without `/F`, some installers) can leave it waiting; close the window titled "Sigil" instead |
 
 ### Related files
 
@@ -418,7 +549,7 @@ A preset fills the settings below; values you change afterwards are used as set.
 | **Quality** | CUDA | RMVPE | 0.5 | 192 ms | 20 ms | 1536 MB |
 | **Studio-TRT** | TensorRT-RTX (NVIDIA RTX) | RMVPE | 0.5 | 192 ms | 20 ms | 1536 MB |
 
-On imported voices, extra context is cheap (only new audio is analysed and only the played audio is decoded); bring-your-own ONNX voices re-encode all of it every block, so keep it small on the CPU. **Autotune** (below) picks the fastest safe settings for your PC and can replace the preset's.
+Which preset suits which PC: [Voice changer by tier](#voice-changer-by-tier). On imported voices, extra context is cheap (only new audio is analysed and only the played audio is decoded); bring-your-own ONNX voices re-encode all of it every block, so keep it small on the CPU. **Autotune** (below) picks the fastest safe settings for your PC and can replace the preset's.
 
 #### Voice settings
 
@@ -461,6 +592,34 @@ On imported voices, extra context is cheap (only new audio is analysed and only 
 
   Only the governor and anchored noise apply to bring-your-own ONNX voices (partial decode too when the export supports it); anchored noise only when set to **On** (Auto keeps such a voice on its export's zero noise, which is what it was made with).
 - **Noise removal** (every mode): Off, **GTCRN** (lightest, about 16–32 ms added; inside the engine for RVC voices), **DPDFNet** (best, 48 kHz, about 50–60 ms added). A stored **DeepFilterNet3** runs DPDFNet (its published model cannot stream). The models install from Models & Runtimes (`vc/denoise-*`); speech-to-text never hears the denoised copy.
+
+#### Defaults and opt-ins at a glance
+
+What the engine does on its own, as shipped by the voice-engine optimization ([ADR 0010](adr/0010-sve-optimization-p3b.md); numbers in [VC_BENCHMARKS.md → P3B](benchmarks/VC_BENCHMARKS.md#p3b-voice-engine-optimization-p3b-i0)). The first table is lossless or measured better and is on for everyone. The second table lists paths that can lower fidelity, or are not yet proven on every kind of hardware: they stay off, or are switches you turn on yourself. Every path also has an environment kill switch for troubleshooting (listed in the [developer guide](DEVELOPER_GUIDE.md#voice-engine-optimization-p3b)). The final scorecard of these defaults (T1–T10 on CUDA, DirectML and the processor: 37 of 67 target rows met, 30 missed, none unmeasured) is in [VC_BENCHMARKS.md → P7-B](benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults). The one default P7 changed is the processor Streamer's thread count (first table).
+
+| On by default | What it does |
+|---|---|
+| Fixed-shape content-encoder plan, with pitch tracking overlapped | The content step costs 1.8 ms on CUDA and 1.5 ms on DirectML instead of 4.9 and 4.3 ms; lookahead runs on DirectML too |
+| Final shapes planned at load, parallel cold start | A voice loads in about 1 s on CUDA (was 1.8 s) and 1.1–1.3 s on DirectML (was 2.5 s) |
+| One shared RMVPE plan, built once | No second copy while loading; a second hot voice adds about 130 MB |
+| Device-resident generator chain | Identical audio, one wait fewer per call |
+| Hybrid CUDA wait | The worker's CPU on CUDA falls from 0.63 to 0.04 cores |
+| Arena shrink before graph capture; CPU session arena | 40 MB less on CUDA; the Streamer shape 5.9 % faster |
+| Streamer preset on the processor: all physical cores but two, never fewer than 4 threads nor more than 6, at below-normal priority | The one-thread Streamer ran at RTF 2.7 and fell behind; this one converts fast enough on an idle PC (RTF p99 0.74–0.89 on the dev rig, 2.6–2.8 cores), but the benchmark plays only about 50-63 % of the converted audio at the default 35 / 70 ms output queue, and under the game stand-in the 6-thread policy reads RTF p99 1.13–1.31 ([details](benchmarks/VC_BENCHMARKS.md#cpu-rows-lose-audio-at-the-shipped-output-queue)); it is not called real time until the queue is sized and the CPU rows re-run. The thread count never changes the audio. `SIGIL_VC_STREAMER_THREADS=1` restores one thread |
+| Parallel SwiftF0 / RMVPE fusion lane | Fusion's pitch step 4.7 → 3.1 ms on CUDA |
+
+| Off by default (switch or opt-in) | Why |
+|---|---|
+| 32-frame RMVPE "VRAM saver" (environment switch only) | About 200 MB less on DirectML, but less accurate pitch on noisy or creaky speech |
+| fp16 RMVPE | Failed its accuracy check on DirectML |
+| Pitch-cache priming, onset continuity, filled pitch calls | Structural gains only; the evidence is mixed, so no default until per-frame proof |
+| Cross-tick pitch decoding, steady content normalisation, 1 s content context | Did not help, or cost a little fidelity |
+| Adaptive output cushion | 18 ms less delay on a calm PC, but ran dry under heavy load |
+| 10 ms device block (recommended next, not the default yet) | 9–16 % less delay on DirectML and CUDA in P7-B's interleaved sessions, with compute, processor use and underruns unchanged; it needs a check on a live audio device and a real microphone first |
+| Shared DirectML queue | Its content stage got slower under load |
+| 10 ms lookahead for Low latency; 10 ms crossfade; narrower join search | Spends the delay the preset exists to save, or lowers fidelity |
+| GPU prewarm | Holds a 338 MB CUDA context for the whole session |
+| A thread-count field for the Streamer | The preset picks 4–6 threads from your physical cores; more than 6 (or the default pool of 8) is no faster and costs 0.5–0.6 more cores. `SIGIL_VC_STREAMER_THREADS=<n>` overrides it for troubleshooting |
 
 #### Status, readouts and live changes
 
@@ -541,6 +700,15 @@ Zero-shot voices (Sigil-ZS, MeanVC2, sidecar recipes that take a reference) conv
 - Files of another kind are refused by what they are: VCClient's fused `rmvpe2_silence.onnx`, MMVC and LLVC models, so-vits, DDSP-SVC and Seed-VC / MeanVC parts, vocoders, pitch models set as the content encoder (and the reverse), PyTorch, JSON, NumPy and GGUF files.
 - **FCPE** also accepts mel-input exports (Sigil computes torchfcpe's 128-band log-mel; latent or F0 output) and the community `[1, N, 1]` waveform export; RMVPE exports set as FCPE are refused.
 
+### Using another voice changer over a virtual cable
+
+Sigil's own voice changer is optional. If you prefer another one (w-okada VCClient, RVC WebUI, Applio or a VST host), run it beside Sigil and connect them with a virtual audio cable such as VB-Cable. Sigil does not need to know about it:
+
+- **Your voice in VRChat:** the other voice changer reads your real microphone and plays into the cable's playback end; VRChat's microphone is the cable's recording end.
+- **Captions:** keep Sigil's speech-to-text on the **real microphone** (the STT inspector's input device, or **Settings → Audio → Default input device**), so it hears your natural voice and not the converted one. Sigil opens the microphone in WASAPI shared mode, so both programs can use it; if the other program insists on exclusive access, switch it to shared mode.
+- **Text-to-speech in VRChat:** set the TTS panel's **Output device** to the cable's playback end. To have the other voice changer convert the speech too, send it to the playback device that program listens to instead.
+- **Measuring the chain:** the benchmark's end-to-end loopback and compare modes can time any external chain over a cable ([benchmarks/README.md](benchmarks/README.md), [`scripts/vc-bench/README.md`](../scripts/vc-bench/README.md)); it plays audio to the devices you chose, so never point it at a cable VRChat is using.
+
 ### Feature parity (conceptual vs VCClient)
 
 | VCClient-style area | VCClient (typical) | Sigil |
@@ -572,7 +740,7 @@ Zero-shot voices (Sigil-ZS, MeanVC2, sidecar recipes that take a reference) conv
 | Setting | Worker thread |
 |---------|---------------|
 | **Automatic** (default) | NORMAL priority when the model runs on a GPU EP, BELOW_NORMAL on the CPU, so a CPU voice does not cost game frames. |
-| **Protect game FPS** | Always BELOW_NORMAL, and ONNX Runtime uses at most 2 threads. |
+| **Protect game FPS** | Always BELOW_NORMAL, and ONNX Runtime uses at most 2 threads (the Streamer preset on the processor then runs on one thread, which is not real time; **Automatic** is also below normal on the processor and gives the Streamer its 4–6 threads). |
 | **Protect voice** | NORMAL plus the Windows power-throttling (EcoQoS) opt-out. |
 
 ONNX Runtime's own pool threads start with the same policy as the worker, so its CPU work never runs at a higher priority than the setting allows. For ONNX Runtime threads, a change applies from the next voice-changer start.
@@ -648,6 +816,7 @@ Models should use **float32** input/output. Sigil reads the graph’s fixed elem
 - **Finals are always delivered, in order**; interims are live and latest-wins (at most one interim request in flight per sentence, and no closer together than **Minimum gap between partials**, 300 ms by default). Speech and typed text are sequenced separately. Each request has a deadline (15 s for interims, 30 s plus 10 ms per character for finals, longer for slow chains); a failed final is retried once, then reported. An untranslated line is never published as a translation (TTS and the chatbox would read it in the wrong language).
 - Failed lines show a throttled notice and are written to the **System log**. The `[...]` cut-off marker STT publishes on stop is never translated.
 - **Steady partial translations** (LocalAgreement, on by default): partial captions show only the words two partial translations in a row agree on, so they grow without flickering; **Also show the unconfirmed end** adds the newest words in the interim colour. The final translation of the whole sentence may still reword the line once.
+- **Interim (partial) translations** follow **Interim results** of the Automatic and AI model panels. The default is automatic: on, except while the local AI model runs on the processor (its variant is `cpu`, or `auto` resolved to the processor), where they cost 4.0 cores next to a game against 1.5 for final lines only; the panel shows the switch as off with a note until you choose. Ticking or unticking it is your choice from then on and is kept. Finals are always translated.
 - **Wait until you finish speaking** (Smart Turn, on by default; needs Smart Turn in speech-to-text): a sentence Smart Turn marks as unfinished is joined with the next one and translated as one line, at most **Longest wait for the end of a turn** (2.5 s) after the last words, or 280 characters.
 - **Context:** the last 3 lines (**Earlier lines to send**, 0–10; only lines with the same target language, forgotten after 5 minutes) and a free-text **Background** go to AI models (and DeepL's context field) so names and style stay consistent.
 - **Glossary:** only the terms that occur in a line are sent (whole words in spaced scripts, anywhere in Chinese / Japanese, at most 24 per line), optionally limited to a source or target language and case-sensitive. **Paste a list** accepts one term per line: term and translation separated by a tab (as copied from a spreadsheet), `=`, `->` or a comma, with optional language columns and `#` comments. AI models use it; DeepL, Firefox Translations and NLLB ignore it. Glossary, context and partial-caption settings apply to the next line while translation runs; engine settings apply on the next start.
@@ -681,6 +850,18 @@ The language pair of the new backends is the panel's **Source language** (automa
 ## Streamer features and extended voices
 
 Everything in this section is off until you turn it on or pick the backend.
+
+### VRChat streamer quick start
+
+The light setup for captions in OBS while you play. Every step uses a feature that is on by default or one click away, and links to its details.
+
+1. **Speech-to-text:** pick [On this PC (automatic)](#automatic-speech-to-text-on-this-pc-automatic), choose your spoken language (an explicit language gives the best live captions) and leave **Hardware** on **Best for my PC**. Set the start/stop and mute shortcuts under **STT → Shortcuts**; they work while VRChat has focus.
+2. **Captions in OBS:** in the OBS Studio inspector copy the browser source link and paste it into an OBS Browser source (`http://localhost:<port>/…`; a saved HTML file is refused). Lower the source's frame rate and keep OBS's **Shutdown source when not visible** on.
+3. **VRChat:** enable OSC in VRChat. In Sigil's VRChat tab turn on **Mute captions when I mute in VRChat** (OSCQuery needs no port setup) and, for the chatbox, **Split long text into pages**; see [VRChat chatbox, mute sync and tags](#vrchat-chatbox-mute-sync-and-tags).
+4. **Other players (optional):** the **Other players** tab captions only VRChat's sound; keep its hardware tier on **Processor** so the game stays smooth ([Other players' captions](#other-players-captions)).
+5. **Captions in VR (optional):** the [caption window](#caption-window-and-steamvr-overlay-vrchat-tab) pinned in XSOverlay or OVR Toolkit, or the SteamVR overlay.
+6. **Translation and voice (optional):** [Firefox Translations or NLLB](#translation-by-tier) need no video memory; [Kokoro / Piper (local)](#text-to-speech-by-tier) is the default voice and Edge voices fall back to it when the service fails.
+7. **Check with the game running:** watch Task Manager, and see [Keeping Sigil light next to VRChat](#keeping-sigil-light-next-to-vrchat) if frames drop.
 
 ### Cloud voices with a local fallback (Edge, Gemini)
 

@@ -200,7 +200,12 @@ describe("routing table", () => {
       expect(row(l).cpuFinal[0]).toBe(SENSE_VOICE);
       expect(row(l).streaming).toHaveLength(0);
     }
-    for (const l of ["ja", "ko", "ru"]) expect(row(l).cpuFinal[0]).toBe(QWEN3_0_6B);
+    // P7-A (own-microphone ranking: clean + room_light + mic_codec): SenseVoice finals for ja (CER 6.8 vs 10.0, about 5x
+    // lighter), Parakeet Ultra for ru (WER 7 vs 22), Qwen3-ASR-0.6B for ko (CER 5.1 vs 7.9) and for the languages nothing
+    // else covers.
+    expect(row("ja").cpuFinal[0]).toBe(SENSE_VOICE);
+    expect(row("ru").cpuFinal[0]).toBe(PARAKEET_ULTRA);
+    for (const l of ["ko", "vi"]) expect(row(l).cpuFinal[0]).toBe(QWEN3_0_6B);
     const cohere = t.models[COHERE];
     for (const l of ["ja", "zh", "ko", "ru", "yue"]) {
       expect(cohere.languages).not.toContain(l);
@@ -297,8 +302,9 @@ describe("planRoute invariants on every language × tier × PC", () => {
             if (plan.tier === "cpu") {
               const fin = model(plan.final);
               if (norm === "zh" || norm === "yue") expect(fin, what).toBe(SENSE_VOICE);
-              if (norm === "ja" || norm === "ko" || norm === "ru") expect(fin, what).toBe(QWEN3_0_6B);
-              if (norm && norm !== "en" && t.models[PARAKEET_ULTRA].languages.includes(norm) && norm !== "ru")
+              if (norm === "ja") expect(fin, what).toBe(SENSE_VOICE);
+              if (norm === "ko") expect(fin, what).toBe(QWEN3_0_6B);
+              if (norm && norm !== "en" && t.models[PARAKEET_ULTRA].languages.includes(norm))
                 expect(fin, what).toBe(PARAKEET_ULTRA);
             }
             if (norm === null) expect(plan.notes, what).toContain(ROUTE_NOTES.autoLanguage);
@@ -315,12 +321,12 @@ describe("planRoute invariants on every language × tier × PC", () => {
       QWEN3_Q8,
       "runtime/sigil-transcribe-cuda13",
       "runtime/nvidia-cuda13",
-      QWEN3_0_6B,
+      SENSE_VOICE,
     ]);
-    expect(plan.missing).toEqual([QWEN3_Q8, "runtime/sigil-transcribe-cuda13", "runtime/nvidia-cuda13", QWEN3_0_6B]);
+    expect(plan.missing).toEqual([QWEN3_Q8, "runtime/sigil-transcribe-cuda13", "runtime/nvidia-cuda13", SENSE_VOICE]);
     expect(plan.vramMb).toBe(3500);
     expect(plan.final).toMatchObject({ engine: "transcribe", variant: "cuda13", options: null });
-    expect(plan.fallback).toMatchObject({ engine: "sherpa-offline", model: QWEN3_0_6B, options: { language: "ja" } });
+    expect(plan.fallback).toMatchObject({ engine: "sherpa-offline", model: SENSE_VOICE, options: { language: "ja" } });
     expect(model(planRoute({ language: "ja", tier: "gpu", twoPass: true }, pc(16_376, 11_400, 8)).final)).toBe(QWEN3_BF16);
   });
 
@@ -452,7 +458,7 @@ describe("interim results off (mirror of speech::router `interim: false`)", () =
     const off = planRoute({ language: "ja", tier: "auto", interim: false }, gpu);
     expect([on.tier, model(on.streaming), model(on.fallback)]).toEqual(["gpu", NEMOTRON, null]);
     // Finals-only GPU plans always keep the CPU fallback (it replaces the GPU engine).
-    expect([off.tier, model(off.streaming), model(off.fallback)]).toEqual(["gpu", null, QWEN3_0_6B]);
+    expect([off.tier, model(off.streaming), model(off.fallback)]).toEqual(["gpu", null, SENSE_VOICE]);
     expect(off.final).toEqual(on.final);
     expect(off.vramMb).toBe(on.vramMb);
     const cpu = pc(0, 0, 8);

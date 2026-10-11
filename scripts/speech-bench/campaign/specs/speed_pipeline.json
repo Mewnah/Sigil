@@ -1,0 +1,156 @@
+{
+ "schema": "sigil-speech-bench-spec/1",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "conditions": [
+    "clean"
+   ],
+   "limit_per_language": 6
+  }
+ },
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ },
+ "name": "p7a-speed-pipeline",
+ "description": "The shipped caption pipeline at real time on a 6-core slice, idle and next to a game",
+ "engines": [
+  {
+   "id": "pipe-cpu-2pass",
+   "task": "stt",
+   "backend": "pipeline",
+   "execution_provider": "cpu",
+   "language_mode": "given",
+   "options": {
+    "route": {
+     "language": "",
+     "tier": "cpu",
+     "twoPass": true
+    }
+   }
+  },
+  {
+   "id": "pipe-cpu-1pass",
+   "task": "stt",
+   "backend": "pipeline",
+   "execution_provider": "cpu",
+   "language_mode": "given",
+   "options": {
+    "route": {
+     "language": "",
+     "tier": "cpu",
+     "twoPass": false
+    }
+   }
+  },
+  {
+   "id": "ultra-final-only",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "pipe-idle",
+   "mode": "cpu_speed",
+   "engines": [
+    "pipe-cpu-2pass",
+    "pipe-cpu-1pass",
+    "ultra-final-only"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "conditions": [
+     "clean"
+    ],
+    "languages": [
+     "en",
+     "de",
+     "ru",
+     "ja",
+     "ko",
+     "zh"
+    ],
+    "limit_per_language": 3
+   },
+   "feed": {
+    "kind": "pipeline",
+    "pace": "realtime",
+    "lead_silence_ms": 500,
+    "tail_silence_ms": 1500
+   },
+   "warmup": 0,
+   "repeat": 1,
+   "load_profile": "none",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 240
+  },
+  {
+   "name": "pipe-game",
+   "mode": "cpu_speed",
+   "engines": [
+    "pipe-cpu-2pass",
+    "pipe-cpu-1pass",
+    "ultra-final-only"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "conditions": [
+     "clean"
+    ],
+    "languages": [
+     "en",
+     "de",
+     "ru",
+     "ja",
+     "ko",
+     "zh"
+    ],
+    "limit_per_language": 3
+   },
+   "feed": {
+    "kind": "pipeline",
+    "pace": "realtime",
+    "lead_silence_ms": 500,
+    "tail_silence_ms": 1500
+   },
+   "warmup": 0,
+   "repeat": 1,
+   "load_profile": "h3_cpu_game",
+   "gpu_lock": {
+    "require": true,
+    "tag": "P7-A"
+   },
+   "timeout_s": 240
+  }
+ ]
+}

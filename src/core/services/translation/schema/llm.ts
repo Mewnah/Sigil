@@ -1,6 +1,7 @@
 import { LLM_PROVIDERS, LLM_REASONING_EFFORTS, LLM_TRANSPORTS } from "@/core/services/llm/types";
 import { zSafe } from "@/utils";
 import { z } from "zod";
+import { zInterimSwitch } from "./backends";
 
 /**
  * Prompt families of the prompt builder (P4-C `prompt.ts`): `auto` picks by model (catalog `promptFormat` for the
@@ -68,5 +69,9 @@ export const Translation_Llm_Schema = z.object({
   timeoutMs: zSafe(z.coerce.number().int().min(1000).max(120_000), 15_000),
   /** Stream replies (earlier first words for captions). */
   stream: zSafe(z.coerce.boolean(), true),
-  interim: zSafe(z.coerce.boolean(), true),
+  /**
+   * Live partial translations: a boolean is the user's choice; `"auto"` (default) = on, except while the bundled
+   * server runs on the processor (`interimPolicy.ts`).
+   */
+  interim: zInterimSwitch(),
 }).default({});

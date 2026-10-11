@@ -53,7 +53,9 @@ BACKENDS = {
     "mt": {"nllb", "openai", "hypotheses", "bergamot", "llama-server"},
     "tts": {"local-tts", "tts-helper", "openai-speech", "rendered"},
 }
-ABS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)|[\\/](?:Users|home)[\\/][^\\/]+[\\/]")
+# A string that starts like a path, runs through a home folder, still holds a Windows \Users\ or \AppData\
+# folder, or is a scrubbed "<path>/" that goes on with a Windows folder (a path only partly replaced).
+ABS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|tmp)/)|[\\/](?:Users|home)[\\/][^\\/]+[\\/]|(?i:\\(?:Users|AppData)\\)|<path>/[^/\\]*\\")
 
 
 def _load(path):

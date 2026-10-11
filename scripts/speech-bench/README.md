@@ -23,6 +23,7 @@ voice engine; the runner itself, `Sigil.exe --headless speech-bench`, is P7-A's
 | `validate.py` | Validates any campaign file against its schema (plus spec cross-references and export privacy) |
 | `setup-venv.ps1`, `requirements.txt` | The light Python environment (no torch) |
 | `tests/` | Unit tests (`python -m unittest discover -s scripts/speech-bench -p "test_*.py"`) |
+| `campaign/` | The P7-A campaign: the specs it ran, the run / lock / process-sampling drivers, the table printers and the real-app footprint harness ([`campaign/README.md`](campaign/README.md)); results in [`docs/benchmarks/SPEECH_BENCHMARKS.md`](../../docs/benchmarks/SPEECH_BENCHMARKS.md) |
 
 Outputs never go into the repo: the venv, the corpus and every run live under
 `%LOCALAPPDATA%\sigil-dev-cache\p7\` and the git-ignored `bench-results/`.
@@ -96,11 +97,19 @@ installed. Python 3.12 (3.11 works). Environment variables the campaign uses:
 
 6. **Decisions** (P7-A, P7-I0): the router table (`src-tauri/model-catalog/stt-routing.json`), the
    translation default chain and interim engine (`src/core/services/translation/router.ts`), the TTS
-   presets and `resources::policy` footprints change only from these numbers. Rule of thumb for a
-   default flip: the challenger's paired 95 % interval against the current default excludes zero in
-   its favour on `core` for the languages it would take, it is not worse on any other `core`
-   condition, and it meets the latency / VRAM budget of its tier under the H1 load profile (and on
-   at least one friend export when the tier is H1 / H3). Results go to
+   presets and `resources::policy` footprints change only from these numbers. Rule for a default
+   flip of the **own-microphone** STT pipeline (user decision 2026-10-09: a streamer's own mic hears
+   no game audio through headphones, so the bleed conditions `music_*`, `sfx_*`, `babble_*` and
+   `vrchat_mix` take no part in the choice, not even as a tie-breaker): rank the engines on `clean`
+   plus the mic-side conditions `room_light` and `mic_codec` (pooled error rate, paired utterance
+   bootstrap); the lowest wins, an engine within the paired interval of zero and at most 1.5 points
+   of it ties it, and among tied engines the cheapest takes the language, except that Granite and Nemotron
+   are never a final and a language whose files lack an own-mic condition for some engine gets no winner
+   ([`campaign/own_mic.py`](campaign/own_mic.py) prints the table and both rankings, and exits 2 on such a
+   partial file list). The bleed
+   numbers are for the "other players' captions" (loopback) feature, whose input is VRChat's own
+   audio, and are tabulated apart. A flip also has to meet the latency / VRAM budget of its tier
+   under the H1 load profile (and on at least one friend export when the tier is H1 / H3). Results go to
    `docs/benchmarks/SPEECH_BENCHMARKS.md` with the corpus `content_sha256`, the normalizer stamp and
    the rig.
 
@@ -170,10 +179,16 @@ processes, warnings).
 ### The export (what friends send back)
 
 `export.json` = the report without audio, without `files`, without absolute paths (rewritten to
-`<path>/<file name>`), without host or user names, with `spec_summary` instead of the spec and a
-bring-your-own model as `byo`. Item text stays only when the spec's `output.export.include_text` is
-true, and never for real clips (`real/...` ids). `score/make_export.py` is the reference
-implementation and `validate.py` checks the rules (`privacy_errors`).
+`<path>/<file name>`; folders may hold spaces, as in `C:\Users\Jane Doe\...`, and a bare profile folder leaves no name),
+without host or user names, with `spec_summary` instead of the spec and a bring-your-own model as `byo`.
+It also names no other program: a run state's other GPU users (the image names of whatever else used
+the GPU, such as a game) become a count (`state.summary.other_top_processes_count`), the run warning
+that lists them keeps only the GPU share, and a Windows power plan that is not one of the built-in
+ones (Balanced, High performance, Power saver, Ultimate Performance; a localized Windows names them
+differently) reads `custom`. Item text stays only when the spec's `output.export.include_text` is true,
+and never for real clips (`real/...` ids). `score/make_export.py` is the reference
+implementation and `validate.py` checks the rules (`privacy_errors`, which also flags a path that
+was only partly replaced).
 
 ### The Rust side (P7-A)
 
@@ -209,18 +224,27 @@ choice open, the runner does this (change the runner and this list together):
 - STT timings: an `utterance` feed's `final_latency_ms` is its decode time. A `stream` feed pushes lead
   silence, the clip and tail silence in `chunk_ms` blocks; `compute_ms` is the engine's busy time
   (push + end), `first_partial_ms` runs from the first fed sample (minus the lead silence at realtime
-  pace), `final_latency_ms` is the time from the end of the fed audio to the final (end_stream alone at
-  asap pace). An engine that cannot stream decodes once at the end of the paced clip (no partials; a
+  pace, where the lead is paced with the clip), `final_latency_ms` is the time from the end of the fed audio to the final (end_stream alone at
+  asap pace). At realtime pace the feed itself runs inside the item's deadline, so `timeout_s` is the
+  engine's time on top of the audio's own duration (lead, clip and tail), not a limit on the whole feed. An engine that cannot stream decodes once at the end of the paced clip (no partials; a
   warning says so). A `pipeline` feed (or the `pipeline` backend) runs the speech plugin's own session
   code on a private registry, one language group at a time, feeding the next item only when the previous
   one has settled, in 20 ms blocks like the capture hub; `final_latency_ms` is the pipeline's
   VAD-close-to-final latency of the item's last final, `compute_ms` (asap only) the wall time from the
-  item's first sample to its last final. A route whose only engine is a streaming one (the CPU tier
+  item's first sample to its last final. `first_partial_ms` runs from the item's first fed sample; the
+  lead silence is pushed at once and takes no wall time, so at realtime pace it is also the time from the
+  clip's start (the lead is not subtracted, unlike the stream feed, which paces its lead). A session
+  loads the models, and there is one per run of same-language items: a real-time run's shuffled order is
+  regrouped by language for a pipeline engine (order inside a language kept), and the engine row's
+  `extra.sessions` counts the sessions, because their model loading sits inside the engine's timed window
+  (`cpu_cores_mean`, `ram_peak_mb`, `wall_ms`) and the pipeline gets no warm-up item. A route whose only engine is a streaming one (the CPU tier
   without a final engine) is always fed at real time, because the pipeline skips the live text of a
   streaming engine that falls more than 3 s behind; the run's warnings say so.
 - `crispasr` starts `crispasr --server` (pack by execution provider: cuda13, vulkan, cpu) under
   `process_host` and speaks to it through the app's HTTP STT engine (`/v1/audio/transcriptions`), so it
-  is an utterance engine; `options.crispasrBackend` is its `--backend`.
+  is an utterance engine; `options.crispasrBackend` is its `--backend`. A catalog `model` id is passed
+  as the entry's file (its first one, or `options.modelFile` as the catalog lists it), a bring-your-own
+  path as that file.
 - `vram_peak_mb` / `vram_delta_mb`: engines in this process are read per process through DXGI (peak and
   peak minus the reading before the engine loaded); engines in a helper process (`llama-server`,
   `tts-helper`, `crispasr`, `bergamot`) are read device-wide through NVML as the growth over the baseline
@@ -237,10 +261,17 @@ choice open, the runner does this (change the runner and this list together):
   streams `/audio/speech` as raw PCM (`ttfa_ms` = first audio byte); a rendering is written as 16-bit PCM
   WAV. The intelligibility, DNSMOS and speaker-similarity pre-screens run after the timed render; a
   pre-screen that cannot run is a note in the item's `extra` and a run warning, not an item error.
-- `hypotheses` files accept `{item, text}` (STT, MT) and mt-bench's `{id, hyp}`.
+- `hypotheses` files accept `{item, text}` (STT, MT) and mt-bench's `{id, hyp}`. A line whose text is
+  `null` (what the runner's own `hyps/` files hold for an item that failed) is skipped, so that item
+  reads "no hypothesis" and the other lines of a runner-written file stay usable.
 - `export.json` is checked with the privacy rules before it is written; a leak writes no export, adds a
   failure to the report and fails the run.
 - A failed item, engine or threshold makes the process exit 1 (the files are written either way).
+- **Limits the P7-A campaign found** (details and workarounds in [`campaign/README.md`](campaign/README.md)): the figures of an
+  engine that runs in a helper process (`llama-server`, `crispasr`, TTS helpers, `bergamot`) do not include the helper's CPU and
+  RAM (sample the process tree); `threads` of a `llama-server` engine is not forwarded to the server; a `pipeline` row at
+  `pace: asap` includes the backlog of a streaming engine in its latencies (use `realtime`); `first_partial_ms` of a `stream`
+  feed includes the clip's own leading silence.
 
 ## Corpus
 
@@ -307,7 +338,7 @@ From the P7 prefetch manifest; each blocks only its own rows.
 
 | Item | State | Next step |
 |---|---|---|
-| The Rust runner | implemented (P7-A1): `speech.rs` + `speech/`, `pub mod speech;` in `bench/mod.rs`, the `speech-bench` arm in `services/cli/mod.rs`; CPU smoke passed; no pack-backed GPU, helper, pipeline or `crispasr` row has been run yet | the campaign (P7-A2) runs it under the GPU timing lock; see "As built" under "The Rust side" for what the runner decided |
+| The Rust runner | implemented (P7-A1): `speech.rs` + `speech/`, `pub mod speech;` in `bench/mod.rs`, the `speech-bench` arm in `services/cli/mod.rs`. The P7-A campaign ran the sherpa, whisper, transcribe (CPU and CUDA), pipeline, nllb, llama-server (CPU and Vulkan) and local-tts backends; `http`, `crispasr`, `bergamot`, `tts-helper` and `openai-speech` have still never run against a live pack or server | see "As built" under "The Rust side" for what the runner decided and `campaign/` for the campaign |
 | Bergamot runtime (`runtime/bergamot`) | unbuilt (only a fake pack); the six CJK models are in `p7/local-assets/mt-bergamot/` | `pwsh scripts/runtime-packs/bergamot/build.ps1 -FetchOnly -PinArchives` (one pinned source fetch), then `pwsh scripts/runtime-packs/bergamot/build.ps1 -SelfTest -Models "$env:LOCALAPPDATA\sigil-dev-cache\p7\local-assets\mt-bergamot"`; copy `sigil-bergamot-69455ac-s1-cpu.zip` to `p7\local-assets\runtime\bergamot\` and run `Sigil.exe --headless fetch runtime/bergamot mt-bergamot/en_ja mt-bergamot/ja_en mt-bergamot/en_zh mt-bergamot/zh_en mt-bergamot/en_ko mt-bergamot/ko_en` with the two variables above (ADR 0008 has the no-go fallback) |
 | qwentts packs | built locally but not installed; the CUDA zip is a one-GPU `-dev` build whose name differs from the catalog's | dev rig: copy `%LOCALAPPDATA%\sigil-native\packs\sigil-qwentts-server-6fae929-s1-cuda13-dev.zip` to `p7\local-assets\runtime\qwentts-server-cuda13\sigil-qwentts-server-6fae929-s1-cuda13.zip` and the cpu zip to `p7\local-assets\runtime\qwentts-server-cpu\`, then `Sigil.exe --headless fetch runtime/qwentts-server-cuda13 runtime/qwentts-server-cpu` (the entries are unpinned: a dev build, or Import in Models & Runtimes). For friends: the five-architecture build, `pwsh scripts/runtime-packs/qwentts/build.ps1 -Variant cuda13` (1.5-2 h, resumes where it stopped; run it while the PC is otherwise idle) |
 | Confucius4-R2T2 runtime | transcribe.cpp 0.2.4 cannot load r2t2; both GGUFs are in `p7/stt/` | Decision for the campaign: CrispASR v0.8.40 (`runtime/crispasr-cuda13` / `-vulkan`, already in `appdata-p7`, the runtime P6-F uses for OmniVoice) with the cstr GGUF (`confucius4-r2t2-q8_0-crispasr`, `--backend qwen3`). P7-A adds the `crispasr` STT backend through `process_host` (reuse `tts_helpers::omnivoice`'s pack lookup; read `crispasr.exe --help` of the pinned release for its transcription flags). A catalog entry (`stt/confucius4-r2t2-q8_0`) and a transcribe.cpp re-pin wait for the measurement |

@@ -242,7 +242,7 @@
         },
         "options": {
           "type": "object",
-          "description": "Backend-specific settings, passed through. stt: speech::engine_api::EngineSpec.options (pipeline: `route` = a RouteRequest {language, tier, twoPass}; hypotheses: `path`; crispasr: `crispasrBackend`). mt: mt-bench engine fields in camelCase (prompt, maxTokens, temperature, timeoutMs, baseUrl, beam, apiKeyEnv; hypotheses: path). tts: `voice` (every language) or `voices` {lang: voice}, `speed`, `helper` + `config` (tts-helper: the helper's camelCase start config), `baseUrl` / `apiKeyEnv` (openai-speech), `dir` (rendered). Never secrets: a key comes from the environment variable named by apiKeyEnv."
+          "description": "Backend-specific settings, passed through. stt: speech::engine_api::EngineSpec.options (pipeline: `route` = a RouteRequest {language, tier, twoPass}; hypotheses: `path`; crispasr: `crispasrBackend`, and `modelFile` to pick a file of a catalog model that lists several). mt: mt-bench engine fields in camelCase (prompt, maxTokens, temperature, timeoutMs, baseUrl, beam, apiKeyEnv; hypotheses: path). tts: `voice` (every language) or `voices` {lang: voice}, `speed`, `helper` + `config` (tts-helper: the helper's camelCase start config), `baseUrl` / `apiKeyEnv` (openai-speech), `dir` (rendered). Never secrets: a key comes from the environment variable named by apiKeyEnv."
         }
       }
     },

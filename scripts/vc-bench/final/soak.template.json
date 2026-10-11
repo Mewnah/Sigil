@@ -1,0 +1,38 @@
+{
+  "schema": "sigil-bench-spec/1",
+  "name": "${NAME}",
+  "description": "P7-B final scorecard, T7 soak: the reference config (Low latency, 40 ms engine blocks, ${PITCH} F0, ${EXTRA_MS} ms extra context, the default 512-frame device block and 35 / 70 ms cushion, fixed) on ${EP} for ${SOAK_S_JSON} s of wall-clock time under a game-like load: the conv hammer at 70 % duty on DirectML in a separate process (a game's own queue) and three CPU threads at 50 % (render, game and OBS), no injected stall. T7 asks for 0 underruns, a backlog never above the budget and no model errors. Run it only when a 30 minute window is free: it loads the GPU and three cores the whole time.",
+  "seed": 20261009,
+  "input": { "kind": "wav", "path": "${CLIP}" },
+  "stream": { "input_rate": 48000, "output_rate": 48000, "input_channels": 1, "output_channels": 2, "block_frames": ${BLOCK_FRAMES}, "extra_context_ms": ${EXTRA_MS} },
+  "engine": {
+    "kind": "rvc",
+    "slot_dir": "${SLOT}",
+    "hubert": "${CONTENT_ENCODER}",
+    "execution_provider": "${EP}",
+    "pitch_extractor": "${PITCH}",
+    "preset": "low_latency",
+    "block_ms": 40,
+    "levers": ${LEVERS_JSON},
+    "build": "${BUILD}",
+    "qos": "${QOS}"
+  },
+  "runs": [
+    {
+      "mode": "contention",
+      "name": "soak",
+      "profile": "custom",
+      "seconds": ${SOAK_S_JSON},
+      "clock": "wall",
+      "warmup_s": 25,
+      "gpu_execution_provider": "dml",
+      "load": {
+        "gpu": { "duty": 0.7, "period_ms": 16.667, "execution_provider": "dml", "size": 256, "depth": 8, "out_of_process": true },
+        "cpu": { "threads": 3, "duty": 0.5, "period_ms": 16.667 }
+      },
+      "stalls": []
+    }
+  ],
+  "thresholds": { "model_errors": { "max": 0 } },
+  "output": { "write_timeline": true, "write_audio": false }
+}

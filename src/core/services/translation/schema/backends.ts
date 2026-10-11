@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Persisted translation backend ids: add values, never rename or remove them (zSafe falls back to the default).
  * `auto` is the router (P4-C): it runs a per-language-pair chain of the other engines with fallback.
@@ -43,3 +45,15 @@ export const SHARED_PAIR_BACKENDS: readonly Translation_Backends[] = [
 export function keepObjects(value: unknown): unknown {
   return Array.isArray(value) ? value.filter((v) => v !== null && typeof v === "object" && !Array.isArray(v)) : value;
 }
+
+/**
+ * `interim` switch of the slices whose engine can be heavy (`llm`, `auto`): a boolean is the user's own choice and
+ * always wins; `"auto"` (the default, also for settings saved without the key) means on, except while the bundled
+ * llama-server translator runs on the processor (`interimPolicy.ts`: interim translations cost it about 4 cores
+ * next to a game, final lines only 1.5). Anything else stored resets to `"auto"`.
+ */
+export type InterimSwitch = boolean | "auto";
+
+/** Zod value for `InterimSwitch`: booleans stay, anything else (or no key) becomes `"auto"`. */
+export const zInterimSwitch = () =>
+  z.preprocess((v) => (typeof v === "boolean" ? v : "auto"), z.union([z.boolean(), z.literal("auto")])).default("auto").catch("auto");

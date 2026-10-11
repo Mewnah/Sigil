@@ -7,6 +7,7 @@ Release QA checklists, **network threat model**, **dependency audits**, **perfor
 - [Release build smoke matrix](#release-build-smoke-matrix)
 - [Manual Tauri smoke checklist](#manual-tauri-checklist)
 - [Local packaged smoke (manual)](#local-packaged-smoke-manual)
+- [Optional checks (verify when convenient)](#optional-checks-verify-when-convenient)
 - [P0 exit matrix (speech stack stabilization)](#p0-exit-matrix-speech-stack-stabilization)
 - [P1 exit matrix (platform foundations)](#p1-exit-matrix-platform-foundations)
 - [P2 exit matrix (speech engine)](#p2-exit-matrix-speech-engine)
@@ -15,6 +16,7 @@ Release QA checklists, **network threat model**, **dependency audits**, **perfor
 - [P5 exit matrix (voice families)](#p5-exit-matrix-voice-families)
 - [P6 exit matrix (streamer features and extended engines)](#p6-exit-matrix-streamer-features-and-extended-engines)
 - [P3B exit matrix (voice-engine optimization)](#p3b-exit-matrix-voice-engine-optimization)
+- [P7 exit matrix (measure, set defaults, document, release)](#p7-exit-matrix-measure-set-defaults-document-release)
 - [Research §6 bug verification](#research-6-bug-verification)
 - [Network security and threat model](#network-security-and-threat-model)
 - [Dependency audit notes](#dependency-audit-notes)
@@ -32,6 +34,8 @@ Use this list before shipping a **packaged** Tauri build. Items that need a huma
 
 - `pnpm typecheck`, `pnpm i18n:check`, `pnpm test:unit` (vitest) — the same gates CI runs.
 - `pnpm run build` — TypeScript + Vite production bundle (includes `sync-manual.mjs`).
+- `node docs/check-docs.mjs --no-todo` — dead links, anchors that match no heading, malformed tables, statements that disagree with the code (UI labels, the Streamer thread rule, unrouted models, the headless table) and leftover `TODO(P7-numbers)` placeholders in the documentation.
+- `node scripts/release/check-catalog-pins.mjs` — every published catalog entry is hash-pinned and immutable, and the release set (the defaults a new install fetches) is complete ([scripts/release/README.md](../scripts/release/README.md#catalog-pins-step-1)); `--online` re-derives the defaults' sizes and digests from the hosts' metadata.
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets` and `cargo test --manifest-path src-tauri/Cargo.toml` (`dist/` must exist).
 - `cd src-tauri && cargo check --release` — release-profile Rust compiles (LTO/strip settings apply at link time; full `cargo build --release` is optional for a longer pass).
 
@@ -81,7 +85,7 @@ Automated Playwright tests use Vite preview only; native Tauri behavior requires
 - [ ] **Twitch** — `SIGIL_TWITCH_CLIENT_ID` set; Twitch console lists **loopback** URLs: **Public** → `http://localhost:17890/oauth/twitch/implicit`; **Confidential** → `http://localhost:17890/oauth/twitch/callback`; plus **Vite** `http://localhost:1420/oauth/...` if you use `pnpm dev`, and the **packaged app** `https` origin + path if flows hit the webview (see [manual/03-integrations.md](manual/03-integrations.md#oauth-redirects-and-ports)); OAuth completes; optional: IRC chat + post/receive.
 - [ ] **Discord** — webhook URL; one post with “post only when live” on and off if you use that gate.
 - [ ] **OBS** — WebSocket connect; captions only send when “Enable” is on under native captions.
-- [ ] **VRChat OSC** — desktop build only; verify chatbox / OSC target with VRChat running.
+- [ ] **VRChat, SteamVR and a second PC** — optional; see [Optional checks](#optional-checks-verify-when-convenient).
 - [ ] **Kick** — optional: OAuth only; register `http://localhost:17890/oauth/kick/callback` for desktop and any packaged/dev webview URLs per [manual/03-integrations.md](manual/03-integrations.md#oauth-redirects-and-ports) (chat/emotes not wired yet).
 
 ### Remote client (`/client`)
@@ -128,6 +132,18 @@ Also on the same build:
 
 Optional helper: `scripts/packaged-smoke-stt.ps1` prints this checklist and launches the release exe if present.
 
+### Clean machine: no GPU, no packs
+
+The release must start and work on a PC with no GPU and no runtime pack installed (a fresh profile; a virtual machine, or Windows Sandbox where that feature is already enabled, or a spare PC). On the installed NSIS build:
+
+1. The app starts: no error overlay on `#root`, the status shows the embedded server's port, and **Models & Runtimes** lists every entry as not installed.
+2. **Settings → GPU & diagnostics** reports the processor (or DirectML when the machine has a GPU adapter) with the reason, and **Test GPU acceleration** completes.
+3. **On this PC (automatic)** with English: **Start** asks before downloading (the dialog shows the size), the download shows progress and resumes after **Stop**, and captions arrive. **Kokoro / Piper (local)** downloads and previews.
+4. `Sigil.exe --headless sysinfo` and `Sigil.exe --headless fetch --list` print their reports and exit 0.
+5. `pwsh scripts/release/verify-bundle.ps1` finds no load-time import outside `scripts/release/expected-imports.txt`.
+
+The scripted version is [`scripts/release/packaged-smoke-all.ps1`](../scripts/release/README.md#packaged-smoke-steps-4-and-5) (Windows PowerShell 5.1 or PowerShell 7, one file for the dev PC, Windows Sandbox, a VM and a CI runner): `-Mode Extract` (the default) unpacks the NSIS setup and runs the app against a scratch profile, so nothing is installed and your own profile is untouched; `-Mode Sandbox` runs the installer in Windows Sandbox with the virtual GPU off (the Sandbox viewer window cannot be hidden: run it when you are away from the PC); `-Mode Installed -AllowInstall -ExpectNoGpu` is the step list for a VM ([manual VM steps](../scripts/release/README.md#clean-machine-smoke-without-windows-sandbox)). The hosted Windows runner of `.github/workflows/release.yml` has no GPU and covers the no-GPU leg. Every GUI launch is minimized (`SIGIL_START_MINIMIZED=1`) and the `gui-focus` check proves the app never took the foreground; `gui-exit` closes the window by title and checks that the process ends.
+
 ### GPU execution provider smoke
 
 On the same release build ([ADR 0003](adr/0003-gpu-ep-delivery.md)):
@@ -139,6 +155,48 @@ On the same release build ([ADR 0003](adr/0003-gpu-ep-delivery.md)):
 5. **Test GPU acceleration** in the diagnostics panel completes and saves `app_data\diagnostics\ep-probe-deep.json`.
 
 **Future automation (optional):** A `workflow_dispatch` Windows job or a local script that launches the built `exe` with a timeout is possible; tracked as backlog in [Major upgrades backlog](#major-upgrades-backlog) if product priority allows.
+
+---
+
+## Optional checks (verify when convenient)
+
+Nothing in this section blocks a release. These checks need something the release does not depend on: VRChat or SteamVR running on this machine, a headset, a second PC or a phone for the LAN token matrix, or a friend's RTX 3060 / 4060 or CPU-only PC for live recordings. Sigil's main audience is VRChat streamers who run captions into OBS, and the automated tests, the release smoke above and the benchmark's game-load simulator (which stands for a running game; no measurement was made inside VR) are what the release rests on. Run these when you next have the setup in front of you and file anything that fails as an issue.
+
+The checks moved here from the exit matrices below, which now point back to them. The labels (P6-12, P3-3, ...) are the old row numbers of those matrices.
+
+### VRChat and VR
+
+- **VRChat OSC (from the Manual Tauri checklist):** desktop build only; verify the chatbox / OSC target with VRChat running.
+- **P6-12.** **Other players:** start VRChat, Other players → default source → Start: only other players are captioned (not your TTS or music). Close and restart VRChat (fallback on: the default output meanwhile, VRChat again within 5 s; fallback off: the panel waits). On a Windows 10 build below 20348 the default output is used. Reverse translation with a local engine; `others.*` reaches `/client` and OBS pages but is refused from Link apps. `cargo test --manifest-path src-tauri/Cargo.toml real_process_capture -- --ignored` passes on Windows 11.
+- **P6-13.** **Caption window** in the real app: transparency, click-through, never stealing focus from a game, the unlocked frame moves and resizes, it closes with the main window and restores its position, **Reset position**, and XSOverlay / OVR Toolkit can pin "Sigil captions".
+- **P6-14.** **SteamVR overlay** with SteamVR: it connects and shows captions; head / hand / world attach and **Recenter**; quitting and restarting SteamVR; CJK and RTL legibility in the headset; texture updates at most 10 Hz. Without SteamVR running no `vrserver` / `vrmonitor` / `vrstartup` process appears (checked on the dev PC, which has no SteamVR). `Sigil.exe --headless fetch runtime/openvr` verifies the pinned DLL.
+- **P6-15.** **VRChat OSC:** enable OSC in VRChat and **Mute captions when I mute in VRChat**: the status shows the port, "VRChat found on this PC" and "Receiving from VRChat"; muting in VRChat stops captions at once, unmuting resumes them; a mute you set in Sigil survives a VRChat mute / unmute; OSCQuery off with another app on 9001 shows "port in use" while sending still works; pages arrive about 1.5 s apart with nothing cut; a mid-thought pause arrives as one chatbox message with Smart Turn and **Wait until I finish speaking**; SenseVoice tags drive `SigilEmotion` / `SigilEvent` on an avatar.
+
+### LAN token matrix (a phone or a second PC)
+
+P6-1 to P6-3 run on this PC alone; the rest need a phone or a second PC. Stage 2 of the LAN security work (the persistent LAN token). The automated part (59 Rust `web::` tests and the vitest token vectors) is in the [P6 exit matrix](#p6-exit-matrix-streamer-features-and-extended-engines); only the two-device behaviour is manual.
+
+- **P6-1.** **LAN, fresh profile:** Settings → LAN access shows a masked token; after one restart the log shows `LAN access: lan (token set)`.
+- **P6-2.** **OBS on this PC** with `http://localhost:3030/client` and `/obs-captions.html` connects without a token.
+- **P6-3.** **Chrome / Edge mic page:** `mic.html` on 127.0.0.1 works without a token.
+- **P6-4.** **Phone on the LAN** with **Copy LAN canvas link** connects; the same URL without `?token=` shows the invalid-key message, and the host shows "Refused a device on your network".
+- **P6-5.** **Second PC with OBS** and **Copy LAN captions link** (or the OBS tab's **Copy LAN link**) shows captions; without the token the page says the LAN token is missing or out of date.
+- **P6-6.** **Link apps between two PCs:** **Copy my address** on A, paste into B's address field (fills address and remote token), connect both ways, text flows with no repeats.
+- **P6-7.** **New token** on A: B's link stops ("refused the link") and the phone mirror disconnects; copying again restores both.
+- **P6-8.** **Legacy on:** the phone URL without a token connects; legacy off disconnects it.
+- **P6-9.** **This PC only:** the log shows a rebind to 127.0.0.1:3030; other devices are disconnected and cannot connect; OBS here keeps working; back to LAN rebinds 0.0.0.0. A profile set to This PC only starts without a firewall prompt (the port pre-check binds 127.0.0.1).
+- **P6-10.** **Foreign origin:** devtools on https://example.com, `new WebSocket('ws://localhost:3030/pubsub?id=x&token=<token>')` fails with 403.
+- **P6-11.** **Origin-less tool from another PC** (`websocat 'ws://<ip>:3030/pubsub?id=x&token=<token>'`) connects; without the token it is refused.
+
+### Live sessions and friends' PCs
+
+The voice-engine numbers in [VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md) come from the dev rig with the benchmark's load simulator. A live session confirms them on real hardware.
+
+- **P3-3.** **30-minute soak** under VRChat + OBS with 0 underruns (T7).
+- **P3-4 / P5-7 / P3B-1.** **H1 and H3 live records:** a friend's RTX 3060 / 4060 PC under VRChat + OBS (T1, T2, T3, T7 authoritative; also `sigil_low` / `sigil_lean` and DDSP-SVC, with and without NVIDIA's *Prefer maximum performance* for Sigil.exe, which removes the idle-clock paced penalty), and a 6-core CPU with VRChat (T4). The T1 / T2 / T3 / T4 rows are simulator numbers until then.
+- **P3B-2.** **Live device for the new pacing controls:** `device_block=model_divisor` on WASAPI (44.1 and 48 kHz devices, shared and exclusive), the adaptive cushion under a real game; P7-B decides their defaults.
+- **P3-5 / P3B-5.** **True end-to-end latency** with the e2e-loopback meter over a virtual cable (T1; the dev PC's cable endpoints are disabled).
+
 
 ---
 
@@ -172,6 +230,8 @@ Automated gates for the P0 pass (all green at P0 integration): `pnpm typecheck`,
 7. Link apps between two PCs carry text both ways with no repeats.
 8. On `https://example.com`, run `new WebSocket('ws://localhost:3030/pubsub?id=x')` in devtools: it fails (403), Sigil logs the refusal and a “Blocked a connection” toast appears.
 9. With **Only allow Sigil pages to connect** off (or `SIGIL_LAN_ORIGIN_CHECK=0`), step 8 connects.
+
+Steps 3 and 7 need a phone or a second PC: run them when convenient (the token version of this matrix is in [Optional checks](#optional-checks-verify-when-convenient)).
 
 ## P1 exit matrix (platform foundations)
 
@@ -208,14 +268,14 @@ Final P2 gate after the review fixes (2026-09-29): `pnpm typecheck` clean, `pnpm
 | Exit criterion | Evidence | Status |
 |---|---|---|
 | Gates green; the app starts with no runtime packs installed | Gates above. The debug `sigil.exe` has 38 load-time imports, all in `scripts/release/expected-imports.txt` (no CUDA, ORT, ggml or sherpa DLL); on an empty `SIGIL_APP_DATA_DIR`, `--headless fetch --list` lists every P2 entry as not installed (exit 0) and `--headless engine-probe sherpa stt/sense-voice-small-int8` ends with "the sherpa-onnx runtime pack is not installed" (exit 1, no crash). Every speech engine answers `NotInstalled` naming its catalog id; the sherpa preload runs only when the pack is installed | Met (automated); a `pnpm tauri dev` start on a fresh profile is manual row 1 |
-| CPU-only: en gives Nemotron partials, zh SenseVoice finals, ja Qwen3-ASR-0.6B finals; the router never sends ja / zh / ko to Cohere | Shared routing fixture (56 cases) in Rust (`speech::router`) and TS (`router.test.ts`), plus the exhaustive rule test over every language × tier × PC profile. Through the real pipeline with real Silero VAD (`through_the_pipeline::real_sherpa_engines_decode_through_the_pipeline`): Nemotron en 9 partials then the final 160 ms after VAD end; SenseVoice zh final 233 ms with `lang:zh` / `emotion:neutral` tags; Qwen3-ASR-0.6B ja final 1216 ms; Parakeet Ultra de 287 ms | Met |
+| CPU-only: en gives Nemotron partials, zh SenseVoice finals, ja Qwen3-ASR-0.6B finals (P2; since P7 ja is a SenseVoice final and ru a Parakeet Ultra final, see the [P7 exit matrix](#p7-exit-matrix-measure-set-defaults-document-release)); the router never sends ja / zh / ko to Cohere | Shared routing fixture (56 cases) in Rust (`speech::router`) and TS (`router.test.ts`), plus the exhaustive rule test over every language × tier × PC profile. Through the real pipeline with real Silero VAD (`through_the_pipeline::real_sherpa_engines_decode_through_the_pipeline`): Nemotron en 9 partials then the final 160 ms after VAD end; SenseVoice zh final 233 ms with `lang:zh` / `emotion:neutral` tags; Qwen3-ASR-0.6B ja final 1216 ms; Parakeet Ultra de 287 ms | Met |
 | On the dev GPU, two-pass finals replace partials under the same segmentId ≤ 800 ms after VAD end for an 8 s utterance | `real_two_pass_ja_with_vram_logged` (RTX 4090, Qwen3-ASR 1.7B Q8_0 through the governor and the real two-pass queue): 199 ms and 194 ms after VAD end, same segment, revision + 1; process VRAM 384 → 3476 MiB. The TS `SegmentPublisher` publishes one final per segment (`localDriver.test.ts`) | Met |
 | Kokoro starts playing after the first sentence (≤ 400 ms on CPU); Stop cancels; every PCM backend honours the device and can route into the VC | Kokoro v1.0 on 4 threads: median RTF 0.294 (Sigil's ORT with the CPU arena, now the default; 0.315 inside sherpa-onnx). The sentence pipeline starts sentence 1 before synthesizing sentence 2 (`pipeline.test.ts`); first audio of a long first sentence 656 ms (its opening clause is about 2 s of audio), so ≤ 400 ms holds only for short opening clauses. Cancel stops a long utterance in about 0.6 s; skip / stop cut audio already in the sink ring (`tts_sink` tests). Device field honoured with tolerant names and route `device` / `voiceChanger` / `both` (`tts_sink` and `aux_feed` tests; P2-G and P2-I mocked-IPC smokes) | Met except the 400 ms target for long opening clauses (P7 decides); the real-device checks are manual rows 5–7 |
 | New installs default to `local`; native-backend users get a one-time prompt | `stt/migrate.ts` + `tts/defaults.ts` planners and `Service_STT` / `Service_TTS` tests (fresh install → `local` / `localNeural` silently; an existing native profile is asked once, no → Whisper; offers never repeat; web build untouched). Production-bundle smoke with an IPC mock: a fresh profile boots on `local` + `localNeural` with no dialog; an existing profile on Web Speech gets the STT offer, then the TTS offer, and the language carries over (`ja-JP` → `ja`) | Met |
 
 **Manual checks still open** (need the real app, devices, servers or keys):
 
-1. **Fresh profile in `pnpm tauri dev`:** onboarding offers **On this PC (automatic)** first; press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a Qwen3-ASR 0.6B final); an existing profile on Web Speech sees the STT offer, and the Kokoro offer too once it uses TTS (auto-start on, a picked voice, or started once).
+1. **Fresh profile in `pnpm tauri dev`:** onboarding offers **On this PC (automatic)** first; press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a SenseVoice final; Korean is Qwen3-ASR 0.6B, Russian Parakeet Ultra); an existing profile on Web Speech sees the STT offer, and the Kokoro offer too once it uses TTS (auto-start on, a picked voice, or started once).
 2. **Whisper with a real microphone:** the download row fills and Models & Runtimes shows `whisper/<id>` installed; captions; the STT hard mute drops the open sentence; replugging a USB microphone continues the recording.
 3. **Vosk and Groq:** Vosk English captions and mute; Groq with a real key (captions, rate-limit status, bad-key message, nothing sent while muted); an OpenAI-compatible STT server on the LAN; the Moonshine server backend with the server off shows its message.
 4. **Local voices:** Kokoro en / ja / zh, Piper ru and Kitten from the panel (download, Preview, the UI never freezes).
@@ -243,9 +303,9 @@ Gates at P3 integration (2026-09-30, dev rig H2: RTX 4090, Ryzen 7 7800X3D): `pn
 
 1. **In-app voice changer** (`pnpm tauri dev`, fresh profile): the Get started card (default voice download, import and selection; Import for ContentVec from a local folder), drag-and-drop import of a `.pth` with its `.index`, a `.zip`, and a refused file (check the translated error), rename / duplicate / merge / delete, a hot switch between two imported voices while running (no gap), voice hotkeys while a game has focus, Quality's lookahead note on DirectML.
 2. **Devices:** USB microphone unplug and replug on the same and on another port, output device unplug and replug while running (`device_lost` / `device_restored`).
-3. **30-minute soak** under VRChat + OBS with 0 underruns (T7).
-4. **H1 live-record** from a friend's RTX 3060 / 4060 PC (T1, T2, T7 authoritative), and a CPU-only run (T4).
-5. **True end-to-end latency** with the e2e-loopback meter over a virtual cable (T1).
+3. **30-minute soak** under VRChat + OBS: moved to [Optional checks](#optional-checks-verify-when-convenient) (P3-3).
+4. **H1 live-record** from a friend's PC: moved to [Optional checks](#optional-checks-verify-when-convenient) (P3-4).
+5. **True end-to-end latency** over a virtual cable: moved to [Optional checks](#optional-checks-verify-when-convenient) (P3-5).
 6. **Corpora:** the 20-clip consented speech corpus (T5) and the user's 40-voice community corpus (`SIGIL_TEST_VC_CORPUS_DIR=<folder> cargo test --manifest-path src-tauri/Cargo.toml community_corpus_report -- --ignored --nocapture`, T8).
 7. **T6 head to head:** RVC WebUI realtime and Applio realtime through `scripts/vc-bench`, w-okada through `play_record.py`, scored with a `compare` run and the blind A/B kit (`tools/listening-test`).
 8. **TensorRT-RTX (T9):** put a TensorRT-RTX plugin execution provider plus the runtime DLLs its imports name in a folder, set `SIGIL_TRT_DIR` to it, run the staged test executable twice with `--ignored gpu_lever_bench` (`SIGIL_BENCH_CONFIGS=all+accel`): the second run's cold load on the TRT row must be ≤ 3000 ms and the log must say "engine loaded from the cache". The provider pyke ships with ort rc.13 imports TensorRT 10 names, so it needs a matching runtime (or a provider built against TensorRT-RTX).
@@ -298,7 +358,7 @@ P5 added the voice families (DDSP-SVC, Sigil-ZS, MeanVC2, so-vits-svc, sidecar p
 4. **so-vits-svc:** export a 4.1 voice with `onnx_export.py`, add it with **New voice… → so-vits-svc**, A/B it against so-vits-svc's own inference on the same clip, then drop its `experimental` flag (`families/sovits.rs` and its test).
 5. **MeanVC2:** download `wavlm_large_finetune.pth` by hand (Google Drive), make `speaker.npy` with upstream `preprocess/extract_spk_emb.py` or export the encoder as `vc/meanvc2-speaker`, then the listening and speaker A/B against RVC Streamer (decides whether it can be the CPU default).
 6. **Sidecars:** X-VC and StreamVoiceAnon with their checkpoints in a Python environment (several GB each), a sidecar voice in the app, and a release installer that contains `resources/neural-sidecar` (`pnpm tauri:release`, then check the install folder).
-7. **H1 live-record** of `sigil_low` / `sigil_lean` and DDSP-SVC on an RTX 3060 / 4060 under VRChat + OBS (with and without NVIDIA's "Prefer maximum performance").
+7. **H1 live-record** of the families: moved to [Optional checks](#optional-checks-verify-when-convenient) (P5-7).
 
 ## P6 exit matrix (streamer features and extended engines)
 
@@ -307,28 +367,13 @@ P6 added other players' captions, the caption window and SteamVR overlay, VRChat
 | Exit criterion | Evidence | Status |
 |---|---|---|
 | Gates green, every feature OFF by default | Above; `src/core/__tests__/p6Scaffold.test.ts` (every P6 setting defaults off, the new backend values are new enum values, `others.*` / `readings.*` stay outside `text.*`); the Kokoro Japanese reader and the TTS turn gate change nothing without their dictionary / setting | Met |
-| The LAN token matrix passes: host, LAN `/client`, OBS, mic.html, Link apps; foreign-origin and unauthenticated LAN clients are rejected | Automated: 59 Rust `web::` tests (`web/auth.rs` combined decisions, close frames, revocation on token / mode / legacy / Origin changes, live rebind, exemption only for same-PC peers without forwarding headers), `lanAccess.test.ts` (token vectors shared with Rust), `hostWebServer.test.ts`, the Playwright `/client` pinning tests. The manual two-PC matrix (rows 1–11 below) has not been run yet | Automated part met; manual matrix open |
-| Loopback captions appear only on `others.*` | `others/__tests__/topics.test.ts` and `driver.test.ts` (publishes on `others.stt` only, 0 events on `text`, history empty), `inbound.test.ts` (`others.*` never accepted from WebSocket peers), the P6-A smoke run of a production build with an IPC mock; `real_process_capture` (ignored) attached to a process on build 26200 | Met (a real VRChat session is manual row 12) |
+| The LAN token matrix passes: host, LAN `/client`, OBS, mic.html, Link apps; foreign-origin and unauthenticated LAN clients are rejected | Automated: 59 Rust `web::` tests (`web/auth.rs` combined decisions, close frames, revocation on token / mode / legacy / Origin changes, live rebind, exemption only for same-PC peers without forwarding headers), `lanAccess.test.ts` (token vectors shared with Rust), `hostWebServer.test.ts`, the Playwright `/client` pinning tests. The manual two-PC matrix (P6-1 to P6-11 in [Optional checks](#optional-checks-verify-when-convenient)) has not been run yet | Automated part met; manual matrix open |
+| Loopback captions appear only on `others.*` | `others/__tests__/topics.test.ts` and `driver.test.ts` (publishes on `others.stt` only, 0 events on `text`, history empty), `inbound.test.ts` (`others.*` never accepted from WebSocket peers), the P6-A smoke run of a production build with an IPC mock; `real_process_capture` (ignored) attached to a process on build 26200 | Met (a real VRChat session is optional check P6-12) |
 | Qwen3-TTS clones from a library clip and streams into the sink | The whole Sigil path against a fake server through the real `process_host` (start, warm-up with TTFA / RTF log, model-type refusal, clone registry, speaker-data cache, crash and restart, VRAM claim); the CPU pack builds and reports its pinned version. The real 0.6B / 1.7B weights were not downloaded (over the phase's 50 MB limit) | Code path met; real model manual row 16 |
 | An Edge or Gemini outage falls back to Kokoro within 1 s | Rust mock-server tests (`edge_tts::tests`, `gemini_tts::tests`: 429 / 5xx / refused connection / DNS failure classified in under 1 s; a blackholed connect after about 1.05 s on both (the connect bound is a third of **Wait for the service**, at least 1 s; Edge races the service's IPv6 and IPv4 addresses 250 ms apart, so a dead IPv6 path costs 250 ms, not the bound)); vitest `cloudTts.test.ts` (the failed sentence and the rest of the outage on Kokoro within 1 s, through the full sentence pipeline) | Met for error answers and refused connections (at once) and for an unreachable service (switch after about 1.05 s; Kokoro's first audio about 0.5-0.85 s later). A silent service waits the 3 s **Wait for the service** setting by design (the plan's 3 s stall) |
 
-**Manual checks still open** (need the real app, a second PC or phone, VRChat / SteamVR, a key, a GPU run or a large download):
+**Manual checks still open** (need the real app, a key, a GPU run or a large download). Rows 1-15, which need a second PC or phone, VRChat or SteamVR, moved to [Optional checks](#optional-checks-verify-when-convenient) and keep their numbers there as P6-1 to P6-15. Rows 16 and 17 cover the opt-in heavy GPU engines, which P7 deliberately did not benchmark; run them before shipping those engines as tested.
 
-1. **LAN, fresh profile:** Settings → LAN access shows a masked token; after one restart the log shows `LAN access: lan (token set)`.
-2. **OBS on this PC** with `http://localhost:3030/client` and `/obs-captions.html` connects without a token.
-3. **Chrome / Edge mic page:** `mic.html` on 127.0.0.1 works without a token.
-4. **Phone on the LAN** with **Copy LAN canvas link** connects; the same URL without `?token=` shows the invalid-key message, and the host shows "Refused a device on your network".
-5. **Second PC with OBS** and **Copy LAN captions link** (or the OBS tab's **Copy LAN link**) shows captions; without the token the page says the LAN token is missing or out of date.
-6. **Link apps between two PCs:** **Copy my address** on A, paste into B's address field (fills address and remote token), connect both ways, text flows with no repeats.
-7. **New token** on A: B's link stops ("refused the link") and the phone mirror disconnects; copying again restores both.
-8. **Legacy on:** the phone URL without a token connects; legacy off disconnects it.
-9. **This PC only:** the log shows a rebind to 127.0.0.1:3030; other devices are disconnected and cannot connect; OBS here keeps working; back to LAN rebinds 0.0.0.0. A profile set to This PC only starts without a firewall prompt (the port pre-check binds 127.0.0.1).
-10. **Foreign origin:** devtools on https://example.com, `new WebSocket('ws://localhost:3030/pubsub?id=x&token=<token>')` fails with 403.
-11. **Origin-less tool from another PC** (`websocat 'ws://<ip>:3030/pubsub?id=x&token=<token>'`) connects; without the token it is refused.
-12. **Other players:** start VRChat, Other players → default source → Start: only other players are captioned (not your TTS or music). Close and restart VRChat (fallback on: the default output meanwhile, VRChat again within 5 s; fallback off: the panel waits). On a Windows 10 build below 20348 the default output is used. Reverse translation with a local engine; `others.*` reaches `/client` and OBS pages but is refused from Link apps. `cargo test --manifest-path src-tauri/Cargo.toml real_process_capture -- --ignored` passes on Windows 11.
-13. **Caption window** in the real app: transparency, click-through, never stealing focus from a game, the unlocked frame moves and resizes, it closes with the main window and restores its position, **Reset position**, and XSOverlay / OVR Toolkit can pin "Sigil captions".
-14. **SteamVR overlay** with SteamVR: it connects and shows captions; head / hand / world attach and **Recenter**; quitting and restarting SteamVR; CJK and RTL legibility in the headset; texture updates at most 10 Hz. Without SteamVR running no `vrserver` / `vrmonitor` / `vrstartup` process appears (checked on the dev PC, which has no SteamVR). `Sigil.exe --headless fetch runtime/openvr` verifies the pinned DLL.
-15. **VRChat OSC:** enable OSC in VRChat and **Mute captions when I mute in VRChat**: the status shows the port, "VRChat found on this PC" and "Receiving from VRChat"; muting in VRChat stops captions at once, unmuting resumes them; a mute you set in Sigil survives a VRChat mute / unmute; OSCQuery off with another app on 9001 shows "port in use" while sending still works; pages arrive about 1.5 s apart with nothing cut; a mid-thought pause arrives as one chatbox message with Smart Turn and **Wait until I finish speaking**; SenseVoice tags drive `SigilEmotion` / `SigilEvent` on an avatar.
 16. **Qwen3-TTS** (hold the GPU timing lock while P3B measures): install `tts/qwen3-tts-0.6b-base` and `tts/qwen3-tts-tokenizer`, import the CUDA 13 (or Vulkan) server pack, clone a library clip, and record the warm-up TTFA / RTF from `sigil.log` and the per-sentence `[Perf]` lines; after **Unload** and **Test** the speaker data comes from the cache; the size swaps to 0.6B when the voice changer starts on an 8 GB card. Or `cargo test real_model_clone_end_to_end -- --ignored --nocapture` with `SIGIL_QWENTTS_EXE`, `SIGIL_TEST_MODELS_DIR`, `SIGIL_GPU_LOCK`. Build the five-architecture CUDA 13 pack and a Vulkan pack (needs the Vulkan SDK).
 17. **Experimental GPU voices:** per engine install, **Test**, a cloned voice (Breeze, OmniVoice, S2) and **Unload**; `real_ggml_engine_speaks` per engine with the GPU lock (TTFA, RTF, VRAM); run `s2/build.ps1 -PinFirstFetch`, `fetch-magpie-tokenizer.ps1` and `convert-magpie-v2607.ps1`.
 18. **Style-Bert-VITS2:** `Sigil.exe --headless fetch text/jpreprocess-naist-jdic tts/sbv2-bert-ja`, drop an `.aivmx` on the panel, preview and speak (or `real_model_sbv2_speaks` with `SIGIL_TEST_MODELS_DIR`). **GPT-SoVITS:** `python api_v2.py -a 127.0.0.1 -p 9880`, a library voice or **Browse…** clip, **Check**, **Test**.
@@ -344,6 +389,9 @@ P6 added other players' captions, the caption window and SteamVR overlay, VRChat
 
 P3B optimized the Sigil Voice Engine after P3 missed several targets (per-call compute, Low-latency delay, VRAM, the CPU generator) and made the benchmark trustworthy enough to say so ([plan → P3B outcomes](SPEECH_STACK_IMPLEMENTATION_PLAN.md#p3b-outcomes-binding-amendments-for-p7), [ADR 0009](adr/0009-vc-scorer-v2.md), [ADR 0010](adr/0010-sve-optimization-p3b.md)). Gates at P3B integration (2026-10-09, dev rig H2, no other job running): `pnpm typecheck` clean; `pnpm i18n:check` OK (23 keys merged from P3B-S0 and P3B-H, `pnpm i18n:sync` run); `pnpm test:unit` 135 files / 1977 tests; `pnpm build` OK; `cargo clippy --all-targets` **0 warnings**; full `cargo test` **2556 passed / 0 failed / 148 ignored** (the first full run had one failure, `process_host::tests::crashed_helper_is_restarted_then_given_up`, a pid-liveness assertion that passes alone 3 of 3 and in the second full run; it is not a P3B file); the release build of the integrated tree has 0 warnings. Final gate after the review fixes (same day, lane `p3b-dev`): `pnpm typecheck` clean; `pnpm i18n:check` OK (`voice_changer.device_block_not_applied` merged); `pnpm test:unit` 135 files / 1982 tests; `pnpm build` OK; `cargo clippy --all-targets` **0 warnings**; full `cargo test` **2621 passed / 0 failed / 151 ignored** on two consecutive runs. The first full run of that gate failed `bench::compare::tests::a_corpus_run_scores_points_and_refuses_unfair_ones` once: its Sigil row is timed on the wall clock against a 10.7 ms block, a stall of the test process (4.7 s p99 in the reproduction under 24 CPU spinners) marks the row real-time-infeasible and the listening pairs are skipped, as designed; it passed alone, in the whole `bench::` module twice and in two more full runs, and its assertion now prints the trials and the skip reasons. By the user's scope change (2026-10-09) there was no regression scorecard; the functional smoke and three integrated confirmations are in [VC_BENCHMARKS.md → Integrated smoke](benchmarks/VC_BENCHMARKS.md#integrated-smoke-p3b-i0).
 
+The single final scorecard of these shipped defaults (T1-T10, 67 target rows) is in [VC_BENCHMARKS.md → P7-B](benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults); the [P7 exit matrix](#p7-exit-matrix-measure-set-defaults-document-release) summarizes it.
+
+
 | Exit criterion | Evidence | Status |
 |---|---|---|
 | Gates green | Above | Met |
@@ -356,13 +404,28 @@ P3B optimized the Sigil Voice Engine after P3 missed several targets (per-call c
 
 **Manual checks still open** (need the real app, another PC, a headset, a download or a listening session):
 
-1. **H1 and H3 live records** (RTX 3060 / 4060 under VRChat + OBS; a 6-core CPU with VRChat): T1 / T2 / T3 / T4 are simulator numbers until then. NVIDIA's *Prefer maximum performance* for Sigil.exe removes the idle-clock paced penalty.
-2. **Live device for the new pacing controls:** `device_block=model_divisor` on WASAPI (44.1 and 48 kHz devices, shared and exclusive), the adaptive cushion under a real game; P7-B decides their defaults.
+1. **H1 and H3 live records:** moved to [Optional checks](#optional-checks-verify-when-convenient) (P3B-1).
+2. **Live device for the new pacing controls:** moved to [Optional checks](#optional-checks-verify-when-convenient) (P3B-2).
 3. **Competitors and T6:** install RVC WebUI / Applio / w-okada / vc-rs / rvc-realtime on a PC you are happy to put them on, capture their renditions (`scripts/vc-bench/README.md`), fetch the public corpus (`scripts/bench/fetch-public-corpus.py`, about 646 MB), run a `compare` with a corpus manifest, then the blind A/B (`tools/listening-test`, 5+ listeners).
 4. **Listening checks:** the 20-trial A/B page for the ablation dry run (time anchoring did not move any automatic metric), and DirectML `ja-long`'s seams (one narrow-window click).
-5. **The e2e loopback** through a virtual cable (the dev PC's cable endpoints are disabled) for the true end-to-end T1 row.
+5. **The e2e loopback** through a virtual cable: moved to [Optional checks](#optional-checks-verify-when-convenient) (P3B-5).
 6. **The T8 community corpus** (40 voices) and a trained DDSP-SVC voice (P5 items, unchanged).
 7. **A packaged build:** `pnpm tauri:release`, `pwsh scripts/release/verify-bundle.ps1`, start the installed app and run a voice on CUDA and DirectML (the engine's CUDA graphs and the hybrid wait need the provider next to the exe).
+
+## P7 exit matrix (measure, set defaults, document, release)
+
+P7 measured the speech stack and the voice engine outside VR (the benchmark's game-load simulator stands for a running game; nothing was tested inside VR or SteamVR), set the shipped defaults from the numbers, finished the documentation and prepared the release ([plan → P7 outcomes](SPEECH_STACK_IMPLEMENTATION_PLAN.md#p7-outcomes-binding-amendments-and-what-is-left)). By the user's scope (2026-10-09) every candidate got a cheap screening pass and only the top engines per category a full test; the heavy GPU models (Voxtral, Cohere Transcribe, Qwen3-ASR 1.7B, R2T2, Hy-MT2 7B, MiLMMT 4B, TranslateGemma, Qwen3-TTS 1.7B, Magpie, Breeze, OmniVoice, Fish S2 Pro) stay opt-in and were neither benchmarked nor tuned. Publishing stays with the user: nothing was uploaded.
+
+| Exit criterion | Evidence | Status |
+|---|---|---|
+| Gates green | `pnpm typecheck`, `pnpm i18n:check`, `pnpm test:unit`, `pnpm build`, `cargo clippy --all-targets`, `cargo test`, Playwright, `node docs/check-docs.mjs --no-todo` and `node scripts/release/check-catalog-pins.mjs`, all on the final tree. Final gate run (2026-10-10, after the review fixes; Rust on a BelowNormal cargo, `CARGO_BUILD_JOBS=6`): `pnpm typecheck` clean; `pnpm i18n:check` OK; `pnpm test:unit` 138 files, 2105 tests passed; `pnpm build` OK (it refreshed `public/docs` and `public/manual`); `node docs/check-docs.mjs` 35 files, 0 problems, 0 placeholders; `node scripts/release/check-catalog-pins.mjs` OK; `cargo clippy --all-targets` 0 warnings; `cargo test` passed on the rerun: 2646 passed, 0 failed, 151 ignored (they need real models, devices or a GPU), with `--test-threads=6`. The gate's own two full runs had each failed one test, `services::bench::compare::tests::a_corpus_run_scores_points_and_refuses_unfair_ones`. That test is a wall-clock real-time check on an in-process stub row: it read a per-block p99 of 70 ms against a 10.7 ms block while an orphaned filesystem search held a full core, on a PC that was in use, in a debug build at below-normal priority. It passes alone. `compare.rs` is unchanged since P3B, and the test was not weakened. Playwright was not run: no route and not `src/index.tsx` changed in P7 | Met (one Rust test is sensitive to CPU contention; it passed in the rerun) |
+| The benchmark pages hold dev-rig numbers, and catalog and preset defaults equal the measured winners | [SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md) (each result cites the corpus `content_sha256` `459c2ff05c92…`, the normalizer stamp `sigil-norm/1` and the rig), [VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md), `stt-routing.json` and its two test suites. Defaults that changed: the CPU route (**ru** Parakeet Ultra instead of Qwen3-ASR 0.6B, **ja** SenseVoice instead of Qwen3-ASR 0.6B; en, the Parakeet languages, ko and zh confirmed), interim translations off while the local AI model runs on the processor (`"auto"` switch; stored booleans win), and the CPU Streamer's thread count (4-6 threads instead of 1). No persisted enum value was renamed or removed; a routing change is a table, so no profile was rewritten. One pipeline check through the release exe of the final tree (ko / ja / ru, two clips each): Korean runs Nemotron partials with a Qwen3-ASR 0.6B final, Japanese a SenseVoice final, Russian a Parakeet Ultra final. CPU rows ran on a 6-core slice and, for the pipeline, a 4-core one; there is no friend export yet. Not measured and still opt-in: every heavy GPU engine, Bergamot (pack unbuilt), Edge TTS, quantized Whisper | Met (heavy GPU tier unbenchmarked by scope) |
+| Targets T1-T10 are stated as met or missed, with remediation for the misses | [VC_BENCHMARKS.md → P7-B](benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults): 67 target rows, 37 met, 30 missed, none unmeasured, no disturbed step; the revised targets are in the [P3B matrix](#p3b-exit-matrix-voice-engine-optimization). Misses and their reasons: T1 (engine-added p99 115-143 ms against 85), T2a/T2b at idle GPU clocks and on DirectML under load, T3 VRAM with RMVPE, T4 Streamer RTF (the shipped one-thread preset measured 2.7 and was not real time; the P7 thread policy converts at RTF p99 0.74-0.89 on the idle dev rig, still above the 0.6 target, and is not called real time yet: at the default 35 / 70 ms output queue the benchmark plays only about 50-63 % of the converted audio, and under the H3 game stand-in the 6-thread policy reads RTF p99 1.13-1.31 and latency p99 345 ms; see [VC_BENCHMARKS.md → CPU rows lose audio](benchmarks/VC_BENCHMARKS.md#cpu-rows-lose-audio-at-the-shipped-output-queue)), T5 v2 identity and pitch rows. T6 (competitors) stays pending: no competitor is installed, and the exact steps are in [`scripts/vc-bench/README.md`](../scripts/vc-bench/README.md). H1/H3 live records, the end-to-end loopback, hot-switch timing and TensorRT-RTX were not measured (reasons in the scorecard) | Stated; misses are the P3B ones |
+| Every release catalog entry is hash-pinned | `build.rs` refuses a published entry without `sha256` or `git_oid` in release builds, and `node scripts/release/check-catalog-pins.mjs` (offline, in CI) adds immutable sources and the release set: 303 entries (266 published), 18 default entries and 186 light options. Online re-check of the defaults: 27 files verified against the hosts' metadata, the 19 install records of the P7 store match the catalog. Sigil-built packs stay `unpublished` and install by Import; the Vosk archives (md5-only host) and the Firefox Translations models (attested by Mozilla's registry) are the documented exceptions | Met |
+| The packaged smoke passes with no GPU and no packs | `pnpm tauri:release` (16 min) and `pwsh scripts/release/verify-bundle.ps1 -Strict` pass (1 warning: the CUDA runtime pack is not installed, as designed; with the pack from the dev store the probe picks CUDA and passes with 0 warnings). `pwsh scripts/release/packaged-smoke-all.ps1 -Mode Extract -PackStore <P7 store> -Online`: 17 of 17 checks pass on the 0.4.0-1 build (layout, sysinfo, catalog 303 entries, ep-probe, real Nemotron French and SenseVoice English decodes, `base/test-small`, the sherpa-onnx pack, server, page, models, idle, focus: 0 foreground hits in 139 samples and the window ended minimized, log, exit in 0 s). **Not run on the dev PC:** the no-GPU leg (this PC has an RTX 4090; the hosted runner of `release.yml` covers it) and Windows Sandbox (its viewer window cannot be hidden; run `-Mode Sandbox -Online` when away from the PC). The smoke exposed one real bug, fixed with an exit guard (see the changelog) | Met on the dev PC; no-GPU leg left to CI / Sandbox |
+| The docs are current | The operator reference, the developer guide, the manual and the changelog; `node docs/check-docs.mjs --no-todo` finds no dead link, anchor, malformed table or `TODO(P7-numbers)` placeholder, and `node scripts/sync-manual.mjs` refreshed `public/docs` and `public/manual` | Met |
+
+**Not done, by design:** the in-VR and SteamVR checks and the two-device LAN matrix ([Optional checks](#optional-checks-verify-when-convenient)), the competitor head-to-head (T6), listening studies, benchmarks of the opt-in heavy engines, the 10 ms device block as a default (it needs a live-device record), the GPU speech tier under a mid-range card's game load, and publishing packs and assets. `whisper-rs` stays (see [Why whisper-rs stays](../scripts/release/README.md#why-whisper-rs-stays)).
 
 ## Research §6 bug verification
 
@@ -549,6 +612,8 @@ License facts for components embedded in or downloaded by Sigil (Sigil itself is
 | Chatterbox Multilingual V3 ONNX export (KitsuMate, commit 3f44461) | `tts/chatterbox-mtl-v3` (+ `-gpu-flow`), downloaded on request; its `token_embedding.onnx` and `tokenizer.json` are vendored as test data, plus the two flow steps' input/output declarations (`flow_step_*.io.pb`) | MIT (model), BSD-3-Clause and Apache-2.0 (language tables) | `local_tts/chatterbox_ort/testdata/README.md` |
 | Kyutai Pocket TTS (sherpa-onnx packages 2026-01-26) | `tts/pocket-tts-en-int8`, `tts/pocket-tts-en`, downloaded on request | CC-BY-4.0 | Runs on the sherpa-onnx runtime pack |
 | Seed-VC (Plachtaa/seed-vc@51383efd), DDSP-SVC 6.3 (yxlllc/DDSP-SVC@d6dd52fc), MeanVC2 (ASLP-lab/MeanVC2@13acf84c) model code | Vendored in `scripts/vc-families/*/upstream/` (export spike tooling, not compiled into Sigil) | GPL-3.0 (Seed-VC), MIT (DDSP-SVC), Apache-2.0 per the upstream README (MeanVC2) | Unchanged below their provenance headers; [ADR 0006](adr/0006-vc-zero-shot-singing.md) |
+| FLEURS (speech), FMA (commercial-use shard), ESC-50, WMT24++, FLORES-200, BSD corpus, MetricX-24 | Used locally by the P7 campaign tooling (`scripts/speech-bench/`, under `%LOCALAPPDATA%\sigil-dev-cache\p7`); never redistributed and not bundled | CC-BY-4.0 (FLEURS), per-track Creative Commons licenses (FMA shard), CC BY-NC 3.0 (ESC-50), Apache-2.0 (WMT24++, MetricX-24), CC-BY-SA-4.0 (FLORES-200), CC BY-NC-SA 4.0 (BSD) | The corpus identity (`content_sha256`) is in its manifest |
+| Whisper English text normalizer | Vendored in `scripts/speech-bench/score/whisper_english.py` (scoring tooling, not compiled into Sigil) | MIT (OpenAI Whisper), Apache-2.0 via transformers 4.39.3 | Scoring only; the normalizer stamp is `sigil-norm/1` |
 
 ---
 

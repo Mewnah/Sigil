@@ -11,6 +11,8 @@
     "i18n:check": "node scripts/check-i18n-keys.mjs",
     "i18n:sync": "node scripts/sync-i18n-missing.mjs",
     "i18n:report": "node scripts/i18n-report-untranslated.mjs",
+    "docs:check": "node docs/check-docs.mjs",
+    "release:pins": "node scripts/release/check-catalog-pins.mjs",
     "i18n:translate": "python scripts/build-translations.py",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",

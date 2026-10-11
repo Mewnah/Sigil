@@ -1,7 +1,10 @@
-import type { Translation_State } from "@/core/services/translation/schema";
+import { llmServerUi } from "@/core/services/llm_server";
+import { bundledTranslatorOnCpu, interimHeldOffByCpu, interimTranslationsOn } from "@/core/services/translation/interimPolicy";
+import type { Translation_Backends, Translation_State } from "@/core/services/translation/schema";
 import classNames from "classnames";
 import { ComponentProps, FC, ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSnapshot } from "valtio";
 import { InputSelect, InputText, type InputSelectOption } from "../components/input";
 import { formatScaled, languageOptions, parseBoundedNumber, pickerValue } from "./logic";
 
@@ -19,6 +22,17 @@ export function mergeOption(opts: InputSelectOption[], current: string): InputSe
 /** Persisted translation settings (valtio proxy): panels write slice fields directly, like the other inspectors. */
 export function translationData(): Translation_State {
   return window.ApiServer.state.services.translation.data;
+}
+
+/**
+ * What the "Interim results" switch of the `llm` and `auto` panels shows (`interim: "auto"` is on, except while the
+ * bundled translator runs on the processor): `on` for the checkbox, `heldOff` for the hint beside it.
+ */
+export function useInterimSwitch(backend: Translation_Backends.llm | Translation_Backends.auto): { on: boolean; heldOff: boolean } {
+  const data = useSnapshot(window.ApiServer.state.services.translation.data) as Translation_State;
+  const status = useSnapshot(llmServerUi).status;
+  const onCpu = bundledTranslatorOnCpu(data.llm, status);
+  return { on: interimTranslationsOn(data, backend, onCpu), heldOff: interimHeldOffByCpu(data, backend, onCpu) };
 }
 
 /** Setter for one field of one backend slice. */

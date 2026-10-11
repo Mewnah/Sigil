@@ -1,0 +1,71 @@
+{
+ "$comment": [
+  "core subset, 30 utterances per language: Parakeet Ultra and v3"
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-finals-a",
+ "description": "core subset, 30 utterances per language: Parakeet Ultra and v3",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "core",
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 30
+  }
+ },
+ "engines": [
+  {
+   "id": "parakeet-ultra",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "parakeet-v3",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-tdt-0.6b-v3-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "finals",
+   "mode": "accuracy",
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}

@@ -1409,7 +1409,8 @@
     "glossary_shadowed_pair_spelling": "For {{pair}}, when a line spells the term exactly \"{{spelling}}\", an earlier entry for it is used instead of this one.",
     "glossary_unknown_language": "Not a language code: {{list}}. This term is sent only while a line's language is unknown; pick a language under \"Languages and case\".",
     "glossary_import_ignored_columns": "Extra columns that are not language codes were left out ({{count}}); those terms apply to any language.",
-    "glossary_paste_help": "One term per line: term and translation separated by a tab (as copied from a spreadsheet), \"=\", \"->\" or a comma. Optional third and fourth tab columns limit it to a source and target language code. Lines starting with # are skipped; put a term that starts with # in quotes."
+    "glossary_paste_help": "One term per line: term and translation separated by a tab (as copied from a spreadsheet), \"=\", \"->\" or a comma. Optional third and fourth tab columns limit it to a source and target language code. Lines starting with # are skipped; put a term that starts with # in quotes.",
+    "interim_cpu_hint": "Off for now: the local translator runs on the processor, where live partial translations take about 4 cores next to a game. Tick the box to turn them on; the final lines are always translated."
   },
   "transform": {
     "title": "Transformación de IA",

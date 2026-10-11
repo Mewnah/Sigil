@@ -12,7 +12,7 @@ from tests.helpers import BENCH, EXAMPLES, FIXTURES, load_json
 
 import validate
 from score.common import canonical_sha256
-from score.make_export import make_export, model_label, scrub
+from score.make_export import make_export, model_label, power_plan_label, scrub
 
 
 class SchemaTests(unittest.TestCase):
@@ -130,6 +130,79 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(scrub({"a": ["/home/bob/m.bin"]}), {"a": ["<path>/m.bin"]})
         self.assertEqual(model_label("stt/qwen3-asr-0.6b-int8"), "stt/qwen3-asr-0.6b-int8")
         self.assertEqual(model_label("D:/models/mine.onnx"), "byo")
+
+    def test_folders_with_spaces_are_scrubbed_whole(self):
+        # The Rust twin (export.rs) has the same cases; both must agree.
+        msg = "cannot read the corpus manifest C:\\Users\\Jane Doe\\AppData\\Local\\sigil-dev-cache\\p7\\corpus\\corpus.json: The system cannot find the file specified. (os error 2)"
+        got = scrub(msg)
+        self.assertEqual(got, "cannot read the corpus manifest <path>/corpus.json: The system cannot find the file specified. (os error 2)")
+        for part in ("Jane", "Doe", "AppData"):
+            self.assertNotIn(part, got)
+        self.assertEqual(scrub("LoadLibrary failed for C:\\Program Files (x86)\\NVIDIA Corporation\\cudart64_13.dll (126)"), "LoadLibrary failed for <path>/cudart64_13.dll (126)")
+        self.assertEqual(scrub('cannot open "C:\\Users\\Jane Doe\\My Models\\a.gguf" now'), 'cannot open "<path>/a.gguf" now')
+        self.assertEqual(scrub("C:\\Users\\Jane Doe\\a.wav, D:\\My Stuff\\b.wav"), "<path>/a.wav, <path>/b.wav")
+        self.assertEqual(scrub("/home/Jane Doe/models/x.gguf failed"), "<path>/x.gguf failed")
+        self.assertEqual(scrub("\\\\NAS 1\\Shared Models\\f.bin"), "<path>/f.bin")
+        # A bare profile folder leaves no name.
+        self.assertEqual(scrub("home is C:\\Users\\Jane Doe"), "home is <path>/")
+        self.assertEqual(scrub("home is C:\\Users\\jane"), "home is <path>/")
+        self.assertEqual(scrub("home is C:\\Users\\jane\\"), "home is <path>/")
+        self.assertEqual(scrub("home is /Users/jane"), "home is <path>/")
+        # Not paths.
+        self.assertEqual(scrub("connect to http://127.0.0.1:8080/v1 failed"), "connect to http://127.0.0.1:8080/v1 failed")
+        self.assertEqual(scrub("see a/b and 5/6"), "see a/b and 5/6")
+
+    def test_privacy_checker_flags_a_path_that_was_only_partly_replaced(self):
+        for leftover in (
+            "cannot read the corpus manifest <path>/Jane Doe\\AppData\\Local\\p7\\corpus\\corpus.json: missing",
+            "x <path>/Doe\\AppData\\Local\\x.json",
+            "fragment of a profile \\Users\\Jane\\x",
+            "fragment \\appdata\\local\\x",
+        ):
+            exp = make_export(self.report)
+            exp["failures"] = [leftover]
+            self.assertTrue(any("looks like a local path" in e for e in validate.privacy_errors(exp)), leftover)
+        for fine in ("<path>/corpus.json: missing", "<path>/", "1/2 done", "http://localhost:8080/pubsub"):
+            exp = make_export(self.report)
+            exp["failures"] = [fine]
+            self.assertEqual(validate.privacy_errors(exp), [], fine)
+        # End to end: an error with a spaced profile folder is scrubbed and the export is clean.
+        report = copy.deepcopy(self.report)
+        report["failures"] = ["cannot read the corpus manifest C:\\Users\\Jane Doe\\AppData\\Local\\p7\\corpus\\corpus.json: missing"]
+        exp = make_export(report)
+        self.assertEqual(exp["failures"][0], "cannot read the corpus manifest <path>/corpus.json: missing")
+        self.assertEqual(validate.privacy_errors(exp), [])
+
+    def test_other_programs_and_custom_power_plans_do_not_leave_the_machine(self):
+        who = "another process used the GPU (up to 37 % SM: GameName.exe, obs64.exe)"
+        report = copy.deepcopy(self.report)
+        report["environment"]["power_plan"] = "My Gaming Plan"
+        report["runs"][0]["warnings"] = [who, "the GPU throttled during the run (power)"]
+        report["runs"][0]["state"] = {
+            "start": {"power_plan": "Balanced", "other_top_process": "GameName.exe (pid 7, 37 % SM)", "sm_clock_mhz": 2100},
+            "end": {"power_plan": "Dell Optimized", "other_top_process": None},
+            "series": [{"other_top_process": "obs64.exe (pid 9, 12 % SM)", "power_plan": "High performance"}],
+            "summary": {"samples": 3, "other_gpu_util_max_pct": 37.0, "other_top_processes": ["GameName.exe", "obs64.exe"]},
+            "warnings": [who],
+        }
+        original = copy.deepcopy(report)
+        exp = make_export(report)
+        text = json.dumps(exp)
+        for needle in ("GameName", "obs64", "My Gaming Plan", "Dell Optimized"):
+            self.assertNotIn(needle, text)
+        self.assertEqual(exp["environment"]["power_plan"], "custom")
+        state = exp["runs"][0]["state"]
+        self.assertEqual((state["start"]["power_plan"], state["series"][0]["power_plan"], state["end"]["power_plan"]), ("Balanced", "High performance", "custom"))
+        self.assertEqual(state["start"]["sm_clock_mhz"], 2100)
+        self.assertNotIn("other_top_process", state["start"])
+        self.assertNotIn("other_top_processes", state["summary"])
+        self.assertEqual(state["summary"]["other_top_processes_count"], 2)
+        self.assertEqual(state["warnings"][0], "another process used the GPU (up to 37 % SM)")
+        self.assertEqual(exp["runs"][0]["warnings"], ["another process used the GPU (up to 37 % SM)", "the GPU throttled during the run (power)"])
+        self.assertEqual(validate.privacy_errors(exp), [])
+        self.assertEqual(report, original, "the report itself is not touched")
+        for plan in ("Balanced", "high performance", "Power saver", "Ultimate Performance"):
+            self.assertEqual(power_plan_label(plan), plan)
 
 
 if __name__ == "__main__":

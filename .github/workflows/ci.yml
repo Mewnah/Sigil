@@ -19,6 +19,10 @@ jobs:
           cache: "pnpm"
       - run: pnpm install
       - run: pnpm i18n:check
+      - name: Docs (dead links, anchors, table shapes, leftover TODO(P7-numbers))
+        run: node docs/check-docs.mjs --no-todo
+      - name: Release catalog pins (offline)
+        run: node scripts/release/check-catalog-pins.mjs
       - run: pnpm typecheck
       - name: Unit tests (vitest)
         run: pnpm test:unit

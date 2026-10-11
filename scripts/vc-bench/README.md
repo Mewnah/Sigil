@@ -34,7 +34,40 @@ have for that app; Sigil only reads the WAVs and JSON sidecars they write.
 | `fcpe_check.py` | env with torchfcpe | Sigil's FCPE adapter against upstream torchfcpe on the same clips. Report only. |
 | `vcrs_probe.py` | any Python | Same-rig compute rows: Sigil reports, vc-rs `latency_probe` CSVs, driver sidecars; RTF verdicts only on one GPU. |
 | `compare_export.py` | any Python | From a compare report: `<run>.make_test.json`, `<run>.pareto.svg`, `<run>.t6.md`. |
-| `tests/test_vcbench.py` | numpy + soundfile | Self-checks, no network: `python -m pytest scripts/vc-bench/tests -q`. |
+| `final_scorecard.ps1` | PowerShell 7 | P7-B: drives the final scorecard of Sigil's shipped voice-changer defaults (`-Profile final` gate passes in rotated order, the T5 corpus runs, the soak, the decision sessions) with a quiet-window check and a load log per step. See "The final scorecard" below. |
+| `final_scorecard.py` | any Python | Builds the scorecard tables from a campaign folder: targets judged on the median of the passes, T5 v2 rows, decision sessions, the load log with the disturbed steps flagged. |
+| `final/` | the perf gate | Spec templates of the final scorecard (`app-default`: the voice changer as the app starts it; `soak`: the 30 minute T7 soak). The profile is `scripts/bench/profiles/final.json`. |
+| `tests/test_vcbench.py`, `tests/test_final_scorecard.py` | numpy + soundfile / stdlib | Self-checks, no network: `python -m pytest scripts/vc-bench/tests -q`. |
+
+## T6 checklist: what is left to do, in order (P7-B)
+
+T6 is the only scorecard row with no measurement, because no competitor is installed on the dev rig
+and the plan keeps competitor installs manual (large downloads on a router that blocks the PC on
+bursts: fetch one thing at a time). The final scorecard
+([VC_BENCHMARKS.md](../../docs/benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults))
+records T6 as pending with exactly these steps; everything Sigil-side is ready and dry-run.
+
+1. **Install the competitors you want ranked**, each in its own folder and Python environment, one
+   after the other: RVC WebUI (its realtime GUI, `realtime_gui.py` / `rtrvc.py`), Applio (its
+   `rvc.realtime` module), optionally w-okada VCClient and vc-rs / rvc-realtime for the same-GPU RTF
+   rows. Load the same MIT default voice everywhere (`default.pth`; its sha256 is the slot's
+   `source_sha256`), transpose 0, index rate 0, protect 0.33, RMVPE.
+2. **Fetch the public corpus** (about 646 MB, one download at a time):
+   `python scripts/bench/fetch-public-corpus.py --voice <path>/default.pth` (section 1 below). The
+   local 10-clip corpus is too small for the +0.05 DNSMOS row; the blind A/B carries the quality
+   claim there.
+3. **Neutral references** in your RVC WebUI environment (section 2).
+4. **Offline tier**: `rvc_webui_offline.py` and `applio_offline.py` with `--sweep 40,60,100,250`
+   (section 3). The smallest feasible block is each app's minimum stable chunk on this GPU.
+5. **Live tier**: a virtual cable pair (the dev PC's endpoints are disabled; enable them yourself
+   or use another PC), `play_record.py` or Sigil's play-and-record run for each app, and an
+   `e2e_loopback` run per app for the end-to-end latency (section 3, "Live tier").
+6. **Score**: the `compare` spec of section 4 (`Sigil.exe --headless bench h2h.json`), then
+   `compare_export.py` and `tools/listening-test/make_test.py`; five or more listeners, 20 pairs
+   each (the 60 % blind A/B row).
+7. **Same-GPU compute**: `vcrs_probe.py` (section 5), judged only between rows on one GPU.
+8. **Record the verdict** in VC_BENCHMARKS.md (T6 rows of the scorecard and the Competitors table):
+   met, missed with the reason, or undecided with what is missing.
 
 ## 1. Build the corpus (manual: about 650 MB of downloads, one at a time)
 
@@ -190,3 +223,75 @@ then run `python scripts/vc-bench/fcpe_check.py <dir>/report.json` in an environ
     the GPE row, or set `consensus_min_agree: 3`.
   - Onsets after 300 ms of silence come out 4.8-5.0 dB under the input's own onset shape at 40 ms,
     and 7.1-7.5 dB under it with 2 s of context (the long-context onset attenuation).
+
+## The final scorecard (P7-B)
+
+`final_scorecard.ps1` runs the scorecard of the shipped defaults on a quiet PC. The ingredients:
+
+- the executable: a release build of the tree, copied with its `DirectML.dll`, `onnxruntime_providers_*.dll`
+  and `resources/` into its own folder (so a rebuild cannot change it under the campaign);
+- an app-data folder with the models of the store (`vc/embedder-contentvec`, `vc/pitch-rmvpe`, `vc/pitch-swiftf0`,
+  `vc/pitch-fcpe`, `vc/pitch-crepe-tiny`, `bench/campplus`, `bench/dnsmos-p835`, `runtime/nvidia-cuda13`), the imported
+  default voice under `voice-changer/models/default`, and `bench/campplus-exact` found through `SIGIL_TEST_MODELS_DIR`
+  (`run_corpus.ps1` sets it to the dev cache);
+- the machine: nobody else timing anything (the script holds `scripts/bench/gpu-lock.ps1`'s lock around a pass),
+  no compiler running, total CPU under about 25 %.
+
+```
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe <exe-final>\sigil.exe -AppData <app data> -Root <campaign> -Step env,smoke
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe ... -AppData ... -Root ... -Step gate,once,corpus
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe ... -AppData ... -Root ... -Step soak
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe ... -AppData ... -Root ... -Step decide -Decide ctx512,devblock-cuda,devblock-dml,devblock-cpu,dml-shared,cpu-f0,cpu-int8,cpu-t6-f0
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe ... -AppData ... -Root ... -Step corpus -CorpusEps cpu-fcpe
+pwsh scripts/vc-bench/final_scorecard.ps1 -Exe ... -AppData ... -Root ... -Step summary
+python scripts/vc-bench/final_scorecard.py <campaign> --md scripts/vc-bench/final/p7b-scorecard-2026-10.md --publish   # the committed copy
+```
+
+Every step is resumable (`<Root>/<DoneDir>/`, default `done`; `-Force` redoes). Two or more instances with
+different `-Step` lists and different `-DoneDir` values can wait for the lock side by side (the lock queue is fair:
+each locked step takes its ticket when it starts waiting), which is how a campaign keeps its place in the queue
+while another agent times its own work; `-Decide` names the decision sessions (an empty list runs them all). The gate passes run each timing row three times in
+rotated order of the execution-provider families (DirectML, CUDA, CPU), because a slow GPU or host state lasts for
+minutes and must not land on one family only; a target is judged on the median of the passes, never on one.
+The `load/<step>.csv` files log total CPU, Sigil's own cores, compilers and busy programs and the lock's owner every
+2 s; `final_scorecard.py` marks a step `disturbed` (and gives the median without the disturbed passes) when a
+compiler ran beside it or foreign CPU stayed over 25 %. The tables it writes are `final-scorecard.md` / `.json`. When both the `cpu` (SwiftF0) and
+`cpu-fcpe` corpora exist it also pairs them per clip on the clips both ran (`paired_f0`: the mean difference with a seeded percentile bootstrap
+interval and the number of clips where FCPE is higher), because the Streamer button applies FCPE and the benchmark's CPU rows use SwiftF0.
+
+Besides the profile's targets the tables hold two things the gate does not judge. **Delivery:** every paced and contention run reports the share of
+the audio the engine converted that the output queue played (`played_ratio`, played over emitted frames of the run) next to the audio it trimmed, the
+output that ran dry and the underruns, and the derived rows require at least 98 %; a profile row that reads `met` on latency or cores in a run below
+that is shown as `met, but audio lost` with a note (a CPU engine can be fast enough per call and still lose 40-50 % of its output at the default
+35 / 70 ms output queue, and its latency is then the latency of the audio that survived). **The over-budget half of the H1-simulation T2b row**, which
+the profile only gates on the call's p99. A row whose limit string the tool cannot read (`< 85`, text) gets the status `limit not parsed` and is counted
+apart, never `met` (`parse_limit` raises `LimitError`; an empty limit is `no limit`). The decision tables add a `B - A` column and a footnote for rows
+the gate judged on its linear scale with a floor (`underruns` and `over_budget_ratio` near zero): read the medians there, not the percentage. The CPU
+rows of the profile run SwiftF0; their rows in the generated tables say so, because the Streamer button applies FCPE (`cpu-t6-f0` is the paired session
+that measures FCPE on the 6-thread policy, with the H3 game simulation).
+
+A corpus step starts by removing the private lock file a stopped run left behind (`<Root>/corpus.lock`), unless the process it names is still alive:
+only the holder of the global lock runs the corpus, so the file belongs to nobody who is working, and the lock script alone would treat it as stale only
+after 30 minutes and make the rerun wait out `-LockWait 5` and exit 1 without marking the step done. A decision session deletes its own earlier
+`gate-summary.json` before the gate starts and counts a nonzero gate exit (the candidate regressed) as a result only when this run wrote the summary and it
+lists every round of every spec; before that fix, a stale summary of an earlier run could stand in for a session that crashed.
+
+`python -m pytest scripts/vc-bench/tests/test_final_scorecard.py -q` checks the tooling and the profile
+(`scripts/bench/profiles/final.json`: every template materializes to a valid spec, every target names a run it
+produces, every derived target names a run the profile produces) without a GPU; with `pwsh` installed it also runs the driver's helper functions
+(the stale-lock cleanup and the decision-session completeness check) on scratch folders.
+
+The decision sessions (`-Step decide`) are ABBA runs of the one executable against itself, side B with one switch
+(`-CompareVars` / `-CompareEnv`), inside one lock hold; `final_scorecard.py` prints their paired rows next to the
+targets, and the `ctx512` session replaces the context-scaling target (two specs that ran in different passes cannot
+be compared across GPU clock states, the two sides of one session can). Sessions: `ctx512` (64 against 512 ms of
+context), `devblock-cuda|dml|cpu` (480-frame device blocks, the `model_divisor` shape, against the shipped 512),
+`dml-shared` (`SIGIL_VC_DML_SHARED=1`), `cpu-int8` (`SIGIL_VC_INT8=0`: the fp32 content encoder) and `cpu-f0`
+(FCPE, the F0 method the Streamer button applies, against the SwiftF0 the benchmark's CPU rows use).
+
+**Result of record.** The campaign of 2026-10-09 to 2026-10-10 (executable `f1132368dc0c73a4…`, tree `38f426d`) is
+tabulated in [`final/p7b-scorecard-2026-10.md`](final/p7b-scorecard-2026-10.md) and discussed in
+[VC_BENCHMARKS.md](../../docs/benchmarks/VC_BENCHMARKS.md#p7-b-final-scorecard-of-the-shipped-defaults). A rerun on
+another PC (a friend's H1 or H3) takes the same commands: build, copy the executable with its DLLs, point `-AppData`
+at a folder with the models, and compare the generated tables.
+

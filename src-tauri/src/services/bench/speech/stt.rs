@@ -261,8 +261,12 @@ impl EngineDriver {
 
         let canceller = self.engine.canceller();
         let timeout = req.timeout;
+        // The item's time to finish. At real time the feed itself takes `total` (the audio is spoken at
+        // its own speed inside the deadline), so the engine gets its timeout on top of that; this budget
+        // serves the watchdog and the in-loop check alike.
+        let budget = if realtime { timeout + total } else { timeout };
         let engine = &mut self.engine;
-        let (result, fired) = with_deadline(canceller, timeout, || -> Result<SttOutput, String> {
+        let (result, fired) = with_deadline(canceller, budget, || -> Result<SttOutput, String> {
             engine.begin_stream(&opts).map_err(|e| asr_message(&e))?;
             let t0 = Instant::now();
             let chunk = (feed.chunk_ms as usize * SAMPLES_PER_MS).max(1);
@@ -276,7 +280,7 @@ impl EngineDriver {
                         std::thread::sleep(wait);
                     }
                 }
-                if t0.elapsed() > timeout + total {
+                if t0.elapsed() > budget {
                     engine.abort_stream();
                     return Err(timeout_message(timeout));
                 }
@@ -466,11 +470,16 @@ pub fn parse_hypotheses(text: &str) -> Result<HashMap<String, String>, String> {
         }
         let v: Value = serde_json::from_str(line).map_err(|e| format!("hypotheses line {}: {e}", n + 1))?;
         let id = v.get("item").or_else(|| v.get("id")).and_then(Value::as_str);
-        let txt = v.get("text").or_else(|| v.get("hyp")).and_then(Value::as_str);
+        // A null text is what the runner's own hyps files hold for an item that failed (`"text": null`
+        // beside its error): that item has no hypothesis, and the other lines stay usable.
+        let given = |key: &str| v.get(key).filter(|t| !t.is_null());
+        let txt = given("text").or_else(|| given("hyp")).and_then(Value::as_str);
+        let only_null = given("text").is_none() && given("hyp").is_none() && (v.get("text").is_some() || v.get("hyp").is_some());
         match (id, txt) {
             (Some(id), Some(txt)) => {
                 out.insert(id.to_string(), txt.to_string());
             }
+            (Some(_), None) if only_null => {}
             _ => return Err(format!("hypotheses line {}: needs {{\"item\", \"text\"}}", n + 1)),
         }
     }
@@ -572,20 +581,26 @@ fn crispasr_args(def: &EngineDef, model: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+/// The GGUF file of catalog model `id` for CrispASR's `-m`: the entry's file `file` (`options.modelFile`,
+/// as the catalog lists it), else its first file. `-m` takes a file; the install folder fails to load.
+fn crispasr_model_file(env: &crate::services::tts_helpers::ggml::launch::PlanEnv<'_>, id: &str, file: Option<&str>) -> Result<String, String> {
+    env.file_of(id, file.filter(|f| !f.is_empty())).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Start the CrispASR server for `def` and return the HTTP engine that talks to it. The pack is the
 /// CUDA 13 / Vulkan / CPU build that matches the engine's execution provider.
 pub fn create_crispasr_driver(def: &EngineDef, paths: &Paths) -> Result<Box<dyn SttDriver>, String> {
     use crate::services::tts_helpers::ggml::{self, launch, Variant};
-    let model = if is_catalog_id(&def.model) {
-        crate::services::model_store::installed_path(&def.model)
-            .ok_or_else(|| format!("not installed: {} (Sigil.exe --headless fetch {})", def.model, def.model))
-            .map(|d| d.to_string_lossy().into_owned())?
+    // A bring-your-own model is a file; a catalog id is resolved to its file below, in the plan
+    // environment (`-m` takes the GGUF, not the install folder).
+    let byo_model = if is_catalog_id(&def.model) {
+        None
     } else {
         let p = paths.resolve(&def.model)?;
         if !p.is_file() {
             return Err(format!("the CrispASR model {} does not exist", file_name(&p)));
         }
-        p.to_string_lossy().into_owned()
+        Some(p.to_string_lossy().into_owned())
     };
     let packs = [
         launch::PackChoice {
@@ -610,12 +625,21 @@ pub fn create_crispasr_driver(def: &EngineDef, paths: &Paths) -> Result<Box<dyn 
             ExecutionProvider::Dml | ExecutionProvider::Auto => None,
         },
     };
-    let (program, variant, dll_dirs) = ggml::with_plan_env(|env| {
+    let (program, variant, dll_dirs, model) = ggml::with_plan_env(|env| {
         let pack = launch::pick_pack("CrispASR", &packs, wanted, env)?;
-        env.require("CrispASR", &launch::pack_ids(pack))?;
+        let mut needed: Vec<&str> = Vec::new();
+        if byo_model.is_none() {
+            needed.push(&def.model);
+        }
+        needed.extend(launch::pack_ids(pack));
+        env.require("CrispASR", &needed)?;
+        let model = match &byo_model {
+            Some(file) => file.clone(),
+            None => crispasr_model_file(env, &def.model, def.options.get("modelFile").and_then(Value::as_str))?,
+        };
         let program = launch::pack_program(env, pack.runtime, CRISPASR_PROGRAM)?;
         let dirs = if pack.variant == Variant::Cuda13 { (env.nvidia_dirs)() } else { Vec::new() };
-        Ok((program, pack.variant, dirs))
+        Ok((program, pack.variant, dirs, model))
     })
     .map_err(normalize_missing)?;
     let args = crispasr_args(def, &model)?;
@@ -765,6 +789,13 @@ mod tests {
             }))
         }
         fn end_stream(&mut self) -> Result<AsrResult, AsrError> {
+            if self.block_until_cancelled {
+                let start = Instant::now();
+                while !self.cancelled.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(5) {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                return Err(AsrError::cancelled());
+            }
             std::thread::sleep(self.delay);
             self.calls.lock().unwrap().push(format!("end {}", *self.fed.lock().unwrap()));
             Ok(AsrResult {
@@ -854,6 +885,34 @@ mod tests {
     }
 
     #[test]
+    fn a_realtime_stream_feed_is_not_timed_out_by_the_time_the_audio_takes() {
+        // 0.5 s of audio + 0.2 s of tail take 0.7 s to speak; the timeout is only 0.3 s. The engine
+        // keeps up, so the item passes: the deadline covers the engine's time, not the audio's.
+        let fake = Fake::new(true, true);
+        let mut d = EngineDriver::new(Box::new(fake), ExecutionProvider::Cpu, None, None);
+        let audio = vec![0.0; 8_000];
+        let f = feed(super::super::spec::FeedKind::Stream, Pace::Realtime);
+        let t0 = Instant::now();
+        let out = d.transcribe(&request(&audio, &f, Duration::from_millis(300)));
+        assert!(t0.elapsed() >= Duration::from_millis(650), "{:?}", t0.elapsed());
+        assert_eq!(out.expect("an engine that keeps up is not a timeout").text, "hello world");
+    }
+
+    #[test]
+    fn a_hung_realtime_stream_still_times_out_after_the_audio_plus_the_timeout() {
+        let mut fake = Fake::new(true, true);
+        fake.block_until_cancelled = true;
+        let mut d = EngineDriver::new(Box::new(fake), ExecutionProvider::Cpu, None, None);
+        let audio = vec![0.0; 4_800]; // 0.3 s + 0.2 s tail
+        let f = feed(super::super::spec::FeedKind::Stream, Pace::Realtime);
+        let t0 = Instant::now();
+        let err = d.transcribe(&request(&audio, &f, Duration::from_millis(200))).unwrap_err();
+        assert_eq!(err, "timeout after 200 ms");
+        let took = t0.elapsed();
+        assert!(took >= Duration::from_millis(650) && took < Duration::from_secs(3), "0.5 s of audio, then the 0.2 s timeout: {took:?}");
+    }
+
+    #[test]
     fn an_engine_that_cannot_stream_decodes_once_and_says_so() {
         let fake = Fake::new(false, true);
         let calls = fake.calls.clone();
@@ -931,12 +990,83 @@ mod tests {
     }
 
     #[test]
+    fn a_catalog_model_reaches_crispasr_as_its_file_and_not_the_install_folder() {
+        use crate::services::model_store::Catalog;
+        use crate::services::tts_helpers::ggml::launch::PlanEnv;
+        use crate::services::tts_helpers::ggml::GpuFacts;
+        let catalog = Catalog::embedded().expect("embedded catalog");
+        let id = "stt/granite-speech-5.0-turboctc-q8_0";
+        let entry = catalog.get(id).expect("the entry is in the catalog");
+        let dir = std::env::temp_dir().join(format!("sigil-crispasr-model-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in &entry.files {
+            std::fs::write(dir.join(&f.path), b"fake gguf").unwrap();
+        }
+        let lookup = |i: &str| (i == id).then(|| dir.clone());
+        let no_dirs = || Vec::<std::path::PathBuf>::new();
+        let env = PlanEnv {
+            catalog: &catalog,
+            installed: &lookup,
+            gpu: GpuFacts::default(),
+            nvidia_dirs: &no_dirs,
+            app_data: None,
+        };
+        let file = crispasr_model_file(&env, id, None).expect("the entry's first file");
+        assert!(Path::new(&file).is_file(), "-m gets a file, not {file}");
+        assert!(file.ends_with(&entry.files[0].path), "{file}");
+        // The `-m` argument of the server command is exactly that file.
+        let def: EngineDef = serde_json::from_value(json!({"id": "r2t2", "task": "stt", "backend": "crispasr", "model": id, "options": {"crispasrBackend": "qwen3"}})).unwrap();
+        let args = crispasr_args(&def, &file).unwrap();
+        let at = args.iter().position(|a| a == "-m").expect("-m");
+        assert_eq!(args[at + 1], file);
+        // `options.modelFile` picks another file of the entry; an unknown one is an error that names it.
+        assert_eq!(crispasr_model_file(&env, id, Some(entry.files[0].path.as_str())).unwrap(), file);
+        assert!(crispasr_model_file(&env, id, Some("nope.gguf")).unwrap_err().contains("nope.gguf"));
+        // An empty `modelFile` means the default; a model that is not installed says so.
+        assert_eq!(crispasr_model_file(&env, id, Some("")).unwrap(), file);
+        assert!(crispasr_model_file(&env, "stt/qwen3-asr-1.7b-q8_0", None).unwrap_err().contains("not installed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn missing_downloads_are_reported_as_not_installed() {
         assert_eq!(
             normalize_missing("CrispASR needs downloads first: runtime/crispasr-cuda13, runtime/nvidia-cuda13".into()),
             "not installed: runtime/crispasr-cuda13, runtime/nvidia-cuda13 (Sigil.exe --headless fetch runtime/crispasr-cuda13 runtime/nvidia-cuda13)"
         );
         assert_eq!(normalize_missing("some other problem".into()), "some other problem");
+    }
+
+    #[test]
+    fn a_hypotheses_file_the_runner_wrote_can_be_read_back_even_with_failed_items() {
+        // The runner's own hyps lines: a failed item has `"text": null` beside its error.
+        let lines = [
+            r#"{"item":"en/1/clean","language":"en","condition":"clean","audio_s":3.2,"text":"hello world"}"#,
+            r#"{"item":"en/2/clean","language":"en","condition":"clean","audio_s":2.0,"text":null,"error":"timeout after 120 s"}"#,
+            r#"{"id":"s:en-ja:3","hyp":null}"#,
+            r#"{"id":"s:en-ja:4","hyp":"fine"}"#,
+        ]
+        .join("\n");
+        let h = parse_hypotheses(&lines).expect("a null text is a missing hypothesis, not a broken file");
+        assert_eq!(h.len(), 2);
+        assert_eq!((h["en/1/clean"].as_str(), h["s:en-ja:4"].as_str()), ("hello world", "fine"));
+        let mut d = HypothesesDriver::from_map(h);
+        let f = Feed::default();
+        let req = |item| SttRequest {
+            item,
+            audio: &[],
+            language: None,
+            feed: &f,
+            timeout: Duration::from_secs(1),
+        };
+        assert!(d.transcribe(&req("en/2/clean")).unwrap_err().contains("no hypothesis for en/2/clean"));
+        assert_eq!(d.transcribe(&req("en/1/clean")).unwrap().text, "hello world");
+        // Still errors: no text member at all, a text that is not a string, no item.
+        assert!(parse_hypotheses(r#"{"item":"a"}"#).is_err());
+        assert!(parse_hypotheses(r#"{"item":"a","text":5}"#).is_err());
+        assert!(parse_hypotheses(r#"{"text":"x"}"#).is_err());
+        assert!(parse_hypotheses(r#"{"text":null}"#).is_err());
     }
 
     #[test]

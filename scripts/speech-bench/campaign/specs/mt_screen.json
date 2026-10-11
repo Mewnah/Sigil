@@ -1,0 +1,114 @@
+{
+ "$comment": [
+  "P7-A MT screening: the light translators on the casual caption lines (240, all 10 directions) and on WMT24++ / FLORES-200 (24 lines per direction)."
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-mt-screen",
+ "description": "MT screening: NLLB-600M greedy / beam 4, Hy-MT2 1.8B on the CPU and on Vulkan",
+ "seed": 20261002,
+ "engines": [
+  {
+   "id": "nllb-greedy",
+   "task": "mt",
+   "backend": "nllb",
+   "model": "mt/nllb-200-distilled-600m-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "options": {
+    "beam": 1
+   }
+  },
+  {
+   "id": "nllb-beam4",
+   "task": "mt",
+   "backend": "nllb",
+   "model": "mt/nllb-200-distilled-600m-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "options": {
+    "beam": 4
+   }
+  },
+  {
+   "id": "hy-mt2-1.8b-cpu4",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  },
+  {
+   "id": "hy-mt2-1.8b-vulkan",
+   "task": "mt",
+   "backend": "llama-server",
+   "model": "mt/hy-mt2-1.8b-q4_k_m",
+   "execution_provider": "vulkan",
+   "options": {
+    "prompt": "hy-mt2",
+    "maxTokens": 256,
+    "temperature": 0.2
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "casual",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-greedy",
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu4",
+    "hy-mt2-1.8b-vulkan"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/sigil-casual.jsonl"
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  },
+  {
+   "name": "wmt24pp",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-greedy",
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu4",
+    "hy-mt2-1.8b-vulkan"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/wmt24pp.jsonl",
+    "limit": 24
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  },
+  {
+   "name": "flores200",
+   "mode": "mt_quality",
+   "engines": [
+    "nllb-greedy",
+    "nllb-beam4",
+    "hy-mt2-1.8b-cpu4",
+    "hy-mt2-1.8b-vulkan"
+   ],
+   "mt": {
+    "set": "${SIGIL_P7_CORPUS}/mt/flores200.jsonl",
+    "limit": 24
+   },
+   "warmup": 2,
+   "timeout_s": 120
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": false,
+   "include_items": true
+  }
+ }
+}

@@ -1326,10 +1326,13 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
             // the rung (`cpu` / `cuda` / `dml`); an accelerator is a lever on top.
             let requested = requested_rvc_ep(&rvc_settings.execution_provider, preset).to_string();
             let ep_hint = effective_rvc_ep(&rvc_settings.execution_provider, preset).to_string();
+            // The Streamer preset on the CPU runs several threads on the below-normal pool (P7-I0: one
+            // thread is not real time); every other preset keeps the caps above.
+            let threads = crate::services::neural_audio::ort_session::vc_threads(preset, &ep_hint, ort_priority, None);
             let session = VcSessionOptions {
                 cuda_device_index: rvc_settings.gpu_device_index,
-                streamer_profile: matches!(preset, RvcPresetProfile::Streamer),
-                intra_threads: ort_intra_threads,
+                streamer_profile: threads.streamer_profile,
+                intra_threads: threads.intra_threads,
                 thread_priority: Some(ort_priority),
                 // The arena cap is a CUDA EP option; DirectML/CPU ignore it.
                 vram_cap_mb: (ep_hint == "cuda").then_some(rvc_settings.vram_cap_mb),

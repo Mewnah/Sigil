@@ -1,0 +1,130 @@
+{
+ "$comment": [
+  "P7-A auto-language mode (the default setting of a new install): engines get no language hint; the pipeline row runs Silero VAD, the language-ID engine, the Qwen3-ASR final and Nemotron partials for detected languages."
+ ],
+ "schema": "sigil-speech-bench-spec/1",
+ "name": "p7a-stt-auto",
+ "description": "STT with no language hint",
+ "seed": 20261002,
+ "corpus": {
+  "manifest": "${SIGIL_P7_CORPUS}/corpus.json",
+  "select": {
+   "subset": "quick",
+   "kinds": [
+    "synthetic"
+   ],
+   "limit_per_language": 10
+  }
+ },
+ "engines": [
+  {
+   "id": "qwen3-auto",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/qwen3-asr-0.6b-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "language_mode": "auto"
+  },
+  {
+   "id": "sensevoice-auto",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/sense-voice-small-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "language_mode": "auto",
+   "languages": [
+    "en",
+    "ja",
+    "ko",
+    "zh"
+   ]
+  },
+  {
+   "id": "ultra-auto",
+   "task": "stt",
+   "backend": "sherpa-offline",
+   "model": "stt/parakeet-ultra-int8",
+   "execution_provider": "cpu",
+   "threads": 2,
+   "language_mode": "auto",
+   "languages": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "ru",
+    "pt"
+   ]
+  },
+  {
+   "id": "whisper-base-auto",
+   "task": "stt",
+   "backend": "whisper",
+   "model": "${APPDATA}/com.sigil.app/whisper/ggml-base.bin",
+   "execution_provider": "cpu",
+   "threads": 4,
+   "language_mode": "auto"
+  },
+  {
+   "id": "pipeline-auto",
+   "task": "stt",
+   "backend": "pipeline",
+   "execution_provider": "cpu",
+   "language_mode": "auto",
+   "options": {
+    "route": {
+     "language": "auto",
+     "tier": "cpu",
+     "twoPass": true
+    }
+   }
+  }
+ ],
+ "runs": [
+  {
+   "name": "auto-offline",
+   "mode": "accuracy",
+   "engines": [
+    "qwen3-auto",
+    "sensevoice-auto",
+    "ultra-auto",
+    "whisper-base-auto"
+   ],
+   "feed": {
+    "kind": "utterance"
+   },
+   "warmup": 1,
+   "timeout_s": 180
+  },
+  {
+   "name": "auto-pipeline",
+   "mode": "accuracy",
+   "engines": [
+    "pipeline-auto"
+   ],
+   "select": {
+    "subset": "quick",
+    "kinds": [
+     "synthetic"
+    ],
+    "limit_per_language": 6
+   },
+   "feed": {
+    "kind": "pipeline",
+    "pace": "asap",
+    "lead_silence_ms": 500,
+    "tail_silence_ms": 1200
+   },
+   "timeout_s": 240
+  }
+ ],
+ "output": {
+  "write_hypotheses": true,
+  "export": {
+   "include_text": true,
+   "include_items": true
+  }
+ }
+}
