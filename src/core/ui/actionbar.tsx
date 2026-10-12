@@ -3,8 +3,7 @@ import { exit } from '@tauri-apps/plugin-process';
 import classNames from "classnames";
 import { toast } from "react-toastify";
 import { FC, HtmlHTMLAttributes, PropsWithChildren, ReactNode, useState } from "react";
-import { BsStars } from "react-icons/bs";
-import { RiChatVoiceFill, RiFileListLine, RiMicFill, RiMicOffFill, RiStackFill, RiTranslate2, RiUserVoiceFill, RiVolumeMuteFill, RiVolumeUpFill } from "react-icons/ri";
+import { RiChatVoiceFill, RiFileListLine, RiMicFill, RiQuillPenFill, RiMicOffFill, RiStackFill, RiTranslate2, RiUserVoiceFill, RiVolumeMuteFill, RiVolumeUpFill } from "react-icons/ri";
 import { RxInput } from "react-icons/rx";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
 import { useSnapshot } from "valtio";
@@ -142,7 +141,7 @@ const AppActions: FC = () => {
     {sttButton && <ButtonService status={sttStatus} tooltip={t('stt.title')} onClick={handleSwitchSTT} ><RiUserVoiceFill /></ButtonService>}
     {ttsButton && <ButtonService status={ttsStatus} tooltip={t('tts.title')} onClick={handleSwitchTTS} ><RiChatVoiceFill /></ButtonService>}
     {translationButton && <ButtonService status={translationStatus} tooltip={t('transl.title')} onClick={handleSwitchTranslation} ><RiTranslate2 /></ButtonService>}
-    {transformButton && <ButtonService status={transformStatus} tooltip={t('transform.title')} onClick={handleSwitchTransform} ><BsStars /></ButtonService>}
+    {transformButton && <ButtonService status={transformStatus} tooltip={t('transform.title')} onClick={handleSwitchTransform} ><RiQuillPenFill /></ButtonService>}
   </div>
 }
 

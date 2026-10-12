@@ -338,8 +338,8 @@ export interface ConsentRequest extends ConsentSet {
   /**
    * The language the plan was made for. On "auto" the dialog adds a tip: the automatic route needs the language-ID
    * model and a general model, so choosing the language first usually downloads less and is more accurate. (The
-   * setup wizard, which asks the language up front, is not shown in the app yet; this is the last moment before a
-   * first download.)
+   * setup wizard asks the language up front, but only on a first run; this is the last moment before a first
+   * download for every other profile.)
    */
   language?: string;
 }

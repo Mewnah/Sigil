@@ -326,6 +326,22 @@ The lightest English engine has one defect, which the P7 smoke run of the speech
 
 How to read it: the first row is the cut-span study on the 7 recording conditions it used (432 cuts; 9.6 % of the cuts fell inside a word with the quietest single frame, 5.1 % with the 140 ms span), and the second row is the same corpus's 8 to 9 s utterances. These figures come from the development runs of the fix (the commit message and the doc comments of `long_utterance.rs` and `sherpa_offline.rs`), not from a campaign spec. The ignored real-model tests reproduce them (`SIGIL_APP_DATA_DIR` with `runtime/sherpa-onnx` and `stt/moonshine-base-en-int8`, `SIGIL_TEST_MODELS_DIR` with the corpus, then `cargo test real_moonshine -- --ignored`), and a sherpa-onnx upgrade has to re-measure the limit (`real_moonshine_sherpa_length_limit_is_still_where_the_split_assumes`). The screening row for Moonshine (13.4 %) includes the cut: 6 of its 10 English utterances run from 10.0 to 14.9 s, and their hypotheses in the screening run are not empty, so it is not a whole-utterance figure.
 
+### Browser speech recognition (Chrome and Edge Web Speech, the old default), English
+
+Before the built-in engine, the default speech-to-text was the browser's own Web Speech recognition: Chrome (Google's servers) or Edge (Microsoft's), run from Sigil's microphone page. It was measured once, in English, on the corpus and with the scorer of the engines above, so that the one-time prompt which offers the built-in engine to a Chrome or Edge profile can quote real numbers (the prompt's figures are the `Finals, clean` column, rounded: 6, 21 and 10 errors per 100 words; `localOffer.ts` holds them and its test reads this table). WER in %, 95 % interval in brackets, lower is better.
+
+| Engine | Screening, clean (10 utt) | Finals, clean (30 utt) | Finals, room_light (30 utt) | Finals, mic_codec (30 utt) | Own mic, pooled (90 utt) |
+|---|---:|---:|---:|---:|---:|
+| Chrome Web Speech (Google), Chrome 154 | 27.3 [14.1, 43.9] | 20.8 [13.6, 29.4] | 22.0 [14.2, 31.1] | 23.8 [16.2, 33.7] | 22.2 [15.1, 30.4] |
+| Edge Web Speech (Microsoft), Edge 155 | 6.7 [3.9, 9.4] | 9.8 [6.3, 14.1] | 11.1 [5.8, 17.4] | 7.1 [5.0, 9.4] | 9.3 [6.4, 12.1] |
+| Parakeet Ultra int8 (the built-in engine's English final) | 8.1 | 6.1 | 6.3 | 6.3 | 6.2 [4.4, 8.3] |
+
+Reading: on the own microphone Chrome makes about 3.6 times the errors of the built-in engine (22.2 against 6.2; the intervals do not overlap) and Edge about 1.5 times (9.3 against 6.2; the intervals overlap, so at 30 utterances per cell Edge is behind by a margin the sample cannot pin down). On the 10-utterance screening Edge is ahead of Parakeet Ultra (6.7 against 8.1), a tie at that size. Timing: a browser final lands at the end of speech (median 0.16 s before the end of the clip in Chrome's clean and room_light runs; between 0.17 s before and 0.16 s after across the six runs). Each 6-minute run saw 1 (Chrome) to 4 (Edge) `network` errors, each ended the browser's session and was followed by an immediate restart of the microphone page (0.07 to 0.17 s of gap per run in total).
+
+Method: Chrome 154 and Edge 155, installed and run headless, were fed the P7 clips (concatenated, with 2 s gaps) by a Chromium fake microphone through `getUserMedia`, a resampler and `recognition.start(track)`, with the settings of Sigil's `mic.html`. The hypotheses were attributed to clips by arrival time and scored with the P7 scorer.
+
+Caveats: one run per browser and condition (30 clips each); the results were not independently re-scored (the verifier was stopped); the other eight languages were measured too but are not published, by the user's choice; the rig (a Python harness driving the browsers) and its raw runs are not part of the repository, so this table is the record.
+
 ## Speech-to-text cost and caption latency
 
 CPU rows on the 6-core slice; "next to a game" adds `h3_cpu_game`. RTF = decode time / audio time.
@@ -631,7 +647,7 @@ mid-range card was not measured. Two of the models listed are not routable: Voxt
   worse than Parakeet Ultra on the European languages (ru 23.8 against 6.1, pt 12.3 against 3.9). The language-ID engine already names the language
   (105 of 108 right); choosing the final engine from the detected language's own row (Ultra for the 25 Parakeet languages, SenseVoice for ja / zh,
   Qwen3-ASR for ko and the rest) needs a per-utterance final in the router (Rust `speech::router`), not a table change. Until then, setting the language
-  is the single biggest accuracy step for a European-language streamer; it also saves 1 GB of RAM (footprint table). Sigil asks for the language rather than waiting for that router change: the setup wizard's STT step (not shown in the app yet), a hint in the STT panel, and a suggestion after three consistent detections in a session (all explicit, never a silent lock; see [Locking the STT language](../DEVELOPER_GUIDE.md#locking-the-stt-language)).
+  is the single biggest accuracy step for a European-language streamer; it also saves 1 GB of RAM (footprint table). Sigil asks for the language rather than waiting for that router change: the setup wizard's STT step (first run only), a hint in the STT panel, and a suggestion after three consistent detections in a session (all explicit, never a silent lock; see [Locking the STT language](../DEVELOPER_GUIDE.md#locking-the-stt-language)).
 - **Interim translations on the CPU: applied by P7-I0** (see the footprint section). The bundled translator on the CPU with the old default took 4.0 cores on average (6.7 at the peak) at speaking pace
   next to the game; final lines only take 1.5. The default is now automatic (off on the CPU variant, on elsewhere; a stored choice wins). A throttle of 1.5 s,
   `translation.partials.throttleMs`, only got to 2.7 cores, so it is not a substitute.

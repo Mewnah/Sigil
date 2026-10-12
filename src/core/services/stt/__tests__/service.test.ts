@@ -224,6 +224,21 @@ describe("Service_STT status channel", () => {
     expect(toast.dismiss).not.toHaveBeenCalled();
   });
 
+  it("toasts download progress while the Rewrite tab is showing (it has no progress of its own) and not after the Speech tab is chosen", async () => {
+    // Open on Rewrite (the status-bar card), then the in-panel tabs move the store (setSidebarTab) as the user clicks.
+    useAppUIStore.getState().changeTab({ tab: Services.transform });
+    const { service } = makeService({ backend: STT_Backends.whisper });
+    service.start();
+    await flush();
+    last().receiver.onStatus("Downloading: 40%", { progress: 40 });
+    expect(toast.info).toHaveBeenCalledTimes(1);
+
+    useAppUIStore.getState().setSidebarTab({ tab: Services.stt }); // the Speech tab shows the progress inline
+    last().receiver.onStatus("Downloading: 50%", { progress: 50 });
+    expect(toast.dismiss).toHaveBeenCalledWith("stt-model-progress");
+    expect(toast.info).toHaveBeenCalledTimes(1);
+  });
+
   it("an engine error stops the session with a toast and clears the status", async () => {
     const { service } = makeService({ backend: STT_Backends.openai_audio });
     service.start();

@@ -201,7 +201,7 @@ export const SigilHeader: FC<SigilHeaderProps> = memo(({ onToggleSidebar, sideba
                         <p className="text-xs text-base-content/60 mb-3">Use Cmd on macOS where Ctrl is shown. Open inspectors from the sidebar.</p>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between gap-2"><span>Toggle STT start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+1</kbd></div>
-                            <div className="flex justify-between gap-2"><span>Toggle AI Transform start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+2</kbd></div>
+                            <div className="flex justify-between gap-2"><span>Toggle Rewrite start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+2</kbd></div>
                             <div className="flex justify-between gap-2"><span>Toggle TTS start/stop</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+3</kbd></div>
                             <div className="border-t border-base-content/10 my-2" />
                             <div className="flex justify-between gap-2"><span>Open Settings</span><kbd className="bg-base-300 px-2 py-0.5 rounded text-xs shrink-0">Ctrl+,</kbd></div>

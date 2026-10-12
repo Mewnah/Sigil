@@ -5,7 +5,7 @@ import classNames from "classnames";
 import {
     RiMicFill,
     RiVolumeUpFill,
-    RiSparklingFill,
+    RiQuillPenFill,
     RiTwitchFill,
     RiDiscordFill,
     RiSettings3Fill,
@@ -136,8 +136,8 @@ const QuickActionDock: FC = memo(() => {
                 onClick={handleToggleSTT}
             />
             <DockIcon
-                icon={<RiSparklingFill />}
-                label="AI Transform"
+                icon={<RiQuillPenFill />}
+                label="Rewrite"
                 active={transformState.status === ServiceNetworkState.connected}
                 status={transformState.status}
                 onClick={handleToggleAI}

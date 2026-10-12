@@ -53,7 +53,7 @@ Sidebar → **Settings** (or `Ctrl+,` / `Cmd+,`).
 
 - **UI language** — i18n; RTL locales include Arabic and Urdu (see [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) for RTL smoke checklist).  
 - **Appearance** — theme selection aligned with header toggle.  
-- **Audio** — default input and output devices. On the desktop app the **default input device** is a native device; Whisper, Vosk, Moonshine, and local HTTP STT use it unless their inspector picks a different mic (Azure and Deepgram have their own browser-device pickers).  
+- **Audio** — default input and output devices. On the desktop app the **default input device** is a native device; the built-in engine, Whisper, Vosk and local HTTP STT use it unless their inspector picks a different mic (Azure and Deepgram have their own browser-device pickers).  
 - **GPU & diagnostics** — which device (CUDA, DirectML, CPU) each model actually runs on, your graphics adapters, **Test GPU acceleration**, the optional **NVIDIA GPU runtime** download (about 1.9 GB, needed for CUDA on a GeForce 16/20 series or newer with driver R580 or newer; the installer does not include it, and without it Sigil uses DirectML; the same pack is also in [Models & Runtimes](#models--runtimes)) and **Open log folder** (`%LOCALAPPDATA%\com.sigil.app\logs`).
 - **Shortcuts** — the global **mute sound effects** shortcut (the STT start/stop and mute shortcuts are in the STT inspector), plus the **background input** combo when that feature is built in. They use Tauri global shortcut registration and work while Sigil is in the background.
 - **Timers** — e.g. background input auto-submit duration.
@@ -109,7 +109,7 @@ Verified against the host UI code (`src/core/ui/shortcuts.ts` and related). On *
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+1` / `Cmd+1` | Toggle **STT** start/stop |
-| `Ctrl+2` / `Cmd+2` | Toggle **AI Transform** start/stop |
+| `Ctrl+2` / `Cmd+2` | Toggle **Rewrite** start/stop |
 | `Ctrl+3` / `Cmd+3` | Toggle **TTS** start/stop |
 | `Ctrl+,` / `Cmd+,` | Open **Settings** |
 | `Ctrl+I` / `Cmd+I` | Toggle **Stats** panel |
@@ -131,7 +131,7 @@ Verified against the host UI code (`src/core/ui/shortcuts.ts` and related). On *
 
 ### Service control bar
 
-The bottom **STT / AI / TTS** cards mirror the same start/stop behavior as the inspectors and the `Ctrl+1`–`Ctrl+3` shortcuts above.
+The bottom **STT / Rewrite / TTS** cards mirror the same start/stop behavior as the inspectors and the `Ctrl+1`–`Ctrl+3` shortcuts above.
 
 ### Global shortcuts you record
 

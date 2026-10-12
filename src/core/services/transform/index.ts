@@ -106,7 +106,7 @@ function partialEvent(event: TextEvent, value: string): TextEvent {
 /** Never empty, so a failed start that is not silent is always explained. */
 function startErrorText(e: unknown): string {
     const detail = errorText(e).trim() || i18n.t("common.error_no_details") || "no details";
-    return i18n.t("transform.error_start_failed", { error: detail }) || `AI Transform could not start: ${detail}`;
+    return i18n.t("transform.error_start_failed", { error: detail }) || `Rewrite could not start: ${detail}`;
 }
 
 class Service_Transform implements IServiceInterface {
@@ -271,7 +271,7 @@ class Service_Transform implements IServiceInterface {
         this.#setStatus(ServiceNetworkState.disconnected);
         if (!message) return;
         this.serviceState.error = message;
-        pushSystemLog("AI Transform", message, "error");
+        pushSystemLog("Rewrite", message, "error");
         toast(message, { type: "error", autoClose: false });
     }
 
@@ -411,7 +411,7 @@ class Service_Transform implements IServiceInterface {
         }
         console.warn("[Transform] line failed, original text sent instead:", error);
         if (this.#errors.shouldShow(message)) {
-            pushSystemLog("AI Transform", message, "warning");
+            pushSystemLog("Rewrite", message, "warning");
             toast(message, { type: "warning", autoClose: 8_000 });
         }
     }

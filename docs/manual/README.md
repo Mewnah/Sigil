@@ -5,7 +5,7 @@ This manual describes **Sigil Studio** (the desktop host) and the **client mirro
 ## Chapters
 
 - [Overview — getting started, UI, client](00-overview.md)
-- [Audio and AI — STT, TTS, translation, transform, voice changer](01-audio.md)
+- [Speech and voice — speech to text and Rewrite, translation, text to speech, voice changer](01-audio.md)
 - [Studio — canvas, files](02-studio.md)
 - [Integrations — OAuth, Twitch, Kick, Discord, OBS, VRChat](03-integrations.md)
 - [System — project, settings, models and runtimes, shortcuts](04-system.md)

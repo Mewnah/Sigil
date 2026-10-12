@@ -178,7 +178,7 @@ class ApiServer {
       { label: "Speech-to-Text", run: run(() => this.stt.init()) },
       { label: "Text-to-Speech", run: run(() => this.tts.init()) },
       { label: "Translation", run: run(() => this.translation.init()) },
-      { label: "AI Transform", run: run(() => this.transform.init()) },
+      { label: "Rewrite", run: run(() => this.transform.init()) },
       { label: "VRChat", run: run(() => this.vrc.init()) },
       { label: "OBS", run: run(() => this.obs.init()) },
       { label: "Keyboard", run: run(() => this.keyboard.init()) },

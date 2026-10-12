@@ -107,6 +107,11 @@ export const BackendSchema = z.object({
   audioInputDeviceNativeMigrated: zSafe(z.coerce.boolean(), false),
   audioOutputDevice: zSafe(z.string(), ""),
   onboardingComplete: zSafe(z.coerce.boolean(), false),
+  /**
+   * The first-run decision was taken (`state/firstRun.ts`): a profile with no settings file is a new install that shows
+   * the setup wizard, any profile that already existed is marked `onboardingComplete`. Written once, never reset.
+   */
+  firstRunDecided: zSafe(z.coerce.boolean(), false),
   showOverlayLogs: zSafe(z.coerce.boolean(), false),
   backgroundInputTimer: zSafe(zStringNumber(), "5000"),
   actionBarServiceOrder: zSafe(z.array(z.string()), [...DEFAULT_ACTION_BAR_SERVICE_ORDER]),

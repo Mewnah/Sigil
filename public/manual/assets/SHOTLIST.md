@@ -12,7 +12,7 @@ Current manual chapters: `00-overview.md` … `04-system.md` plus `README.md`. R
 | `stt-inspector.png` | [01-audio.md](../01-audio.md) | Speech to text |
 | `tts-inspector.png` | [01-audio.md](../01-audio.md) | Text to speech |
 | `translation-inspector.png` | [01-audio.md](../01-audio.md) | Translation |
-| `transform-inspector.png` | [01-audio.md](../01-audio.md) | AI transform |
+| `transform-inspector.png` | [01-audio.md](../01-audio.md) | Rewrite (the Rewrite tab of the Speech to Text inspector) |
 | `voice-changer-inspector.png` | [01-audio.md](../01-audio.md) | Voice changer |
 | `canvas-scenes.png` | [02-studio.md](../02-studio.md) | Canvas and elements (Scenes) |
 | `canvas-properties-text.png` | [02-studio.md](../02-studio.md) | Optional: text element Properties (swap into section if you add a second figure) |
@@ -24,7 +24,7 @@ Current manual chapters: `00-overview.md` … `04-system.md` plus `README.md`. R
 | `vrc-inspector.png` | [03-integrations.md](../03-integrations.md) | VRChat |
 | `project-inspector.png` | [04-system.md](../04-system.md) | Project |
 | `settings-inspector.png` | [04-system.md](../04-system.md) | Settings |
-| `control-bar.png` | [04-system.md](../04-system.md) | Shortcuts — bottom STT / AI / TTS bar (optional) |
+| `control-bar.png` | [04-system.md](../04-system.md) | Shortcuts — bottom STT / Rewrite / TTS bar (optional) |
 
 ## Naming
 

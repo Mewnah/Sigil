@@ -24,7 +24,7 @@ const SOURCE_OPTIONS: { value: CaptionEventSource; label: string }[] = [
   { value: TextEventSource.stt, label: "stt.title" },
   { value: TextEventSource.translation, label: "transl.title" },
   { value: TextEventSource.textfield, label: "common.text_source_textfield" },
-  { value: TextEventSource.transform, label: "transform.title" },
+  { value: TextEventSource.transform, label: "transform.source_label" },
   { value: TextEventSource.any, label: "common.text_source_any" },
   { value: OthersEventSource.stt, label: "common.text_source_others_stt" },
   { value: OthersEventSource.translation, label: "common.text_source_others_translation" },

@@ -6,7 +6,7 @@ import { ServiceNetworkState } from "@/types";
 import {
     RiMicFill,
     RiVolumeUpFill,
-    RiSparklingFill,
+    RiQuillPenFill,
     RiTranslate2,
     RiSettings3Line,
     RiTwitchFill,
@@ -399,8 +399,8 @@ export const StatusFooter: FC = memo(() => {
         },
         {
             id: Services.transform,
-            label: "AI Transform",
-            icon: <RiSparklingFill />,
+            label: "Rewrite",
+            icon: <RiQuillPenFill />,
             show: services.transform.showActionButton,
             status: transformState.status,
             onToggle: () => toggleService("transform"),

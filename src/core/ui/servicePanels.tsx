@@ -7,7 +7,6 @@ import {
   RiMessage2Fill,
   RiMicFill,
   RiRecordCircleFill,
-  RiSparklingFill,
   RiTeamFill,
   RiTranslate2,
   RiTwitchFill,
@@ -22,7 +21,6 @@ const Inspector_STT = lazy(() => import("./inspector/stt"));
 const Inspector_Translation = lazy(() => import("./inspector/inspector_translation"));
 const Inspector_TTS = lazy(() => import("./inspector/tts"));
 const Inspector_VRC = lazy(() => import("./inspector/inspector_vrc"));
-const Inspector_Transform = lazy(() => import("./inspector/inspector_transform"));
 const Inspector_Twitch = lazy(() => import("./inspector/inspector_twitch"));
 const Inspector_Discord = lazy(() => import("./inspector/inspector_discord"));
 const Inspector_Kick = lazy(() => import("./inspector/inspector_kick"));
@@ -37,8 +35,14 @@ export type SidebarSection = "services" | "integrations";
 
 export type HostServiceIcon = ComponentType<{ className?: string }>;
 
+/**
+ * Services with an inspector tab of their own. `Services.transform` (Rewrite) has none: it is the second tab of the
+ * Speech to Text inspector, and `changeTab({ tab: Services.transform })` resolves there (`inspectorRoutes.ts`).
+ */
+export type PanelTab = Exclude<Services, Services.transform>;
+
 export interface HostServicePanelDefinition {
-  tab: Services;
+  tab: PanelTab;
   Inspector: LazyExoticComponent<FC>;
   /** Header title and nav label (English; nav does not use i18n today). */
   title: string;
@@ -73,7 +77,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_TTS,
     title: "Text to Speech",
     navGroup: "live",
-    navOrder: 1,
+    navOrder: 2,
     NavIcon: RiVolumeUpFill,
     SidebarIcon: RiChatVoiceFill,
     sidebarTooltipI18nKey: "tts.title",
@@ -86,7 +90,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_Translation,
     title: "Translation",
     navGroup: "live",
-    navOrder: 2,
+    navOrder: 1,
     NavIcon: RiTranslate2,
     SidebarIcon: RiTranslate2,
     sidebarTooltipI18nKey: "transl.title",
@@ -95,23 +99,11 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     sidebarSection: "services",
   },
   {
-    tab: Services.transform,
-    Inspector: Inspector_Transform,
-    title: "AI Transform",
-    navGroup: "live",
-    navOrder: 3,
-    NavIcon: RiSparklingFill,
-    SidebarIcon: RiSparklingFill,
-    sidebarTooltipFallback: "AI Transform",
-    sidebarOrder: 1,
-    sidebarSection: "services",
-  },
-  {
     tab: Services.voice_changer,
     Inspector: Inspector_VoiceChanger,
     title: "Voice Changer",
     navGroup: "live",
-    navOrder: 4,
+    navOrder: 3,
     NavIcon: RiMagicFill,
     SidebarIcon: RiMagicFill,
     sidebarTooltipFallback: "Voice Changer",
@@ -124,7 +116,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_Others,
     title: "Other Players",
     navGroup: "live",
-    navOrder: 5,
+    navOrder: 4,
     NavIcon: RiTeamFill,
     SidebarIcon: RiTeamFill,
     sidebarTooltipI18nKey: "others.title",
@@ -137,7 +129,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_Twitch,
     title: "Twitch",
     navGroup: "integrations",
-    navOrder: 0,
+    navOrder: 2,
     NavIcon: RiTwitchFill,
     SidebarIcon: SiTwitch,
     sidebarTooltipI18nKey: "twitch.title",
@@ -150,7 +142,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_Kick,
     title: "Kick",
     navGroup: "integrations",
-    navOrder: 1,
+    navOrder: 3,
     NavIcon: KickIcon,
     SidebarIcon: KickIcon,
     sidebarTooltipFallback: "Kick",
@@ -162,7 +154,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_Discord,
     title: "Discord",
     navGroup: "integrations",
-    navOrder: 2,
+    navOrder: 4,
     NavIcon: RiDiscordFill,
     SidebarIcon: SiDiscord,
     sidebarTooltipI18nKey: "discord.title",
@@ -175,7 +167,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_OBS,
     title: "OBS Studio",
     navGroup: "integrations",
-    navOrder: 3,
+    navOrder: 1,
     NavIcon: RiRecordCircleFill,
     SidebarIcon: SiObsstudio,
     sidebarTooltipI18nKey: "obs.title",
@@ -188,7 +180,7 @@ const ALL_PANELS: HostServicePanelDefinition[] = [
     Inspector: Inspector_VRC,
     title: "VRChat",
     navGroup: "integrations",
-    navOrder: 4,
+    navOrder: 0,
     NavIcon: RiGamepadFill,
     SidebarIcon: RiMessage2Fill,
     sidebarTooltipI18nKey: "vrc.title",
@@ -225,7 +217,7 @@ export const HOST_SERVICE_PANEL_BY_TAB = ALL_PANELS.reduce(
     acc[p.tab] = p;
     return acc;
   },
-  {} as Record<Services, HostServicePanelDefinition>
+  {} as Record<PanelTab, HostServicePanelDefinition>
 );
 
 /** Non-`Services` inspector tabs — titles for the window header. */
@@ -240,7 +232,7 @@ export const EXTRA_INSPECTOR_TAB_TITLES: Record<string, string> = {
   image: "Image Element",
 };
 
-export function isHostServiceInspectorTab(tab: string | undefined): tab is Services {
+export function isHostServiceInspectorTab(tab: string | undefined): tab is PanelTab {
   return tab !== undefined && tab in HOST_SERVICE_PANEL_BY_TAB;
 }
 
@@ -250,7 +242,7 @@ export function getInspectorHeaderTitle(tab: string | undefined): string {
   return EXTRA_INSPECTOR_TAB_TITLES[tab] ?? tab;
 }
 
-export const HostServiceInspector: FC<{ tab: Services }> = ({ tab }) => {
+export const HostServiceInspector: FC<{ tab: PanelTab }> = ({ tab }) => {
   const def = HOST_SERVICE_PANEL_BY_TAB[tab];
   const Cmp = def.Inspector;
   return <Cmp key={tab} />;

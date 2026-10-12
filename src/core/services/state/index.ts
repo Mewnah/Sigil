@@ -6,6 +6,7 @@ import { proxy, subscribe } from "valtio";
 import { BackendState, BackendSchema } from "../../schema";
 import { AtomicJsonFile, JsonFileFs } from "../diagnostics/atomicJsonFile";
 import { pushSystemLog } from "../systemLog";
+import { applyFirstRunDecision, isFreshProfile } from "./firstRun";
 
 /** Persisted settings, relative to the app-data directory (`%APPDATA%\com.sigil.app`). */
 const SETTINGS_PATH = "user/settings";
@@ -35,6 +36,7 @@ class Service_State implements IServiceInterface {
 
   async init() {
     const loaded = await this.#load();
+    let fresh = loaded.fresh;
     let parsed: BackendState;
     try {
       parsed = BackendSchema.parse(loaded.data ?? {});
@@ -48,26 +50,30 @@ class Service_State implements IServiceInterface {
       );
       parsed = BackendSchema.parse({});
       loaded.source = "none";
+      fresh = false; // there was a profile: an existing user, not a new install
     }
+    // No settings file means a new install (the setup wizard); any profile that existed never sees it.
+    const decided = applyFirstRunDecision(parsed, fresh);
     this.state = proxy(parsed);
-    // Write immediately unless the main file is the good one we just read: first run, or the
-    // settings were recovered from the backup / reset to defaults (replaces the damaged file,
-    // which was preserved first).
-    if (loaded.source !== "primary") void this.#save();
+    // Write immediately unless the main file is the good one we just read and nothing changed: first run, the
+    // settings were recovered from the backup / reset to defaults (replaces the damaged file, which was preserved
+    // first), or the first-run decision was just recorded.
+    if (loaded.source !== "primary" || decided) void this.#save();
     subscribe(this.state, () => this.#debouncedSave());
   }
 
-  async #load(): Promise<{ data: Record<string, unknown> | undefined; source: "primary" | "backup" | "none" }> {
+  async #load(): Promise<{ data: Record<string, unknown> | undefined; source: "primary" | "backup" | "none"; fresh: boolean }> {
     try {
       const result = await this.#file.load();
       for (const problem of result.problems) {
         pushSystemLog("Settings", problem, result.source === "backup" ? "warning" : "error");
       }
-      return { data: result.data, source: result.source };
+      return { data: result.data, source: result.source, fresh: isFreshProfile(result) };
     } catch (error) {
       console.error("settings load failed", error);
       pushSystemLog("Settings", `Settings could not be loaded: ${error instanceof Error ? error.message : String(error)}`, "error");
-      return { data: undefined, source: "none" };
+      // The file could not be read at all: that is an existing profile, never a new install.
+      return { data: undefined, source: "none", fresh: false };
     }
   }
 

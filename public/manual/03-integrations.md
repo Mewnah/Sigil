@@ -230,7 +230,7 @@ Details: [Caption window and SteamVR overlay](../OPERATOR_REFERENCE.md#caption-w
 ### Tips
 
 - Firewall rules must allow **UDP** loopback or LAN as your setup requires.  
-- Latency stacks: STT → (optional transform) → OSC → VRChat; keep STT local if possible.
+- Latency stacks: STT → (optional Rewrite) → OSC → VRChat; keep STT local if possible.
 - **Chatbox** mode: you can disable the per-line **notification sound** in the inspector (VRChat OSC third argument on `/chatbox/input`; see VRChat’s OSC docs).
 
 ### Related

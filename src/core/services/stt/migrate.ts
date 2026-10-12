@@ -8,6 +8,11 @@ import { whisperLanguageFromBcp47 } from "./whisperModels";
  *   the first Start asks before downloading them);
  * - an existing profile is offered `local` once (never a silent switch); when it declines (or already saw the
  *   offer) it moves to local Whisper behind the Silero VAD gate (P0), whose model downloads on the first Start.
+ *
+ * Chrome and Edge (the microphone page, the same Web Speech engines in a browser window) work, so a profile on them
+ * keeps working whatever it answers: it gets the same one-time offer of the built-in engine, with no fallback, and
+ * "Keep" records `localOfferShown` and is never asked again. It is judged on `localOfferShown` alone, not on
+ * `desktopDefaultMigrated`, because that flag was already set for those profiles by the earlier "mark" step.
  * Pure: `Service_STT.init` applies the plan.
  */
 
@@ -30,6 +35,9 @@ export interface DesktopDefaultMigrationInput {
   localOfferShown?: boolean;
 }
 
+/** Which engine the one-time "switch to the built-in engine?" prompt is about; it picks the wording and the buttons. */
+export type LocalOfferKind = "native" | "chrome" | "edge";
+
 export type DesktopDefaultMigration =
   /** Nothing to do and nothing to record (web build, or already migrated). */
   | { action: "none" }
@@ -39,8 +47,10 @@ export type DesktopDefaultMigration =
   | WhisperMigration
   /** New install: switch to the `local` backend (its language stays "auto"). */
   | { action: "local"; backend: STT_Backends.local }
-  /** Existing profile: offer `local` once; apply `fallback` (Whisper) when the offer is declined. */
-  | { action: "offer"; fallback: WhisperMigration };
+  /** Existing profile on `native` (does not work in the desktop webview): offer `local` once; apply `fallback` (Whisper) when declined. */
+  | { action: "offer"; kind: "native"; fallback: WhisperMigration }
+  /** Existing profile on Chrome or Edge (works): offer `local` once; declining changes nothing. */
+  | { action: "offer"; kind: "chrome" | "edge"; fallback: null };
 
 export type WhisperMigration = { action: "migrate"; backend: STT_Backends.whisper; whisperModel?: string; whisperLanguage?: string };
 
@@ -68,11 +78,25 @@ export function pickDesktopWhisperModel(physicalCores: number, language: string)
 }
 
 export function planDesktopDefaultMigration(input: DesktopDefaultMigrationInput): DesktopDefaultMigration {
-  if (!input.isDesktop || input.alreadyMigrated) return { action: "none" };
+  if (!input.isDesktop) return { action: "none" };
+  if (input.backend === STT_Backends.chrome || input.backend === STT_Backends.edge) {
+    // A working engine: offer the built-in one once to an existing profile, never switch it silently. A new install
+    // (onboarding not finished) that is on one has just chosen it, and an offer already answered is not repeated.
+    if (!input.freshInstall && !input.localOfferShown) return { action: "offer", kind: input.backend, fallback: null };
+    return input.alreadyMigrated ? { action: "none" } : { action: "mark" };
+  }
+  if (input.alreadyMigrated) return { action: "none" };
   if (input.backend !== STT_Backends.native && input.backend !== STT_Backends.browser) return { action: "mark" };
   if (input.freshInstall) return { action: "local", backend: STT_Backends.local };
   const fallback = planWhisperMigration(input);
-  return input.localOfferShown ? fallback : { action: "offer", fallback };
+  return input.localOfferShown ? fallback : { action: "offer", kind: "native", fallback };
+}
+
+/** The prompt kind for the backend a profile is on, or null when no offer applies to it (`offerLocalBackend`). */
+export function localOfferKindOf(backend: string): LocalOfferKind | null {
+  if (backend === STT_Backends.chrome) return "chrome";
+  if (backend === STT_Backends.edge) return "edge";
+  return backend === STT_Backends.native || backend === STT_Backends.browser ? "native" : null;
 }
 
 /** P0 migration of a profile on `native` to local Whisper (small / base Q5_1 by core count). */
@@ -89,4 +113,15 @@ export function planWhisperMigration(input: DesktopDefaultMigrationInput): Whisp
     whisperModel: pickDesktopWhisperModel(estimatePhysicalCores(input.logicalCores), language),
     whisperLanguage: language,
   };
+}
+
+/**
+ * Backends removed from the product. A desktop profile still on one moves to the built-in engine (`local`, automatic)
+ * once at launch, with a notice; Moonshine server mode is the first. The web build is untouched (it has no in-process
+ * engine to move to). Pure: `Service_STT.init` applies the plan.
+ */
+export type RetiredBackendMigration = { action: "none" } | { action: "local" };
+
+export function planRetiredBackendMigration(input: { isDesktop: boolean; backend: string }): RetiredBackendMigration {
+  return input.isDesktop && input.backend === STT_Backends.moonshine ? { action: "local" } : { action: "none" };
 }

@@ -106,14 +106,14 @@ export function initSystemLogListeners() {
 
   pushSystemLog(
     "System",
-    "Monitoring STT, TTS, Translation, AI Transform, OBS WebSocket, and voice changer state.",
+    "Monitoring STT, TTS, Translation, Rewrite, OBS WebSocket, and voice changer state.",
     "info"
   );
 
   wireNetworkService("STT", api.stt.serviceState);
   wireNetworkService("TTS", api.tts.serviceState);
   wireNetworkService("Translation", api.translation.serviceState);
-  wireNetworkService("AI Transform", api.transform.serviceState);
+  wireNetworkService("Rewrite", api.transform.serviceState);
 
   const obsWs = api.obs.wsState;
   const obsEmit = () => {

@@ -7,9 +7,9 @@ function sourceLabel(eventKey: string): string {
   const map: Record<string, string> = {
     stt: "Speech-to-text",
     translation: "Translation",
-    transform: "AI (output)",
-    transform_source: "AI (source)",
-    transform_raw: "AI (thinking)",
+    transform: "Rewritten text",
+    transform_source: "Original text (synced)",
+    transform_raw: "Original text (in step)",
     textfield: "Typed / shortcut",
   };
   return map[eventKey] || eventKey || "Text";

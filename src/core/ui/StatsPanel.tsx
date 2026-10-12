@@ -99,7 +99,7 @@ const StatsPanel: FC = memo(() => {
                         color={ttsState.status === ServiceNetworkState.connected ? "text-success" : "text-base-content/50"}
                     />
                     <StatCard
-                        label="AI Service"
+                        label="Rewrite"
                         value={transformState.status === ServiceNetworkState.connected ? "Online" : "Offline"}
                         color={transformState.status === ServiceNetworkState.connected ? "text-success" : "text-base-content/50"}
                     />

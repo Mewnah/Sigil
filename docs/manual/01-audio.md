@@ -1,13 +1,12 @@
-# Audio and AI
+# Speech and voice
 
-This chapter covers **speech-to-text**, **text-to-speech**, **translation**, **AI transform**, and the **voice changer**.
+This chapter covers **speech to text** (with **Rewrite**, which runs next to it), **translation**, **text to speech**, and the **voice changer**. In the app they sit together under **Speech** in the left menu.
 
 ## Table of contents
 
-- [Speech to text (STT)](#speech-to-text-stt)
-- [Text to speech (TTS)](#text-to-speech-tts)
+- [Speech to text (STT)](#speech-to-text-stt), including [Rewrite](#rewrite)
 - [Translation](#translation)
-- [AI transform](#ai-transform)
+- [Text to speech (TTS)](#text-to-speech-tts)
 - [Voice changer](#voice-changer)
 
 ## Speech to text (STT)
@@ -20,7 +19,7 @@ Turn microphone (or other) audio into **text** for captions, chat pipelines, and
 
 ### Open the inspector
 
-Sidebar → **Speech to Text**.
+Left menu → **Speech** → **Speech to Text**. The inspector has two tabs: **Speech** (engine, language and start) and **Rewrite** (see [Rewrite](#rewrite) below).
 
 ### Start and stop
 
@@ -31,25 +30,24 @@ Sidebar → **Speech to Text**.
 
 ### Engines (summary)
 
-Pick a **backend** in the inspector. Minimum requirements per engine are in [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#speech-to-text).
+Pick the engine from the inspector's list, which is grouped: **Recommended** (the built-in engine), **Online (your own account or key)**, **Chrome / Edge microphone page** and **Other engines**. Minimum requirements per engine are in [OPERATOR_REFERENCE.md](../OPERATOR_REFERENCE.md#speech-to-text).
 
 | Engine class | Notes |
 |--------------|--------|
-| **On this PC (automatic)** | Recommended and the default for new desktop installs. Sigil picks the best speech models for your language and your PC (live captions while you speak, then a more accurate final line) and runs them on this PC. |
+| **Built-in (runs on your PC)** | Recommended and the default for new desktop installs. Sigil picks the best speech models for your language and your PC (live captions while you speak, then a more accurate final line) and runs them on this PC. Works without internet; your voice never leaves the PC. |
+| **Groq Whisper (free cloud)** | Whisper large-v3 Turbo on Groq's free plan; needs a free API key and sends your speech to Groq. Sigil paces requests to stay inside the free limits. |
+| **Azure / Deepgram** | Cloud; keys in settings (Deepgram uses Nova-3 by default) |
+| **Chrome / Edge** | The browser's own speech recognition, run from a **microphone page** (`mic.html`) that Sigil opens in Chrome or Edge. It sends your voice to Google (Chrome) or Microsoft (Edge). In Sigil's English test it made about 21 (Chrome) and 10 (Edge) mistakes per 100 words, against about 6 for the built-in engine ([measurements](../OPERATOR_REFERENCE.md#speech-to-text)). A profile that still uses it is asked once whether to switch to the built-in engine; **Keep Chrome** / **Keep Edge** keeps it and is never asked again. |
 | **Whisper (Rust)** | Local; model download on first use. |
 | **Vosk** | Local models via Tauri + browser loader |
 | **OpenAI-style HTTP** | Your own server `POST …/audio/transcriptions` (on this PC or the LAN), one request per sentence |
-| **Groq Whisper (free cloud)** | Whisper large-v3 Turbo on Groq's free plan; needs a free API key and sends your speech to Groq. Sigil paces requests to stay inside the free limits. |
-| **Azure / Deepgram** | Cloud; keys in settings (Deepgram uses Nova-3 by default) |
-| **Native / Web Speech** | Browser speech APIs where available (does not work inside the desktop app; desktop users on it are asked once to switch to the automatic backend, else they move to Whisper) |
-| **Chrome / Edge** | Optional path to open a **mic helper** page (`mic.html`) for browser-based capture |
-| **Moonshine server (legacy)** | An external Moonshine HTTP server (Moonshine also exists as a built-in English model in Sigil's speech engine) |
+| **Native / Web Speech** | Browser speech APIs, listed only in the web build. It does not work inside the desktop app; a desktop profile still on it is asked once to switch to the built-in engine, else it moves to Whisper. |
 
-**Which one for my PC?** Start with **On this PC (automatic)**: it runs on the processor by default, so the game keeps the graphics card, and with fewer than 6 physical cores it uses one lighter pass. Models for the graphics card (a more accurate final line, more languages) are opt-in. What each engine downloads and costs, by kind of PC: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
+**Which one for my PC?** Start with **Built-in (runs on your PC)**: it runs on the processor by default, so the game keeps the graphics card, and with fewer than 6 physical cores it uses one lighter pass. Models for the graphics card (a more accurate final line, more languages) are opt-in. What each engine downloads and costs, by kind of PC: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
 
-### First start with "On this PC (automatic)"
+### First start with "Built-in (runs on your PC)"
 
-1. In the STT inspector, pick **On this PC (automatic)** and your **language**. Setting the language is the biggest step for accurate captions and also saves memory; **Detect automatically** works, but is noticeably less accurate for languages such as French, German, Spanish and Russian (see [Choosing your language](#choosing-your-language)).
+1. In the STT inspector, pick **Built-in (runs on your PC)** and your **language**. Setting the language is the biggest step for accurate captions and also saves memory; **Detect automatically** works, but is noticeably less accurate for languages such as French, German, Spanish and Russian (see [Choosing your language](#choosing-your-language)).
 2. The panel shows which models Sigil will use on this PC and why. Leave **Hardware** on **Best for my PC** unless you want to force **Processor only** or let speech recognition share the graphics card with the voice changer (**Graphics card**).
 3. Press **Start**. Sigil asks once before downloading (for English about 1.1 GB; **Smaller setup** downloads less and uses one model). Progress shows under the Start button and in **Models & Runtimes**; you can stop and resume later.
 4. Speak: live words appear, then each sentence is replaced by its final, more accurate version on the same line.
@@ -60,7 +58,7 @@ Models download once and stay on this PC; your voice never leaves it. If the mic
 
 Sigil never picks a language for you. It asks, and **Detect automatically** stays a choice everywhere.
 
-- **Setup wizard (not shown in this version yet):** the speech step is built to ask *What language do you speak?*, starting on your Windows language when Sigil supports it and it is not English (otherwise on **Detect automatically**); nothing is saved until you press **Continue**. Until the wizard is shown, the touchpoints below are what you will meet.
+- **Setup wizard (first run):** on a new install the speech step asks *What language do you speak?*, starting on your Windows language when Sigil supports it and it is not English (otherwise on **Detect automatically**); nothing is saved until you press **Continue**. The touchpoints below are what you meet afterwards, and what a profile that already existed meets.
 - **STT inspector:** while the language is still on **Detect automatically** and you have not answered, a card above **Start** says "Your Windows language is French. Lock captions to French?" (not when Windows is in English, which says nothing about what you speak).
 - **Before the first download:** if the language is still on **Detect automatically**, the question "Download speech models?" adds a tip: cancel, choose your language in the inspector, and press **Start** again (a set language usually downloads less).
 - **While you talk:** if Sigil hears the same language in three sentences in a row, it asks "Detected French. Lock captions to French?" in the STT inspector, or as a small toast (no window pops up and nothing takes focus) when the inspector is closed. A session that mixes languages is never asked, and the card goes away again if the next sentences are in another language.
@@ -69,7 +67,7 @@ The card has three buttons. **Lock to French** saves the language: running capti
 
 ### Audio input
 
-- **On this PC (automatic), Whisper, Vosk, Moonshine, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
+- **Built-in (runs on your PC), Whisper, Vosk, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
 - **Azure and Deepgram** capture in the webview, so their device pickers list **browser** microphones. Leave the picker on the default to use the system microphone.
 - If a microphone is **unplugged** while STT runs, Sigil shows a toast and reconnects it by itself when it comes back; STT keeps running. With the system default selected, STT follows a change of the Windows default microphone. A saved microphone that is not plugged in is shown as **(not connected)**.
 
@@ -77,13 +75,36 @@ Details: [Input device resolution](../OPERATOR_REFERENCE.md#input-device-resolut
 
 ### Voice detection
 
-The automatic backend, Whisper, Moonshine, local HTTP and Groq only hear you when the built-in voice detector (Silero VAD) decides you are speaking, so silence, keyboard noise and game audio are never transcribed. Adjust it under **Voice detection** in the STT inspector: **Speech sensitivity** (lower catches quiet speech), **Pause that ends speech** (shorter feels faster but can split sentences), audio kept before speech, shortest speech kept, and the longest sentence. **Reset to defaults** restores them.
+The built-in engine, Whisper, local HTTP and Groq only hear you when the built-in voice detector (Silero VAD) decides you are speaking, so silence, keyboard noise and game audio are never transcribed. Adjust it under **Voice detection** in the STT inspector: **Speech sensitivity** (lower catches quiet speech), **Pause that ends speech** (shorter feels faster but can split sentences), audio kept before speech, shortest speech kept, and the longest sentence. **Reset to defaults** restores them.
 
-Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait. The automatic backend has **Two-pass accuracy** (the accurate final line), **Enable interim results** (words while you are still speaking; turn it off to get each sentence once it is finished, which also saves the live model's processor time and memory, about 0.3-0.4 cores and 0.8 GB, and applies at the next start), **Smart Turn** (lets translation, TTS and the chatbox react sooner when you finish talking; captions are unchanged), **hotwords** and the hallucination filter.
+Whisper also has **Accuracy and performance** settings: the hallucination filter (drops phantom phrases such as “Thanks for watching”), the no-speech cutoff, **hotwords** (names and terms Whisper should spell correctly), a context prompt, CPU threads and how many sentences may wait. The built-in engine has **Two-pass accuracy** (the accurate final line), **Enable interim results** (words while you are still speaking; turn it off to get each sentence once it is finished, which also saves the live model's processor time and memory, about 0.3-0.4 cores and 0.8 GB, and applies at the next start), **Smart Turn** (lets translation, TTS and the chatbox react sooner when you finish talking; captions are unchanged), **hotwords** and the hallucination filter.
+
+### Rewrite
+
+![Rewrite tab](assets/transform-inspector.png)
+
+Rewrite sends each finished sentence through a **language model** (OpenAI, OpenRouter, **Google Gemini**, or a **local** OpenAI-compatible server such as Ollama or LM Studio) with your instructions: fix grammar, change the tone, shorten, stylize. It runs next to Speech to Text, so **start both**. To use the result, choose **Rewritten text** as the text source of a caption, of Text to Speech or of the VRChat chatbox.
+
+Open it with the **Rewrite** tab of the Speech to Text inspector, or with the **Rewrite** card in the bottom bar (it opens the same tab). A small dot on the tab shows that Rewrite is running (green) or starting (amber).
+
+- **Start and stop:** **Start rewriting** / **Stop rewriting** in the tab or on the bottom-bar card. **Keyboard:** `Ctrl+2` / `Cmd+2` toggles it.
+- **Provider, model and key:** pick the **Provider** (OpenAI, OpenRouter, **Google Gemini**, or your own server) and fill in the **model name**, the **API key** (if required) and the **API URL** for local or proxy setups. **Check connection** lists the models the server offers and says whether yours is among them. **Instructions** holds your prompt; short, focused instructions answer faster than long ones.
+- **Google Gemini (free tier available):** create a free key in Google AI Studio (aistudio.google.com). Flash-Lite models answer fastest and have the most generous free limits.
+- **Enable context history** sends your previous sentences to the model for better context, at the cost of a few more tokens.
+- **More options** (a fold at the bottom of the tab):
+  - **Treat speech as text to rewrite** (on by default, recommended) keeps the model from answering spoken questions.
+  - **Max output tokens** (default 1024) limits the reply length. Thinking models spend tokens on reasoning, so give them a higher limit.
+  - **Reasoning effort** (default **Model default**) controls how long reasoning models think. Choose **None** or **Minimal** to keep captions fast. If a model rejects a level, keep **Model default**.
+  - **Stream the reply** (on by default): captions bound to "Rewrite: original text (synced)" fill in word by word as the reply arrives. Text to Speech, the chatbox and the **Rewritten text** source still get only the finished line.
+  - **Timeout per line** (15 seconds by default). On a failure or timeout the **original text** is sent on (with a short notice), so captions and Text to Speech keep flowing.
+  - **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block browser requests (Ollama, LM Studio). Change it to **Direct from the app window** or **Through Sigil** only if a server cannot be reached.
+- Changes apply to the next sentence; no restart is needed.
+- **Stop with Twitch stream** works, and captions set to **Show the original text in step with Rewrite** follow speech to text when Rewrite is off.
+- **Local endpoints** reduce cloud cost and privacy risk; latency still depends on your graphics card and processor. If Rewrite errors, check the **System log** and the provider's rate limits.
 
 ### Tips
 
-- Prefer **local** engines for latency-sensitive VRChat or game audio; **On this PC (automatic)** needs no server.
+- Prefer **local** engines for latency-sensitive VRChat or game audio; **Built-in (runs on your PC)** needs no server.
 - If frames drop in the game while captions run, see [Keeping Sigil light next to VRChat](../OPERATOR_REFERENCE.md#keeping-sigil-light-next-to-vrchat) (a smaller model, one pass instead of two; for the voice changer, **Protect game FPS** together with a graphics-card preset, because on the processor Streamer preset it makes the voice changer fall behind).
 - For **OpenAI-compatible** servers, confirm they accept **non-streaming multipart** uploads (one upload per sentence).
 - Use **mute** (or its shortcut) to pause captions without stopping the service. The Rust engines and Deepgram do not hear or send muted speech at all.
@@ -93,8 +114,68 @@ For timeouts, wrong microphone, and “connected but no text” behavior, see [O
 ### Related
 
 - [Translation](#translation) — can run on STT output  
-- [AI transform](#ai-transform) — optional rewrite of transcribed text  
+- [Rewrite](#rewrite) — optional rewrite of transcribed text  
 - [OBS Studio](03-integrations.md#obs-studio) — showing captions in a browser source  
+
+## Translation
+
+![Translation inspector](assets/translation-inspector.png)
+
+### Purpose
+
+Translate text (often from **STT** or chat) into another language for captions or downstream TTS.
+
+### Open the inspector
+
+Left menu → **Speech** → **Translation**.
+
+### Typical flow
+
+1. Pick a **provider** at the top of the panel. **Automatic (best available)** tries several engines in order and falls back when one does not answer.
+2. Set the **source** and **target** language. Leave the source on automatic to use the language speech-to-text recognized.
+3. Follow the panel's hints: it shows what is still missing (an API key, a download) under **Start**.
+4. **Start** translation. Speech-to-text (or typed text) feeds it automatically.
+
+### Providers
+
+- **Automatic (best available)**: an engine order (by default the language model, then Firefox Translations, then NLLB), plus optional rules for some language pairs (for example a Japanese specialist for Japanese to English). Each engine gets a few seconds (**Time per engine**) before the next one is tried; when an online engine fails, the offline ones are tried too. The status line shows which engine translated the last line and warns while a fallback is in use. While the language model runs on the processor, English with French, Spanish, Portuguese and Dutch (either direction) is tried with NLLB first when it is installed: it translates those pairs better, in about 1.6 seconds a line instead of 0.4. A rule of your own for the pair, or an engine order you changed, turns that off.
+- **Language model**: the best quality. **Model runs on**:
+  - **This PC (Sigil's model server)**: Sigil downloads a translation model (Hy-MT2 1.8B, about 1.1 GB, by default) and runs it on your graphics card or processor. The **Local model server** box shows where it will run and how much video memory it needs. If it does not fit next to your game or the voice changer, it is refused with the reason; **Start it anyway** overrides that until Sigil closes. **Test load** checks it; the server stops a few seconds after translation stops and always ends with Sigil. You can also pick a larger model, a specialist, or your own GGUF file.
+  - **Google Gemini (free tier available)**: create a free key in Google AI Studio.
+  - **OpenRouter** or **OpenAI**: paste the key and a model name.
+  - **Your own server (Ollama, LM Studio, …)**: pick the preset, press **Check connection** and choose a model from the list.
+  - **Prompt format** is automatic for the catalog models; **Custom** lets you write your own template (a preview shows what is sent). Keep **Reasoning effort** on **Model default** for translation models.
+- **DeepL**: paste your DeepL API key (Free keys end in `:fx`, 500,000 characters a month). The panel shows this month's usage. Partial captions are off by default because they use quota.
+- **Firefox Translations (offline)**: fast, offline, no video memory. Import the Firefox Translations engine pack in **Models & Runtimes**, then download the language models the panel lists (small downloads; pairs without English go through English). It needs to know the spoken language.
+- **NLLB-200 (offline, 200 languages)**: about 0.9 GB, runs on the processor, about a second per line. Best for languages the other offline engines do not cover.
+- **Azure**, **LibreTranslate** (including the **LTEngine** preset) and **On-device (WebView)** work as before.
+
+### Live settings
+
+These apply to the next line while translation runs; no restart is needed.
+
+- **Glossary**: names and terms and how to translate them. Only the terms in a line are sent. **Paste a list** accepts one term per line (term and translation separated by a tab, `=`, `->` or a comma), and the tester shows which terms a sample line would use. Language models use the glossary; DeepL, Firefox Translations and NLLB ignore it.
+- **Context**: earlier lines (3 by default) and a short **Background** (topic, names, speaking style) help language models and DeepL keep names and tone consistent.
+- **Partial captions**: **Steady partial translations** show only the words two partial translations agree on, so captions grow without flickering; **Also show the unconfirmed end** shows the newest words too (they may still change). **Wait until you finish speaking** joins a sentence Smart Turn marks as unfinished with the next one.
+- **Use keyboard input**: whether typed text is translated too.
+
+### What to expect
+
+- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one, which may reword the line once because it sees the whole sentence. While the local language model runs on your processor, interim translations are off by default (they would take about 4 cores next to the game, final lines only 1.5): tick **Interim results** in the Automatic or Language model panel to turn them on. On a graphics card they stay on.
+- A line that fails to translate shows a short notice and is written to the **System log**; untranslated text is never passed off as a translation.
+- **Azure:** the **Region** field is optional (only regional or multi-service resources need it). Leave the source language empty to auto-detect.
+
+### Tips
+
+- For the best quality with no cloud account, use **Language model** on **This PC**. For older PCs or while the voice changer needs the graphics card, **Firefox Translations** or **NLLB** run on the processor.
+- If a local server (Ollama, LM Studio) cannot be reached, set **Route** to **Through Sigil**.
+- If output looks wrong, check the source language, and whether your text source sends interim or only final text.
+
+### Related
+
+- [Speech to text (STT)](#speech-to-text-stt)  
+- [Text to speech (TTS)](#text-to-speech-tts)  
+- [Rewrite](#rewrite)  
 
 ## Text to speech (TTS)
 
@@ -102,11 +183,11 @@ For timeouts, wrong microphone, and “connected but no text” behavior, see [O
 
 ### Purpose
 
-Speak text aloud with the built-in **Kokoro / Piper** voices, **VOICEVOX / AivisSpeech**, **Azure**, **Uberduck**, **Windows SAPI**, **browser** voices, any **OpenAI-compatible** speech server, or other configured backends. Often used with chat, macros, or transformed captions.
+Speak text aloud with the built-in **Kokoro / Piper** voices, **VOICEVOX / AivisSpeech**, **Azure**, **Uberduck**, **Windows SAPI**, **browser** voices, any **OpenAI-compatible** speech server, or other configured backends. Often used with chat, macros, or rewritten captions.
 
 ### Open the inspector
 
-Sidebar → **Text to Speech**.
+Left menu → **Speech** → **Text to Speech**.
 
 ### Start and stop
 
@@ -141,111 +222,9 @@ A **TTS input** bar can appear above the bottom of the canvas (host) so you can 
 
 ### Related
 
-- [AI transform](#ai-transform)  
+- [Rewrite](#rewrite)  
 - [Translation](#translation)  
 - [Discord](03-integrations.md#discord) — outbound hooks may carry text  
-
-## Translation
-
-![Translation inspector](assets/translation-inspector.png)
-
-### Purpose
-
-Translate text (often from **STT** or chat) into another language for captions or downstream TTS.
-
-### Open the inspector
-
-Sidebar → **Translation**.
-
-### Typical flow
-
-1. Pick a **provider** at the top of the panel. **Automatic (best available)** tries several engines in order and falls back when one does not answer.
-2. Set the **source** and **target** language. Leave the source on automatic to use the language speech-to-text recognized.
-3. Follow the panel's hints: it shows what is still missing (an API key, a download) under **Start**.
-4. **Start** translation. Speech-to-text (or typed text) feeds it automatically.
-
-### Providers
-
-- **Automatic (best available)**: an engine order (by default AI model, then Firefox Translations, then NLLB), plus optional rules for some language pairs (for example a Japanese specialist for Japanese to English). Each engine gets a few seconds (**Time per engine**) before the next one is tried; when an online engine fails, the offline ones are tried too. The status line shows which engine translated the last line and warns while a fallback is in use. While the AI model runs on the processor, English with French, Spanish, Portuguese and Dutch (either direction) is tried with NLLB first when it is installed: it translates those pairs better, in about 1.6 seconds a line instead of 0.4. A rule of your own for the pair, or an engine order you changed, turns that off.
-- **AI model (LLM)**: the best quality. **Model runs on**:
-  - **This PC (Sigil's model server)**: Sigil downloads a translation model (Hy-MT2 1.8B, about 1.1 GB, by default) and runs it on your graphics card or processor. The **Local model server** box shows where it will run and how much video memory it needs. If it does not fit next to your game or the voice changer, it is refused with the reason; **Start it anyway** overrides that until Sigil closes. **Test load** checks it; the server stops a few seconds after translation stops and always ends with Sigil. You can also pick a larger model, a specialist, or your own GGUF file.
-  - **Google Gemini (free tier available)**: create a free key in Google AI Studio.
-  - **OpenRouter** or **OpenAI**: paste the key and a model name.
-  - **Your own server (Ollama, LM Studio, …)**: pick the preset, press **Check connection** and choose a model from the list.
-  - **Prompt format** is automatic for the catalog models; **Custom** lets you write your own template (a preview shows what is sent). Keep **Reasoning effort** on **Model default** for translation models.
-- **DeepL**: paste your DeepL API key (Free keys end in `:fx`, 500,000 characters a month). The panel shows this month's usage. Partial captions are off by default because they use quota.
-- **Firefox Translations (offline)**: fast, offline, no video memory. Import the Firefox Translations engine pack in **Models & Runtimes**, then download the language models the panel lists (small downloads; pairs without English go through English). It needs to know the spoken language.
-- **NLLB-200 (offline, 200 languages)**: about 0.9 GB, runs on the processor, about a second per line. Best for languages the other offline engines do not cover.
-- **Azure**, **LibreTranslate** (including the **LTEngine** preset) and **On-device (WebView)** work as before.
-
-### Live settings
-
-These apply to the next line while translation runs; no restart is needed.
-
-- **Glossary**: names and terms and how to translate them. Only the terms in a line are sent. **Paste a list** accepts one term per line (term and translation separated by a tab, `=`, `->` or a comma), and the tester shows which terms a sample line would use. AI models use the glossary; DeepL, Firefox Translations and NLLB ignore it.
-- **Context**: earlier lines (3 by default) and a short **Background** (topic, names, speaking style) help AI models and DeepL keep names and tone consistent.
-- **Partial captions**: **Steady partial translations** show only the words two partial translations agree on, so captions grow without flickering; **Also show the unconfirmed end** shows the newest words too (they may still change). **Wait until you finish speaking** joins a sentence Smart Turn marks as unfinished with the next one.
-- **Use keyboard input**: whether typed text is translated too.
-
-### What to expect
-
-- **Final** translations are always delivered, in the order you spoke. **Interim** (live) translations update as you talk and are replaced by the final one, which may reword the line once because it sees the whole sentence. While the local AI model runs on your processor, interim translations are off by default (they would take about 4 cores next to the game, final lines only 1.5): tick **Interim results** in the Automatic or AI model panel to turn them on. On a graphics card they stay on.
-- A line that fails to translate shows a short notice and is written to the **System log**; untranslated text is never passed off as a translation.
-- **Azure:** the **Region** field is optional (only regional or multi-service resources need it). Leave the source language empty to auto-detect.
-
-### Tips
-
-- For the best quality with no cloud account, use **AI model** on **This PC**. For older PCs or while the voice changer needs the graphics card, **Firefox Translations** or **NLLB** run on the processor.
-- If a local server (Ollama, LM Studio) cannot be reached, set **Route** to **Through Sigil**.
-- If output looks wrong, check the source language, and whether your text source sends interim or only final text.
-
-### Related
-
-- [Speech to text (STT)](#speech-to-text-stt)  
-- [Text to speech (TTS)](#text-to-speech-tts)  
-- [AI transform](#ai-transform)  
-
-## AI transform
-
-![AI transform inspector](assets/transform-inspector.png)
-
-### Purpose
-
-Rewrite, summarize, or stylize text with an **LLM** (OpenAI, OpenRouter, Google Gemini, or a **local** OpenAI-compatible server such as Ollama or LM Studio). Often applied to **STT** output before display or TTS.
-
-### Open the inspector
-
-Sidebar → **AI Transform**.
-
-### Start and stop
-
-- Inspector controls or bottom bar **AI**.
-- **Keyboard:** `Ctrl+2` / `Cmd+2` toggles the transform service start/stop.
-
-### Configuration
-
-Set the **provider** (OpenAI, OpenRouter, **Google Gemini**, or your own server), **model**, **API key** (if required), and **base URL** for local or proxy setups. **Check connection** lists the models the server offers and says whether yours is among them. Prompts and options are in the inspector; keep them aligned with your stream’s tone and latency budget.
-
-- **Google Gemini (free tier available):** create a free key in Google AI Studio (aistudio.google.com). Flash-Lite models answer fastest and have the most generous free limits.
-- **Max output tokens** (default 1024) limits the reply length. Thinking models spend tokens on reasoning, so give them a higher limit.
-- **Reasoning effort** (default **Model default**) controls how long reasoning models think. Choose **None** or **Minimal** to keep captions fast. If a model rejects a level, keep **Model default**.
-- **Stream the reply** (on by default): captions bound to the synced AI source ("AI: Original Text (Synced)") fill in word by word as the reply arrives. TTS, the chatbox and the AI Transform source still get only the finished line.
-- **Timeout per line** (15 seconds by default). On a failure or timeout the **original text** is sent on (with a short notice), so captions and TTS keep flowing.
-- **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block browser requests (Ollama, LM Studio). Change it to **Direct from the app window** or **Through Sigil** only if a server cannot be reached.
-- Changes apply to the next sentence; no restart is needed.
-- **Stop with stream** works, and “Sync timing” captions follow STT when AI is off.
-
-### Tips
-
-- **Local endpoints** reduce cloud cost and privacy risk; latency still depends on GPU/CPU.  
-- Short, focused prompts reduce delay versus long system prompts.  
-- If the service errors, check the **logs** panel and provider rate limits.
-
-### Related
-
-- [Speech to text (STT)](#speech-to-text-stt)  
-- [Text to speech (TTS)](#text-to-speech-tts)  
-- [Settings](04-system.md#settings) for related keys  
 
 ## Voice changer
 
@@ -259,7 +238,7 @@ For DSP modes, sidecar protocol, and ONNX details, see [OPERATOR_REFERENCE.md](.
 
 ### Open the inspector
 
-Sidebar → **Voice Changer**.
+Left menu → **Speech** → **Voice Changer**.
 
 ### Usage
 

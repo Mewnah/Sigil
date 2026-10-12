@@ -394,8 +394,8 @@ class Service_PubSub implements IServiceInterface {
     this.registerEvent({ label: "Speech-to-Text", value: TextEventSource.stt });
     this.registerEvent({ label: "Translation", value: TextEventSource.translation });
     this.registerEvent({ label: "Text field", value: TextEventSource.textfield });
-    this.registerEvent({ label: "AI: Rewritten Text", value: TextEventSource.transform });
-    this.registerEvent({ label: "AI: Original Text (Synced)", value: TextEventSource.transform_source });
+    this.registerEvent({ label: "Rewrite: rewritten text", value: TextEventSource.transform });
+    this.registerEvent({ label: "Rewrite: original text (synced)", value: TextEventSource.transform_source });
     this.registerEvent({ label: "Any text source", value: TextEventSource.any });
     // P6-S0: other players (P6-A) and readings (P6-L); outside `text.*`, so "Any text source" never hears them.
     this.registerEvent({ label: "Other players: Speech-to-Text", value: OthersEventSource.stt });

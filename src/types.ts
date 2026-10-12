@@ -155,6 +155,7 @@ export type ObsCaptionEnvelope = z.infer<typeof ObsCaptionEnvelopeSchema>;
 
 export type InspectorTabPath = {
   tab: Services | ElementType | "settings" | "integrations" | "scenes" | "files" | "fonts" | "project" | "elements" | "models",
+  /** An element id, a catalog entry id ("models"), or for "stt" a section of the inspector (see `STT_REWRITE_SECTION`). */
   value?: string
 }
 

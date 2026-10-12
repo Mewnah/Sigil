@@ -12,15 +12,15 @@ There is a lot under the hood; mix local models, cloud APIs, and browser fallbac
 
 ### Speech-to-text (STT)
 
-- **On this PC (automatic)** — the default for new desktop installs: Sigil picks local models for your language and PC (live partials from Nemotron streaming, a more accurate final per sentence from Parakeet, Qwen3-ASR, SenseVoice or Whisper), asks before it downloads anything and runs them inside the app, on the processor by default so the game keeps the GPU. Opt-in GPU models (Qwen3-ASR 1.7B, Cohere Transcribe, Voxtral) need a runtime pack.
+- **Built-in (runs on your PC)** — the default for new desktop installs: Sigil picks local models for your language and PC (live partials from Nemotron streaming, a more accurate final per sentence from Parakeet, Qwen3-ASR, SenseVoice or Whisper), asks before it downloads anything and runs them inside the app, on the processor by default so the game keeps the GPU. Opt-in GPU models (Qwen3-ASR 1.7B, Cohere Transcribe, Voxtral) need a runtime pack.
 - **Whisper** (Rust plugin) — local inference; models downloaded on first use through the model store
 - **Vosk** — local models via Tauri + browser loader
 - **OpenAI-style HTTP** — `POST …/audio/transcriptions` for local servers (speaches and others), plus a **Groq** free-cloud preset that stays inside Groq's limits
-- **Moonshine** — an external Moonshine HTTP server (legacy backend); Moonshine base also exists inside Sigil's speech engine
 - **Azure** / **Deepgram** / **Gemini Live** — cloud APIs where configured
+- **Chrome / Edge** — the browser's speech recognition through a microphone page (it sends your voice to Google or Microsoft; in Sigil's English test it made about 21 and 10 mistakes per 100 words against about 6 for the built-in engine, see [the measurements](docs/benchmarks/SPEECH_BENCHMARKS.md#browser-speech-recognition-chrome-and-edge-web-speech-the-old-default-english)); a profile still on it is asked once whether to switch to the built-in engine
 - **Native / Web Speech** — browser speech recognition where available (not inside the desktop app)
 
-STT is configured on the **desktop host**. The lightweight **`/client`** page does not run Tauri; it syncs with the host over PeerJS (see [ARCHITECTURE.md](ARCHITECTURE.md)). A Silero voice detector keeps silence and keyboard noise away from every engine in Sigil's own speech pipeline (automatic, Whisper, Moonshine, local HTTP, Groq; the cloud engines, Vosk and Web Speech do not use it). [Which engine for which PC](docs/OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
+STT is configured on the **desktop host**. The lightweight **`/client`** page does not run Tauri; it syncs with the host over PeerJS (see [ARCHITECTURE.md](ARCHITECTURE.md)). A Silero voice detector keeps silence and keyboard noise away from every engine in Sigil's own speech pipeline (built-in, Whisper, local HTTP, Groq; the cloud engines, Vosk and Web Speech do not use it). [Which engine for which PC](docs/OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
 
 ### Text-to-speech (TTS)
 
@@ -36,15 +36,15 @@ Speech plays sentence by sentence, with Skip and Stop, and can be **routed into 
 
 ### Translation
 
-- **Automatic (best available)** — an ordered chain with fallbacks: a local AI model (Hy-MT2 on a `llama-server` helper that Sigil starts and stops itself) → Firefox Translations (Bergamot, no video memory) → NLLB-200
+- **Automatic (best available)** — an ordered chain with fallbacks: a local language model (Hy-MT2 on a `llama-server` helper that Sigil starts and stops itself) → Firefox Translations (Bergamot, no video memory) → NLLB-200
 - **DeepL API Free**, **Gemini** (free tier), **Azure**, **LibreTranslate** — cloud or self-hosted
 - **On-device** — Chromium **WebView Translator / Language Detector** APIs when the runtime exposes them
 
 Partial captions translate without flicker (LocalAgreement), and final translations are never dropped.
 
-### AI transform
+### Rewrite
 
-Rewrite or style transcribed text with **OpenAI**, **OpenRouter**, **Google Gemini** (free tier) or **local** LLM endpoints (configured in the inspector).
+Rewrite or style transcribed text with a language model: **OpenAI**, **OpenRouter**, **Google Gemini** (free tier) or a **local** endpoint (configured in the **Rewrite** tab of the Speech to Text inspector). It runs next to speech to text; choose **Rewritten text** as the text source of a caption, Text to Speech or the VRChat chatbox to use it.
 
 ### Streaming and chat
 

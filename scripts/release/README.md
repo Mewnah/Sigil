@@ -93,7 +93,7 @@ The app is started with `SIGIL_START_MINIMIZED=1` (`src-tauri/src/main.rs`): the
 1. Use a Windows 10/11 x64 virtual machine with no GPU passthrough and no Sigil data (a snapshot is ideal). Copy the NSIS setup and `packaged-smoke-all.ps1` into it.
 2. In Windows PowerShell inside the VM: `powershell -ExecutionPolicy Bypass -File .\packaged-smoke-all.ps1 -Mode Installed -AllowInstall -InstallerPath .\Sigil_<version>_x64-setup.exe -ExpectNoGpu -Online -ResultsDir C:\smoke-out`. (`-AllowInstall` says this VM is disposable: the script installs the app for the current user and uninstalls it afterwards, and refuses to do that on a PC it cannot tell is disposable. GitHub-hosted runners and Windows Sandbox are recognized without it.)
 3. Every check in `C:\smoke-out\smoke-result.json` should be `pass` (the GUI checks `skip` without the WebView2 runtime; the setup installs it when the VM has internet).
-4. By hand, once, with the window open: Settings -> GPU & diagnostics names the processor (or DirectML with the reason) and **Test GPU acceleration** completes; Models & Runtimes shows every entry as not installed; the STT backend **On this PC (automatic)** with English, **Start**, asks before downloading and shows the size.
+4. By hand, once, with the window open: Settings -> GPU & diagnostics names the processor (or DirectML with the reason) and **Test GPU acceleration** completes; Models & Runtimes shows every entry as not installed; the STT backend **Built-in (runs on your PC)** with English, **Start**, asks before downloading and shows the size.
 
 ## Firefox Translations (Bergamot) pack: manual build
 

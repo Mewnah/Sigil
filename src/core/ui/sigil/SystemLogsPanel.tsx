@@ -52,7 +52,7 @@ export const SystemLogsPanel: FC<SystemLogsPanelProps> = memo(({ embedded }) => 
       <div className="flex-1 min-h-0 overflow-auto text-xs font-mono space-y-1.5 select-text pe-1 custom-scrollbar">
         {entries.length === 0 ? (
           <div className="text-base-content/40 leading-relaxed">
-            No service events yet. After startup, STT, TTS, Translation, and AI Transform status changes appear here. Use the dock or footer to start
+            No service events yet. After startup, STT, TTS, Translation, and Rewrite status changes appear here. Use the dock or footer to start
             services.
           </div>
         ) : (

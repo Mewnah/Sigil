@@ -297,10 +297,10 @@ describe("onboarding: What language do you speak?", () => {
     expect(out).toContain('<option value="ja">Japanese</option>');
   });
 
-  it("is unchanged for the other engines in the list", () => {
+  it("offers only the built-in engine (the others are in the engine list of the Speech panel)", () => {
     const out = step(["fr-FR"]);
-    expect(out).toContain("On this PC (automatic)");
-    expect(out).toContain("Whisper");
-    expect(out).toContain("Vosk");
+    expect(out).toContain("Built-in (runs on your PC)");
+    expect(out).not.toContain("Whisper");
+    expect(out).not.toContain("Vosk");
   });
 });

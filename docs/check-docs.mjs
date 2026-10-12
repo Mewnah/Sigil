@@ -251,10 +251,11 @@ function loadFacts() {
       hardware: [need("local_tier_auto").replace(/\s*\(recommended\)\s*$/i, ""), need("local_tier_cpu"), need("local_tier_gpu")],
       twoPass: need("local_two_pass"),
       interim: need("field_enable_interim_results"),
+      local: need("provider_local"),
     };
   } catch {
     fail("cannot read the stt strings of public/i18n/en/translation.json");
-    facts.labels = { hardware: [], twoPass: "", interim: "" };
+    facts.labels = { hardware: [], twoPass: "", interim: "", local: "" };
   }
 
   // Catalog speech models that no routing row lists: installable, but no route ever plans them.
@@ -315,6 +316,24 @@ const RULES = [
       "If frame rate comes first, set **Hardware → Processor only**; **Hardware → Graphics card** shares the card.",
       "turn **Two-pass accuracy** off; **Enable interim results** (default on; applies the next time speech-to-text starts)",
       "Tick **Interim results** in the Automatic or AI model panel to turn interim translations on.",
+    ],
+  },
+  {
+    // The engine that runs inside Sigil is "Built-in (runs on your PC)" (stt.provider_local); it used to be "On this PC (automatic)".
+    name: "engine-label",
+    applies: (rel) => LABEL_FILES(rel) && rel !== "CHANGELOG.md", // the changelog keeps the names of the day
+    check(unit, f) {
+      if (/On this PC \(automatic\)|\*\*On this PC\*\*/.test(unit.text)) return `the speech-to-text engine that runs inside Sigil is called "${f.labels.local}" in the app`;
+      return null;
+    },
+    facts: { labels: { local: "Built-in (runs on your PC)" } },
+    bad: [
+      "Pick **On this PC (automatic)** unless you have a reason not to.",
+      "(TTS panel; needs Smart Turn in **On this PC** speech-to-text)",
+    ],
+    good: [
+      "Pick **Built-in (runs on your PC)** unless you have a reason not to.",
+      "Sigil runs on this PC, and the models stay on this PC.",
     ],
   },
   {
@@ -418,6 +437,8 @@ function runFactRules(facts) {
     ["docs/benchmarks/SPEECH_BENCHMARKS.md", /^### Moonshine and long utterances/m, "the Moonshine long-utterance measurement (the 9 s cut)"],
     ["docs/benchmarks/SPEECH_BENCHMARKS.md", /DEVELOPER_GUIDE\.md#speech-benchmark/, "a link to the speech-benchmark section of the developer guide"],
   ];
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  required.push(["docs/manual/01-audio.md", new RegExp(`\\*\\*${escapeRe(facts.labels.local)}\\*\\*`), `the engine row **${facts.labels.local}** (the label of stt.provider_local)`]);
   for (const [rel, re, what] of required) if (!re.test(read(rel))) found.push(`${rel}: missing ${what}`);
 
   return found;

@@ -1,150 +1,229 @@
-import { FC, useMemo, useState, memo } from "react";
+import { FC, ReactNode, useEffect, useMemo, useRef, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
-import { useSnapshot } from "valtio";
 import {
-    RiUserVoiceFill,
-    RiMicFill,
-    RiCheckLine,
-    RiArrowRightLine,
     RiArrowLeftLine,
+    RiArrowRightLine,
+    RiCheckLine,
+    RiCheckboxCircleFill,
+    RiMessage2Fill,
+    RiMicFill,
     RiRocketFill,
-    RiVolumeUpFill,
+    RiUserVoiceFill,
 } from "react-icons/ri";
-import { SiTwitch, SiDiscord } from "react-icons/si";
+import { SiDiscord, SiObsstudio, SiTwitch } from "react-icons/si";
 import classNames from "classnames";
 import { useTranslation } from "react-i18next";
-import { STT_Backends } from "@/core/services/stt/schema";
 import {
     ONBOARDING_AUTO,
+    type OnboardingSttSave,
     lockableLanguages,
     onboardingLanguageDefault,
     pickSystemLanguage,
     planOnboardingSttSave,
     systemLanguageTags,
 } from "@/core/services/stt/languageSuggestion";
+import type { STT_State } from "@/core/services/stt/schema";
 import { useLanguageName } from "@/core/ui/inspector/stt/common";
+import { Services } from "@/services-registry";
+import { KickIcon } from "./icons/KickIcon";
 
-// Kick logo
-const KickIcon: FC = () => (
-    <svg width={24} height={24} viewBox="0 0 512 512" fill="currentColor">
-        <path d="M115.2 0h76.8v204.8L345.6 0H448L268.8 230.4 460.8 512H345.6L192 281.6V512h-76.8V0z" />
-    </svg>
-);
+/**
+ * The first-run setup wizard: five short steps (welcome, microphone and speakers, speech to text, where captions go,
+ * done). It shows only for a new install (`state/firstRun.ts`: no settings file), never to an existing profile.
+ * Skipping at any step before the last, or finishing, sets `onboardingComplete`; quitting in the middle shows it again.
+ */
+
+/** Steps, in order. The progress dots and the Skip button follow this list. */
+export const ONBOARDING_STEPS = ["welcome", "audio", "stt", "send", "done"] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+/**
+ * The wizard covers the app but not its title bar: the window has no system decorations (`decorations: false`), so the
+ * drag area and the minimise, maximise and close buttons are in `SigilHeader` (`h-10`, which is `top-10`) and stay usable.
+ * `SigilLayout` makes everything below the header inert while the wizard shows.
+ */
+export const WIZARD_ROOT_CLASS = "fixed inset-x-0 bottom-0 top-10 z-[90] bg-base-300 flex items-center justify-center p-8";
+
+/** Skip is offered on every step but the last. */
+const LAST_SKIPPABLE_STEP = ONBOARDING_STEPS.length - 2;
+
+/** Skipping only marks the wizard as done: nothing else is touched. */
+export function skipOnboarding(): void {
+    window.ApiServer.state.onboardingComplete = true;
+}
+
+/**
+ * Ends the wizard. The Speech to Text card goes to the bottom bar (so "press Start" has something to press), and when
+ * the user picked a destination its panel opens.
+ */
+export function finishOnboarding(tab?: Services): void {
+    window.ApiServer.patchService("stt", s => { s.showActionButton = true; });
+    window.ApiServer.state.onboardingComplete = true;
+    if (tab) window.ApiServer.changeTab({ tab });
+}
+
+/** The devices the wizard offers, as `plugin:audio|list_input_devices` / `list_output_devices` return them (id == name). */
+interface AudioDevice {
+    id: string;
+    name: string;
+}
+
+/**
+ * What the Audio step writes. A device is written only when the user changed it: opening the wizard and pressing
+ * Continue (or a device list that never loaded) must not replace what the profile already has. Choosing
+ * "System default" is a choice too.
+ */
+export function planOnboardingAudioSave(
+    saved: { input: string; output: string },
+    picked: { input: string; output: string },
+): { input?: string; output?: string } {
+    const plan: { input?: string; output?: string } = {};
+    if (picked.input !== saved.input) plan.input = picked.input;
+    if (picked.output !== saved.output) plan.output = picked.output;
+    return plan;
+}
+
+/**
+ * What the speech step writes to the profile (`stt.data`). Marking the desktop default migration done stops it from
+ * overriding this pick, and the built-in engine is a choice made here: a later switch to Chrome or Edge is not offered
+ * the built-in engine again (`localOfferShown`).
+ */
+export function applyOnboardingSttSave(
+    data: Pick<STT_State, "backend" | "desktopDefaultMigrated" | "localOfferShown"> & { local: Pick<STT_State["local"], "language" | "languageDecision"> },
+    save: OnboardingSttSave,
+): void {
+    data.backend = save.backend;
+    data.desktopDefaultMigrated = true;
+    data.localOfferShown = true;
+    // The language is only ever set by this answer: "Detect automatically" is stored as an explicit choice.
+    if (save.localLanguage !== undefined) data.local.language = save.localLanguage;
+    if (save.decision) data.local.languageDecision = save.decision;
+}
+
+/** The profile's current devices ("" = system default). Safe before the host state exists. */
+function savedDevices(): { input: string; output: string } {
+    const state = typeof window === "undefined" ? undefined : window.ApiServer?.state;
+    return { input: state?.audioInputDeviceNative ?? "", output: state?.audioOutputDevice ?? "" };
+}
+
+/** The saved device stays selectable when it is not plugged in right now, so the list never silently shows another one. */
+function withCurrent(devices: AudioDevice[], current: string): AudioDevice[] {
+    return current && !devices.some((d) => d.id === current) ? [...devices, { id: current, name: current }] : devices;
+}
+
+/**
+ * The heading of a step. Moving to a step moves focus here (it is not a tab stop of its own), so a keyboard or screen
+ * reader user lands on the new step instead of staying on a button that has just left the screen.
+ */
+const StepHeading: FC<{ className: string; children: ReactNode }> = ({ className, children }) => {
+    const ref = useRef<HTMLHeadingElement>(null);
+    useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []);
+    return <h2 ref={ref} tabIndex={-1} className={classNames(className, "outline-none")}>{children}</h2>;
+};
 
 interface StepProps {
     onNext: () => void;
     onBack?: () => void;
-    isFirst?: boolean;
-    isLast?: boolean;
 }
 
-// Step 1: Welcome
-const WelcomeStep: FC<StepProps> = ({ onNext }) => (
-    <div className="flex flex-col items-center text-center space-y-6">
-        <div className="text-6xl">🚀</div>
-        <h2 className="text-3xl font-bold font-header">
-            Welcome to <span className="text-primary">Sigil</span>
-        </h2>
-        <p className="text-base-content/70 max-w-md">
-            The ultimate streaming toolkit for VRChat creators. Let's get you set up in just a few steps.
-        </p>
-        <button onClick={onNext} className="btn btn-primary btn-lg gap-2">
-            Get Started <RiArrowRightLine />
-        </button>
-    </div>
-);
-
-// Step 2: Audio Setup
-const AudioStep: FC<StepProps> = ({ onNext, onBack }) => {
-    const [inputDevices, setInputDevices] = useState<{ id: string; name: string }[]>([]);
-    const [outputDevices, setOutputDevices] = useState<{ id: string; name: string }[]>([]);
-    const [selectedInput, setSelectedInput] = useState("");
-    const [selectedOutput, setSelectedOutput] = useState("");
-    const [loading, setLoading] = useState(false);
-
-    const loadDevices = async () => {
-        setLoading(true);
-        try {
-            const inputs = await invoke<{ id: string; name: string }[]>("plugin:audio|list_input_devices");
-            const outputs = await invoke<{ id: string; name: string }[]>("plugin:audio|list_output_devices");
-            setInputDevices(inputs);
-            setOutputDevices(outputs);
-        } catch (e) {
-            console.error("Failed to load devices", e);
-        }
-        setLoading(false);
-    };
-
-    useState(() => {
-        loadDevices();
-    });
-
-    const saveAndContinue = () => {
-        // cpal device name from `plugin:audio|list_input_devices` (native STT default), not a Web Audio deviceId.
-        window.ApiServer.state.audioInputDeviceNative = selectedInput;
-        window.ApiServer.state.audioInputDeviceNativeMigrated = true;
-        window.ApiServer.state.audioOutputDevice = selectedOutput;
-        onNext();
-    };
-
+const StepButtons: FC<{ onBack?: () => void; onNext: () => void; nextLabel: string; nextIcon?: ReactNode }> = ({ onBack, onNext, nextLabel, nextIcon }) => {
+    const { t } = useTranslation();
     return (
-        <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary"><RiMicFill /></div>
-            <h2 className="text-2xl font-bold font-header">Audio Setup</h2>
-            <p className="text-base-content/70 text-center">
-                Select your microphone and speakers for speech recognition and voice output.
-            </p>
-
-            <div className="w-full space-y-4">
-                <div className="form-control w-full">
-                    <label className="label"><span className="label-text font-semibold">Microphone</span></label>
-                    <select
-                        className="select select-bordered w-full"
-                        value={selectedInput}
-                        onChange={(e) => setSelectedInput(e.target.value)}
-                        aria-label="Select microphone"
-                    >
-                        <option value="">System Default</option>
-                        {inputDevices.map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="form-control w-full">
-                    <label className="label"><span className="label-text font-semibold">Speakers</span></label>
-                    <select
-                        className="select select-bordered w-full"
-                        value={selectedOutput}
-                        onChange={(e) => setSelectedOutput(e.target.value)}
-                        aria-label="Select speakers"
-                    >
-                        <option value="">System Default</option>
-                        {outputDevices.map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                        ))}
-                    </select>
-                </div>
-            </div>
-
-            <div className="flex gap-3 w-full">
-                <button onClick={onBack} className="btn btn-ghost flex-1 gap-2">
-                    <RiArrowLeftLine /> Back
-                </button>
-                <button onClick={saveAndContinue} className="btn btn-primary flex-1 gap-2">
-                    Continue <RiArrowRightLine />
-                </button>
-            </div>
+        <div className="flex gap-3 w-full">
+            <button type="button" onClick={onBack} className="btn btn-ghost flex-1 gap-2">
+                <RiArrowLeftLine className="rtl:-scale-x-100" aria-hidden="true" /> {t("onboarding.back")}
+            </button>
+            <button type="button" onClick={onNext} className="btn btn-primary flex-1 gap-2">
+                {nextLabel} {nextIcon ?? <RiArrowRightLine className="rtl:-scale-x-100" aria-hidden="true" />}
+            </button>
         </div>
     );
 };
 
-// Step 3: STT Selection
-type SttChoice = "local" | "whisper" | "vosk";
+// Step 1: Welcome
+export const WelcomeStep: FC<StepProps> = ({ onNext }) => {
+    const { t } = useTranslation();
+    return (
+        <div className="flex flex-col items-center text-center space-y-6">
+            <div className="text-6xl text-primary" aria-hidden="true"><RiRocketFill /></div>
+            <StepHeading className="text-3xl font-bold font-header">{t("onboarding.welcome_title")}</StepHeading>
+            <p className="text-base-content/70 max-w-md">{t("onboarding.welcome_body")}</p>
+            <button type="button" onClick={onNext} className="btn btn-primary btn-lg gap-2">
+                {t("onboarding.get_started")} <RiArrowRightLine className="rtl:-scale-x-100" aria-hidden="true" />
+            </button>
+        </div>
+    );
+};
+
+// Step 2: Microphone and speakers
+export const AudioStep: FC<StepProps> = ({ onNext, onBack }) => {
+    const { t } = useTranslation();
+    const [saved] = useState(savedDevices);
+    const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
+    const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+    const [selectedInput, setSelectedInput] = useState(saved.input);
+    const [selectedOutput, setSelectedOutput] = useState(saved.output);
+
+    // The lists load once the step is on screen; an unmounted step drops a late answer. A list that fails to load
+    // leaves "System default" as the only choice, and then nothing is written.
+    useEffect(() => {
+        let cancelled = false;
+        void Promise.allSettled([
+            invoke<AudioDevice[]>("plugin:audio|list_input_devices"),
+            invoke<AudioDevice[]>("plugin:audio|list_output_devices"),
+        ]).then(([inputs, outputs]) => {
+            if (cancelled) return;
+            if (inputs.status === "fulfilled") setInputDevices(inputs.value);
+            else console.error("Failed to load input devices", inputs.reason);
+            if (outputs.status === "fulfilled") setOutputDevices(outputs.value);
+            else console.error("Failed to load output devices", outputs.reason);
+        });
+        return () => { cancelled = true; };
+    }, []);
+
+    const saveAndContinue = () => {
+        const plan = planOnboardingAudioSave(saved, { input: selectedInput, output: selectedOutput });
+        const state = window.ApiServer.state;
+        if (plan.input !== undefined) {
+            // cpal device name from `plugin:audio|list_input_devices` (native STT default), not a Web Audio deviceId.
+            // A deliberate pick (including "system default") ends the one-time legacy device migration.
+            state.audioInputDeviceNative = plan.input;
+            state.audioInputDeviceNativeMigrated = true;
+        }
+        if (plan.output !== undefined) state.audioOutputDevice = plan.output;
+        onNext();
+    };
+
+    const picker = (id: string, label: string, value: string, devices: AudioDevice[], onChange: (v: string) => void) => (
+        <div className="form-control w-full">
+            <label className="label" htmlFor={id}><span className="label-text font-semibold">{label}</span></label>
+            <select id={id} className="select select-bordered w-full" value={value} onChange={(e) => onChange(e.target.value)}>
+                <option value="">{t("onboarding.audio_default")}</option>
+                {withCurrent(devices, value).map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+            </select>
+        </div>
+    );
+
+    return (
+        <div className="flex flex-col items-center space-y-6 w-full max-w-md">
+            <div className="text-5xl text-primary" aria-hidden="true"><RiMicFill /></div>
+            <StepHeading className="text-2xl font-bold font-header">{t("onboarding.audio_title")}</StepHeading>
+            <p className="text-base-content/70 text-center">{t("onboarding.audio_body")}</p>
+
+            <div className="w-full space-y-4">
+                {picker("onboarding-microphone", t("onboarding.audio_microphone"), selectedInput, inputDevices, setSelectedInput)}
+                {picker("onboarding-speakers", t("onboarding.audio_speakers"), selectedOutput, outputDevices, setSelectedOutput)}
+            </div>
+
+            <StepButtons onBack={onBack} onNext={saveAndContinue} nextLabel={t("onboarding.continue")} />
+        </div>
+    );
+};
 
 /**
- * "What language do you speak?" for the automatic engine. Starts on the Windows language when Sigil can route it
+ * "What language do you speak?" for the built-in engine. Starts on the Windows language when Sigil can route it
  * (so most people only press Continue) and otherwise on "Detect automatically"; both stay choices in the list, and
  * nothing is stored until Continue.
  */
@@ -180,238 +259,119 @@ const SttLanguageQuestion: FC<{ value: string; onChange: (code: string) => void;
     );
 };
 
+// Step 3: Speech to Text. One engine, chosen for the user; the others stay in the engine list of the Speech panel.
 export const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
     const { t } = useTranslation();
-    // New desktop installs default to "On this PC (automatic)" (the P2 desktop default in stt/migrate.ts).
-    const [selected, setSelected] = useState<SttChoice | "">("local");
     const windowsTags = useMemo(() => systemLanguageTags(), []);
     const windowsLanguage = useMemo(() => pickSystemLanguage(windowsTags), [windowsTags]);
     const [language, setLanguage] = useState<string>(() => onboardingLanguageDefault(windowsTags));
 
-    const options: { id: SttChoice; name: string; desc: string; icon: JSX.Element }[] = [
-        { id: "local", name: t("stt.provider_local"), desc: t("stt.local_onboarding_desc"), icon: <RiRocketFill /> },
-        { id: "whisper", name: "Whisper", desc: "Highly accurate, runs locally via Rust", icon: <RiUserVoiceFill /> },
-        { id: "vosk", name: "Vosk", desc: "Fast offline recognition, lightweight", icon: <RiVolumeUpFill /> },
-    ];
-
     const saveAndContinue = () => {
-        // Keep the choice; marking the desktop default migration done stops it from overriding this pick.
-        if (selected) {
-            const save = planOnboardingSttSave(selected, language, Date.now());
-            window.ApiServer.patchService("stt", s => {
-                s.data.backend = save.backend;
-                s.data.desktopDefaultMigrated = true;
-                // The language is only ever set by this answer: "Detect automatically" is stored as an explicit choice.
-                if (save.localLanguage !== undefined) s.data.local.language = save.localLanguage;
-                if (save.decision) s.data.local.languageDecision = save.decision;
-            });
-        }
+        const save = planOnboardingSttSave("local", language, Date.now());
+        window.ApiServer.patchService("stt", s => applyOnboardingSttSave(s.data, save));
         onNext();
     };
 
     return (
         <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary"><RiUserVoiceFill /></div>
-            <h2 className="text-2xl font-bold font-header">Speech Recognition</h2>
-            <p className="text-base-content/70 text-center">
-                Choose your speech-to-text engine. All of them run locally for privacy.
-            </p>
+            <div className="text-5xl text-primary" aria-hidden="true"><RiUserVoiceFill /></div>
+            <StepHeading className="text-2xl font-bold font-header">{t("onboarding.stt_title")}</StepHeading>
+            <p className="text-base-content/70 text-center">{t("onboarding.stt_body")}</p>
 
-            <div className="w-full space-y-3">
-                {options.map((opt) => (
-                    <button
-                        key={opt.id}
-                        onClick={() => setSelected(opt.id)}
-                        className={classNames(
-                            "w-full p-4 rounded-xl border-2 flex items-center gap-4 transition-all",
-                            selected === opt.id
-                                ? "border-primary bg-primary/10"
-                                : "border-base-content/10 hover:border-primary/30"
-                        )}
-                    >
-                        <div className="text-2xl text-primary">{opt.icon}</div>
-                        <div className="text-left">
-                            <div className="font-semibold">{opt.name}</div>
-                            <div className="text-xs text-base-content/60">{opt.desc}</div>
-                        </div>
-                        {selected === opt.id && <RiCheckLine className="ms-auto text-xl text-primary" />}
-                    </button>
-                ))}
+            <div className="w-full p-4 rounded-xl border-2 border-primary bg-primary/10 flex items-center gap-4" data-testid="onboarding-engine">
+                <div className="text-2xl text-primary" aria-hidden="true"><RiRocketFill /></div>
+                <div className="text-start">
+                    <div className="font-semibold">{t("stt.provider_local")}</div>
+                    <div className="text-xs text-base-content/60">{t("stt.local_onboarding_desc")}</div>
+                </div>
+                <RiCheckLine className="ms-auto text-xl text-primary" aria-hidden="true" />
             </div>
 
-            {selected === "local" && (
-                <SttLanguageQuestion value={language} onChange={setLanguage} fromWindows={windowsLanguage !== null && language === windowsLanguage} />
-            )}
+            <SttLanguageQuestion value={language} onChange={setLanguage} fromWindows={windowsLanguage !== null && language === windowsLanguage} />
+            <p className="text-xs text-base-content/60 text-center">{t("onboarding.stt_other")}</p>
 
-            <div className="flex gap-3 w-full">
-                <button onClick={onBack} className="btn btn-ghost flex-1 gap-2">
-                    <RiArrowLeftLine /> Back
-                </button>
-                <button onClick={saveAndContinue} className="btn btn-primary flex-1 gap-2">
-                    Continue <RiArrowRightLine />
-                </button>
-            </div>
+            <StepButtons onBack={onBack} onNext={saveAndContinue} nextLabel={t("onboarding.continue")} />
         </div>
     );
 };
 
-// Step 4: Integrations
-const IntegrationsStep: FC<StepProps> = ({ onNext, onBack }) => {
-    const integrations = [
-        { id: "twitch", name: "Twitch", icon: <SiTwitch />, desc: "Connect your Twitch chat" },
-        { id: "kick", name: "Kick", icon: <KickIcon />, desc: "Connect your Kick chat" },
-        { id: "discord", name: "Discord", icon: <SiDiscord />, desc: "Post captions to a channel via webhook" },
+// Step 4: Where should captions go?
+export const SendStep: FC<StepProps & { onPick: (tab: Services) => void }> = ({ onNext, onBack, onPick }) => {
+    const { t } = useTranslation();
+    const cards: { tab: Services; name: string; desc: string; icon: ReactNode }[] = [
+        { tab: Services.vrc, name: "VRChat", desc: t("onboarding.send_vrc_desc"), icon: <RiMessage2Fill /> },
+        { tab: Services.obs, name: "OBS Studio", desc: t("onboarding.send_obs_desc"), icon: <SiObsstudio /> },
+    ];
+    const others: { tab: Services; name: string; icon: ReactNode }[] = [
+        { tab: Services.twitch, name: "Twitch", icon: <SiTwitch /> },
+        { tab: Services.kick, name: "Kick", icon: <KickIcon /> },
+        { tab: Services.discord, name: "Discord", icon: <SiDiscord /> },
     ];
 
     return (
         <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary"><SiTwitch /></div>
-            <h2 className="text-2xl font-bold font-header">Connect Integrations</h2>
-            <p className="text-base-content/70 text-center">
-                You can set these up now or later from the dashboard.
-            </p>
+            <div className="text-5xl text-primary" aria-hidden="true"><RiMessage2Fill /></div>
+            <StepHeading className="text-2xl font-bold font-header">{t("onboarding.send_title")}</StepHeading>
+            <p className="text-base-content/70 text-center">{t("onboarding.send_body")}</p>
 
             <div className="w-full space-y-3">
-                {integrations.map((int) => (
+                {cards.map((card) => (
                     <button
-                        key={int.id}
-                        onClick={() => {
-                            window.ApiServer.changeTab({ tab: int.id as any });
-                            window.ApiServer.state.onboardingComplete = true;
-                        }}
+                        type="button"
+                        key={card.tab}
+                        onClick={() => onPick(card.tab)}
                         className="w-full p-4 rounded-xl border border-base-content/10 flex items-center gap-4 hover:border-primary/30 transition-all"
                     >
-                        <div className="text-2xl">{int.icon}</div>
-                        <div className="text-left">
-                            <div className="font-semibold">{int.name}</div>
-                            <div className="text-xs text-base-content/60">{int.desc}</div>
+                        <div className="text-2xl text-primary" aria-hidden="true">{card.icon}</div>
+                        <div className="text-start">
+                            <div className="font-semibold">{card.name}</div>
+                            <div className="text-xs text-base-content/60">{card.desc}</div>
                         </div>
-                        <RiArrowRightLine className="ms-auto text-base-content/30" />
+                        <RiArrowRightLine className="ms-auto text-base-content/30 rtl:-scale-x-100" aria-hidden="true" />
                     </button>
                 ))}
             </div>
 
-            <div className="flex gap-3 w-full">
-                <button onClick={onBack} className="btn btn-ghost flex-1 gap-2">
-                    <RiArrowLeftLine /> Back
-                </button>
-                <button onClick={onNext} className="btn btn-primary flex-1 gap-2">
-                    Finish Setup <RiRocketFill />
-                </button>
+            <div className="flex flex-wrap justify-center gap-2">
+                {others.map((o) => (
+                    <button type="button" key={o.tab} onClick={() => onPick(o.tab)} className="btn btn-sm btn-ghost gap-2 border border-base-content/10">
+                        <span aria-hidden="true">{o.icon}</span> {o.name}
+                    </button>
+                ))}
             </div>
+
+            <StepButtons onBack={onBack} onNext={onNext} nextLabel={t("onboarding.finish")} nextIcon={<RiRocketFill />} />
         </div>
     );
 };
 
-// Step 5: Accessibility
-const AccessibilityStep: FC<StepProps> = ({ onNext, onBack }) => {
-    const state = useSnapshot(window.ApiServer.state);
-    const clientTheme = state.clientTheme;
-    const isHighContrast = clientTheme === "streamer";
-
-    const handleToggleHighContrast = () => {
-        if (isHighContrast) {
-            window.ApiServer.state.clientTheme = "sigil-dark";
-        } else {
-            window.ApiServer.state.clientTheme = "streamer";
-        }
-    };
-
-    const ariaCheckedValue = isHighContrast ? "true" : "false";
-
+// Step 5: Done
+export const DoneStep: FC<{ onOpen: () => void }> = ({ onOpen }) => {
+    const { t } = useTranslation();
     return (
-        <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl">♿</div>
-            <h2 className="text-2xl font-bold font-header">Accessibility</h2>
-            <p className="text-base-content/70 text-center">
-                Sigil is designed for everyone. Customize your experience.
-            </p>
-
-            <div className="w-full space-y-4">
-                {/* High Contrast Toggle */}
-                <button
-                    onClick={handleToggleHighContrast}
-                    className={classNames(
-                        "w-full p-4 rounded-xl border-2 flex items-center gap-4 transition-all",
-                        isHighContrast
-                            ? "border-primary bg-primary/10"
-                            : "border-base-content/10 hover:border-primary/30"
-                    )}
-                    role="switch"
-                    aria-checked={ariaCheckedValue}
-                    aria-label="Toggle high contrast mode"
-                >
-                    <div className="text-2xl">🔆</div>
-                    <div className="text-left flex-1">
-                        <div className="font-semibold">High Contrast Mode</div>
-                        <div className="text-xs text-base-content/60">
-                            Better visibility for streaming & low vision
-                        </div>
-                    </div>
-                    <div className={classNames(
-                        "w-12 h-6 rounded-full transition-colors relative",
-                        isHighContrast ? "bg-primary" : "bg-base-content/20"
-                    )}>
-                        <div className={classNames(
-                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
-                            isHighContrast ? "left-7" : "left-1"
-                        )} />
-                    </div>
-                </button>
-
-                {/* Info Cards */}
-                <div className="p-4 rounded-xl bg-base-100/50 border border-base-content/10">
-                    <div className="text-sm font-medium mb-2">✨ Built-in Features</div>
-                    <ul className="text-xs text-base-content/60 space-y-1">
-                        <li>• Keyboard navigation support</li>
-                        <li>• Screen reader friendly labels</li>
-                        <li>• Large, clear buttons</li>
-                        <li>• Customizable text sizes in Settings</li>
-                    </ul>
-                </div>
-            </div>
-
-            <div className="flex gap-3 w-full">
-                <button onClick={onBack} className="btn btn-ghost flex-1 gap-2">
-                    <RiArrowLeftLine /> Back
-                </button>
-                <button onClick={onNext} className="btn btn-primary flex-1 gap-2">
-                    Continue <RiArrowRightLine />
-                </button>
-            </div>
+        <div className="flex flex-col items-center text-center space-y-6">
+            <div className="text-6xl text-success" aria-hidden="true"><RiCheckboxCircleFill /></div>
+            <StepHeading className="text-3xl font-bold font-header">{t("onboarding.done_title")}</StepHeading>
+            <p className="text-base-content/70 max-w-md">{t("onboarding.done_body")}</p>
+            <button type="button" onClick={onOpen} className="btn btn-primary btn-lg gap-2">
+                {t("onboarding.done_open")} <RiArrowRightLine className="rtl:-scale-x-100" aria-hidden="true" />
+            </button>
         </div>
     );
 };
-
-// Complete Step
-const CompleteStep: FC<{ onComplete: () => void }> = ({ onComplete }) => (
-    <div className="flex flex-col items-center text-center space-y-6">
-        <div className="text-6xl">🎉</div>
-        <h2 className="text-3xl font-bold font-header">You're All Set!</h2>
-        <p className="text-base-content/70 max-w-md">
-            Sigil is ready to use. Start streaming with speech recognition, TTS, and more.
-        </p>
-        <button onClick={onComplete} className="btn btn-primary btn-lg gap-2">
-            Launch Dashboard <RiArrowRightLine />
-        </button>
-    </div>
-);
 
 // Main Onboarding Component
-const Onboarding: FC = memo(() => {
-    const [step, setStep] = useState(0);
-
-    const handleComplete = () => {
-        window.ApiServer.state.onboardingComplete = true;
-    };
+const Onboarding: FC<{ initialStep?: number }> = memo(({ initialStep = 0 }) => {
+    const { t } = useTranslation();
+    const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), ONBOARDING_STEPS.length - 1));
+    const total = ONBOARDING_STEPS.length;
 
     const steps = [
-        <WelcomeStep key="welcome" onNext={() => setStep(1)} isFirst />,
+        <WelcomeStep key="welcome" onNext={() => setStep(1)} />,
         <AudioStep key="audio" onNext={() => setStep(2)} onBack={() => setStep(0)} />,
         <SttStep key="stt" onNext={() => setStep(3)} onBack={() => setStep(1)} />,
-        <IntegrationsStep key="integrations" onNext={() => setStep(4)} onBack={() => setStep(2)} />,
-        <AccessibilityStep key="accessibility" onNext={() => setStep(5)} onBack={() => setStep(3)} />,
-        <CompleteStep key="complete" onComplete={handleComplete} />,
+        <SendStep key="send" onNext={() => setStep(4)} onBack={() => setStep(2)} onPick={finishOnboarding} />,
+        <DoneStep key="done" onOpen={() => finishOnboarding()} />,
     ];
 
     return (
@@ -419,19 +379,24 @@ const Onboarding: FC = memo(() => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-base-300 flex items-center justify-center p-8"
+            className={WIZARD_ROOT_CLASS}
             role="dialog"
-            aria-label="Sigil Setup Wizard"
+            aria-modal="true"
+            aria-label={t("onboarding.dialog_label")}
         >
-            {/* Progress indicator */}
+            {/* Progress indicator: a bar to assistive technology (its label says "step n of 5"), dots to the eye */}
             <div
                 className="absolute top-8 left-1/2 -translate-x-1/2 flex gap-2"
-                role="status"
-                aria-label={`Setup progress: step ${step + 1} of 6`}
+                role="progressbar"
+                aria-label={t("onboarding.progress", { step: step + 1, total })}
+                aria-valuemin={1}
+                aria-valuemax={total}
+                aria-valuenow={step + 1}
+                aria-valuetext={t("onboarding.progress", { step: step + 1, total })}
             >
-                {[0, 1, 2, 3, 4, 5].map((i) => (
+                {ONBOARDING_STEPS.map((id, i) => (
                     <div
-                        key={i}
+                        key={id}
                         className={classNames(
                             "w-3 h-3 rounded-full transition-colors",
                             i <= step ? "bg-primary" : "bg-base-content/20"
@@ -456,12 +421,13 @@ const Onboarding: FC = memo(() => {
             </AnimatePresence>
 
             {/* Skip button */}
-            {step < 4 && (
+            {step <= LAST_SKIPPABLE_STEP && (
                 <button
-                    onClick={handleComplete}
+                    type="button"
+                    onClick={skipOnboarding}
                     className="absolute bottom-8 text-base-content/50 hover:text-base-content transition-colors"
                 >
-                    Skip setup
+                    {t("onboarding.skip")}
                 </button>
             )}
         </motion.div>

@@ -99,8 +99,8 @@ export const SigilNavigation: FC<SigilNavigationProps> = memo(({ collapsed = fal
                 />
             </NavGroup>
 
-            {/* Live Services */}
-            <NavGroup title="Live Services" collapsed={collapsed}>
+            {/* Speech: speak, translate, speak aloud (Rewrite is a tab of Speech to Text) */}
+            <NavGroup title="Speech" collapsed={collapsed}>
                 {HOST_SERVICE_PANELS_LIVE.map((p) => {
                     const Icon = p.NavIcon;
                     return (

@@ -7,7 +7,7 @@ import {
     RiUserVoiceFill,
     RiChatVoiceFill,
     RiTranslate2,
-    RiSparklingFill,
+    RiQuillPenFill,
     RiPlayCircleFill,
     RiStopCircleFill,
     RiSettings2Fill,
@@ -181,8 +181,8 @@ const Dashboard: FC = memo(() => {
                             onSettings={() => navigateTo({ tab: Services.stt })}
                         />
                         <ServiceCard
-                            title="AI Transform"
-                            icon={<RiSparklingFill />}
+                            title="Rewrite"
+                            icon={<RiQuillPenFill />}
                             status={transformState.status}
                             onToggle={() => {
                                 if (transformState.status === ServiceNetworkState.connected) window.ApiServer.transform.stop();

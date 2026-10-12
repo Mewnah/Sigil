@@ -9,6 +9,7 @@ import type { LockOutcome, LanguageOfferSource } from "@/core/services/stt/langu
 import { isAskable, planSystemHint, systemLanguage } from "@/core/services/stt/languageSuggestion";
 import { Services } from "@/services-registry";
 import { useAppUIStore } from "../../store";
+import { STT_REWRITE_SECTION } from "../../inspectorRoutes";
 import { useLanguageName } from "./common";
 
 /**
@@ -211,7 +212,8 @@ const reactToastifyApi: OfferToastApi = {
 export const LanguageOfferToastHost: FC = () => {
   const offer = useSnapshot(window.ApiServer.stt.languageOffer.view);
   const stt = useSnapshot(window.ApiServer.state.services.stt.data);
-  const panelOpen = useAppUIStore((s) => s.sidebar.show && s.sidebar.tab?.tab === Services.stt);
+  // Open on its Speech tab: the Rewrite tab does not show the card.
+  const panelOpen = useAppUIStore((s) => s.sidebar.show && s.sidebar.tab?.tab === Services.stt && s.sidebar.tab.value !== STT_REWRITE_SECTION);
   const offered = offer.language !== null && isAskable(stt.backend, stt.local.language);
   const wanted = (offered || offer.result !== null) && !panelOpen;
   const sync = useMemo(

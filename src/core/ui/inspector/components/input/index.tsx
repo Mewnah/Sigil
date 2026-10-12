@@ -308,7 +308,7 @@ export const InputTextSource: FC<TextSourceProps> = memo(({ label, value, onChan
             ? [{ label: t('common.text_source_textfield'), value: TextEventSource.textfield }]
             : []),
         { label: t('transl.title'), value: TextEventSource.translation },
-        { label: t('transform.title') ?? "AI Transform", value: TextEventSource.transform },
+        { label: t('transform.source_label'), value: TextEventSource.transform },
         { label: t('common.text_source_any'), value: TextEventSource.any },
         ...(includeOthers
             ? [

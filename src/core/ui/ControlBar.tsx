@@ -7,7 +7,7 @@ import {
     RiMicOffFill,
     RiVolumeUpFill,
     RiVolumeMuteFill,
-    RiSparklingFill,
+    RiQuillPenFill,
     RiPlayFill,
     RiStopFill,
     RiSettings3Fill,
@@ -183,8 +183,8 @@ const ControlBar: FC = memo(() => {
                 />
 
                 <ServiceCard
-                    label="AI"
-                    icon={<RiSparklingFill />}
+                    label="Rewrite"
+                    icon={<RiQuillPenFill />}
                     status={transformState.status}
                     onToggle={handleToggleTransform}
                     onSettings={() => openSettings(Services.transform)}

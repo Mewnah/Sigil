@@ -51,8 +51,8 @@ export const TabsContent: FC<PropsWithChildren<{ tabKey: number | string, direct
     </AnimatePresence>
   </div>
 });
-export const Tabs: FC<PropsWithChildren> = ({ children }) => {
-  return <div className="flex justify-center border-b-2 border-neutral border-solid">
+export const Tabs: FC<PropsWithChildren<{ role?: "tablist"; "aria-label"?: string }>> = ({ children, ...aria }) => {
+  return <div {...aria} className="flex justify-center border-b-2 border-neutral border-solid">
     {children}
   </div>
 }
@@ -61,10 +61,11 @@ export const Tab: FC<PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> &
   tooltipBody,
   tooltip,
   active,
+  className,
   ...props
 }) => {
   const colors = active ? "border-primary text-primary" : "border-transparent text-base-content/60 hover:text-base-content"
   return <Tooltip className="relative" placement="bottom" content={tooltip} body={tooltipBody}>
-    <button {...props} className={classNames("text-lg min-w-[3rem] flex justify-center p-2 border-b-2 border-solid mb-[-1px] transition-colors", colors)}>{children}</button>
+    <button {...props} className={classNames("text-lg min-w-[3rem] flex justify-center p-2 border-b-2 border-solid mb-[-1px] transition-colors", colors, className)}>{children}</button>
   </Tooltip>
 })

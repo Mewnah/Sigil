@@ -44,7 +44,8 @@ const PanelErrorFallback = ({ error, resetErrorBoundary }: FallbackProps) => (
     </div>
 );
 
-export const SigilLayout: FC = memo(() => {
+/** `blocked`: a modal wizard covers the app (the first-run setup). Everything below the title bar is then inert, so Tab and assistive technology stay in the wizard; the title bar keeps its window buttons. */
+export const SigilLayout: FC<{ blocked?: boolean }> = memo(({ blocked = false }) => {
     const { t } = useTranslation();
     const { tab, selections } = useAppUIStore(
         useShallow((s) => ({ tab: s.sidebar.tab, selections: s.sidebar.selections }))
@@ -106,7 +107,7 @@ export const SigilLayout: FC = memo(() => {
             )}
 
             {/* MAIN CONTENT ROW */}
-            <div className="flex flex-1 overflow-hidden relative">
+            <div className="flex flex-1 overflow-hidden relative" {...(blocked ? { inert: "" } : {})}>
 
                 {/* 1. SIDEBAR NAVIGATION (Leftmost) */}
                 {!toolbarState.presentationMode && (

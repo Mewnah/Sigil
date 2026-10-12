@@ -31,7 +31,7 @@ This starts the Vite dev server and the Tauri shell. The app listens on a local 
 
 ### First launch and onboarding
 
-A **setup wizard** (welcome, audio, STT, integrations, accessibility) is part of the app's code but is not shown in this version yet; you configure everything in **Settings** and each service inspector. (Once it is shown you can complete it step by step or use **Skip setup**.)
+The first time Sigil starts on a PC (no settings file yet), a **setup wizard** opens over the app. It has five short steps: **welcome**, **microphone and speakers**, **Speech to Text** (the built-in engine, plus the language you speak), **where captions should go** (VRChat or OBS Studio, or Twitch, Kick or Discord), and **done**. Complete it step by step or use **Skip setup** on any step but the last; everything can be changed later in **Settings** and each inspector. If you quit in the middle it opens again at the next start. A profile that already exists never sees it.
 
 ### Projects
 
@@ -47,7 +47,7 @@ For Twitch, Kick, Google Fonts, and some cloud APIs, copy `.env.example` to `.en
 
 - [UI overview](#ui-overview) below
 - [Client mirror](#client-mirror) if you use OBS or a second machine
-- [Speech to text (STT)](01-audio.md#speech-to-text-stt) in **Audio and AI**
+- [Speech to text (STT)](01-audio.md#speech-to-text-stt) in **Speech and voice**
 
 ## UI overview
 
@@ -68,7 +68,7 @@ Sigil **Studio** (host) is organized into a **header**, **left navigation**, opt
 Groups:
 
 1. **Main** — Dashboard, Project  
-2. **Live services** — STT, TTS, Translation, AI Transform, Voice Changer  
+2. **Speech** — Speech to Text (with its **Rewrite** tab), Translation, Text to Speech, Voice Changer, Other players  
 3. **Studio** — Canvas and Elements, Files  
 4. **Integrations** — Twitch, Kick, Discord, OBS, VRChat  
 5. **Settings** — bottom of the list  
@@ -86,11 +86,11 @@ The editable **stage** for text and image elements, organized into **scenes**. U
 
 ### Bottom area
 
-**Status** and quick links into service inspectors; **STT / AI / TTS** controls mirror start/stop for those pipelines (see [Shortcuts and tips](04-system.md#shortcuts-and-tips)).
+**Status** and quick links into service inspectors; **STT / Rewrite / TTS** controls mirror start/stop for those pipelines (see [Shortcuts and tips](04-system.md#shortcuts-and-tips)).
 
 ### Floating / overlays
 
-Depending on configuration you may see **TTS input**, **overlay typing**, **background input**, or **stats** (see shortcuts). These are documented on their respective service sections in [Audio and AI](01-audio.md) where relevant.
+Depending on configuration you may see **TTS input**, **overlay typing**, **background input**, or **stats** (see shortcuts). These are documented on their respective service sections in [Speech and voice](01-audio.md) where relevant.
 
 ### Host vs client
 

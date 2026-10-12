@@ -28,10 +28,12 @@ import {
 } from "./types";
 import { isAbortError, untilAborted } from "./abort";
 import { createScopedReceiver, EMPTY_STT_STATUS, SttStatus } from "./statusChannel";
-import { planDesktopDefaultMigration, type WhisperMigration } from "./migrate";
+import { localOfferKindOf, planDesktopDefaultMigration, planRetiredBackendMigration, type LocalOfferKind, type WhisperMigration } from "./migrate";
+import { localOfferDialog, type LocalOfferDialogKind } from "./localOffer";
 import { findWhisperModel, formatModelSize } from "./whisperModels";
 import { i18nReady } from "./statusMessages";
 import { useAppUIStore } from "@/core/ui/store";
+import { STT_REWRITE_SECTION } from "@/core/ui/inspectorRoutes";
 import { Services } from "@/services-registry";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { normalizeLanguage, planHasEngine } from "./router";
@@ -51,6 +53,7 @@ const backends: SttBackendMap = {
   [STT_Backends.deepgram]: STT_DeepgramService,
   [STT_Backends.whisper]: STT_WhisperService,
   [STT_Backends.vosk]: STT_VoskService,
+  /** @deprecated Retired from the engine list: desktop profiles on it move to `local` at launch (`#migrateRetiredBackend`). The service stays for saved web profiles. */
   [STT_Backends.moonshine]: STT_MoonshineService,
   [STT_Backends.openai_audio]: STT_OpenAI_AudioService,
   [STT_Backends.local]: STT_LocalService,
@@ -338,11 +341,11 @@ class Service_STT implements IServiceInterface {
     this.#syncProgressToast();
   }
 
-  /** The STT inspector already shows status and progress inline. */
+  /** The STT inspector already shows status and progress inline (on its Speech tab; its Rewrite tab does not). */
   #sttInspectorOpen(): boolean {
     try {
       const { sidebar } = useAppUIStore.getState();
-      return sidebar.show && sidebar.tab?.tab === Services.stt;
+      return sidebar.show && sidebar.tab?.tab === Services.stt && sidebar.tab.value !== STT_REWRITE_SECTION;
     }
     catch {
       return false;
@@ -602,7 +605,12 @@ class Service_STT implements IServiceInterface {
       i18nReady(),
     ]).then(() => {});
 
-    const migrated = this.#migrateDesktopDefault();
+    // A retired backend moves to the built-in engine first, so the desktop default migration below sees the new one.
+    const retired = this.#migrateRetiredBackend();
+    const migrated = this.#migrateDesktopDefault() || retired;
+    // A profile on the built-in engine has no offer to answer, now or when it later picks another engine by hand.
+    this.#noteBuiltInEngine();
+    this.eventDisposers.push(subscribeKey(this.data, "backend", () => this.#noteBuiltInEngine()));
 
     // Web Speech ("native") cannot run in the desktop webview. Right after the migration the models are not on disk
     // yet: the user starts once (and agrees to the download) instead of a silent download at launch.
@@ -612,25 +620,72 @@ class Service_STT implements IServiceInterface {
   }
 
   /**
-   * One-time offer to move an existing desktop profile to the `local` backend (Sigil picks and runs the speech models
-   * itself). Never a silent switch: a native dialog asks, and the answer is recorded (`stt.localOfferShown`) either
-   * way so it is asked once. The language and microphone of the previous backend carry over. A running session is
-   * stopped first; nothing downloads until the next Start asks for consent. Resolves true when the user switched.
-   *
-   * Launch flow: `runStartupOffer` asks existing desktop profiles on `native` (the P2 desktop default).
+   * The one-time offer of the built-in engine is for a profile that never chose it. One that is on it (a new install,
+   * the setup wizard, an accepted offer, a retired backend moved over) has chosen it, so the offer is recorded as
+   * answered: a later switch to Chrome or Edge is that user's choice and is not questioned at the next launch.
    */
-  async offerLocalBackend(): Promise<boolean> {
+  #noteBuiltInEngine(): void {
+    if (this.data.backend !== STT_Backends.local || this.data.localOfferShown)
+      return;
+    window.ApiServer.patchService("stt", s => { s.data.localOfferShown = true; });
+  }
+
+  /**
+   * Moonshine server mode was retired: the built-in engine runs Moonshine and more accurate models inside Sigil, with
+   * nothing to install. A desktop profile still on it moves to `local` (automatic) with its language and microphone
+   * (`localBackendCarryOver`), and is told so. Never a silent download: the first Start asks, and the auto-start of this
+   * launch is skipped (the caller treats a true result like a migration). Idempotent: once on `local` it does nothing.
+   */
+  #migrateRetiredBackend(): boolean {
+    let plan: ReturnType<typeof planRetiredBackendMigration>;
+    try {
+      plan = planRetiredBackendMigration({ isDesktop: window.Config.isApp(), backend: this.data.backend });
+    }
+    catch (e) {
+      console.error("[STT] retired backend migration failed:", e);
+      return false;
+    }
+    if (plan.action !== "local")
+      return false;
+    const carry = localBackendCarryOver(this.data);
+    window.ApiServer.patchService("stt", s => {
+      if (carry.language)
+        s.data.local.language = carry.language;
+      if (carry.device)
+        s.data.local.device = carry.device;
+      s.data.backend = STT_Backends.local;
+    });
+    void i18nReady().then(() => {
+      const message = i18n.t("stt.moonshine_retired");
+      pushSystemLog("STT", message, "info");
+      toast.info(message, { autoClose: 12_000 });
+    });
+    return true;
+  }
+
+  /**
+   * One-time offer to move an existing desktop profile to the `local` backend (Sigil's own speech recognition, which
+   * runs on this PC). Never a silent switch: a native dialog asks, and the answer is recorded (`stt.localOfferShown`)
+   * either way so it is asked once ("Keep" never asks again). The wording names the engine the profile is on and, for
+   * Chrome and Edge, how it measured against the built-in one (`localOffer.ts`). The language and microphone of the
+   * previous backend carry over. A running session is stopped first; nothing downloads until the next Start asks for
+   * consent. Resolves true when the user switched.
+   *
+   * Launch flow: `runStartupOffer` asks existing desktop profiles on `native` (the P2 desktop default), Chrome or Edge.
+   */
+  async offerLocalBackend(kind?: LocalOfferDialogKind): Promise<boolean> {
     if (!window.Config.isApp() || this.data.localOfferShown || this.data.backend === STT_Backends.local)
       return false;
     await i18nReady();
+    const dialog = localOfferDialog(kind ?? localOfferKindOf(this.data.backend) ?? "other", (key, options) => i18n.t(key, options));
     window.ApiServer.patchService("stt", s => { s.data.localOfferShown = true; });
     let accepted = false;
     try {
-      accepted = await ask(i18n.t("stt.local_offer_message"), {
-        title: i18n.t("stt.local_offer_title"),
+      accepted = await ask(dialog.message, {
+        title: dialog.title,
         kind: "info",
-        okLabel: i18n.t("stt.local_offer_yes"),
-        cancelLabel: i18n.t("stt.local_offer_no"),
+        okLabel: dialog.okLabel,
+        cancelLabel: dialog.cancelLabel,
       });
     }
     catch (e) {
@@ -655,40 +710,51 @@ class Service_STT implements IServiceInterface {
     return true;
   }
 
-  /** Whisper migration to apply when the one-time `local` offer of this launch is declined (`runStartupOffer`). */
-  #pendingLocalOffer?: WhisperMigration;
+  /**
+   * The one-time `local` offer planned by the desktop default migration of this launch: what to ask (`kind`) and the
+   * Whisper migration to apply when it is declined (`fallback`; null for Chrome and Edge, which keep working).
+   */
+  #pendingLocalOffer?: { kind: LocalOfferKind; fallback: WhisperMigration | null };
 
   /**
    * The one-time `local` offer planned by the desktop default migration of this launch (existing profiles on
-   * `native`). Called once after startup (before the TTS offer, so two dialogs never overlap). Yes switches to
-   * `local`; no (or a failed dialog) applies the P0 Whisper migration, so the broken Web Speech default never stays.
+   * `native`, Chrome or Edge). Called once after startup (before the TTS offer, so two dialogs never overlap). Yes
+   * switches to `local`. No (or a failed dialog) keeps Chrome and Edge as they are (and starts them when auto-start
+   * is on, which `init` held back while the question was open), and applies the P0 Whisper migration to `native`, so
+   * the broken Web Speech default never stays.
    */
   async runStartupOffer(): Promise<void> {
-    const fallback = this.#pendingLocalOffer;
+    const pending = this.#pendingLocalOffer;
     this.#pendingLocalOffer = undefined;
-    if (!fallback)
+    if (!pending)
       return;
     let switched = false;
     try {
-      switched = await this.offerLocalBackend();
+      switched = await this.offerLocalBackend(pending.kind);
     }
     catch (e) {
       console.error("[STT] local backend offer failed:", e);
     }
     const backend = this.data.backend;
-    if (switched || (backend !== STT_Backends.native && backend !== STT_Backends.browser)) {
-      // Switched, or the user picked a backend while the dialog was open.
+    if (switched || !pending.fallback || (backend !== STT_Backends.native && backend !== STT_Backends.browser)) {
+      // Switched, kept a working engine, or the user picked a backend while the dialog was open.
       window.ApiServer.patchService("stt", s => { s.data.desktopDefaultMigrated = true; });
+      // Auto-start waited for the answer (`init` skipped it): a kept Chrome or Edge starts now, as it would have at launch.
+      // A switch to the built-in engine never starts by itself: its first Start asks before downloading models.
+      const kept = !switched && (backend === STT_Backends.chrome || backend === STT_Backends.edge);
+      if (kept && this.data.autoStart && this.serviceState.status === ServiceNetworkState.disconnected)
+        this.start({ automatic: true });
       return;
     }
-    this.#applyWhisperMigration(fallback);
+    this.#applyWhisperMigration(pending.fallback);
   }
 
   /**
    * One-time desktop default migration of profiles on `native` (the old default, broken in the desktop webview):
    * a new install starts on `local`; an existing profile is offered `local` once by {@link runStartupOffer} (Whisper
-   * when it declines, or right away when it already saw the offer). Returns true when the backend was switched or an
-   * offer is pending in this launch (no auto-start then).
+   * when it declines, or right away when it already saw the offer). A profile on Chrome or Edge is offered `local`
+   * the same way and keeps its engine when it declines. Returns true when the backend was switched or an offer is
+   * pending in this launch (no auto-start then; a kept Chrome or Edge starts once the offer is answered).
    */
   #migrateDesktopDefault(): boolean {
     let plan: ReturnType<typeof planDesktopDefaultMigration>;
@@ -724,7 +790,7 @@ class Service_STT implements IServiceInterface {
       return true;
     }
     if (plan.action === "offer") {
-      this.#pendingLocalOffer = plan.fallback;
+      this.#pendingLocalOffer = { kind: plan.kind, fallback: plan.fallback };
       return true;
     }
     this.#applyWhisperMigration(plan);
@@ -873,6 +939,7 @@ class Service_STT implements IServiceInterface {
   }
 
   start(options: SttStartOptions = {}) {
+    this.#migrateRetiredBackend();
     this.#startAbortController?.abort();
     // Captured per call: by the time a queued start runs, stop() may have replaced/cleared the field.
     const controller = new AbortController();

@@ -214,7 +214,7 @@ const Inspector_TextHorizontal: FC<{ id: string }> = memo(({ id }) => {
 
     if (!data) return <div className="p-4 text-white/30 text-xs">Element not found</div>;
 
-    // Check if synced with AI Transform
+    // Check if synced with Rewrite
     const isSyncedWithAI = data.sourceMain === TextEventSource.transform_raw;
     const showSyncOption = data.sourceMain === TextEventSource.stt || isSyncedWithAI;
 
@@ -258,7 +258,7 @@ const Inspector_TextHorizontal: FC<{ id: string }> = memo(({ id }) => {
                                 <div className="flex flex-col gap-2 justify-center">
                                     {showSyncOption && (
                                         <CompactToggle
-                                            label="Sync with AI Transform"
+                                            label="Sync with Rewrite"
                                             value={isSyncedWithAI}
                                             onChange={(v) => up("sourceMain", v ? TextEventSource.transform_raw : TextEventSource.stt)}
                                         />

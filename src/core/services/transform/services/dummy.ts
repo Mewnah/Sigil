@@ -7,6 +7,6 @@ export class Transform_DummyService implements ITransformEngine {
     stop(): void {}
 
     async transform(request: TransformRequest): Promise<string> {
-        return request.text.toUpperCase() + " (AI)";
+        return request.text.toUpperCase() + " (rewritten)";
     }
 }

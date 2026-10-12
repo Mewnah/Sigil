@@ -1,4 +1,4 @@
-import { FC, useEffect } from "react";
+import { FC, Suspense, lazy, useEffect } from "react";
 import NiceModal from "@ebay/nice-modal-react";
 import { ToastContainer } from "react-toastify";
 import 'react-toastify/dist/ReactToastify.min.css';
@@ -12,12 +12,16 @@ import { SigilLayout } from "./SigilLayout";
 import { LanguageOfferToastHost } from "../inspector/stt/LanguageOffer";
 import "../file-modal";
 
+// The first-run wizard is loaded only when a new install needs it.
+const Onboarding = lazy(() => import("../Onboarding"));
+
 // Shortcut Recorder (Inline for now or import if extracted)
 // We'll reuse the logic from EditorView if possible, or just re-implement simple version
 const ShortcutRecorderStub: FC = () => null;
 
 export const SigilRoot: FC = () => {
-    const { showOverlay } = useSnapshot(window.ApiServer.state);
+    const { showOverlay, onboardingComplete } = useSnapshot(window.ApiServer.state);
+    const showWizard = window.Config.isApp() && !onboardingComplete;
 
     // Initialize keyboard shortcuts
     useEffect(() => {
@@ -27,7 +31,16 @@ export const SigilRoot: FC = () => {
 
     return (
         <NiceModal.Provider>
-            <SigilLayout />
+            <SigilLayout blocked={showWizard} />
+
+            {/* First run: only a new install (no settings file, see state/firstRun.ts) leaves onboardingComplete false. */}
+            <AnimatePresence>
+                {showWizard && (
+                    <Suspense key="onboarding" fallback={null}>
+                        <Onboarding key="onboarding" />
+                    </Suspense>
+                )}
+            </AnimatePresence>
 
             {/* Global Overlays */}
             <AnimatePresence>

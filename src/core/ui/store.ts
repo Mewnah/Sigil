@@ -1,4 +1,5 @@
 import { InspectorTabPath } from "@/types";
+import { resolveInspectorTab } from "./inspectorRoutes";
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 
@@ -34,6 +35,12 @@ interface AppUIState {
 
   sidebar: SidebarSlice;
   changeTab: (v?: InspectorTabPath) => void;
+  /**
+   * Moves the open panel to another tab or section without toggling or showing it. The tabs inside an inspector (the
+   * Speech | Rewrite tabs of Speech to Text) use it, so the store always names what the panel shows: the status-bar
+   * cards, the nav and the toasts read it. `changeTab` is for opening and closing.
+   */
+  setSidebarTab: (v: InspectorTabPath) => void;
   closeSidebar: () => void;
   toggleSidebarExpand: () => void;
   setSidebarShow: (show: boolean) => void;
@@ -68,8 +75,10 @@ export const useAppUIStore = create<AppUIState>()(
 
       sidebar: { ...initialSidebar },
 
-      changeTab: (v?: InspectorTabPath) =>
+      changeTab: (requested?: InspectorTabPath) =>
         set((s) => {
+          // Aliases (Rewrite lives in the STT inspector) resolve first, so the toggle compares the real target.
+          const v = resolveInspectorTab(requested);
           const { tab, show } = s.sidebar;
           if (tab?.tab === v?.tab && tab?.value === v?.value && show) {
             return {
@@ -78,6 +87,9 @@ export const useAppUIStore = create<AppUIState>()(
           }
           return { sidebar: { ...s.sidebar, tab: v, show: true } };
         }),
+
+      setSidebarTab: (requested: InspectorTabPath) =>
+        set((s) => ({ sidebar: { ...s.sidebar, tab: resolveInspectorTab(requested) } })),
 
       closeSidebar: () =>
         set((s) => ({
