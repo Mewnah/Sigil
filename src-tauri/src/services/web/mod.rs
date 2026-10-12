@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
     process::Command,
     sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
@@ -170,15 +171,20 @@ async fn config(config: State<'_, AppConfiguration>) -> Result<WebConfig, String
     })
 }
 
-/// The address the server will listen on at startup (`lanAccess.mode` from the persisted settings:
-/// `0.0.0.0` for `lan`, the default, or `127.0.0.1` for `localhost`). For main.rs's port pre-check
-/// before Tauri starts, so it checks the address the server really binds (P6-D hotspot request).
+/// The address the server will listen on at startup (`lanAccess.mode` from the persisted settings,
+/// see [`auth::startup_lan_access`]: `127.0.0.1` for `localhost` and for a new install with no
+/// settings file yet, `0.0.0.0` for `lan`, which an existing profile without the key keeps). For
+/// main.rs's port pre-check before Tauri starts, so it checks the address the server really binds
+/// (P6-D hotspot request).
 pub fn startup_bind_ip() -> IpAddr {
-    super::diagnostics::app_data_dir()
-        .and_then(|dir| auth::persisted_lan_access(&dir))
-        .unwrap_or_default()
-        .mode
-        .ip()
+    bind_ip_for(super::diagnostics::app_data_dir().as_deref())
+}
+
+/// [`startup_bind_ip`] for a given app data folder. The plugin's init gets its settings from the same
+/// [`auth::startup_lan_access`] (the persisted-settings read behind it is private to `auth`), so the port
+/// pre-check and the bind cannot probe one address and take another.
+fn bind_ip_for(app_data: Option<&Path>) -> IpAddr {
+    auth::startup_lan_access(app_data).mode.ip()
 }
 
 /// Lifecycle of the local web server.
@@ -901,10 +907,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 }
             };
             let persisted_origin_check = app_data.as_deref().and_then(origin::persisted_origin_check);
-            let lan_settings = app_data
-                .as_deref()
-                .and_then(auth::persisted_lan_access)
-                .unwrap_or_default();
+            // The same read as `startup_bind_ip`, so the pre-check and the bind agree: a new install
+            // (no settings file) starts "This PC only" and binds 127.0.0.1.
+            let lan_settings = auth::startup_lan_access(app_data.as_deref());
 
             let origin_guard = OriginGuard::for_app(app_port, persisted_origin_check);
             if let Some(forced) = origin_guard.env_override() {
@@ -1003,6 +1008,31 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
+
+    /// From an app data folder to the address the server binds: the step the port pre-check (main.rs) and the
+    /// plugin's init share (`auth::startup_lan_access`). A new install binds 127.0.0.1 on its very first launch
+    /// (a 0.0.0.0 listener raises the Windows Firewall prompt); an existing profile keeps what it had.
+    #[test]
+    fn a_new_install_binds_loopback_and_an_existing_profile_keeps_its_address() {
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let any = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let mut new_installs = 0;
+        auth::startup_fixture::each("bind", |case, dir| {
+            let want = if case.mode == BindMode::Localhost { loopback } else { any };
+            assert_eq!(bind_ip_for(Some(dir)), want, "{}", case.name);
+            // What init hands the supervisor for the first bind is the same address, on the app's port.
+            let first_bind = auth::startup_lan_access(Some(dir)).mode.socket_addr(3030);
+            assert_eq!(first_bind, SocketAddr::new(want, 3030), "{}", case.name);
+            if case.new_install {
+                assert_eq!(bind_ip_for(Some(dir)), loopback, "{}", case.name);
+                new_installs += 1;
+            }
+        });
+        assert!(new_installs >= 2, "the table has new installs");
+        // A folder that was never created is a new install too; no folder at all keeps the default.
+        assert_eq!(bind_ip_for(Some(&std::env::temp_dir().join("sigil-web-bind-never-created"))), loopback);
+        assert_eq!(bind_ip_for(None), any);
+    }
 
     type Seen = Arc<StdMutex<Vec<ServerEvent>>>;
 

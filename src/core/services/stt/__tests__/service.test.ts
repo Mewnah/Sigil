@@ -488,6 +488,60 @@ describe("Service_STT desktop default migration", () => {
   });
 });
 
+describe("Service_STT start at launch while the setup wizard shows", () => {
+  // What the wizard's speech step leaves: the built-in engine, the migration done, Start when Sigil opens on.
+  const saved = { autoStart: true, backend: STT_Backends.local, desktopDefaultMigrated: true };
+
+  it("starts nothing behind a wizard that shows again (the user quit in the middle of it)", async () => {
+    isApp = true;
+    const { service } = makeService(saved, { onboardingComplete: false });
+    await service.init();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(0);
+    expect(toast).not.toHaveBeenCalled(); // no "models not downloaded" error over a wizard that cannot open Speech to Text
+  });
+
+  it("starts at launch once the wizard is done", async () => {
+    isApp = true;
+    const { service } = makeService(saved, { onboardingComplete: true });
+    await service.init();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(last().started).toBe(1);
+  });
+
+  it("the web build has no wizard, so it starts as before", async () => {
+    isApp = false;
+    const { service } = makeService({ autoStart: true, backend: STT_Backends.local }, { onboardingComplete: false });
+    await service.init();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+});
+
+describe("Service_STT a session that did not start by design", () => {
+  it("shows a notice that closes by itself, not an error that stays", async () => {
+    const { service } = makeService({ backend: STT_Backends.local });
+    service.start({ automatic: true });
+    await flush();
+    last().receiver.onStop("Speech models are not downloaded.", { notice: true });
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(service.serviceState.error).toBe("Speech models are not downloaded."); // the status still says why
+    expect(toast.info).toHaveBeenCalledWith("Speech models are not downloaded.", { autoClose: 12_000 });
+    expect(toast).not.toHaveBeenCalled(); // no error toast
+  });
+
+  it("an engine error without the notice option is still an error that stays", async () => {
+    const { service } = makeService({ backend: STT_Backends.local });
+    service.start({ automatic: true });
+    await flush();
+    last().receiver.onStop("The microphone is in use.");
+    expect(toast).toHaveBeenCalledWith("The microphone is in use.", { type: "error", autoClose: false });
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(service.serviceState.error).toBe("The microphone is in use.");
+  });
+});
+
 describe("Service_STT language suggestion (the automatic backend on automatic language)", () => {
   const FRENCH = "Je voudrais essayer ce nouveau micro ce soir";
   const plan = (missing: string[]) => ({

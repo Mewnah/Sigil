@@ -471,7 +471,14 @@ class Service_STT implements IServiceInterface {
     }
     this.#resetReconnect();
     if (error) {
-      toast(error, { type: "error", autoClose: false });
+      if (options?.notice) {
+        // Expected, and one Start fixes it: information that closes by itself, not an error that stays until clicked.
+        toast.info(error, { autoClose: 12_000 });
+        pushSystemLog("STT", error, "info");
+      }
+      else {
+        toast(error, { type: "error", autoClose: false });
+      }
       this.serviceState.error = error;
     }
     this.#setStatus(ServiceNetworkState.disconnected);
@@ -765,7 +772,11 @@ class Service_STT implements IServiceInterface {
     // Web Speech ("native") cannot run in the desktop webview. Right after the migration the models are not on disk
     // yet: the user starts once (and agrees to the download) instead of a silent download at launch.
     const nativeBackend = this.data.backend === STT_Backends.native || this.data.backend === STT_Backends.browser;
-    if (this.data.autoStart && !nativeBackend && !migrated)
+    // The setup wizard asks "Start captions when Sigil opens" on its speech step and saves the answer there. A launch
+    // that shows the wizard again (the user quit in the middle of it) starts nothing behind it: the app under the
+    // wizard is inert, so a failed start would only leave an error over it and a started one would open the microphone.
+    const wizardOpen = window.Config.isApp() && !window.ApiServer.state.onboardingComplete;
+    if (this.data.autoStart && !nativeBackend && !migrated && !wizardOpen)
       this.start({ automatic: true });
   }
 

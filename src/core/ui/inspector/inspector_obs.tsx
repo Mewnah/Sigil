@@ -10,6 +10,7 @@ import { useSnapshot } from "valtio";
 import Dropdown, { useDropdown } from "../dropdown/Dropdown";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
+import { LanOffHint } from "./lanAccessHints";
 import { InputCheckbox, InputMapObject, InputNetworkStatus, InputSelect, InputText, InputTextSource } from "./components/input";
 import { useTranslation } from "react-i18next";
 
@@ -89,6 +90,8 @@ const Inspector_OBS: FC = () => {
           <RiFileCopyLine /> {t("obs.btn_copy_lan_browser_source_link")}
         </button>
       )}
+      {/* "This PC only" hides the LAN link above; OBS on this PC works as it is, so say where another PC or a phone is enabled. */}
+      <LanOffHint />
 
       <div className="mt-3 space-y-2">
         <InputCheckbox value={data.browserCaptionsEnable} onChange={e => up("browserCaptionsEnable", e)} label="obs.field_enable_browser_captions_feed" />

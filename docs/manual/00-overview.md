@@ -31,7 +31,7 @@ This starts the Vite dev server and the Tauri shell. The app listens on a local 
 
 ### First launch and onboarding
 
-The first time Sigil starts on a PC (no settings file yet), a **setup wizard** opens over the app. It has five short steps: **welcome**, **microphone and speakers**, **Speech to Text** (the built-in engine, plus the language you speak), **where captions should go** (VRChat or OBS Studio, or Twitch, Kick or Discord), and **done**. Complete it step by step or use **Skip setup** on any step but the last; everything can be changed later in **Settings** and each inspector. If you quit in the middle it opens again at the next start. A profile that already exists never sees it.
+The first time Sigil starts on a PC (no settings file yet), a **setup wizard** opens over the app. It has five short steps: **welcome**, **microphone and speakers**, **Speech to Text** (the built-in engine, the language you speak and **Start captions when Sigil opens**, ticked by default), **where captions should go** (VRChat or OBS Studio, or Twitch, Kick or Discord), and **done**. Complete it step by step or use **Skip setup** on any step but the last; everything can be changed later in **Settings** and each inspector. If you quit in the middle it opens again at the next start. A profile that already exists never sees it. Captions do not start on that first launch: press **Start** in Speech to Text once, which asks before it downloads the speech models; with **Start captions when Sigil opens** ticked they start by themselves from the next launch. A new install also starts with **LAN access** on **This PC only**: Sigil listens on this PC alone, so Windows shows no Firewall question and OBS on this PC works at once. A phone or OBS on another PC needs **Settings → LAN access → Other devices** switched to **Allowed with the LAN token**; Windows may ask once then ([how the links work](#how-to-open-it)).
 
 ### Projects
 
@@ -115,7 +115,7 @@ See [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) and [OPERATOR_REFERENCE.md](../O
 
 The host serves the page at `http://localhost:<port>/client` (port **3030** unless you started Sigil with `--port`). The link has no host, id or peer parameters; the page connects back to the Sigil that served it. Copy it with **OBS Studio → Copy browser source link**: that is the right address for OBS on this PC, and it keeps working after Sigil restarts.
 
-For a phone, a tablet or OBS on **another PC**, copy the **LAN link** instead (OBS Studio inspector, or **Settings → LAN access**). It ends in `?token=…`, the LAN token that other devices need; links for this PC never carry one. Change the token or switch to **This PC only** and the old LAN links are refused until you copy them again.
+For a phone, a tablet or OBS on **another PC**, copy the **LAN link** instead (OBS Studio inspector, or **Settings → LAN access**). It ends in `?token=…`, the LAN token that other devices need; links for this PC never carry one. A new install starts on **This PC only**, where Sigil listens on this PC alone and the OBS Studio inspector shows no LAN link: set **Settings → LAN access → Other devices** to **Allowed with the LAN token** first (Windows may ask once to allow Sigil on the network; a profile that already existed keeps the setting it had). Change the token or switch back to **This PC only** and the old LAN links are refused until you copy them again.
 
 **Tip:** OBS’s embedded browser can be an older Chromium; Sigil sets `data-sigil-client` on `/client` for CSS fallbacks. If something looks wrong, try a normal browser to compare.
 
@@ -146,5 +146,5 @@ In an ordinary browser tab (a phone, a second PC) a start-up failure that may pa
 
 ### Troubleshooting
 
-- **No sync:** check that Sigil is running and that the port in the link is the one Sigil shows (**OBS Studio → Copy browser source link** fills it in). The page for this PC needs no token; a page on another PC needs the LAN link. See [If the connection drops](#if-the-connection-drops) for what each message means.
+- **No sync:** check that Sigil is running and that the port in the link is the one Sigil shows (**OBS Studio → Copy browser source link** fills it in). The page for this PC needs no token; a page on another PC (or a phone) needs the LAN link, and a new install only gives one after **Settings → LAN access → Other devices** is set to **Allowed with the LAN token**. See [If the connection drops](#if-the-connection-drops) for what each message means.
 - **Stale OBS preview:** Sigil removes any service worker it finds on `/client`, so the only cache is OBS's own: use **Refresh cache of current page** in the source's properties.

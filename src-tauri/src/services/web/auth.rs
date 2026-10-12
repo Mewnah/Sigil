@@ -22,7 +22,8 @@
 //!   `token` parameter there, which is ignored). Pages carry it as `?token=` in their own URL.
 //! - **Mode** ([`BindMode`]): `lan` binds `0.0.0.0` (as before; other machines need the token),
 //!   `localhost` binds `127.0.0.1` only and also refuses any non-local peer here, so connections
-//!   from before a switch are closed at once.
+//!   from before a switch are closed at once. A new install (no settings file) starts as
+//!   `localhost` ([`startup_lan_access`]); an existing profile without the key keeps `lan`.
 //! - **Legacy** (`legacyNoToken`, default off, shown with a caution label): other machines get in
 //!   without the token, as in stage 1 (Origin allow-list only).
 //! - **Refusals** happen after the WebSocket upgrade, with close code [`CLOSE_LAN_UNAUTHORIZED`]
@@ -208,9 +209,40 @@ pub fn lan_access_from_settings(bytes: &[u8]) -> Option<LanAccessSettings> {
     })
 }
 
-/// `lanAccess` from `<app_data>/user/settings` (or its backup).
-pub fn persisted_lan_access(app_data_dir: &Path) -> Option<LanAccessSettings> {
+/// `lanAccess` from `<app_data>/user/settings` (or its backup). Private on purpose: the start-up read
+/// is [`startup_lan_access`], which the web plugin's init and the port pre-check both go through, so
+/// neither can bring back a read that ignores the new-install rule.
+fn persisted_lan_access(app_data_dir: &Path) -> Option<LanAccessSettings> {
     origin::read_persisted_settings(app_data_dir, lan_access_from_settings)
+}
+
+/// `lanAccess` as the server starts with it, before the webview has pushed anything: the one step from
+/// "the app data folder (if there is one)" to the settings. It follows the front end's first-run
+/// decision (src/core/services/state/firstRun.ts), so the address bound here is the one the front end
+/// then confirms and the server never rebinds at the first launch:
+/// - no settings file at all (a new install): `localhost`, "This PC only", so the first launch binds
+///   `127.0.0.1` and never raises the Windows Firewall prompt (the front end writes `localhost` into
+///   the new file, and `lan` stays one switch away in Settings). A `settings.bak` next to a missing
+///   `settings` does not make it an existing profile: the front end never reads the backup of a file
+///   that is gone, so both sides call it a new install;
+/// - a file that exists keeps what it has: its `lanAccess.mode`, and `lan` (the schema default) when the
+///   key or the mode is missing, as in every profile written before `lanAccess` existed. That includes
+///   a file that exists but cannot be read or parsed (the front end counts it as an existing profile
+///   too): the backup is tried, then the default `lan`;
+/// - no app data folder to look in: `lan`, the default (the front end cannot load its settings either).
+///
+/// The cases are listed in `startup_lan_cases.json`, which the front end's test of `firstRun.ts` runs too.
+pub fn startup_lan_access(app_data_dir: Option<&Path>) -> LanAccessSettings {
+    let Some(app_data_dir) = app_data_dir else {
+        return LanAccessSettings::default();
+    };
+    if origin::persisted_settings_missing(app_data_dir) {
+        return LanAccessSettings {
+            mode: BindMode::Localhost,
+            ..LanAccessSettings::default()
+        };
+    }
+    persisted_lan_access(app_data_dir).unwrap_or_default()
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -625,6 +657,73 @@ impl Access {
     }
 }
 
+/// `startup_lan_cases.json` as scratch app data folders: one table of "settings file state -> mode" that the
+/// front end's test of src/core/services/state/firstRun.ts reads too. Used here and by the bind address test in mod.rs.
+#[cfg(test)]
+pub(super) mod startup_fixture {
+    use super::BindMode;
+    use serde_json::Value;
+    use std::path::Path;
+
+    pub struct Case {
+        pub name: String,
+        /// The mode both sides must end up with.
+        pub mode: BindMode,
+        /// Whether both sides call the profile a new install.
+        pub new_install: bool,
+        settings: Value,
+        backup: Value,
+    }
+
+    pub fn cases() -> Vec<Case> {
+        let table: Value = serde_json::from_str(include_str!("startup_lan_cases.json")).expect("startup_lan_cases.json is JSON");
+        let rows = table["cases"].as_array().expect("`cases` is a list");
+        assert!(rows.len() >= 10, "the table lost its rows");
+        rows.iter()
+            .map(|row| Case {
+                name: row["name"].as_str().expect("a name").to_string(),
+                mode: BindMode::parse(row["mode"].as_str().expect("a mode")).expect("a known mode"),
+                new_install: row["newInstall"].as_bool().expect("newInstall"),
+                settings: row["settings"].clone(),
+                backup: row["backup"].clone(),
+            })
+            .collect()
+    }
+
+    /// Writes one file of a case: `null` is no file, `json` a file with that JSON, `raw` a file with exactly that text,
+    /// `unreadable` a file that exists but cannot be read (a folder in its place: opening it fails).
+    fn write(user: &Path, name: &str, spec: &Value) {
+        let path = user.join(name);
+        if spec.is_null() {
+            return;
+        }
+        if let Some(json) = spec.get("json") {
+            std::fs::write(path, serde_json::to_vec(json).unwrap()).unwrap();
+        } else if let Some(raw) = spec.get("raw") {
+            std::fs::write(path, raw.as_str().expect("raw is text").as_bytes()).unwrap();
+        } else if spec.get("unreadable").is_some() {
+            std::fs::create_dir(path).unwrap();
+        } else {
+            panic!("unknown file spec {spec}");
+        }
+    }
+
+    /// Calls `check` for every case, with a freshly written scratch app data folder (one folder per `tag`: the
+    /// tests of a binary run side by side).
+    pub fn each(tag: &str, mut check: impl FnMut(&Case, &Path)) {
+        let dir = std::env::temp_dir().join(format!("sigil-web-startup-{tag}-{}", std::process::id()));
+        for case in cases() {
+            let _ = std::fs::remove_dir_all(&dir);
+            let user = dir.join("user");
+            std::fs::create_dir_all(&user).unwrap();
+            write(&user, "settings", &case.settings);
+            write(&user, "settings.bak", &case.backup);
+            check(&case, &dir);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,6 +861,75 @@ mod tests {
         std::fs::write(user.join("settings"), br#"{"lanAccess":{"token":"0123456789abcdefghjkmnpqrs"}}"#).unwrap();
         assert_eq!(persisted_lan_access(&dir), Some(settings(BindMode::Lan, TOKEN, false)));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const LOOPBACK_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    const ANY_IP: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+
+    /// The start-up decision for every state the settings file can be in, from the table the front end's
+    /// test of firstRun.ts reads too (`startup_lan_cases.json`): the mode, the address it binds, and who
+    /// counts as a new install. Nothing here is written to match the other side by hand.
+    #[test]
+    fn startup_follows_the_shared_cases() {
+        let mut seen_new = 0;
+        startup_fixture::each("auth", |case, dir| {
+            let got = startup_lan_access(Some(dir));
+            assert_eq!(got.mode, case.mode, "{}", case.name);
+            let ip = if case.mode == BindMode::Localhost { LOOPBACK_IP } else { ANY_IP };
+            assert_eq!(got.mode.ip(), ip, "{}", case.name);
+            assert_eq!(origin::persisted_settings_missing(dir), case.new_install, "{}", case.name);
+            seen_new += usize::from(case.new_install);
+        });
+        assert!(seen_new >= 2, "the table has new installs");
+    }
+
+    /// No settings file is a new install: it starts "This PC only" and binds 127.0.0.1, so the first
+    /// launch never raises the Windows Firewall prompt. Mirrors `applyFirstRunDecision` in
+    /// src/core/services/state/firstRun.ts, which writes `localhost` into the new file.
+    #[test]
+    fn a_new_install_starts_this_pc_only() {
+        let dir = std::env::temp_dir().join(format!("sigil-web-auth-startup-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // No app data folder yet, an empty one, and one with an empty `user` folder.
+        for step in 0..3 {
+            match step {
+                1 => std::fs::create_dir_all(&dir).unwrap(),
+                2 => std::fs::create_dir_all(dir.join("user")).unwrap(),
+                _ => {}
+            }
+            let got = startup_lan_access(Some(&dir));
+            assert_eq!(got, settings(BindMode::Localhost, "", false), "step {step}: the host generates the token later");
+            assert_eq!(got.mode.ip(), LOOPBACK_IP, "step {step}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An existing profile keeps its token and legacy switch along with its mode.
+    #[test]
+    fn an_existing_profile_keeps_its_token_and_legacy_switch() {
+        let dir = std::env::temp_dir().join(format!("sigil-web-auth-startup-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("user")).unwrap();
+        std::fs::write(
+            dir.join("user").join("settings"),
+            r#"{"lanAccess":{"mode":"lan","token":"0123456789abcdefghjkmnpqrs","legacyNoToken":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(startup_lan_access(Some(&dir)), settings(BindMode::Lan, TOKEN, true));
+        std::fs::write(
+            dir.join("user").join("settings"),
+            r#"{"lanAccess":{"mode":"localhost","token":"0123456789abcdefghjkmnpqrs"}}"#,
+        )
+        .unwrap();
+        assert_eq!(startup_lan_access(Some(&dir)), settings(BindMode::Localhost, TOKEN, false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With no app data folder to look in the front end cannot load its settings either: the default.
+    #[test]
+    fn without_an_app_data_folder_the_default_applies() {
+        assert_eq!(startup_lan_access(None), LanAccessSettings::default());
+        assert_eq!(startup_lan_access(None).mode, BindMode::Lan);
     }
 
     #[test]

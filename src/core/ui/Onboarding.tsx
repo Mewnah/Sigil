@@ -41,7 +41,8 @@ export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
  * drag area and the minimise, maximise and close buttons are in `SigilHeader` (`h-10`, which is `top-10`) and stay usable.
  * `SigilLayout` makes everything below the header inert while the wizard shows.
  */
-export const WIZARD_ROOT_CLASS = "fixed inset-x-0 bottom-0 top-10 z-[90] bg-base-300 flex items-center justify-center p-8";
+export const WIZARD_ROOT_CLASS =
+    "fixed inset-x-0 bottom-0 top-10 z-[90] bg-base-300 flex flex-col items-center gap-2 overflow-y-auto px-8 py-4";
 
 /** Skip is offered on every step but the last. */
 const LAST_SKIPPABLE_STEP = ONBOARDING_STEPS.length - 2;
@@ -83,20 +84,49 @@ export function planOnboardingAudioSave(
 }
 
 /**
+ * "Start captions when Sigil opens" is on when the speech step opens: a streamer in VR cannot reach Start. An
+ * automatic start before the models are downloaded never downloads or asks; it ends with a notice that one Start
+ * downloads them (`stt/services/local.ts`, `#ensureModels`; `SttStopOptions.notice`). The launch that shows this wizard
+ * starts nothing (`Service_STT.init`), so the first automatic start is the next one.
+ */
+export const ONBOARDING_AUTO_START_DEFAULT = true;
+
+/**
+ * What the speech step has been asked. The wizard holds it, not the step: Back unmounts a step, so a step that kept its
+ * own answers would show the defaults again (a checked box, the Windows language) over what the user had picked.
+ * `language` stays unset until the user picks one, so a step that was never touched keeps following the Windows language.
+ */
+export interface SttAnswers {
+    language?: string;
+    autoStart: boolean;
+}
+
+export const INITIAL_STT_ANSWERS: SttAnswers = { autoStart: ONBOARDING_AUTO_START_DEFAULT };
+
+/**
  * What the speech step writes to the profile (`stt.data`). Marking the desktop default migration done stops it from
  * overriding this pick, and the built-in engine is a choice made here: a later switch to Chrome or Edge is not offered
- * the built-in engine again (`localOfferShown`).
+ * the built-in engine again (`localOfferShown`). `autoStart` is the answer to "Start captions when Sigil opens", written
+ * either way; skipping the wizard never gets here, so a skipped profile keeps the schema default (off).
  */
 export function applyOnboardingSttSave(
-    data: Pick<STT_State, "backend" | "desktopDefaultMigrated" | "localOfferShown"> & { local: Pick<STT_State["local"], "language" | "languageDecision"> },
+    data: Pick<STT_State, "backend" | "desktopDefaultMigrated" | "localOfferShown" | "autoStart"> & { local: Pick<STT_State["local"], "language" | "languageDecision"> },
     save: OnboardingSttSave,
+    autoStart: boolean,
 ): void {
     data.backend = save.backend;
     data.desktopDefaultMigrated = true;
     data.localOfferShown = true;
+    data.autoStart = autoStart;
     // The language is only ever set by this answer: "Detect automatically" is stored as an explicit choice.
     if (save.localLanguage !== undefined) data.local.language = save.localLanguage;
     if (save.decision) data.local.languageDecision = save.decision;
+}
+
+/** Continue on the speech step: the built-in engine, the language answer and the auto-start answer, in one patch. */
+export function saveOnboardingStt(language: string, autoStart: boolean, now: number = Date.now()): void {
+    const save = planOnboardingSttSave("local", language, now);
+    window.ApiServer.patchService("stt", s => applyOnboardingSttSave(s.data, save, autoStart));
 }
 
 /** The profile's current devices ("" = system default). Safe before the host state exists. */
@@ -258,24 +288,57 @@ const SttLanguageQuestion: FC<{ value: string; onChange: (code: string) => void;
     );
 };
 
+/**
+ * "Start captions when Sigil opens": a checkbox with a short hint, under the language. The label names the input
+ * (a click on the words toggles it) and the hint describes it, so a screen reader reads both. The hint is indented by
+ * the checkbox (`size-6`) and its gap (`gap-3`), so it lines up with the label. The label is only as wide as its words
+ * (a click beside them does not toggle the box next to Continue) and the box never shrinks, so a long translation wraps
+ * the words and not the square.
+ */
+export const SttAutoStartOption: FC<{ checked: boolean; onChange: (on: boolean) => void }> = ({ checked, onChange }) => {
+    const { t } = useTranslation();
+    return (
+        <div className="w-full" data-testid="onboarding-autostart">
+            <label className="flex w-fit max-w-full items-center gap-3 cursor-pointer" htmlFor="onboarding-stt-autostart">
+                <input
+                    id="onboarding-stt-autostart"
+                    type="checkbox"
+                    className="checkbox checkbox-primary shrink-0"
+                    checked={checked}
+                    onChange={(e) => onChange(e.target.checked)}
+                    aria-describedby="onboarding-stt-autostart-hint"
+                />
+                <span className="font-semibold">{t("onboarding.stt_autostart")}</span>
+            </label>
+            <p id="onboarding-stt-autostart-hint" className="mt-1 ms-9 text-xs text-base-content/60">{t("onboarding.stt_autostart_hint")}</p>
+        </div>
+    );
+};
+
 // Step 3: Speech to Text. One engine, chosen for the user; the others stay in the engine list of the Speech panel.
-export const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
+export const SttStep: FC<StepProps & { answers?: SttAnswers; onAnswers?: (answers: SttAnswers) => void }> = ({ onNext, onBack, answers: held, onAnswers: hold }) => {
     const { t } = useTranslation();
     const windowsTags = useMemo(() => systemLanguageTags(), []);
     // The wizard preselects the Windows language, English included; "Detect automatically" when none is routable.
     const windowsDefault = useMemo(() => onboardingLanguageDefault(windowsTags), [windowsTags]);
     const windowsLanguage = windowsDefault === ONBOARDING_AUTO ? null : windowsDefault;
-    const [language, setLanguage] = useState<string>(windowsDefault);
+    // The wizard holds the answers so that Back keeps them; a step shown on its own keeps its answers itself.
+    const [own, setOwn] = useState<SttAnswers>(INITIAL_STT_ANSWERS);
+    const answers = held ?? own;
+    const setAnswers = hold ?? setOwn;
+    const language = answers.language ?? windowsDefault;
 
     const saveAndContinue = () => {
-        const save = planOnboardingSttSave("local", language, Date.now());
-        window.ApiServer.patchService("stt", s => applyOnboardingSttSave(s.data, save));
+        saveOnboardingStt(language, answers.autoStart);
         onNext();
     };
 
+    // `space-y-3`, not 6: this is the tallest step. A new install opens at 800 x 600 (560 px below the title bar); the
+    // dots, the step and Skip are stacked in the wizard (it scrolls rather than overlap), and the icon is dropped on a
+    // window that short. Measured 2026-10-12 in a browser at 800 x 600: everything fits without scrolling.
     return (
-        <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary" aria-hidden="true"><RiUserVoiceFill /></div>
+        <div className="flex flex-col items-center space-y-3 w-full max-w-md">
+            <div className="text-5xl text-primary [@media(max-height:680px)]:hidden" aria-hidden="true"><RiUserVoiceFill /></div>
             <StepHeading className="text-2xl font-bold font-header">{t("onboarding.stt_title")}</StepHeading>
             <p className="text-base-content/70 text-center">{t("onboarding.stt_body")}</p>
 
@@ -288,7 +351,14 @@ export const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
                 <RiCheckLine className="ms-auto text-xl text-primary" aria-hidden="true" />
             </div>
 
-            <SttLanguageQuestion value={language} onChange={setLanguage} fromWindows={windowsLanguage !== null && language === windowsLanguage} />
+            <div className="w-full space-y-3">
+                <SttLanguageQuestion
+                    value={language}
+                    onChange={(code) => setAnswers({ ...answers, language: code })}
+                    fromWindows={windowsLanguage !== null && language === windowsLanguage}
+                />
+                <SttAutoStartOption checked={answers.autoStart} onChange={(on) => setAnswers({ ...answers, autoStart: on })} />
+            </div>
             <p className="text-xs text-base-content/60 text-center">{t("onboarding.stt_other")}</p>
 
             <StepButtons onBack={onBack} onNext={saveAndContinue} nextLabel={t("onboarding.continue")} />
@@ -311,7 +381,7 @@ export const SendStep: FC<StepProps & { onPick: (tab: Services) => void }> = ({ 
 
     return (
         <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary" aria-hidden="true"><RiMessage2Fill /></div>
+            <div className="text-5xl text-primary [@media(max-height:680px)]:hidden" aria-hidden="true"><RiMessage2Fill /></div>
             <StepHeading className="text-2xl font-bold font-header">{t("onboarding.send_title")}</StepHeading>
             <p className="text-base-content/70 text-center">{t("onboarding.send_body")}</p>
 
@@ -366,11 +436,12 @@ const Onboarding: FC<{ initialStep?: number }> = memo(({ initialStep = 0 }) => {
     const { t } = useTranslation();
     const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), ONBOARDING_STEPS.length - 1));
     const total = ONBOARDING_STEPS.length;
+    const [sttAnswers, setSttAnswers] = useState<SttAnswers>(INITIAL_STT_ANSWERS);
 
     const steps = [
         <WelcomeStep key="welcome" onNext={() => setStep(1)} />,
         <AudioStep key="audio" onNext={() => setStep(2)} onBack={() => setStep(0)} />,
-        <SttStep key="stt" onNext={() => setStep(3)} onBack={() => setStep(1)} />,
+        <SttStep key="stt" answers={sttAnswers} onAnswers={setSttAnswers} onNext={() => setStep(3)} onBack={() => setStep(1)} />,
         <SendStep key="send" onNext={() => setStep(4)} onBack={() => setStep(2)} onPick={finishOnboarding} />,
         <DoneStep key="done" onOpen={() => finishOnboarding()} />,
     ];
@@ -387,7 +458,7 @@ const Onboarding: FC<{ initialStep?: number }> = memo(({ initialStep = 0 }) => {
         >
             {/* Progress indicator: a bar to assistive technology (its label says "step n of 5"), dots to the eye */}
             <div
-                className="absolute top-8 left-1/2 -translate-x-1/2 flex gap-2"
+                className="flex gap-2 shrink-0"
                 role="progressbar"
                 aria-label={t("onboarding.progress", { step: step + 1, total })}
                 aria-valuemin={1}
@@ -415,7 +486,7 @@ const Onboarding: FC<{ initialStep?: number }> = memo(({ initialStep = 0 }) => {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -50 }}
                     transition={{ duration: 0.2 }}
-                    className="w-full flex justify-center"
+                    className="w-full flex justify-center my-auto"
                 >
                     {steps[step]}
                 </motion.div>
@@ -426,7 +497,7 @@ const Onboarding: FC<{ initialStep?: number }> = memo(({ initialStep = 0 }) => {
                 <button
                     type="button"
                     onClick={skipOnboarding}
-                    className="absolute bottom-8 text-base-content/50 hover:text-base-content transition-colors"
+                    className="shrink-0 text-base-content/50 hover:text-base-content transition-colors"
                 >
                     {t("onboarding.skip")}
                 </button>

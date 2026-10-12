@@ -1001,7 +1001,7 @@ describe("STT_LocalService", () => {
     await h.svc.start(params());
     expect(h.askConsent).not.toHaveBeenCalled();
     expect(h.models.install).not.toHaveBeenCalled();
-    expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+    expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing", { notice: true });
   });
 
   describe("an automatic start whose language needs models that are not installed", () => {
@@ -1052,7 +1052,7 @@ describe("STT_LocalService", () => {
       await h.svc.start(params({ language: "fr" }));
       expect(h.askConsent).not.toHaveBeenCalled();
       expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(0);
-      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing", { notice: true });
       expect(h.systemLog).not.toHaveBeenCalledWith("stt.local_log_auto_fallback", "warning");
     });
 
@@ -1060,7 +1060,7 @@ describe("STT_LocalService", () => {
       const h = harness({ installed: [], automatic: true });
       await h.svc.start(params({ language: "auto" }));
       expect(h.calls("plugin:speech|preview_route")).toHaveLength(1);
-      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing");
+      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_models_missing", { notice: true });
     });
 
     it("a Start by hand still asks and downloads: nothing is swapped behind the user's back", async () => {

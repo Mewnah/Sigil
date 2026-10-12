@@ -70,6 +70,12 @@ export interface SttStopOptions {
    * retries at the slow pace for as long as the user wants STT running. Leave it off when the network is known down.
    */
   unproven?: boolean;
+  /**
+   * The session did not start by design and one Start by hand fixes it (an automatic start found the speech models not
+   * downloaded): shown once as information that closes by itself, not as an error that stays until clicked. The message
+   * is still `serviceState.error`.
+   */
+  notice?: boolean;
 }
 
 /**

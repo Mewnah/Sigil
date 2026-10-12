@@ -24,7 +24,7 @@ A helper Sigil starts must meet five requirements:
 
 - **No orphans.** A helper that outlives Sigil (after a crash, or a kill from Task Manager) keeps
   holding VRAM and a port.
-- **No LAN exposure.** Sigil's own web server already listens on `0.0.0.0` without auth (CLAUDE.md).
+- **No LAN exposure.** Sigil's own web server listens on `0.0.0.0` in LAN mode (a new install starts on `127.0.0.1`; CLAUDE.md).
   A second unauthenticated LAN listener would be worse.
 - **No console windows,** and no dialogs: no Windows Error Reporting dialog when a helper crashes,
   and no loader box when a DLL it needs is missing.

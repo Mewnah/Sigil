@@ -862,6 +862,12 @@ class AbortedError extends DOMException {
   }
 }
 
+/**
+ * An automatic start (the app launching with Start on launch) found the speech models not downloaded. It never downloads
+ * or asks, so it ends with this message; one Start by hand fixes it, which makes it a notice and not a failure.
+ */
+class ModelsMissingAtAutoStart extends Error {}
+
 export class STT_LocalService implements ISTTService {
   startAbortSignal?: AbortSignal | null;
   startAutomatic?: boolean;
@@ -908,7 +914,8 @@ export class STT_LocalService implements ISTTService {
 
   constructor(private readonly receiver: ISTTReceiver, deps: Partial<LocalDriverDeps> = {}) {
     this.#deps = { ...defaultDeps, ...deps };
-    this.#lifecycle = new SttStartLifecycle((error) => this.receiver.onStop(error));
+    // The stop options (`notice`, `retry`) travel with the message; a stop without them stays a one-argument call.
+    this.#lifecycle = new SttStartLifecycle((...stop) => this.receiver.onStop(...stop));
   }
 
   // --- lifecycle --------------------------------------------------------------------------------------------------
@@ -970,7 +977,7 @@ export class STT_LocalService implements ISTTService {
       // Downloads live only as long as the start that asked for them (the Models tab is for background ones).
       this.#cancelDownloads();
       this.receiver.onStatus("");
-      this.#lifecycle.notifyStopOnce(errorText(error));
+      this.#lifecycle.notifyStopOnce(errorText(error), error instanceof ModelsMissingAtAutoStart ? { notice: true } : undefined);
     } finally {
       this.#lifecycle.finishStart();
     }
@@ -1118,7 +1125,7 @@ export class STT_LocalService implements ISTTService {
     const toFetch = summary.missing.filter((e) => !isBusyState(models.state.states[e.id]?.state));
     if (toFetch.length > 0) {
       const full = consentSet(toFetch);
-      if (this.startAutomatic) throw new Error(i18n.t("stt.local_error_models_missing", { size: sizeLabel(full) || "?" }));
+      if (this.startAutomatic) throw new ModelsMissingAtAutoStart(i18n.t("stt.local_error_models_missing", { size: sizeLabel(full) || "?" }));
       const smaller = await this.#smallerSetup(plan, request, smartTurn, full, signal);
       this.#throwIfAborted(signal);
       this.receiver.onStatus(i18n.t("stt.local_status_consent"));

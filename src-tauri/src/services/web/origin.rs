@@ -457,12 +457,32 @@ pub fn origin_check_from_settings(bytes: &[u8]) -> Option<bool> {
 
 /// Parse the host's persisted settings with `parse`, reading `<app_data>/user/settings` and falling
 /// back to `settings.bak` (atomic writer backup) when the main file is missing or `parse` refuses
-/// it (corrupt or half-written). `None` if neither is usable.
+/// it (corrupt or half-written). `None` if neither is usable. A UTF-8 byte order mark in front of
+/// the JSON is skipped, as the front end's `TextDecoder` does when it reads the same file.
 pub fn read_persisted_settings<T>(app_data_dir: &Path, parse: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
-    let dir = app_data_dir.join("user");
-    ["settings", "settings.bak"]
-        .iter()
-        .find_map(|name| std::fs::read(dir.join(name)).ok().and_then(|bytes| parse(&bytes)))
+    let dir = app_data_dir.join(SETTINGS_DIR);
+    [SETTINGS_FILE, SETTINGS_BACKUP_FILE].iter().find_map(|name| {
+        let bytes = std::fs::read(dir.join(name)).ok()?;
+        parse(bytes.strip_prefix(UTF8_BOM).unwrap_or(&bytes))
+    })
+}
+
+/// What Windows PowerShell 5.1 (`Set-Content -Encoding UTF8`) and Notepad put in front of a text file.
+/// `serde_json` refuses it as the start of a document.
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+
+/// The host's settings file under the app data folder (`SETTINGS_PATH` in src/core/services/state/index.ts) and its backup.
+const SETTINGS_DIR: &str = "user";
+const SETTINGS_FILE: &str = "settings";
+const SETTINGS_BACKUP_FILE: &str = "settings.bak";
+
+/// True when `<app_data>/user/settings` does not exist at all: a new install (or a deliberate reset). Only "not found"
+/// counts, and the backup is not consulted: this is the front end's own test (`AtomicJsonFile.load` returns no data and
+/// no problem when the main file is absent, never resurrecting an old backup), so the two agree on who is new. A file that
+/// exists but cannot be read or opened, or an app data folder that cannot be inspected, is an existing profile.
+pub fn persisted_settings_missing(app_data_dir: &Path) -> bool {
+    let file = app_data_dir.join(SETTINGS_DIR).join(SETTINGS_FILE);
+    matches!(std::fs::metadata(file), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Read `lanOriginCheck` from the persisted settings ([`read_persisted_settings`]).
@@ -828,6 +848,43 @@ mod tests {
         assert_eq!(persisted_origin_check(&dir), Some(false), "corrupt main file uses the backup");
         std::fs::write(user.join("settings"), br#"{"uiLanguage":"en"}"#).unwrap();
         assert_eq!(persisted_origin_check(&dir), Some(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Windows PowerShell 5.1 and Notepad save UTF-8 with a byte order mark; the front end reads such a file
+    /// (`TextDecoder` drops the mark), so the Rust reader must agree on what it says.
+    #[test]
+    fn a_byte_order_mark_in_front_of_the_settings_is_skipped() {
+        let dir = std::env::temp_dir().join(format!("sigil-web-origin-bom-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let user = dir.join("user");
+        std::fs::create_dir_all(&user).unwrap();
+        let with_bom = |json: &str| [&[0xEF, 0xBB, 0xBF][..], json.as_bytes()].concat();
+        assert_eq!(origin_check_from_settings(&with_bom(r#"{"lanOriginCheck":false}"#)), None, "the parser itself is strict");
+
+        std::fs::write(user.join("settings"), with_bom(r#"{"lanOriginCheck":false}"#)).unwrap();
+        assert_eq!(persisted_origin_check(&dir), Some(false), "the main file");
+        std::fs::write(user.join("settings"), b"{half-written").unwrap();
+        std::fs::write(user.join("settings.bak"), with_bom(r#"{"lanOriginCheck":false}"#)).unwrap();
+        assert_eq!(persisted_origin_check(&dir), Some(false), "the backup");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_settings_file_is_told_from_an_unreadable_one() {
+        let dir = std::env::temp_dir().join(format!("sigil-web-origin-missing-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(persisted_settings_missing(&dir), "no app data folder");
+        let user = dir.join("user");
+        std::fs::create_dir_all(&user).unwrap();
+        assert!(persisted_settings_missing(&dir), "no file");
+        std::fs::write(user.join("settings.bak"), br#"{"lanOriginCheck":false}"#).unwrap();
+        assert!(persisted_settings_missing(&dir), "a backup alone is not the file");
+        std::fs::write(user.join("settings"), b"{half-written").unwrap();
+        assert!(!persisted_settings_missing(&dir), "a damaged file exists");
+        std::fs::remove_file(user.join("settings")).unwrap();
+        std::fs::create_dir(user.join("settings")).unwrap();
+        assert!(!persisted_settings_missing(&dir), "a file that cannot be opened exists");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

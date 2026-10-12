@@ -31,7 +31,7 @@ This starts the Vite dev server and the Tauri shell. The app listens on a local 
 
 ### First launch and onboarding
 
-The first time Sigil starts on a PC (no settings file yet), a **setup wizard** opens over the app. It has five short steps: **welcome**, **microphone and speakers**, **Speech to Text** (the built-in engine, plus the language you speak), **where captions should go** (VRChat or OBS Studio, or Twitch, Kick or Discord), and **done**. Complete it step by step or use **Skip setup** on any step but the last; everything can be changed later in **Settings** and each inspector. If you quit in the middle it opens again at the next start. A profile that already exists never sees it.
+The first time Sigil starts on a PC (no settings file yet), a **setup wizard** opens over the app. It has five short steps: **welcome**, **microphone and speakers**, **Speech to Text** (the built-in engine, the language you speak and **Start captions when Sigil opens**, ticked by default), **where captions should go** (VRChat or OBS Studio, or Twitch, Kick or Discord), and **done**. Complete it step by step or use **Skip setup** on any step but the last; everything can be changed later in **Settings** and each inspector. If you quit in the middle it opens again at the next start. A profile that already exists never sees it. Captions do not start on that first launch: press **Start** in Speech to Text once, which asks before it downloads the speech models; with **Start captions when Sigil opens** ticked they start by themselves from the next launch. A new install also starts with **LAN access** on **This PC only**: Sigil listens on this PC alone, so Windows shows no Firewall question and OBS on this PC works at once. A phone or OBS on another PC needs **Settings → LAN access → Other devices** switched to **Allowed with the LAN token**; Windows may ask once then ([how the links work](#how-to-open-it)).
 
 ### Projects
 
@@ -113,18 +113,38 @@ See [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) and [OPERATOR_REFERENCE.md](../O
 
 ### How to open it
 
-The host serves the site on `http://127.0.0.1:<port>` (port from your run or Tauri config). The client URL includes query parameters for the host connection (for example host id, port, and peer id). When in doubt, copy the URL from **OBS** or **network** documentation in the host app if provided, or from your deployment notes.
+The host serves the page at `http://localhost:<port>/client` (port **3030** unless you started Sigil with `--port`). The link has no host, id or peer parameters; the page connects back to the Sigil that served it. Copy it with **OBS Studio → Copy browser source link**: that is the right address for OBS on this PC, and it keeps working after Sigil restarts.
+
+For a phone, a tablet or OBS on **another PC**, copy the **LAN link** instead (OBS Studio inspector, or **Settings → LAN access**). It ends in `?token=…`, the LAN token that other devices need; links for this PC never carry one. A new install starts on **This PC only**, where Sigil listens on this PC alone and the OBS Studio inspector shows no LAN link: set **Settings → LAN access → Other devices** to **Allowed with the LAN token** first (Windows may ask once to allow Sigil on the network; a profile that already existed keeps the setting it had). Change the token or switch back to **This PC only** and the old LAN links are refused until you copy them again.
 
 **Tip:** OBS’s embedded browser can be an older Chromium; Sigil sets `data-sigil-client` on `/client` for CSS fallbacks. If something looks wrong, try a normal browser to compare.
 
 ### Typical workflow
 
-1. Start **Sigil** on the streaming PC (host).  
-2. Configure **STT**, **TTS**, and **canvas** on the host.  
-3. Add a **Browser Source** in OBS pointing at the **client** or host-published URL as you prefer for layout.  
-4. Keep the host running while streaming so sync and services stay alive.
+1. Start **Sigil** on the streaming PC (host).
+2. Configure **STT**, **TTS**, and **canvas** on the host.
+3. Add a **Browser Source** in OBS and paste the copied link. Starting Sigil first is good practice, but the order does not matter: a source that loads before Sigil is listening keeps showing "Connecting to Sigil…" and connects as soon as Sigil is up.
+4. Keep the host running while streaming. Sigil can stay minimized.
+
+### If the connection drops
+
+The source reconnects **by itself, for as long as it lives**. What you see on stream while it does:
+
+| You see | What it means | What to do |
+|---|---|---|
+| **Connecting to Sigil…** | The source is loading or has not reached Sigil yet. After three failed tries it also names the address it is waiting for and the last error. | Nothing. It connects as soon as Sigil answers. |
+| Yellow bar **Lost connection to Sigil — reconnecting.** | Sigil restarted, slept or the network dropped. The source tries again 1, 2, 4, 8 and 16 s apart, then every 30 s, with no limit. | Nothing. The bar goes away and captions resume by themselves, on the scene Sigil is showing now. |
+| Yellow bar **Disconnected from Sigil…** | Sigil refused this source: the LAN token changed, or Sigil accepts only its own PC and the source runs elsewhere. It asks again every minute. | Copy the link again (the LAN link for another PC) and paste it into the source. |
+| The dark page **Application failed to start** | The source can never work as set up: Sigil refused the link when it loaded, the browser has no WebRTC, or the address is wrong. This page does not retry on its own. | Fix the link or the setting it names, then use **Refresh cache of current page** (below). |
+| Nothing at all | The active scene has no element that shows captions (see [Canvas and elements](02-studio.md#canvas-and-elements)), or the page crashed. A crashed page reloads itself after 4 s (twice as long for each further reload within 10 minutes, at most 2 minutes), once Sigil answers. | Add a Text element to the scene. Otherwise wait a few seconds. |
+
+In an ordinary browser tab (a phone, a second PC) a start-up failure that may pass also shows the dark panel, and it says when the page reloads itself. In OBS the same failure stays transparent and the page reloads itself.
+
+**When "Refresh cache of current page" is still needed.** In the browser source's properties, only in two cases: after the dark **Application failed to start** page, once you have fixed what it names; and once after you update Sigil, so the source loads the new page (an open source keeps running the page it loaded). It is not needed after a Sigil restart or a dropped connection.
+
+**Shutdown source when not visible** (OBS) is optional. It saves CPU while the scene is hidden; the page reloads and reconnects by itself when the scene is shown again, so the first seconds of the scene may be without captions. If captions lag right after a scene switch, turn it off. It is not a workaround for a stuck source: a source that lost Sigil already reconnects or reloads itself.
 
 ### Troubleshooting
 
-- **No sync:** confirm firewall allows local traffic; host and client must use matching port and peer settings.  
-- **Stale OBS preview:** older CEF caches; the client path may unregister service workers—see code comments in `src/index.tsx` if issues persist after updates.
+- **No sync:** check that Sigil is running and that the port in the link is the one Sigil shows (**OBS Studio → Copy browser source link** fills it in). The page for this PC needs no token; a page on another PC (or a phone) needs the LAN link, and a new install only gives one after **Settings → LAN access → Other devices** is set to **Allowed with the LAN token**. See [If the connection drops](#if-the-connection-drops) for what each message means.
+- **Stale OBS preview:** Sigil removes any service worker it finds on `/client`, so the only cache is OBS's own: use **Refresh cache of current page** in the source's properties.

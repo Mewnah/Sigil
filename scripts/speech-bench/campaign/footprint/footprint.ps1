@@ -93,7 +93,9 @@ if ($Scenario -like 'translate-*') {
   if ($Scenario -eq 'translate-cpu-slow') { $tr.partials = @{ throttleMs = 1500 } }        # at most one interim request per 1.5 s
   $services.translation = @{ data = $tr }
 }
-$settings = @{ id = 'p7a-footprint'; uiLanguage = 'en'; onboardingComplete = $true; services = $services }
+# A new install now starts on 127.0.0.1 ("This PC only"); a profile without lanAccess keeps the older 0.0.0.0, whose Windows Firewall
+# prompt would pop up over the user's desktop on every new exe or lane path. The listener of a measurement stays on loopback.
+$settings = @{ id = 'p7a-footprint'; uiLanguage = 'en'; onboardingComplete = $true; lanAccess = @{ mode = 'localhost' }; services = $services }
 if ($Device) { $settings.audioInputDevice = $Device }
 ($settings | ConvertTo-Json -Depth 12) | Set-Content -Encoding UTF8 "$roam/user/settings"
 

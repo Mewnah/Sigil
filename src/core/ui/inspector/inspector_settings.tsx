@@ -24,6 +24,7 @@ import Logo from "../logo";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
 import { webServerStatusLine } from "./webServerStatus";
+import { LanOffHint } from "./lanAccessHints";
 import { InputCheckbox, InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import DiagnosticsPanel from "@/core/services/diagnostics/DiagnosticsPanel";
 import { useTranslation } from "react-i18next";
@@ -124,7 +125,7 @@ const obsLinks = new ObsBrowserSourceService();
  * the persistent LAN token (show, copy, regenerate), links for other devices, and the legacy
  * no-token switch with its caution.
  */
-const LanAccessSection: FC = () => {
+export const LanAccessSection: FC = () => {
   const { t } = useTranslation();
   const { lanAccess } = useSnapshot(window.ApiServer.state);
   const { status } = useSnapshot(window.ApiShared.pubsub.webServer);
@@ -178,6 +179,14 @@ const LanAccessSection: FC = () => {
     <Inspector.Description>
       <span className="text-base-content/60 text-xs">{t(lanAccess.mode === "localhost" ? "settings.lan_mode_localhost_hint" : "settings.lan_mode_lan_hint")}</span>
     </Inspector.Description>
+    {lanAccess.mode === "localhost" && <>
+      <Inspector.Description>
+        <span className="text-base-content/60 text-xs">{t("settings.lan_mode_localhost_turn_on", { option: t("settings.lan_mode_lan") })}</span>
+      </Inspector.Description>
+      <Inspector.Description>
+        <span className="text-base-content/60 text-xs">{t("settings.lan_mode_firewall_note")}</span>
+      </Inspector.Description>
+    </>}
     {lan?.boundAddress && !switchFailed && <span className="text-xs text-base-content/70" dir="ltr">{t("settings.lan_bound_address", { address: lan.boundAddress })}</span>}
     {switchFailed && <span className="text-xs text-warning">{t("settings.lan_mode_switch_failed", { address: lan?.boundAddress ?? "", error: status?.error ?? "" })}</span>}
 
@@ -249,6 +258,26 @@ const WebServerSection: FC = () => {
   </>;
 };
 
+/**
+ * Link apps: connect this Sigil to another one (its address and LAN token) and copy this one's address. The desktop host in
+ * "This PC only" (the default of a new install) also gets the hint that says where other devices are let in.
+ */
+export const LinkAppsSection: FC = () => {
+  const { t } = useTranslation();
+  const { state: linkStatus } = useSnapshot(window.ApiShared.pubsub.serviceState);
+  return <>
+    <Inspector.SubHeader>{t('settings.section_link_apps')}</Inspector.SubHeader>
+    <Inspector.Description>{t('settings.section_link_apps_desc')}</Inspector.Description>
+    <Inspector.Deactivatable active={linkStatus === ServiceNetworkState.disconnected}>
+      <LinkAddressInputs />
+      <InputNetworkStatus value={linkStatus} label="common.field_connection_status" />
+    </Inspector.Deactivatable>
+    <ServiceButton startLabel="common.btn_connect" stopLabel="common.btn_disconnect" status={linkStatus} onStart={() => window.ApiShared.pubsub.linkConnect()} onStop={() => window.ApiShared.pubsub.linkDisconnect()} />
+    <button className="btn btn-sm btn-ghost" onClick={() => window.ApiShared.pubsub.copyLinkAddress()}>{t('settings.btn_copy_address')}</button>
+    {isTauri() && <LanOffHint />}
+  </>;
+};
+
 const Inspector_Settings: FC = memo(() => {
   const { t } = useTranslation();
   const themeSelectOptions = useMemo(
@@ -262,7 +291,6 @@ const Inspector_Settings: FC = memo(() => {
     [t],
   );
   const { clientTheme, uiScale, uiLanguage, backgroundInputTimer, audioInputDevice, audioInputDeviceNative, audioOutputDevice } = useSnapshot(window.ApiServer.state);
-  const { state: linkStatus } = useSnapshot(window.ApiShared.pubsub.serviceState);
   const author = useGetState(state => state.author);
 
   const [version, setVersion] = useState("")
@@ -385,14 +413,7 @@ const Inspector_Settings: FC = memo(() => {
       </>}
 
 
-      <Inspector.SubHeader>{t('settings.section_link_apps')}</Inspector.SubHeader>
-      <Inspector.Description>{t('settings.section_link_apps_desc')}</Inspector.Description>
-      <Inspector.Deactivatable active={linkStatus === ServiceNetworkState.disconnected}>
-        <LinkAddressInputs />
-        <InputNetworkStatus value={linkStatus} label="common.field_connection_status" />
-      </Inspector.Deactivatable>
-      <ServiceButton startLabel="common.btn_connect" stopLabel="common.btn_disconnect" status={linkStatus} onStart={() => window.ApiShared.pubsub.linkConnect()} onStop={() => window.ApiShared.pubsub.linkDisconnect()} />
-      <button className="btn btn-sm btn-ghost" onClick={() => window.ApiShared.pubsub.copyLinkAddress()}>{t('settings.btn_copy_address')}</button>
+      <LinkAppsSection />
 
       {isTauri() && <LanAccessSection />}
       {isTauri() && <WebServerSection />}

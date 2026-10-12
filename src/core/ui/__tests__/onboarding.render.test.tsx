@@ -12,19 +12,24 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke: vi.fn(async () => []) }));
 
 import { initSttTestI18n } from "@/core/services/stt/__tests__/sttTestI18n";
+import { planDesktopDefaultMigration, planRetiredBackendMigration } from "@/core/services/stt/migrate";
 import { Service_STT_Schema } from "@/core/services/stt/schema";
 import { Services } from "@/services-registry";
 import Onboarding, {
   AudioStep,
   DoneStep,
+  INITIAL_STT_ANSWERS,
+  ONBOARDING_AUTO_START_DEFAULT,
   ONBOARDING_STEPS,
   SendStep,
+  SttAutoStartOption,
   SttStep,
   WIZARD_ROOT_CLASS,
   WelcomeStep,
   applyOnboardingSttSave,
   finishOnboarding,
   planOnboardingAudioSave,
+  saveOnboardingStt,
   skipOnboarding,
 } from "../Onboarding";
 import { planOnboardingSttSave } from "@/core/services/stt/languageSuggestion";
@@ -45,7 +50,10 @@ const rawKey = /\b(?:onboarding|stt)\.[a-z_]+\b/;
 
 /** A host state with just what the wizard writes. */
 function stubHost(state: Record<string, unknown> = {}) {
-  const stt = { showActionButton: false, data: { backend: "local", desktopDefaultMigrated: false, local: { language: "auto" } } };
+  const stt = {
+    showActionButton: false,
+    data: { backend: "local", desktopDefaultMigrated: false, localOfferShown: false, autoStart: false, local: { language: "auto" } },
+  };
   const host = {
     state: { onboardingComplete: false, audioInputDeviceNative: "", audioOutputDevice: "", audioInputDeviceNativeMigrated: false, ...state },
     patchService: vi.fn((_key: "stt", fn: (s: typeof stt) => void) => fn(stt)),
@@ -94,6 +102,52 @@ describe("wizard steps", () => {
     expect(out).not.toMatch(/Whisper|Vosk|Moonshine|automatic\)/);
     expect(out.match(/data-testid="onboarding-engine"/g)).toHaveLength(1);
     expect(out).not.toMatch(rawKey);
+  });
+
+  it("offers to start captions when Sigil opens: a labelled checkbox, on by default, under the language", () => {
+    vi.stubGlobal("navigator", { language: "en-US", languages: ["en-US"] });
+    const out = html(<SttStep onNext={noop} onBack={noop} />);
+    expect(ONBOARDING_AUTO_START_DEFAULT).toBe(true);
+    const box = out.match(/<input[^>]*id="onboarding-stt-autostart"[^>]*>/)?.[0] ?? "";
+    expect(box).toContain('type="checkbox"');
+    expect(box).toContain('checked=""'); // on until the user turns it off
+    expect(box).toContain('aria-describedby="onboarding-stt-autostart-hint"');
+    expect(box).not.toMatch(/tabindex|disabled/); // a native checkbox: Tab reaches it and Space toggles it
+    expect(box).toMatch(/class="[^"]*\bshrink-0\b/); // a long translation wraps the words, it does not squeeze the square
+    // The words name the input (a click on them toggles it); the hint describes it.
+    expect(out).toMatch(/<label[^>]*for="onboarding-stt-autostart"[^>]*>.*Start captions when Sigil opens<\/span><\/label>/);
+    expect(out).toMatch(/<label[^>]*class="[^"]*\bw-fit\b[^"]*\bmax-w-full\b[^"]*"[^>]*for="onboarding-stt-autostart"/); // as wide as its words, not the step
+    // The hint promises only what happens: it starts at every launch, and the first Start downloads the models.
+    expect(out).toMatch(/<p id="onboarding-stt-autostart-hint"[^>]*>Captions start by themselves each time you open Sigil\. Press Start once first to download the speech models\.<\/p>/);
+    expect(out).not.toMatch(/crash|restart/i);
+    const at = (s: string) => out.indexOf(s);
+    expect(at('data-testid="onboarding-language"')).toBeGreaterThan(-1);
+    expect(at('data-testid="onboarding-language"')).toBeLessThan(at('data-testid="onboarding-autostart"'));
+    expect(at('data-testid="onboarding-autostart"')).toBeLessThan(at("Online engines and others"));
+    expect(at("Online engines and others")).toBeLessThan(at("Continue"));
+    expect(out.match(/type="checkbox"/g)).toHaveLength(1);
+    expect(out).not.toMatch(rawKey);
+  });
+
+  it("shows the checkbox off when it is off, and lines the hint up with the label for a right-to-left layout", () => {
+    const off = html(<SttAutoStartOption checked={false} onChange={noop} />);
+    expect(off).toContain('type="checkbox"');
+    expect(off).not.toContain('checked=""');
+    expect(off).toContain("ms-9"); // checkbox (size-6) + gap-3, on the start side
+    expect(off).not.toMatch(/\b(?:ml|mr|pl|pr)-\d/);
+    expect(html(<SttAutoStartOption checked onChange={noop} />)).toContain('checked=""');
+  });
+
+  it("shows what the wizard holds: a box left unchecked and a language picked stay so when the step comes back", () => {
+    vi.stubGlobal("navigator", { language: "en-US", languages: ["en-US"] });
+    const out = html(<SttStep onNext={noop} onBack={noop} answers={{ language: "ja", autoStart: false }} onAnswers={noop} />);
+    expect(out.match(/<input[^>]*id="onboarding-stt-autostart"[^>]*>/)?.[0]).not.toContain('checked=""');
+    expect(out).toMatch(/<option value="ja" selected="">/); // not the Windows language the step opens on
+    expect(out).not.toMatch(/<option value="en" selected="">/);
+    // Nothing picked yet: the Windows language, and the box on.
+    const fresh = html(<SttStep onNext={noop} onBack={noop} answers={INITIAL_STT_ANSWERS} onAnswers={noop} />);
+    expect(fresh).toMatch(/<option value="en" selected="">/);
+    expect(fresh.match(/<input[^>]*id="onboarding-stt-autostart"[^>]*>/)?.[0]).toContain('checked=""');
   });
 
   it("asks where captions should go: VRChat, then OBS Studio, then Twitch, Kick and Discord as small buttons", () => {
@@ -211,7 +265,7 @@ describe("what the speech step writes", () => {
 
   it("puts the profile on the built-in engine, marks the migration done and the offer as answered", () => {
     const data = profile();
-    applyOnboardingSttSave(data, planOnboardingSttSave("local", "auto", 1000));
+    applyOnboardingSttSave(data, planOnboardingSttSave("local", "auto", 1000), true);
     expect(data.backend).toBe("local");
     expect(data.desktopDefaultMigrated).toBe(true);
     // The built-in engine was chosen here: a later switch to Chrome or Edge is that user's choice, not an offer.
@@ -221,9 +275,60 @@ describe("what the speech step writes", () => {
 
   it("stores the language the user answered", () => {
     const data = profile();
-    applyOnboardingSttSave(data, planOnboardingSttSave("local", "ja", 1000));
+    applyOnboardingSttSave(data, planOnboardingSttSave("local", "ja", 1000), true);
     expect(data.local.language).toBe("ja");
     expect(data.local.languageDecision).toMatchObject({ outcome: "locked", language: "ja" });
+  });
+
+  it("stores the answer to \"Start captions when Sigil opens\", on or off", () => {
+    expect(profile().autoStart).toBe(false); // the schema default, which a skipped wizard keeps
+    const on = profile();
+    applyOnboardingSttSave(on, planOnboardingSttSave("local", "auto", 1000), true);
+    expect(on.autoStart).toBe(true);
+    const off = profile();
+    off.autoStart = true;
+    applyOnboardingSttSave(off, planOnboardingSttSave("local", "auto", 1000), false);
+    expect(off.autoStart).toBe(false);
+  });
+
+  it("leaves a profile that the next launch starts by itself, with nothing holding the start back", () => {
+    const data = profile();
+    applyOnboardingSttSave(data, planOnboardingSttSave("local", "en", 1000), ONBOARDING_AUTO_START_DEFAULT);
+    expect(data.autoStart).toBe(true);
+    // `Service_STT.init` starts when auto-start is on and neither migration claims this launch. Whether the wizard is
+    // done or shows again (quit in the middle), the migration leaves the profile alone: what holds the start back while
+    // the wizard shows is `Service_STT.init` itself (`stt/__tests__/service.test.ts`), not a migration.
+    for (const freshInstall of [false, true]) {
+      const migration = planDesktopDefaultMigration({
+        isDesktop: true,
+        alreadyMigrated: data.desktopDefaultMigrated,
+        backend: data.backend,
+        freshInstall,
+        localOfferShown: data.localOfferShown,
+      });
+      expect(migration, `freshInstall ${freshInstall}`).toEqual({ action: "none" });
+    }
+    expect(planRetiredBackendMigration({ isDesktop: true, backend: data.backend })).toEqual({ action: "none" });
+  });
+});
+
+describe("Continue on the speech step", () => {
+  it("starts captions at launch by default, and saves the engine and the language with it", () => {
+    const { host, stt } = stubHost();
+    saveOnboardingStt("fr", ONBOARDING_AUTO_START_DEFAULT, 1000);
+    expect(host.patchService).toHaveBeenCalledTimes(1);
+    expect(host.patchService).toHaveBeenCalledWith("stt", expect.any(Function));
+    expect(stt.data.autoStart).toBe(true);
+    expect(stt.data.backend).toBe("local");
+    expect(stt.data.local.language).toBe("fr");
+  });
+
+  it("does not start captions at launch when the box was unchecked", () => {
+    const { stt } = stubHost();
+    stt.data.autoStart = true;
+    saveOnboardingStt("auto", false, 1000);
+    expect(stt.data.autoStart).toBe(false);
+    expect(stt.data.desktopDefaultMigrated).toBe(true); // the rest of the step is saved all the same
   });
 });
 
@@ -233,8 +338,15 @@ describe("finishing and skipping", () => {
     skipOnboarding();
     expect(host.state.onboardingComplete).toBe(true);
     expect(stt.showActionButton).toBe(false);
+    expect(stt.data.autoStart).toBe(false); // a skipped wizard keeps the schema default: captions start by hand
     expect(host.patchService).not.toHaveBeenCalled();
     expect(host.changeTab).not.toHaveBeenCalled();
+  });
+
+  it("finish without Continue on the speech step does not turn on auto-start either", () => {
+    const { stt } = stubHost();
+    finishOnboarding();
+    expect(stt.data.autoStart).toBe(false);
   });
 
   it("finish puts Speech to Text in the bottom bar and marks the wizard done", () => {

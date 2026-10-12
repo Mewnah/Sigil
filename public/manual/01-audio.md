@@ -52,13 +52,13 @@ Pick the engine from the inspector's list, which is grouped: **Recommended** (th
 3. Press **Start**. Sigil asks once before downloading (for English about 1.1 GB; **Smaller setup** downloads less and uses one model). Progress shows under the Start button and in **Models & Runtimes**; you can stop and resume later.
 4. Speak: live words appear, then each sentence is replaced by its final, more accurate version on the same line.
 
-Models download once and stay on this PC; your voice never leaves it. If the microphone drops out or a model crashes, the session restarts by itself.
+Models download once and stay on this PC; your voice never leaves it. If the microphone drops out or a model crashes, the session restarts by itself: five quick tries (1, 2, 5, 10 and 20 s apart), then one about every 45 s until you press Stop. The status line under the Start button says it is trying again; nothing needs your attention. A microphone that Windows renamed after a USB port change ("Microphone (USB Audio)" becomes "Microphone (2- USB Audio)") is found again when only one device has that name.
 
 ### Choosing your language
 
 Sigil never picks a language for you. It asks, and **Detect automatically** stays a choice everywhere.
 
-- **Setup wizard (first run):** on a new install the speech step asks *What language do you speak?*, starting on your Windows language when Sigil supports it and it is not English (otherwise on **Detect automatically**); nothing is saved until you press **Continue**. The touchpoints below are what you meet afterwards, and what a profile that already existed meets.
+- **Setup wizard (first run):** on a new install the speech step asks *What language do you speak?*, starting on your Windows language when Sigil supports it, English included (otherwise on **Detect automatically**); under it, **Start captions when Sigil opens** is ticked (captions then start by themselves from the next launch; the launch with the wizard starts nothing, so press **Start** once, which asks before downloading the speech models). Nothing is saved until you press **Continue**, and **Skip setup** leaves captions off at launch. The touchpoints below are what you meet afterwards, and what a profile that already existed meets.
 - **STT inspector:** while the language is still on **Detect automatically** and you have not answered, a card above **Start** says "Your Windows language is French. Lock captions to French?" (not when Windows is in English, which says nothing about what you speak).
 - **Before the first download:** if the language is still on **Detect automatically**, the question "Download speech models?" adds a tip: cancel, choose your language in the inspector, and press **Start** again (a set language usually downloads less).
 - **While you talk:** if Sigil hears the same language in three sentences in a row, it asks "Detected French. Lock captions to French?" in the STT inspector, or as a small toast (no window pops up and nothing takes focus) when the inspector is closed. A session that mixes languages is never asked, and the card goes away again if the next sentences are in another language.
@@ -99,7 +99,7 @@ Open it with the **Rewrite** tab of the Speech to Text inspector, or with the **
   - **Timeout per line** (15 seconds by default). On a failure or timeout the **original text** is sent on (with a short notice), so captions and Text to Speech keep flowing.
   - **Connection route:** **Automatic** sends cloud requests directly and routes servers on your network through Sigil, which also reaches local servers that block browser requests (Ollama, LM Studio). Change it to **Direct from the app window** or **Through Sigil** only if a server cannot be reached.
 - Changes apply to the next sentence; no restart is needed.
-- **Stop with Twitch stream** works, and captions set to **Show the original text in step with Rewrite** follow speech to text when Rewrite is off.
+- **Stop with Twitch stream** works: it stops Rewrite once the stream has stayed offline for 60 s (a dropped connection does not end it) and starts it again if the stream comes back during the same session. Captions set to **Show the original text in step with Rewrite** follow speech to text when Rewrite is off.
 - **Local endpoints** reduce cloud cost and privacy risk; latency still depends on your graphics card and processor. If Rewrite errors, check the **System log** and the provider's rate limits.
 
 ### Tips

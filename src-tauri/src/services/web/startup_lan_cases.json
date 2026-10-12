@@ -1,0 +1,32 @@
+{
+  "about": "Who may connect at the first launch, by the state of the settings file. One table for both sides: the Rust web plugin (auth.rs startup_lan_access, which decides the address it binds before the webview exists) and the front end (src/core/services/state/firstRun.ts, tested in firstRun.test.ts). Both suites read this file, so a change to either side that the other does not follow fails a test. Every row: `settings` and `backup` are the files <app data>/user/settings and settings.bak (null = no such file; {json} = a file holding that JSON; {raw} = a file holding exactly that text; {unreadable} = a file that exists but cannot be read), `mode` is the lanAccess.mode both sides must end up with, `newInstall` is whether both sides call it a new install (the setup wizard shows, and the mode is localhost whatever the files say).",
+  "cases": [
+    { "name": "no settings file", "settings": null, "backup": null, "mode": "localhost", "newInstall": true },
+    { "name": "no settings file, but a backup with LAN access (the front end never reads the backup of a file that is gone)", "settings": null, "backup": { "json": { "lanAccess": { "mode": "lan", "token": "0123456789abcdefghjkmnpqrs" } } }, "mode": "localhost", "newInstall": true },
+
+    { "name": "empty file", "settings": { "raw": "" }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "half-written file", "settings": { "raw": "{half-written" }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "valid JSON that is not an object", "settings": { "raw": "[1]" }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "file that exists but cannot be read", "settings": { "unreadable": true }, "backup": null, "mode": "lan", "newInstall": false },
+
+    { "name": "damaged file, backup says localhost", "settings": { "raw": "{half-written" }, "backup": { "json": { "lanAccess": { "mode": "localhost" } } }, "mode": "localhost", "newInstall": false },
+    { "name": "damaged file, backup says lan", "settings": { "raw": "{half-written" }, "backup": { "json": { "lanAccess": { "mode": "lan", "token": "0123456789abcdefghjkmnpqrs" } } }, "mode": "lan", "newInstall": false },
+    { "name": "damaged file, backup has no lanAccess", "settings": { "raw": "{half-written" }, "backup": { "json": { "id": "me" } }, "mode": "lan", "newInstall": false },
+    { "name": "damaged file, damaged backup", "settings": { "raw": "{half-written" }, "backup": { "raw": "also damaged" }, "mode": "lan", "newInstall": false },
+    { "name": "unreadable file, backup says localhost", "settings": { "unreadable": true }, "backup": { "json": { "lanAccess": { "mode": "localhost" } } }, "mode": "localhost", "newInstall": false },
+
+    { "name": "profile from before lanAccess existed", "settings": { "json": { "id": "old", "uiLanguage": "de", "onboardingComplete": false } }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "empty object", "settings": { "json": {} }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "empty lanAccess", "settings": { "json": { "lanAccess": {} } }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "token without a mode", "settings": { "json": { "lanAccess": { "token": "0123456789abcdefghjkmnpqrs" } } }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "unknown mode", "settings": { "json": { "lanAccess": { "mode": "everywhere" } } }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "mode lan", "settings": { "json": { "lanAccess": { "mode": "lan", "token": "0123456789abcdefghjkmnpqrs", "legacyNoToken": true } } }, "backup": null, "mode": "lan", "newInstall": false },
+    { "name": "mode localhost", "settings": { "json": { "lanAccess": { "mode": "localhost" } } }, "backup": null, "mode": "localhost", "newInstall": false },
+
+    { "name": "the file wins over its backup (localhost, lan)", "settings": { "json": { "lanAccess": { "mode": "localhost" } } }, "backup": { "json": { "lanAccess": { "mode": "lan" } } }, "mode": "localhost", "newInstall": false },
+    { "name": "the file wins over its backup (lan, localhost)", "settings": { "json": { "lanAccess": { "mode": "lan" } } }, "backup": { "json": { "lanAccess": { "mode": "localhost" } } }, "mode": "lan", "newInstall": false },
+
+    { "name": "UTF-8 byte order mark, localhost (Windows PowerShell 5.1 and Notepad write one)", "settings": { "raw": "﻿{\"lanAccess\":{\"mode\":\"localhost\"}}" }, "backup": null, "mode": "localhost", "newInstall": false },
+    { "name": "UTF-8 byte order mark, backup says localhost", "settings": { "raw": "{half-written" }, "backup": { "raw": "﻿{\"lanAccess\":{\"mode\":\"localhost\"}}" }, "mode": "localhost", "newInstall": false }
+  ]
+}

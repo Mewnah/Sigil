@@ -168,11 +168,11 @@ Sidebar → **OBS Studio**.
 
 ### Browser source (most common)
 
-1. Click **Copy browser source link** (or equivalent). For OBS on another PC use **Copy LAN link** instead; it carries the LAN token.
+1. Click **Copy browser source link** (or equivalent). For OBS on another PC use **Copy LAN link** instead; it carries the LAN token. A new install starts on **This PC only** and shows no LAN link: set **Settings → LAN access → Other devices** to **Allowed with the LAN token** first (Windows may ask once to allow Sigil on the network).
 2. In OBS, add a **Browser** source and paste the URL.
 3. Set width/height to match your canvas (often 1920×1080 or your base resolution).
 
-Start order does not matter, and the source needs no attention afterwards: it reconnects **by itself, for as long as it lives**, after a Sigil restart, a sleep or a network drop. The yellow bar over the source and the other messages are explained under [If the connection drops](00-overview.md#if-the-connection-drops); the one that needs you is the refusal ("Copy the LAN link again").
+Start order does not matter, and the source needs no attention afterwards: it reconnects **by itself, for as long as it lives**, after a Sigil restart, a sleep or a network drop. The yellow bar over the source and the other messages are explained under [If the connection drops](00-overview.md#if-the-connection-drops); the one that needs you is the refusal ("Copy the LAN link again"; on **This PC only** a source on another PC is refused until you allow LAN access).
 
 ### WebSocket automation
 

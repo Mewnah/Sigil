@@ -1589,7 +1589,10 @@
     "field_link_remote_token": "Remote token",
     "link_remote_token_hint": "The other Sigil's LAN token (Settings → LAN access there). \"Copy my address\" on that PC copies its address with the token; paste it into the address field to fill both.",
     "link_remote_token_invalid": "This is not a LAN token (26 letters and digits).",
-    "web_server_status_stopped": "Stopped: {{error}}. Starting again."
+    "web_server_status_stopped": "Stopped: {{error}}. Starting again.",
+    "lan_off_hint": "To use a phone or a second PC, set {{field}} to {{option}} (Settings, {{section}}).",
+    "lan_mode_localhost_turn_on": "To allow a phone, a second PC or Link apps, choose {{option}} above.",
+    "lan_mode_firewall_note": "Windows may ask once to allow Sigil on the network when LAN access is turned on."
   },
   "word_replacements": {
     "title": "Zamienniki słów",
@@ -3147,6 +3150,8 @@
     "finish": "Finish setup",
     "done_title": "You're all set",
     "done_body": "Press Start in the bottom bar and speak. Translation, Text to Speech and Voice Changer are under Speech in the left menu.",
-    "done_open": "Open Sigil"
+    "done_open": "Open Sigil",
+    "stt_autostart": "Start captions when Sigil opens",
+    "stt_autostart_hint": "Captions start by themselves each time you open Sigil. Press Start once first to download the speech models."
   }
 }
