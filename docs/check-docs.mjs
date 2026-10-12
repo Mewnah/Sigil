@@ -319,20 +319,20 @@ const RULES = [
     ],
   },
   {
-    // The engine that runs inside Sigil is "Built-in (runs on your PC)" (stt.provider_local); it used to be "On this PC (automatic)".
+    // The engine that runs inside Sigil is "Built-in (on your PC)" (stt.provider_local); it used to be "On this PC (automatic)".
     name: "engine-label",
     applies: (rel) => LABEL_FILES(rel) && rel !== "CHANGELOG.md", // the changelog keeps the names of the day
     check(unit, f) {
       if (/On this PC \(automatic\)|\*\*On this PC\*\*/.test(unit.text)) return `the speech-to-text engine that runs inside Sigil is called "${f.labels.local}" in the app`;
       return null;
     },
-    facts: { labels: { local: "Built-in (runs on your PC)" } },
+    facts: { labels: { local: "Built-in (on your PC)" } },
     bad: [
       "Pick **On this PC (automatic)** unless you have a reason not to.",
       "(TTS panel; needs Smart Turn in **On this PC** speech-to-text)",
     ],
     good: [
-      "Pick **Built-in (runs on your PC)** unless you have a reason not to.",
+      "Pick **Built-in (on your PC)** unless you have a reason not to.",
       "Sigil runs on this PC, and the models stay on this PC.",
     ],
   },

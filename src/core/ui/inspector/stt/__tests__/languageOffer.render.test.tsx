@@ -275,12 +275,12 @@ describe("onboarding: What language do you speak?", () => {
     expect(selected(step(["ru-RU"]))).toBe("ru");
   });
 
-  it("does not preselect English because Windows is in English", () => {
+  it("preselects English when Windows is in English (the user's call)", () => {
     const english = step(["en-US"]);
-    expect(selected(english)).toBe("auto");
-    expect(english).not.toContain("Chosen from your Windows language.");
-    // A second language the webview lists is a better prior than the English display language.
-    expect(selected(step(["en-US", "pt-BR"]))).toBe("pt");
+    expect(selected(english)).toBe("en");
+    expect(english).toContain("Chosen from your Windows language.");
+    // The display language comes first.
+    expect(selected(step(["en-US", "pt-BR"]))).toBe("en");
   });
 
   it("falls back to an input language, and to Detect automatically when none is routable", () => {
@@ -299,7 +299,7 @@ describe("onboarding: What language do you speak?", () => {
 
   it("offers only the built-in engine (the others are in the engine list of the Speech panel)", () => {
     const out = step(["fr-FR"]);
-    expect(out).toContain("Built-in (runs on your PC)");
+    expect(out).toContain("Built-in (on your PC)");
     expect(out).not.toContain("Whisper");
     expect(out).not.toContain("Vosk");
   });

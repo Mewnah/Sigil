@@ -142,7 +142,7 @@ describe("Service_STT retired Moonshine server backend", () => {
     expect(toast.info).toHaveBeenCalledTimes(1);
     const [message, options] = vi.mocked(toast.info).mock.calls[0];
     expect(message).toContain("Moonshine server mode was retired.");
-    expect(message).toContain("Built-in (runs on your PC)");
+    expect(message).toContain("Built-in (on your PC)");
     expect(message).toContain("The first Start asks before downloading models.");
     expect(message).not.toMatch(/^stt\./);
     expect(options).toMatchObject({ autoClose: 12_000 });

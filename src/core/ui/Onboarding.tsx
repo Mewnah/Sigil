@@ -19,7 +19,6 @@ import {
     type OnboardingSttSave,
     lockableLanguages,
     onboardingLanguageDefault,
-    pickSystemLanguage,
     planOnboardingSttSave,
     systemLanguageTags,
 } from "@/core/services/stt/languageSuggestion";
@@ -263,8 +262,10 @@ const SttLanguageQuestion: FC<{ value: string; onChange: (code: string) => void;
 export const SttStep: FC<StepProps> = ({ onNext, onBack }) => {
     const { t } = useTranslation();
     const windowsTags = useMemo(() => systemLanguageTags(), []);
-    const windowsLanguage = useMemo(() => pickSystemLanguage(windowsTags), [windowsTags]);
-    const [language, setLanguage] = useState<string>(() => onboardingLanguageDefault(windowsTags));
+    // The wizard preselects the Windows language, English included; "Detect automatically" when none is routable.
+    const windowsDefault = useMemo(() => onboardingLanguageDefault(windowsTags), [windowsTags]);
+    const windowsLanguage = windowsDefault === ONBOARDING_AUTO ? null : windowsDefault;
+    const [language, setLanguage] = useState<string>(windowsDefault);
 
     const saveAndContinue = () => {
         const save = planOnboardingSttSave("local", language, Date.now());

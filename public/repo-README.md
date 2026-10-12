@@ -12,7 +12,7 @@ There is a lot under the hood; mix local models, cloud APIs, and browser fallbac
 
 ### Speech-to-text (STT)
 
-- **Built-in (runs on your PC)** — the default for new desktop installs: Sigil picks local models for your language and PC (live partials from Nemotron streaming, a more accurate final per sentence from Parakeet, Qwen3-ASR, SenseVoice or Whisper), asks before it downloads anything and runs them inside the app, on the processor by default so the game keeps the GPU. Opt-in GPU models (Qwen3-ASR 1.7B, Cohere Transcribe, Voxtral) need a runtime pack.
+- **Built-in (on your PC)** — the default for new desktop installs: Sigil picks local models for your language and PC (live partials from Nemotron streaming, a more accurate final per sentence from Parakeet, Qwen3-ASR, SenseVoice or Whisper), asks before it downloads anything and runs them inside the app, on the processor by default so the game keeps the GPU. Opt-in GPU models (Qwen3-ASR 1.7B, Cohere Transcribe, Voxtral) need a runtime pack.
 - **Whisper** (Rust plugin) — local inference; models downloaded on first use through the model store
 - **Vosk** — local models via Tauri + browser loader
 - **OpenAI-style HTTP** — `POST …/audio/transcriptions` for local servers (speaches and others), plus a **Groq** free-cloud preset that stays inside Groq's limits

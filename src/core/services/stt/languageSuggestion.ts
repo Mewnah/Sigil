@@ -292,11 +292,16 @@ export function planSystemHint(input: OfferInput & { system: string | null }): O
 export const ONBOARDING_AUTO = "auto";
 
 /**
- * What the language question starts on: the Windows language when Sigil can route it and it says something about the
- * speaker (not English), else "Detect automatically". The user sees the choice and confirms it with Continue.
+ * What the language question starts on: the first Windows language Sigil can route, English included (the user's call:
+ * most of Sigil's streamers speak English, and the wizard only preselects; the user sees the choice and confirms it
+ * with Continue), else "Detect automatically". The one-click STT panel hint ({@link planSystemHint}) still skips English.
  */
-export function onboardingLanguageDefault(tags: readonly (string | null | undefined)[], lockable?: ReadonlySet<string>): string {
-  return pickSystemLanguage(tags, lockable) ?? ONBOARDING_AUTO;
+export function onboardingLanguageDefault(tags: readonly (string | null | undefined)[], lockable: ReadonlySet<string> = lockableLanguages()): string {
+  for (const tag of tags) {
+    const code = lockableCode(tag, lockable);
+    if (code) return code;
+  }
+  return ONBOARDING_AUTO;
 }
 
 export type OnboardingSttChoice = "local" | "whisper" | "vosk";

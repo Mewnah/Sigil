@@ -288,9 +288,11 @@ describe("onboarding: What language do you speak?", () => {
     expect(onboardingLanguageDefault([])).toBe(ONBOARDING_AUTO);
   });
 
-  it("does not start on English because Windows is in English (the user can still pick it)", () => {
-    expect(onboardingLanguageDefault(["en-US"])).toBe(ONBOARDING_AUTO);
-    expect(onboardingLanguageDefault(["en-US", "pt-BR"])).toBe("pt");
+  it("starts on English when Windows is in English (the user's call; they confirm it with Continue)", () => {
+    expect(onboardingLanguageDefault(["en-US"])).toBe("en");
+    // The display language comes first, English included.
+    expect(onboardingLanguageDefault(["en-US", "pt-BR"])).toBe("en");
+    expect(onboardingLanguageDefault(["xx-XX"])).toBe(ONBOARDING_AUTO);
     expect(planOnboardingSttSave("local", "en", NOW)).toEqual({
       backend: STT_Backends.local,
       localLanguage: "en",

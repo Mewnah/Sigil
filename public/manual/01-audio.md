@@ -34,7 +34,7 @@ Pick the engine from the inspector's list, which is grouped: **Recommended** (th
 
 | Engine class | Notes |
 |--------------|--------|
-| **Built-in (runs on your PC)** | Recommended and the default for new desktop installs. Sigil picks the best speech models for your language and your PC (live captions while you speak, then a more accurate final line) and runs them on this PC. Works without internet; your voice never leaves the PC. |
+| **Built-in (on your PC)** | Recommended and the default for new desktop installs. Sigil picks the best speech models for your language and your PC (live captions while you speak, then a more accurate final line) and runs them on this PC. Works without internet; your voice never leaves the PC. |
 | **Groq Whisper (free cloud)** | Whisper large-v3 Turbo on Groq's free plan; needs a free API key and sends your speech to Groq. Sigil paces requests to stay inside the free limits. |
 | **Azure / Deepgram** | Cloud; keys in settings (Deepgram uses Nova-3 by default) |
 | **Chrome / Edge** | The browser's own speech recognition, run from a **microphone page** (`mic.html`) that Sigil opens in Chrome or Edge. It sends your voice to Google (Chrome) or Microsoft (Edge). In Sigil's English test it made about 21 (Chrome) and 10 (Edge) mistakes per 100 words, against about 6 for the built-in engine ([measurements](../OPERATOR_REFERENCE.md#speech-to-text)). A profile that still uses it is asked once whether to switch to the built-in engine; **Keep Chrome** / **Keep Edge** keeps it and is never asked again. |
@@ -43,11 +43,11 @@ Pick the engine from the inspector's list, which is grouped: **Recommended** (th
 | **OpenAI-style HTTP** | Your own server `POST …/audio/transcriptions` (on this PC or the LAN), one request per sentence |
 | **Native / Web Speech** | Browser speech APIs, listed only in the web build. It does not work inside the desktop app; a desktop profile still on it is asked once to switch to the built-in engine, else it moves to Whisper. |
 
-**Which one for my PC?** Start with **Built-in (runs on your PC)**: it runs on the processor by default, so the game keeps the graphics card, and with fewer than 6 physical cores it uses one lighter pass. Models for the graphics card (a more accurate final line, more languages) are opt-in. What each engine downloads and costs, by kind of PC: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
+**Which one for my PC?** Start with **Built-in (on your PC)**: it runs on the processor by default, so the game keeps the graphics card, and with fewer than 6 physical cores it uses one lighter pass. Models for the graphics card (a more accurate final line, more languages) are opt-in. What each engine downloads and costs, by kind of PC: [Choosing engines for your PC](../OPERATOR_REFERENCE.md#choosing-engines-for-your-pc).
 
-### First start with "Built-in (runs on your PC)"
+### First start with "Built-in (on your PC)"
 
-1. In the STT inspector, pick **Built-in (runs on your PC)** and your **language**. Setting the language is the biggest step for accurate captions and also saves memory; **Detect automatically** works, but is noticeably less accurate for languages such as French, German, Spanish and Russian (see [Choosing your language](#choosing-your-language)).
+1. In the STT inspector, pick **Built-in (on your PC)** and your **language**. Setting the language is the biggest step for accurate captions and also saves memory; **Detect automatically** works, but is noticeably less accurate for languages such as French, German, Spanish and Russian (see [Choosing your language](#choosing-your-language)).
 2. The panel shows which models Sigil will use on this PC and why. Leave **Hardware** on **Best for my PC** unless you want to force **Processor only** or let speech recognition share the graphics card with the voice changer (**Graphics card**).
 3. Press **Start**. Sigil asks once before downloading (for English about 1.1 GB; **Smaller setup** downloads less and uses one model). Progress shows under the Start button and in **Models & Runtimes**; you can stop and resume later.
 4. Speak: live words appear, then each sentence is replaced by its final, more accurate version on the same line.
@@ -67,7 +67,7 @@ The card has three buttons. **Lock to French** saves the language: running capti
 
 ### Audio input
 
-- **Built-in (runs on your PC), Whisper, Vosk, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
+- **Built-in (on your PC), Whisper, Vosk, and local HTTP (OpenAI-style)** capture audio natively on the desktop app. They use the inspector’s **input device** when one is chosen; otherwise they use **Settings → Audio → Default input device** (a native device on the desktop app), and finally the system default.
 - **Azure and Deepgram** capture in the webview, so their device pickers list **browser** microphones. Leave the picker on the default to use the system microphone.
 - If a microphone is **unplugged** while STT runs, Sigil shows a toast and reconnects it by itself when it comes back; STT keeps running. With the system default selected, STT follows a change of the Windows default microphone. A saved microphone that is not plugged in is shown as **(not connected)**.
 
@@ -104,7 +104,7 @@ Open it with the **Rewrite** tab of the Speech to Text inspector, or with the **
 
 ### Tips
 
-- Prefer **local** engines for latency-sensitive VRChat or game audio; **Built-in (runs on your PC)** needs no server.
+- Prefer **local** engines for latency-sensitive VRChat or game audio; **Built-in (on your PC)** needs no server.
 - If frames drop in the game while captions run, see [Keeping Sigil light next to VRChat](../OPERATOR_REFERENCE.md#keeping-sigil-light-next-to-vrchat) (a smaller model, one pass instead of two; for the voice changer, **Protect game FPS** together with a graphics-card preset, because on the processor Streamer preset it makes the voice changer fall behind).
 - For **OpenAI-compatible** servers, confirm they accept **non-streaming multipart** uploads (one upload per sentence).
 - Use **mute** (or its shortcut) to pause captions without stopping the service. The Rust engines and Deepgram do not hear or send muted speech at all.

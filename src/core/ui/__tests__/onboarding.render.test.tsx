@@ -88,7 +88,7 @@ describe("wizard steps", () => {
     const out = html(<SttStep onNext={noop} onBack={noop} />);
     expect(out).toContain("Speech to Text");
     expect(out).toContain("Sigil recognizes your speech on this PC. Models download once, after you agree.");
-    expect(out).toContain("Built-in (runs on your PC)");
+    expect(out).toContain("Built-in (on your PC)");
     expect(out).toContain("What language do you speak?");
     expect(out).toContain("Online engines and others are in the Speech to Text engine list.");
     expect(out).not.toMatch(/Whisper|Vosk|Moonshine|automatic\)/);

@@ -21,7 +21,7 @@ describe("sttEngineGroups", () => {
       "Chrome / Edge microphone page",
       "Other engines",
     ]);
-    expect(groups[0].options).toEqual([{ label: "Built-in (runs on your PC)", value: STT_Backends.local }]);
+    expect(groups[0].options).toEqual([{ label: "Built-in (on your PC)", value: STT_Backends.local }]);
   });
 
   it("puts each engine in its group (desktop)", () => {

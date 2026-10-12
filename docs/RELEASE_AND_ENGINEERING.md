@@ -63,7 +63,7 @@ Run before you cut a release candidate; update [Dependency audit notes](#depende
 3. **External STT / mic.html** — From STT inspector, open Chrome or Edge (or default browser on Linux/macOS); WebSocket pubsub connects; speech reaches the host.
 4. **Client mirror** — Open `/client` with `host`, `port`, `id` query params against the running host; canvas loads; disconnect shows a clear error.
 5. **i18n** — Switch languages; translations load from `/i18n/...` without JSON parse errors.
-6. **Local speech** — STT **Built-in (runs on your PC)**: Start asks before downloading, then captions arrive; TTS **Kokoro / Piper (local)**: the panel's download, **Preview**, then speech through the chosen device; optional HTTP sidecar (`scripts/neural-sidecar/tts_sidecar.py`) through **OpenAI-compatible (HTTP)**.
+6. **Local speech** — STT **Built-in (on your PC)**: Start asks before downloading, then captions arrive; TTS **Kokoro / Piper (local)**: the panel's download, **Preview**, then speech through the chosen device; optional HTTP sidecar (`scripts/neural-sidecar/tts_sidecar.py`) through **OpenAI-compatible (HTTP)**.
 7. **Second instance** — Launch a second Sigil while the first holds the port; expect the native port-unavailable dialog.
 
 See also [Manual Tauri checklist](#manual-tauri-checklist) for a broader feature pass.
@@ -79,7 +79,7 @@ Automated Playwright tests use Vite preview only; native Tauri behavior requires
 - [ ] `npm run tauri dev` — app window opens, no startup error overlay in `#root`.
 - [ ] **Config / network** — `plugin:web|config` loads; status/footer shows expected host/port.
 - [ ] **Whisper** — download or load model path (progress shows under the Start button and in Models & Runtimes, never in captions); start recording; one **final** per spoken sentence (`whisper:segment_transcript`); silence produces nothing.
-- [ ] **Built-in (runs on your PC)** — fresh profile: Start asks before downloading (sizes match the route preview); downloads show progress; live partials, then one final per sentence; STT mute drops the open sentence.
+- [ ] **Built-in (on your PC)** — fresh profile: Start asks before downloading (sizes match the route preview); downloads show progress; live partials, then one final per sentence; STT mute drops the open sentence.
 - [ ] **One STT path** — e.g. native or engine you ship; Start/Stop from bottom bar or inspector.
 - [ ] **One TTS path** — voice selected; Start; speak or trigger text event. Long text starts after its first sentence; **Skip** / **Stop speaking** on the status bar.
 - [ ] **Twitch** — `SIGIL_TWITCH_CLIENT_ID` set; Twitch console lists **loopback** URLs: **Public** → `http://localhost:17890/oauth/twitch/implicit`; **Confidential** → `http://localhost:17890/oauth/twitch/callback`; plus **Vite** `http://localhost:1420/oauth/...` if you use `pnpm dev`, and the **packaged app** `https` origin + path if flows hit the webview (see [manual/03-integrations.md](manual/03-integrations.md#oauth-redirects-and-ports)); OAuth completes; optional: IRC chat + post/receive.
@@ -126,7 +126,7 @@ Run on the **installed** or freshly built exe (`pnpm tauri build` → `src-tauri
 
 Also on the same build:
 
-- **Built-in (runs on your PC)** — English and Japanese: consent dialog, downloads, live partials replaced by one final per sentence; Stop during a download cancels it (the next Start resumes).
+- **Built-in (on your PC)** — English and Japanese: consent dialog, downloads, live partials replaced by one final per sentence; Stop during a download cancels it (the next Start resumes).
 - **Groq** (real key) — captions arrive; the status line shows a rate-limit wait when you talk continuously; a bad key stops with a readable message; nothing is sent while muted.
 - **Local HTTP server on the LAN** (OpenAI-compatible, for example speaches on another PC) — transcribes (the request is sent by Rust, so the webview CSP does not apply).
 
@@ -138,7 +138,7 @@ The release must start and work on a PC with no GPU and no runtime pack installe
 
 1. The app starts: no error overlay on `#root`, the status shows the embedded server's port, and **Models & Runtimes** lists every entry as not installed.
 2. **Settings → GPU & diagnostics** reports the processor (or DirectML when the machine has a GPU adapter) with the reason, and **Test GPU acceleration** completes.
-3. **Built-in (runs on your PC)** with English: **Start** asks before downloading (the dialog shows the size), the download shows progress and resumes after **Stop**, and captions arrive. **Kokoro / Piper (local)** downloads and previews.
+3. **Built-in (on your PC)** with English: **Start** asks before downloading (the dialog shows the size), the download shows progress and resumes after **Stop**, and captions arrive. **Kokoro / Piper (local)** downloads and previews.
 4. `Sigil.exe --headless sysinfo` and `Sigil.exe --headless fetch --list` print their reports and exit 0.
 5. `pwsh scripts/release/verify-bundle.ps1` finds no load-time import outside `scripts/release/expected-imports.txt`.
 
@@ -276,7 +276,7 @@ Final P2 gate after the review fixes (2026-09-29): `pnpm typecheck` clean, `pnpm
 
 **Manual checks still open** (need the real app, devices, servers or keys):
 
-1. **Fresh profile in `pnpm tauri dev`** (move `%APPDATA%\com.sigil.app\user\settings` away first; automated runs always seed a settings file and so never see the wizard): the setup wizard opens, five steps, with **Skip setup** on every step but the last. The speech step shows the **Built-in (runs on your PC)** card and asks for your Windows language (not English) as a question; the profile starts on that engine (the one-time desktop-default migration sets it), and finishing puts the Speech to Text card in the bottom bar. Quitting in the middle of the wizard shows it again at the next start, and a profile that has a settings file (even with `onboardingComplete` false) never sees it. Press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a SenseVoice final; Korean is Qwen3-ASR 0.6B, Russian Parakeet Ultra); an existing profile on Web Speech sees the STT offer, one on Chrome or Edge sees the same offer worded for its browser (**Switch to built-in** / **Keep Chrome** or **Keep Edge**, and Keep never asks again), and the Kokoro offer too once the profile uses TTS (auto-start on, a picked voice, or started once); a profile saved on the retired Moonshine server opens on Built-in with the notice and does not auto-start. Then **Rewrite**: start Speech to Text and Rewrite together, the dot on the Rewrite tab lights, the bottom-bar Rewrite card opens that tab, `Ctrl+2` toggles it.
+1. **Fresh profile in `pnpm tauri dev`** (move `%APPDATA%\com.sigil.app\user\settings` away first; automated runs always seed a settings file and so never see the wizard): the setup wizard opens, five steps, with **Skip setup** on every step but the last. The speech step shows the **Built-in (on your PC)** card and asks for your Windows language (not English) as a question; the profile starts on that engine (the one-time desktop-default migration sets it), and finishing puts the Speech to Text card in the bottom bar. Quitting in the middle of the wizard shows it again at the next start, and a profile that has a settings file (even with `onboardingComplete` false) never sees it. Press Start with English, agree to the download, captions arrive; switch to Japanese (Nemotron partials plus a SenseVoice final; Korean is Qwen3-ASR 0.6B, Russian Parakeet Ultra); an existing profile on Web Speech sees the STT offer, one on Chrome or Edge sees the same offer worded for its browser (**Switch to built-in** / **Keep Chrome** or **Keep Edge**, and Keep never asks again), and the Kokoro offer too once the profile uses TTS (auto-start on, a picked voice, or started once); a profile saved on the retired Moonshine server opens on Built-in with the notice and does not auto-start. Then **Rewrite**: start Speech to Text and Rewrite together, the dot on the Rewrite tab lights, the bottom-bar Rewrite card opens that tab, `Ctrl+2` toggles it.
 2. **Whisper with a real microphone:** the download row fills and Models & Runtimes shows `whisper/<id>` installed; captions; the STT hard mute drops the open sentence; replugging a USB microphone continues the recording.
 3. **Vosk and Groq:** Vosk English captions and mute; Groq with a real key (captions, rate-limit status, bad-key message, nothing sent while muted); an OpenAI-compatible STT server on the LAN.
 4. **Local voices:** Kokoro en / ja / zh, Piper ru and Kitten from the panel (download, Preview, the UI never freezes).

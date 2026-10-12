@@ -532,7 +532,7 @@ function Write-ManualVmSteps {
   Write-Line '     (add -OnlineModel to also download SenseVoice, 163 MB, and decode English speech)'
   Write-Line '  3. Read C:\smoke-out\smoke-result.json; every check should be "pass" (a GUI check may "skip" without the WebView2 runtime).'
   Write-Line '  4. By hand, once: start Sigil, open Settings > GPU & diagnostics (processor / DirectML with the reason, Test GPU acceleration'
-  Write-Line '     completes), Models & Runtimes (every entry "not installed"), STT backend "Built-in (runs on your PC)", English, Start:'
+  Write-Line '     completes), Models & Runtimes (every entry "not installed"), STT backend "Built-in (on your PC)", English, Start:'
   Write-Line '     it asks before downloading and shows the size. See docs/RELEASE_AND_ENGINEERING.md, "Clean machine: no GPU, no packs".'
 }
 

@@ -1,7 +1,7 @@
 import type { LocalOfferKind } from "./migrate";
 
 /**
- * The one-time prompt that offers the built-in engine (`STT_Backends.local`, "Built-in (runs on your PC)") to an
+ * The one-time prompt that offers the built-in engine (`STT_Backends.local`, "Built-in (on your PC)") to an
  * existing desktop profile: its numbers, its wording per engine, its buttons. Pure; `Service_STT.offerLocalBackend`
  * shows it in a native dialog.
  */

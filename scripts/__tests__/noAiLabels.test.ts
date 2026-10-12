@@ -1,6 +1,6 @@
 /**
  * Guard: the UI does not call features "AI". Rewrite is "Rewrite", the model behind it is a "language model", and the
- * engine that runs on the PC is "Built-in (runs on your PC)". "AI" stays only where it is a proper name or a notice to the
+ * engine that runs on the PC is "Built-in (on your PC)". "AI" stays only where it is a proper name or a notice to the
  * audience that a voice is synthetic. English strings are checked together with the staged ones
  * (`scripts/i18n-staging/*.json`), so a string waiting for the merge is held to the same rule.
  */
@@ -79,7 +79,7 @@ describe("no 'AI' or 'LLM' in English UI labels", () => {
     expect(english.get("transl.llm_title")).toBe("Language model");
     expect(english.get("transl.llm_server_holder_transform")).toBe("Rewrite");
     expect(english.get("manual.nav_audio")).toBe("Speech and voice");
-    expect(english.get("stt.provider_local")).toBe("Built-in (runs on your PC)");
+    expect(english.get("stt.provider_local")).toBe("Built-in (on your PC)");
   });
 
   it("does not use the old engine name in a label that points at it", () => {
