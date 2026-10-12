@@ -6,11 +6,17 @@ Entries before **2026** may name documentation files that were later merged or r
 
 ## [Unreleased]
 
+---
+
+## [0.5.0](https://github.com/Mewnah/Sigil/releases/tag/v0.5.0) - 2026-10-12
+
+**The speech-stack release.** Speech-to-text now defaults to **Built-in (on your PC)**: live captions that a more accurate final line replaces per sentence, with the models picked for your language and PC and a question before anything downloads; the speech pipeline, the models and their accuracy are measured on a public corpus. **Translation** gets a local default (Hy-MT2, NLLB-200 for about 200 languages, free cloud options) whose partial captions no longer flicker. **Text-to-speech** plays through one output with local, keyless and cloud voices. The **voice changer** runs on Sigil's own engine: import the RVC voices you already have, zero-shot and singing voices, GPU and CPU presets and a benchmark you can rerun. The interface has one **Speech** group in the left menu, Rewrite as a tab of Speech to Text and a five-step **setup wizard** on the first run. Other computers on your network now need a token, and a scene you open can no longer run code through its event text. The installers bundle the CUDA and DirectML providers; NVIDIA's CUDA runtime stays an opt-in download.
+
 - **Documentation** — Consolidated detailed guides into [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md), [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md), and manual chapters under [docs/manual/README.md](docs/manual/README.md). Older bullets in this file may still reference previous filenames.
 
-### Speech stack overhaul (in progress)
+### Speech stack overhaul
 
-Implementing [docs/SPEECH_STACK_RESEARCH_2026-09.md](docs/SPEECH_STACK_RESEARCH_2026-09.md) per [docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md](docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md) (phases P0–P7). Work lands on the local `speech-stack` branch, one commit per phase.
+Implements [docs/SPEECH_STACK_RESEARCH_2026-09.md](docs/SPEECH_STACK_RESEARCH_2026-09.md) per [docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md](docs/SPEECH_STACK_IMPLEMENTATION_PLAN.md) (phases P0–P7). Work landed on the `speech-stack` branch, one commit per phase.
 
 #### P0 — stabilize (bug fixes, hardening, tooling)
 

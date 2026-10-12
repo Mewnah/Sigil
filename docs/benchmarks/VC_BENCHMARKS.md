@@ -1065,7 +1065,7 @@ How it got there:
 
 ## Competitors (T6)
 
-T6 is defined statistically since P3B ([README → compare v2](README.md#modes)): a corpus of loudness-normalised clips, paired per-clip statistics, DNSMOS +0.05 at matched latency with the lower confidence bound above 0, GPE and MCD non-inferiority under every analyzer against EGG or consensus truth, and latency at most 0.7x as a Pareto row against each competitor's operating points, its minimum stable chunk on the same rig included. It is **undecided**: no competitor renditions exist (the installs and captures are manual, [Still to run](#still-to-run-manual)). P7-B left it pending; the exact steps, in order, are the [T6 checklist](../../scripts/vc-bench/README.md#t6-checklist-what-is-left-to-do-in-order-p7-b). The published per-chunk figures are reference rows from other PCs, so they bound rather than rank:
+T6 is defined statistically since P3B ([README → compare v2](README.md#modes)): a corpus of loudness-normalised clips, paired per-clip statistics, DNSMOS +0.05 at matched latency with the lower confidence bound above 0, GPE and MCD non-inferiority under every analyzer against EGG or consensus truth, and latency at most 0.7x as a Pareto row against each competitor's operating points, its minimum stable chunk on the same rig included. It is **undecided**: no corpus-scale competitor renditions exist (the installs and captures are manual, [Still to run](#still-to-run-manual)); the one-run [quick head-to-head](#quick-head-to-head-one-run) below is five clips against one competitor and decides nothing. P7-B left it pending; the exact steps, in order, are the [T6 checklist](../../scripts/vc-bench/README.md#t6-checklist-what-is-left-to-do-in-order-p7-b). The published per-chunk figures are reference rows from other PCs, so they bound rather than rank:
 
 | System | Per-chunk compute | Chunk | Compute / chunk | GPU and method |
 |---|---|---|---|---|
@@ -1076,6 +1076,31 @@ T6 is defined statistically since P3B ([README → compare v2](README.md#modes))
 | SVE, CUDA + levers, SwiftF0 (P3) | p95 10.6 / 10.1 ms | 80 / 40 ms | 0.132 / 0.252 | RTX 4090 |
 
 The 4090 and the 3060 Ti differ by roughly 1.5x to 5x depending on the workload, so no cross-rig ranking holds: `scripts/vc-bench/vcrs_probe.py` gives a normalized-RTF verdict only when the GPU names match. P3B-C's ablation dry run (10 local clips, SVE minus time anchoring at matched shapes) found no automatic metric that separates the time-anchoring levers (DNSMOS −0.011 [−0.120, +0.098] at 40 ms, MCD to the reference +0.007 dB, GPE 0), while the same metrics do separate block and context (DNSMOS 3.11–3.14 at a GUI-like 200 ms shape against 2.71–2.79 at 40 ms); a blind listening check comes before any conclusion, and the ablation margins are never published as competitor results. The +0.05 DNSMOS row needs 31–36 clips (50 % power) or 63–73 (80 %) at the measured paired SD of 0.14–0.15, so the public corpus (92 clips) can carry it and the 10-clip local corpus cannot (the blind A/B row carries the quality claim there). Inputs must be loudness-normalised: a −65 dBFS clip was silence-gated in both renditions. As a whole-clip analyzer SwiftF0 voices only 2–47 % of the speech frames and CREPE-tiny 78–100 %, so the strict four-analyzer consensus truth covers 2–44 % of speech frames: use EGG truth or `consensus_min_agree: 3`.
+
+### Quick head-to-head (one run)
+
+A one-time check on 2026-10-12 of Sigil against the RVC WebUI realtime loop on this rig (RTX 4090, Ryzen 7 7800X3D, driver 617.14). It is **not the statistical T6** and decides no T6 row: the compare tool prints "T6: fail" for it, but that line comes from 5 clips where the DNSMOS row alone needs 86 (50 % power) to 175 (80 %) at the measured paired SD of 0.236, so read the table, not the verdict.
+
+- **Same inputs, same voice.** The MIT default voice (`default.pth`, sha256 `c9d6b0ac7aa8df91…`; the slot's `source_sha256` matches), transpose 0, index rate 0, and 5 of the 10 local dev-cache clips (`jfk`, `ja-short`, `ko-short`, `ru-short`, `join-en-yue`; 11.0-12.6 s, 16 kHz mono, -26 LUFS, sha256-checked). MCD is scored against RVC WebUI's own whole-utterance fp32 renders (two seeds, RMVPE, protect 0.33, `rvc_offline_reference.py`), so those references are RVC's output and favour RVC on that row; the seed-to-seed floor is 1.18 dB.
+- **Each side at its own defaults, so the shapes differ.** Sigil: the Low latency preset on CUDA with RMVPE, as the GPU preset button applies it (a new install runs the CPU Streamer instead), the app's stream: 512-frame (10.7 ms) device block and engine block, 96 ms of extra context, 20 ms crossfade. RVC WebUI (build 20260718 Nvidia, `realtime_gui.py`'s block loop run offline by `rvc_webui_offline.py`, fp16, RMVPE): 250 ms block, 2.5 s of extra context, 50 ms crossfade, SOLA 40 + 10 ms, RMS mix 1. The 23-fold difference in block size and 26-fold in context is the main confound: this run cannot say how much of the quality gap is the engine and how much is the shape.
+- **Offline tier only.** No end-to-end latency (the virtual cables are disabled on the dev PC); the latencies below are algorithmic. w-okada VCClient was left out because it opens its own window and takes focus on the user's PC; Applio was not run.
+- **One run, 5 clips, not significant** except where an interval is given. The GPU was shared and clocked down (SM 1155 MHz at the run's summary, other processes used it in some samples: a browser, the desktop, an RGB-lighting service), so Sigil's compute is, if anything, pessimistic. The RVC WebUI renditions came from an earlier run (same session, different load); its 35 ms p99 is the first clip's cold start (the other four clips read p99 16.4-16.7 ms).
+
+| Mean over 5 clips | Sigil, Low latency, CUDA | RVC WebUI realtime, 250 ms |
+|---|---|---|
+| Algorithmic latency | 60.4 ms | 303.8 ms measured (294.3 ms by the driver); ratio 0.20 |
+| DNSMOS OVRL (SIG / BAK) | 2.64 (2.95 / 3.85) | 3.18 (3.44 / 4.10) |
+| Speaker similarity (CAM++ cosine) | 0.702 | 0.729 |
+| Gross pitch error, RMVPE / SwiftF0 / DIO | 0 / 0 / 0.14 % | 0 / 0 / 0.14 % |
+| Gross pitch error, CREPE-tiny | 15.0 % | 12.4 % |
+| Fine pitch error (RMVPE analyzer) | 23.0 cents | 17.1 cents |
+| Envelope MCD to RVC's reference | 2.71 dB | 1.90 dB |
+| Compute per block p50 / p95 / p99 | 6.89 / 8.16 / 8.51 ms per 10.7 ms block | 15.3 / 21.9 / 35.2 ms per 250 ms block |
+| Compute per second of audio (p50) | 0.65 s | 0.06 s |
+
+How to read it. RVC WebUI's long-block defaults score higher on DNSMOS: the paired difference (Sigil minus RVC) is -0.54 [-0.83, -0.25] and RVC is higher on all 5 clips; the envelope MCD to the reference is 0.81 dB worse for Sigil [+0.49, +1.13] (also 5 of 5). Speaker similarity and pitch error are close (the pitch truth covers only 28-451 consensus frames per clip, so GPE is 0 under three analyzers for both). That is the direction the T6 dry run found for the shape alone (DNSMOS 3.11-3.14 at a GUI-like 200 ms block against 2.71-2.79 at 40 ms), so it does not show the engine is worse at a matched shape. What the run does show is the trade the Low latency preset makes: about a fifth of RVC WebUI's latency for roughly half a DNSMOS point at these settings, and about ten times the GPU time per second of audio (it converts 94 blocks a second, each with its context), still under the block period at p99 (0.80 of 10.7 ms). A matched-latency comparison, RVC WebUI at its 40-100 ms blocks (`--sweep`) against Sigil's Quality preset, is a T6 step this run did not do.
+
+Reproduce (the audio stays in the scratch folder; nothing here is committed): `rvc_offline_reference.py` for the references, `rvc_webui_offline.py --block-time 0.25 --crossfade-time 0.05 --extra-time 2.5 --f0method rmvpe --index-rate 0 --rms-mix-rate 1` for the renditions, a corpus manifest with one `rvc_webui` point, and a spec with `compare.sigil.configs: ["low_latency"]` on `execution_provider: cuda`, `block_ms: 0` ([README section 4](../../scripts/vc-bench/README.md#4-score)), run as `Sigil.exe --headless bench <spec> --out <dir>` under `scripts/bench/gpu-lock.ps1`.
 
 ## Scorers and how to read them
 

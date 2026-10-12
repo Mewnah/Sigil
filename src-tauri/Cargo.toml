@@ -1,6 +1,6 @@
 [package]
 name = "sigil"
-version = "0.4.0-1"
+version = "0.5.0"
 description = "Sigil desktop application"
 authors = ["Sigil contributors", "Mewnah"]
 license = "AGPL-3.0-only"

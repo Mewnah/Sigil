@@ -69,6 +69,33 @@ def reference_name(clip_id: str, seed: int) -> str:
     return f"{clip_id}.seed{seed}.wav"
 
 
+def single_kwargs(vc_single, args, path: str, transpose: int, index: str) -> dict:
+    """``vc_single``'s arguments by name: the signature changed across RVC WebUI versions (the
+    2026-07 build has no ``f0_file``, ``file_index2`` or ``filter_radius``). A parameter this
+    driver has no value for stops the run instead of being guessed."""
+    import inspect
+
+    values = {
+        "sid": args.sid,
+        "input_audio_path": path,
+        "f0_up_key": transpose,
+        "f0_file": None,
+        "f0_method": "rmvpe",
+        "file_index": index,
+        "file_index2": index,
+        "index_rate": args.index_rate,
+        "filter_radius": args.filter_radius,
+        "resample_sr": 0,
+        "rms_mix_rate": args.rms_mix_rate,
+        "protect": args.protect,
+    }
+    names = [n for n, p in inspect.signature(vc_single).parameters.items() if n != "self"]
+    unknown = [n for n in names if n not in values]
+    if unknown:
+        raise SystemExit(f"this RVC WebUI version's vc_single takes {unknown}, which this driver has no value for; update single_kwargs")
+    return {n: values[n] for n in names}
+
+
 def with_references(manifest: dict, refs: dict, manifest_dir: str, out_dir: str) -> dict:
     """A copy of ``manifest`` whose clips list their references (paths relative to the manifest)."""
     m = json.loads(json.dumps(manifest))
@@ -108,7 +135,10 @@ def main():
     finally:
         sys.argv = argv
     config.is_half = False  # fp32: the neutral reference
-    from infer.modules.vc.modules import VC
+    try:
+        from infer.modules.vc.modules import VC
+    except ImportError:
+        from infer.vc.modules import VC  # the 2026-07 layout (RVC20260718Nvidia)
 
     vc = VC(config)
     vc.get_vc(os.path.basename(pth), args.protect, args.protect)
@@ -119,9 +149,8 @@ def main():
             torch.manual_seed(seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
-            info, result = vc.vc_single(
-                args.sid, path, transpose, None, "rmvpe", index, index, args.index_rate, args.filter_radius, 0, args.rms_mix_rate, args.protect
-            )
+            kw = single_kwargs(vc.vc_single, args, path, transpose, index)
+            info, result = vc.vc_single(**kw)
             if not isinstance(result, tuple) or result[1] is None:
                 raise SystemExit(f"{clip_id} seed {seed}: vc_single failed: {info}")
             sr, audio = result
@@ -138,7 +167,7 @@ def main():
                 "index_rate": args.index_rate,
                 "protect": args.protect,
                 "rms_mix": args.rms_mix_rate,
-                "filter_radius": args.filter_radius,
+                "filter_radius": kw.get("filter_radius"),  # None: this version has no median filter argument
                 "precision": "fp32",
                 "whole_utterance": True,
                 "seed": seed,

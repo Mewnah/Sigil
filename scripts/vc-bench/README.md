@@ -196,9 +196,13 @@ then run `python scripts/vc-bench/fcpe_check.py <dir>/report.json` in an environ
 
 ## Status
 
-- No competitor is installed on the dev rig. The RVC WebUI and Applio drivers were written against
-  RVC WebUI `81eed5e8` (2026-08) and Applio `c7665ac9`, and they have not run here. On the first real
-  run, check the output length against the input, and check the printed notes.
+- RVC WebUI (the 20260718 Nvidia build) is on the dev rig; Applio and the others are not. The RVC WebUI
+  drivers ran once here (2026-10-12, 5 clips, 250 ms block; `rvc_offline_reference.py` reads
+  `vc_single`'s signature by name for that build's layout), and the result is the one-run
+  [quick head-to-head](../../docs/benchmarks/VC_BENCHMARKS.md#quick-head-to-head-one-run), not the
+  statistical T6. The drivers were written against RVC WebUI `81eed5e8` (2026-08) and Applio `c7665ac9`;
+  the Applio driver has not run here. On the first real run, check the output length against the input,
+  and check the printed notes.
 - The neutral references, the public corpus download, the live captures (the dev PC's virtual-cable
   endpoints are disabled) and every competitor sweep are manual steps.
 - The T6 dry run (`scripts/bench/specs/p3b/c/run_dryrun.ps1`) compares SVE with its own ablation on
