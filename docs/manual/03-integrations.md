@@ -23,7 +23,7 @@ This section explains how **desktop loopback**, **dev server**, and **packaged a
 | **17890** (fixed) | Short-lived **OAuth loopback** server for Twitch/Kick when the system browser completes login. Register redirect URLs that use **`http://localhost:17890`** for these flows (not the same as 3030). |
 | **1420** | **Vite dev server only** (`pnpm dev`). Not used by the installed app. |
 
-If a second Sigil instance cannot bind its main port, the app shows a warning: free the port or pass a different `--port`.
+Starting Sigil again while it is running brings the running window to the front and ends the second start without a message. Right after you close Sigil, the old copy can take up to 20 s to finish ending; the new start waits for the port quietly (up to about 25 s) and then starts normally. If another program holds the port, Sigil waits a few seconds, then explains what holds it (the program's name, or a Windows reserved range) and suggests another port: start Sigil with `--port N`, and the OBS links change with the port. If the web server cannot bind the port while Sigil runs, or its listener ever ends, Sigil keeps retrying by itself (after 1, 2, 5 and 10 s, then every 15 s) and OBS and browser sources reconnect once it is back; **Settings → Local web server** shows the state.
 
 ### Packaged app vs `pnpm dev` (redirect URLs)
 
@@ -168,9 +168,11 @@ Sidebar → **OBS Studio**.
 
 ### Browser source (most common)
 
-1. Click **Copy browser source link** (or equivalent).  
-2. In OBS, add a **Browser** source and paste the URL.  
+1. Click **Copy browser source link** (or equivalent). For OBS on another PC use **Copy LAN link** instead; it carries the LAN token.
+2. In OBS, add a **Browser** source and paste the URL.
 3. Set width/height to match your canvas (often 1920×1080 or your base resolution).
+
+Start order does not matter, and the source needs no attention afterwards: it reconnects **by itself, for as long as it lives**, after a Sigil restart, a sleep or a network drop. The yellow bar over the source and the other messages are explained under [If the connection drops](00-overview.md#if-the-connection-drops); the one that needs you is the refusal ("Copy the LAN link again").
 
 ### WebSocket automation
 
@@ -180,8 +182,10 @@ Sidebar → **OBS Studio**.
 
 ### Tips
 
-- Browser source **FPS** and **shutdown when not visible** affect CPU; tune per scene.
-- If the preview is blank, confirm the **host** is running and the URL uses the correct **port**.
+- Browser source **FPS** and **shutdown when not visible** affect CPU; tune per scene. Shutdown is optional: the page reloads and reconnects when the scene is shown (the first seconds may lack captions), and it is not a workaround for a stuck source, which fixes itself.
+- If the preview is blank, confirm the **host** is running and the URL uses the correct **port**, and that the active scene has a Text element for captions.
+- **Refresh cache of current page** (the source's properties) is needed only after the dark "Application failed to start" page, once you have fixed what it names, and once after you update Sigil.
+- The captions-only page `http://localhost:<port>/obs-captions.html` also reconnects by itself and does not care about start order. Each connection picks its own random id, so two sources with the same URL are fine.
 - Use the `http://localhost:<port>/…` URL Sigil gives you. A **Local file** browser source (a saved HTML file) is refused by Sigil's connection check; see **Settings → Local web server**.
 
 ### Related

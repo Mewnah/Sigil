@@ -38,7 +38,9 @@ use std::time::{Duration, Instant};
 use super::engine_api::{AsrEngine, AsrError, AsrErrorKind, AsrResult, DecodeOptions, EngineContext, EngineSpec};
 use super::events::{codes, FinalPass};
 use super::lang;
-use super::pipeline::{catalog_id_in, DoneGuard, EngineFactory, FinalMeta, OutcomeFn, SecondPassFactory, SessionCtx, LOG};
+use super::pipeline::{
+    catalog_id_in, run_session_thread, DoneGuard, EngineFactory, FinalMeta, OutcomeFn, SecondPassFactory, SessionCtx, LOG,
+};
 use super::two_pass::{FinalJob, TwoPassConfig, TwoPassOutcome};
 use super::utterance::{merge_audio, ms_to_samples, reasons, samples_to_ms, MERGE_GAP_MS, MERGE_MAX_MS};
 use crate::services::speech_core::utterance::{BoundedQueue, Pop};
@@ -295,7 +297,9 @@ pub(crate) fn spawn_utterance_worker(setup: UtteranceWorkerSetup, done: DoneGuar
     let name = format!("sigil-speech-{}-final", setup.ctx.pipeline_id);
     spawn_named(name, move || {
         let _done = done;
-        UtteranceWorker::new(setup).run();
+        let ctx = Arc::clone(&setup.ctx);
+        // A panic ends this thread alone: it becomes the session's engine error.
+        run_session_thread(&ctx, codes::ENGINE_ERROR, "speech engine", move || UtteranceWorker::new(setup).run());
     })
 }
 
@@ -599,7 +603,9 @@ pub(crate) fn spawn_stream_worker(setup: StreamWorkerSetup, done: DoneGuard) -> 
     let name = format!("sigil-speech-{}-stream", setup.ctx.pipeline_id);
     spawn_named(name, move || {
         let _done = done;
-        run_stream_worker(setup);
+        let ctx = Arc::clone(&setup.ctx);
+        // A panic ends this thread alone: it becomes the session's engine error.
+        run_session_thread(&ctx, codes::ENGINE_ERROR, "streaming speech engine", move || run_stream_worker(setup));
     })
 }
 
@@ -641,6 +647,14 @@ pub(crate) fn outcome_handler(ctx: Arc<SessionCtx>) -> OutcomeFn {
                     }
                 }
             }
+        }
+        TwoPassOutcome::WorkerDied { detail } => {
+            // Final-only segments would be dropped for good: end the session so it restarts.
+            ctx.fatal(
+                codes::ENGINE_ERROR,
+                format!("the second-pass speech engine stopped unexpectedly ({detail})"),
+                None,
+            );
         }
         TwoPassOutcome::Skipped { segment_id, reason } => {
             let reason = match reason.as_str() {

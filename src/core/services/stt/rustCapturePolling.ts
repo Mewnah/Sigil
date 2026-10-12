@@ -16,10 +16,11 @@ import { PROCESS_NONCE } from "@/utils/processNonce";
 import { resolveRustInputDeviceForInvoke } from "@/utils/rustAudioInput";
 import { isAbortError, listenWithAbort, raceWithAbort } from "./abort";
 import { SttStartLifecycle } from "./localEngineLifecycle";
+import { networkFailureCanRetry, networkFailureNeedsPause } from "./restartPolicy";
 import type { STT_State } from "./schema";
 import { TRANSIENT_WARNING_MS } from "./statusChannel";
 import { buildVadConfig } from "./sttOptions";
-import type { ISTTReceiver, ISpeechRecognitionService, SttStatusOptions, SttTextMeta } from "./types";
+import type { ISTTReceiver, ISpeechRecognitionService, SttStatusOptions, SttStopOptions, SttTextMeta } from "./types";
 
 /**
  * STT backends whose engine runs inside Sigil's Rust speech pipeline (`speech` plugin) as its explicit utterance
@@ -303,6 +304,15 @@ export function sttPipelineStartSuperseded(generation: number): boolean {
   return sttPipelineStarts !== generation;
 }
 
+/**
+ * `{ retry: true }` for a failure that may pass (`slow` too for a rate limit, which only clears with time), else
+ * nothing (the stop then reads as before).
+ */
+export function retryOption(code: string, detail: string): SttStopOptions | undefined {
+  if (!networkFailureCanRetry(code, detail)) return undefined;
+  return networkFailureNeedsPause(code) ? { retry: true, slow: true } : { retry: true };
+}
+
 const TIMED_OUT = Symbol("timed out");
 
 function within<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
@@ -343,7 +353,7 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
   protected abstract readonly logTag: string;
 
   constructor(protected readonly receiver: ISTTReceiver) {
-    this.lifecycle = new SttStartLifecycle((error) => this.receiver.onStop(error));
+    this.lifecycle = new SttStartLifecycle((error, options) => (options ? this.receiver.onStop(error, options) : this.receiver.onStop(error)));
   }
 
   /** User-facing engine name for status lines and stop messages. */
@@ -413,8 +423,11 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
       console.error(`${this.logTag} Error starting:`, detail);
       await this.#teardown();
       this.receiver.onStatus("");
+      // A busy microphone or a network error may pass (Service_STT retries it while the user wants STT running); a
+      // rejected key or bad settings needs the user.
       this.lifecycle.notifyStopOnce(
         code === "capture_error" ? i18n.t("stt.error_capture", { detail: shortDetail(detail) }) : this.startFailedMessage(detail),
+        retryOption(code ?? "", detail),
       );
     } finally {
       this.lifecycle.finishStart();
@@ -508,7 +521,7 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
   #onStatus(ev: RustSpeechStatus): void {
     if (ev.state === "error") {
       this.#ended = true;
-      void this.#fail(speechFatalMessage(ev, this.engineLabel()));
+      void this.#fail(speechFatalMessage(ev, this.engineLabel()), retryOption(ev.code, String(ev.detail ?? "")));
       return;
     }
     if (ev.state === "stopped") {
@@ -557,12 +570,12 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
     });
   }
 
-  async #fail(message: string): Promise<void> {
+  async #fail(message: string, retry?: SttStopOptions): Promise<void> {
     if (this.lifecycle.aborted) return;
     console.error(`${this.logTag} ${message}`);
     await this.#teardown();
     this.receiver.onStatus("");
-    this.lifecycle.notifyStopOnce(message);
+    this.lifecycle.notifyStopOnce(message, retry);
   }
 
   async #endedByRust(): Promise<void> {

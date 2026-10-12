@@ -39,8 +39,9 @@ $raw = Get-Content -Raw -LiteralPath $smoke
 $m = [regex]::Match($raw, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
 if (-not $m.Success) { throw "cannot find the window helper in $smoke" }
 Add-Type -TypeDefinition $m.Groups[1].Value
-# ... and so are the port helpers (Test-PortFree, Get-FreePort): Sigil shows a modal "Port N is not available!" dialog
-# when its port is taken, which is exactly what this script must never put in front of the person at the PC.
+# ... and so are the port helpers (Test-PortFree, Get-FreePort): Sigil waits for a taken port and then gives up (with
+# SIGIL_START_MINIMIZED it exits 1 without a box; without it a box follows), and a run that waits on or provokes that
+# is exactly what this script must never do on the PC someone is using.
 $h = [regex]::Match($raw, "(?s)#region testable-helpers\r?\n(.*?)\r?\n#endregion testable-helpers")
 if (-not $h.Success) { throw "cannot find the helper functions in $smoke" }
 . ([scriptblock]::Create($h.Groups[1].Value))

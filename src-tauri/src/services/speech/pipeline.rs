@@ -68,6 +68,7 @@
 //! `whisper` plugin run its `start_recording` through a pipeline with its own event names.
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::thread::{self, Thread};
@@ -96,6 +97,7 @@ use super::worker::{
 use super::{engines, lang, music_gate, router, smart_turn};
 use crate::services::audio::hub::{self, CaptureConsumer, ConsumerOptions, MuteGroup, SourceSpec};
 use crate::services::speech_core::hallucination::clean_transcript;
+use crate::services::speech_core::panic_text;
 use crate::services::speech_core::utterance::{f32_to_le_bytes, BoundedQueue, UtteranceStore};
 use crate::services::speech_core::{SegmenterEvent, Segmenter, SpeechSegmenter, VadConfig};
 
@@ -1040,6 +1042,19 @@ impl StreamSender {
 /// Signals a thread's end when dropped.
 pub(crate) struct DoneGuard(#[allow(dead_code)] oneshot::Sender<()>);
 
+/// Run the body of a thread of `ctx`'s session. A panic ends only that thread and nothing else
+/// watches it: the session would stay "listening" and hear nothing until the user restarted it.
+/// It becomes the session's fatal `code` error instead (`what` names the thread), which the app
+/// restarts like any other capture or engine error. Runs after the unwind, so the thread's
+/// engines and device are already released and the error path never runs while panicking.
+pub(crate) fn run_session_thread(ctx: &SessionCtx, code: &str, what: &str, body: impl FnOnce()) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(body)) {
+        let text = panic_text(payload.as_ref());
+        tracing::error!(target: LOG, "[{}] the {what} thread panicked: {text}", ctx.pipeline_id);
+        ctx.fatal(code, format!("the {what} stopped unexpectedly ({text})"), None);
+    }
+}
+
 /// A running (or starting) session. Dropping it stops everything without waiting.
 pub(crate) struct Session {
     ctx: Arc<SessionCtx>,
@@ -1521,64 +1536,67 @@ pub(crate) async fn start_session(
             .name(format!("sigil-speech-{pipeline_id}"))
             .spawn(move || {
                 let _done = DoneGuard(done_tx);
-                let segmenter = match segmenter_factory(&vad) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(format!("speech detection (Silero VAD) failed to load: {e}")));
+                // A panic ends this thread alone: it becomes the session's capture error.
+                run_session_thread(&ctx, codes::CAPTURE_ERROR, "speech capture", || {
+                    let segmenter = match segmenter_factory(&vad) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let _ = ready_tx.send(Err(format!("speech detection (Silero VAD) failed to load: {e}")));
+                            return;
+                        }
+                    };
+                    let turn = if smart_turn {
+                        match turn_factory() {
+                            Ok(t) => Some(t),
+                            Err(e) => {
+                                ctx.status(
+                                    None,
+                                    codes::NOT_INSTALLED,
+                                    format!("Smart Turn is unavailable ({e}); turn ends are not detected"),
+                                    StatusLevel::Warning,
+                                    StatusExtra {
+                                        model_id: Some(smart_turn::MODEL_ID.to_string()),
+                                        ..StatusExtra::default()
+                                    },
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    // P6-L A/B (default off): a missing model leaves the gate off with a warning.
+                    let music = if music_gate_on {
+                        match music_gate::MusicGate::load() {
+                            Ok(gate) => Some(Box::new(gate) as Box<dyn MusicDetector>),
+                            Err(e) => {
+                                ctx.status(
+                                    None,
+                                    codes::NOT_INSTALLED,
+                                    format!("The music filter is unavailable ({e}); music is transcribed as speech"),
+                                    StatusLevel::Warning,
+                                    StatusExtra {
+                                        model_id: Some(music_gate::MODEL_ID.to_string()),
+                                        ..StatusExtra::default()
+                                    },
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    if ready_tx.send(Ok(())).is_err() {
                         return;
                     }
-                };
-                let turn = if smart_turn {
-                    match turn_factory() {
-                        Ok(t) => Some(t),
-                        Err(e) => {
-                            ctx.status(
-                                None,
-                                codes::NOT_INSTALLED,
-                                format!("Smart Turn is unavailable ({e}); turn ends are not detected"),
-                                StatusLevel::Warning,
-                                StatusExtra {
-                                    model_id: Some(smart_turn::MODEL_ID.to_string()),
-                                    ..StatusExtra::default()
-                                },
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-                // P6-L A/B (default off): a missing model leaves the gate off with a warning.
-                let music = if music_gate_on {
-                    match music_gate::MusicGate::load() {
-                        Ok(gate) => Some(Box::new(gate) as Box<dyn MusicDetector>),
-                        Err(e) => {
-                            ctx.status(
-                                None,
-                                codes::NOT_INSTALLED,
-                                format!("The music filter is unavailable ({e}); music is transcribed as speech"),
-                                StatusLevel::Warning,
-                                StatusExtra {
-                                    model_id: Some(music_gate::MODEL_ID.to_string()),
-                                    ..StatusExtra::default()
-                                },
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-                if ready_tx.send(Ok(())).is_err() {
-                    return;
-                }
-                // The source arrives once the device is attached (the sender drops on failure).
-                let Ok(source) = source_rx.recv() else { return };
-                let start_qpc_ns = capture_clock.then(hub::now_qpc_ns);
-                let front = FrontEnd::new(Arc::clone(&ctx), segmenter, turn, dispatch, start_qpc_ns, speaking)
-                    .with_music_gate(music);
-                let source = run_capture(front, source, &stop);
-                source.close();
+                    // The source arrives once the device is attached (the sender drops on failure).
+                    let Ok(source) = source_rx.recv() else { return };
+                    let start_qpc_ns = capture_clock.then(hub::now_qpc_ns);
+                    let front = FrontEnd::new(Arc::clone(&ctx), segmenter, turn, dispatch, start_qpc_ns, speaking)
+                        .with_music_gate(music);
+                    let source = run_capture(front, source, &stop);
+                    source.close();
+                });
             })
     };
     let capture = match capture {
@@ -2542,6 +2560,8 @@ mod tests {
     enum Item {
         Audio(Vec<f32>),
         Gap { restarted: bool, muted: bool },
+        /// The capture thread panics when it reads this.
+        Panic,
     }
 
     #[derive(Default)]
@@ -2590,6 +2610,7 @@ mod tests {
                         end_qpc_ns: None,
                     }
                 }
+                Some(Item::Panic) => panic!("scripted capture panic"),
                 None => SourceRead::default(),
             }
         }
@@ -2668,6 +2689,8 @@ mod tests {
         languages: Vec<String>,
         /// `begin_stream` fails with this.
         refuse_begin: Option<AsrErrorKind>,
+        /// `transcribe` and `push_stream` panic.
+        panic: bool,
         /// `transcribe` gives the utterance up for its deadline (a rate limit).
         give_up: bool,
         /// Audio length and language of every `transcribe`.
@@ -2720,6 +2743,9 @@ mod tests {
         }
 
         fn transcribe(&mut self, audio: &[f32], options: &DecodeOptions) -> Result<AsrResult, AsrError> {
+            if self.b.panic {
+                panic!("scripted engine panic");
+            }
             let first = self.b.calls.lock().unwrap().is_empty();
             self.b.calls.lock().unwrap().push((audio.len(), options.language.clone()));
             self.b
@@ -2773,6 +2799,9 @@ mod tests {
         }
 
         fn push_stream(&mut self, audio: &[f32]) -> Result<Option<Hypothesis>, AsrError> {
+            if self.b.panic {
+                panic!("scripted engine panic");
+            }
             let Some(total) = self.stream.as_mut() else {
                 return Err(AsrError::invalid_input("no stream"));
             };
@@ -3299,6 +3328,125 @@ mod tests {
             .unwrap();
         assert!(events[err_at + 1..].iter().all(|e| e.epoch() != Some(started.epoch)));
         assert!(!h.stop("mic").await, "nothing left to stop");
+    }
+
+    /// A panic on a speech thread ends only that thread. Without a guard the session would stay
+    /// "listening" and hear nothing (the app shows it connected); it must end with an error the
+    /// app's restart path handles (`engine_error` / `capture_error`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_in_the_engine_worker_ends_the_session_with_an_engine_error() {
+        let h = Harness::new();
+        let b = Behavior {
+            panic: true,
+            ..Behavior::default()
+        };
+        let started = h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", b)]))).await;
+        h.script.feed(&utterance(640));
+        let events = h
+            .rec
+            .wait_for("the error", |e| statuses(e).iter().any(|s| s.state == SpeechState::Error));
+        let err = statuses(&events).into_iter().find(|s| s.state == SpeechState::Error).unwrap();
+        assert_eq!((err.code.as_str(), err.level, err.epoch), (codes::ENGINE_ERROR, StatusLevel::Error, started.epoch));
+        assert!(err.detail.contains("scripted engine panic"), "{}", err.detail);
+        wait_until("the device release", || h.script.closed.load(Ordering::SeqCst));
+        assert!(h.registry.statuses().is_empty(), "the dead session is gone, not listening");
+        assert!(!h.stop("mic").await, "nothing left to stop");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_in_the_stream_worker_ends_the_session_with_an_engine_error() {
+        let h = Harness::new();
+        let s = Behavior {
+            streaming: true,
+            panic: true,
+            ..Behavior::default()
+        };
+        h.start(streaming_config("stream", None), h.deps(engines(vec![("stream", s)])))
+            .await;
+        h.script.feed(&utterance(640));
+        let events = h
+            .rec
+            .wait_for("the error", |e| statuses(e).iter().any(|s| s.state == SpeechState::Error));
+        let err = statuses(&events).into_iter().find(|s| s.state == SpeechState::Error).unwrap();
+        assert_eq!(err.code, codes::ENGINE_ERROR);
+        assert!(err.detail.contains("scripted engine panic"), "{}", err.detail);
+        wait_until("the session to end", || h.registry.statuses().is_empty());
+        assert!(!h.stop("mic").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_in_the_capture_thread_ends_the_session_with_a_capture_error() {
+        let h = Harness::new();
+        let started = h
+            .start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.items.lock().unwrap().push_back(Item::Panic);
+        let events = h
+            .rec
+            .wait_for("the error", |e| statuses(e).iter().any(|s| s.state == SpeechState::Error));
+        let err = statuses(&events).into_iter().find(|s| s.state == SpeechState::Error).unwrap();
+        assert_eq!((err.code.as_str(), err.epoch), (codes::CAPTURE_ERROR, started.epoch));
+        assert!(err.detail.contains("scripted capture panic"), "{}", err.detail);
+        wait_until("the session to end", || h.registry.statuses().is_empty());
+        assert!(!h.stop("mic").await);
+    }
+
+    /// The second pass runs on its own thread (`TwoPass`); its panic, through the real queue, must end
+    /// the session too: otherwise every segment would be kept as a first pass for good, with the
+    /// app showing a healthy session.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_in_the_two_pass_worker_ends_the_session_with_an_engine_error() {
+        let h = Harness::new();
+        let s = Behavior {
+            streaming: true,
+            ..Behavior::default()
+        };
+        let f = Behavior {
+            panic: true,
+            ..Behavior::default()
+        };
+        let mut deps = h.deps(engines(vec![("stream", s), ("final", f)]));
+        deps.second_pass = Box::new(|primary, fallback, config, on_outcome| {
+            TwoPass::spawn(primary, fallback, config, on_outcome).map(|p| Box::new(p) as Box<dyn SecondPass>)
+        });
+        let started = h.start(streaming_config("stream", Some("final")), deps).await;
+        h.script.feed(&utterance(640));
+        let events = h
+            .rec
+            .wait_for("the error", |e| statuses(e).iter().any(|s| s.state == SpeechState::Error));
+        let err = statuses(&events).into_iter().find(|s| s.state == SpeechState::Error).unwrap();
+        assert_eq!((err.code.as_str(), err.level, err.epoch), (codes::ENGINE_ERROR, StatusLevel::Error, started.epoch));
+        assert!(
+            err.detail.contains("second-pass") && err.detail.contains("scripted engine panic"),
+            "{}",
+            err.detail
+        );
+        wait_until("the device release", || h.script.closed.load(Ordering::SeqCst));
+        assert!(h.registry.statuses().is_empty(), "the dead session is gone, not listening");
+        assert!(!h.stop("mic").await, "nothing left to stop");
+    }
+
+    /// A panic of the capture thread while it loads (before it reports ready) fails the start; the
+    /// panic's own error and the start failure are one error event of the epoch, and no session or
+    /// device is left behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_while_the_capture_thread_loads_fails_the_start_with_one_error() {
+        let h = Harness::new();
+        let mut deps = h.deps(engines(vec![("fake-final", Behavior::default())]));
+        deps.segmenter = Box::new(|_| panic!("scripted segmenter panic"));
+        let failed = start_session(&h.registry, finals_config("fake-final"), deps, false).await;
+        assert!(failed.is_err(), "the start must fail");
+        let events = h.rec.all();
+        let errors: Vec<SpeechStatus> = statuses(&events).into_iter().filter(|s| s.state == SpeechState::Error).collect();
+        assert_eq!(errors.len(), 1, "one error for this start: {errors:?}");
+        assert!(
+            errors[0].code == codes::CAPTURE_ERROR || errors[0].code == codes::ENGINE_ERROR,
+            "{}",
+            errors[0].code
+        );
+        assert!(h.registry.statuses().is_empty(), "no session was left behind");
+        assert!(!h.script.attached.load(Ordering::SeqCst), "the device was never opened");
+        assert!(!h.stop("mic").await, "nothing to stop");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

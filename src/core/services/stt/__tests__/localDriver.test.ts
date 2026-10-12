@@ -54,6 +54,8 @@ import {
   buildLocalPipelineConfig,
   buildLocalRouteRequest,
   consentTexts,
+  DEVICE_RETRY_MIN_GAP_MS,
+  DEVICE_RETRY_SETTLE_MS,
   HOLD_MARGIN_MS,
   LOCAL_PIPELINE_ID,
   localSpeechState,
@@ -63,6 +65,7 @@ import {
   RESTART_DELAYS_MS,
   restartCanFix,
   SegmentPublisher,
+  SLOW_RESTART_MS,
   speechStatusLine,
   STABLE_RUN_MS,
   STALL_MS,
@@ -1127,7 +1130,7 @@ describe("STT_LocalService", () => {
     expect(h.receiver.onFinal).not.toHaveBeenCalled();
     h.emit("speech:status", { pipelineId: "mic", epoch: first, state: "error", code: "capture_error", detail: "device lost", progress: null, level: "error", modelId: null, engine: null, device: null });
     expect(h.receiver.onFinal).toHaveBeenCalledWith("Held words.", expect.objectContaining({ segmentId: `${MIC}:${first}:3` }));
-    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_restarting", { level: "warning" });
+    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_restarting", { level: "warning", retrying: true });
     expect(h.receiver.onStop).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
     expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2);
@@ -1150,20 +1153,40 @@ describe("STT_LocalService", () => {
     resolveStart({ pipelineId: "mic", epoch, plan: planFor({}, new Set(CATALOG.map((c) => c.id))) });
     await run;
     expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
-    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_restarting", { level: "warning" });
+    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_restarting", { level: "warning", retrying: true });
     await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
     expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2);
     await h.svc.stop();
   });
 
-  it("gives up after the restart budget, and never restarts a missing model", async () => {
+  it("keeps retrying at the slow pace once the fast ladder is used up, and never restarts a missing model", async () => {
     const h = harness();
     await h.svc.start(params());
-    for (let i = 0; i < MAX_RESTARTS; i++) h.startResults.push(new Error("engine_error: still broken"));
+    const starts = () => h.calls("plugin:speech|start_pipeline").length;
+    for (let i = 0; i < MAX_RESTARTS + 2; i++) h.startResults.push(new Error("engine_error: still broken"));
     h.emit("speech:status", { pipelineId: "mic", epoch: h.epoch, state: "error", code: "engine_error", detail: "boom", progress: null, level: "error", modelId: null, engine: null, device: null });
     for (const delay of RESTART_DELAYS_MS) await vi.advanceTimersByTimeAsync(delay);
-    expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(1 + MAX_RESTARTS);
-    expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_gave_up");
+    expect(starts()).toBe(1 + MAX_RESTARTS);
+    // No sticky error: the line says it is trying again, and the next attempt waits the slow pace.
+    expect(h.receiver.onStop).not.toHaveBeenCalled();
+    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_retrying", { level: "warning", retrying: true });
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS - 1);
+    expect(starts()).toBe(1 + MAX_RESTARTS);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(starts()).toBe(2 + MAX_RESTARTS);
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+    expect(starts()).toBe(3 + MAX_RESTARTS);
+    expect(h.receiver.onStop).not.toHaveBeenCalled();
+    // The fault passes: the next attempt starts a session again, and captions are back without a Start.
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+    expect(starts()).toBe(4 + MAX_RESTARTS);
+    expect(h.receiver.onStatus).toHaveBeenLastCalledWith("");
+    expect(h.receiver.onStop).not.toHaveBeenCalled();
+    h.emit("speech:partial", { pipelineId: "mic", epoch: h.epoch, segmentId: 9, revision: 0, text: "back", lang: "en" });
+    expect(h.receiver.onInterim).toHaveBeenLastCalledWith("back", expect.objectContaining({ segmentId: `${MIC}:${h.epoch}:9` }));
+    await h.svc.stop();
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(starts()).toBe(4 + MAX_RESTARTS);
 
     const g = harness();
     await g.svc.start(params());
@@ -1173,6 +1196,21 @@ describe("STT_LocalService", () => {
     expect(g.receiver.onStop).toHaveBeenCalledWith("stt.local_error_not_installed");
   });
 
+  it("stops at once when a slow retry meets an error a restart cannot fix", async () => {
+    const h = harness();
+    await h.svc.start(params());
+    for (let i = 0; i < MAX_RESTARTS; i++) h.startResults.push(new Error("engine_error: still broken"));
+    h.startResults.push(new Error(`not_installed: ${NEMOTRON}`));
+    h.emit("speech:status", { pipelineId: "mic", epoch: h.epoch, state: "error", code: "engine_error", detail: "boom", progress: null, level: "error", modelId: null, engine: null, device: null });
+    for (const delay of RESTART_DELAYS_MS) await vi.advanceTimersByTimeAsync(delay);
+    expect(h.receiver.onStop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+    expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2 + MAX_RESTARTS);
+    expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_not_installed");
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2 + MAX_RESTARTS);
+  });
+
   it("counts restarts that fail at start against the budget, even after a long session", async () => {
     const h = harness();
     await h.svc.start(params());
@@ -1180,9 +1218,14 @@ describe("STT_LocalService", () => {
     for (let i = 0; i < MAX_RESTARTS + 3; i++) h.startResults.push(new Error("engine_error: still broken"));
     h.emit("speech:status", { pipelineId: "mic", epoch: h.epoch, state: "error", code: "engine_error", detail: "runtime: device reset", progress: null, level: "error", modelId: null, engine: null, device: null });
     for (const delay of RESTART_DELAYS_MS) await vi.advanceTimersByTimeAsync(delay);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    // The long run before the failure gave the first failure of the streak a fresh budget; the failed starts since
+    // then never ran, so they keep counting: the next attempt is at the slow pace, not the first delay again.
     expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(1 + MAX_RESTARTS);
-    expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_gave_up");
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(1 + MAX_RESTARTS);
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+    expect(h.calls("plugin:speech|start_pipeline")).toHaveLength(2 + MAX_RESTARTS);
+    await h.svc.stop();
   });
 
   it("a session that ran STABLE_RUN_MS after a restart begins a new restart budget", async () => {
@@ -1233,6 +1276,182 @@ describe("STT_LocalService", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(r.calls("plugin:speech|start_pipeline")).toHaveLength(2);
     expect(r.receiver.onStop).toHaveBeenCalledWith("stt.local_error_start");
+  });
+
+  describe("a first start that fails", () => {
+    const failingStatus = (epoch: number, code: string, detail: string) =>
+      ({ pipelineId: "mic", epoch, state: "error", code, detail, progress: null, level: "error", modelId: null, engine: null, device: null });
+    const starts = (h: Harness) => h.calls("plugin:speech|start_pipeline").length;
+
+    it("is tried again on the restart ladder when a restart can fix it, and reports the start on the first success", async () => {
+      // Start on launch with the microphone held by another app: the single attach fails.
+      const h = harness({ automatic: true });
+      h.startResults.push(new Error("Could not open the audio device 'USB Mic'"));
+      await h.svc.start(params());
+      expect(starts(h)).toBe(1);
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      expect(h.receiver.onStart).not.toHaveBeenCalled();
+      expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_start_retry", { level: "warning", retrying: true });
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(starts(h)).toBe(2);
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      expect(h.receiver.onStatus).toHaveBeenLastCalledWith("");
+      expect(localSpeechState.plan).not.toBeNull();
+      // The retried session publishes like any other.
+      h.emit("speech:partial", { pipelineId: "mic", epoch: h.epoch, segmentId: 1, revision: 0, text: "hello", lang: "en" });
+      expect(h.receiver.onInterim).toHaveBeenLastCalledWith("hello", expect.objectContaining({ segmentId: `${MIC}:${h.epoch}:1` }));
+      await h.svc.stop();
+    });
+
+    it("says another app may hold the microphone when Rust reported a capture error", async () => {
+      const h = harness({ automatic: true });
+      h.startResults.push(async () => {
+        h.emit("speech:status", failingStatus(++epochCounter, "capture_error", "Could not open the audio device"));
+        throw new Error("Could not open the audio device");
+      });
+      await h.svc.start(params());
+      expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_start_retry_capture", { level: "warning", retrying: true });
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      await h.svc.stop();
+    });
+
+    it("keeps trying at the slow pace while nobody pressed Stop", async () => {
+      const h = harness({ automatic: true });
+      for (let i = 0; i < MAX_RESTARTS + 2; i++) h.startResults.push(new Error("Could not open the audio device"));
+      await h.svc.start(params());
+      for (const delay of RESTART_DELAYS_MS) await vi.advanceTimersByTimeAsync(delay);
+      expect(starts(h)).toBe(1 + MAX_RESTARTS);
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      expect(h.receiver.onStatus).toHaveBeenLastCalledWith("stt.local_status_retrying", { level: "warning", retrying: true });
+      await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+      expect(starts(h)).toBe(2 + MAX_RESTARTS);
+      // The microphone is released: the next attempt starts the session.
+      await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+      expect(starts(h)).toBe(3 + MAX_RESTARTS);
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      await h.svc.stop();
+    });
+
+    it("stops with the message when a restart cannot fix it", async () => {
+      for (const error of ["invalid_input: bad options", "unsupported: language xx", "no speech engine for this request (language xx)", "cancelled"]) {
+        const h = harness({ automatic: true });
+        h.startResults.push(new Error(error));
+        await h.svc.start(params());
+        expect(h.receiver.onStop, error).toHaveBeenCalledTimes(1);
+        expect(h.receiver.onStop.mock.calls[0][0]).toMatch(/^stt\.local_error_(start|no_engine)$/);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(starts(h), error).toBe(1);
+      }
+      const g = harness({ automatic: true });
+      g.startResults.push(new Error(`not_installed: ${NEMOTRON}`));
+      await g.svc.start(params());
+      expect(g.receiver.onStop).toHaveBeenCalledWith("stt.local_error_not_installed");
+      expect(starts(g)).toBe(1);
+    });
+
+    it("also retries a start the user pressed", async () => {
+      const h = harness();
+      h.startResults.push(new Error("Could not open the audio device"));
+      await h.svc.start(params());
+      expect(h.receiver.onStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+      await h.svc.stop();
+    });
+
+    it("stops with the reason when a later attempt meets an error a restart cannot fix", async () => {
+      const h = harness({ automatic: true });
+      h.startResults.push(new Error("Could not open the audio device"));
+      h.startResults.push(new Error("invalid_input: bad options"));
+      await h.svc.start(params());
+      await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+      expect(h.receiver.onStop).toHaveBeenCalledWith("stt.local_error_start");
+      expect(h.receiver.onStart).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(starts(h)).toBe(2);
+    });
+
+    it("a Stop while it waits ends it without another try", async () => {
+      const h = harness({ automatic: true });
+      h.startResults.push(new Error("Could not open the audio device"));
+      await h.svc.start(params());
+      await h.svc.stop();
+      expect(h.receiver.onStop).toHaveBeenCalledTimes(1);
+      expect(h.receiver.onStop.mock.calls[0][0]).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+      expect(starts(h)).toBe(1);
+      expect(h.receiver.onStart).not.toHaveBeenCalled();
+    });
+
+    describe("and a device comes or goes meanwhile", () => {
+      const change = { reason: "added", inputs: [], outputs: [], default_input: null, default_output: null };
+
+      it("tries again once the events settled, instead of waiting out the ladder", async () => {
+        // The named microphone is not listed yet at launch, or came back under a renumbered name.
+        const h = harness({ automatic: true });
+        for (let i = 0; i < 3; i++) h.startResults.push(new Error("Could not open the audio device"));
+        await h.svc.start(params());
+        await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+        await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[1]);
+        expect(starts(h)).toBe(3); // the next wait of the ladder is 5 s
+        // The microphone is plugged in: a burst of events raises one retry.
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(300);
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(DEVICE_RETRY_SETTLE_MS - 301);
+        expect(starts(h)).toBe(3);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(starts(h)).toBe(4);
+        expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+        expect(h.receiver.onStop).not.toHaveBeenCalled();
+        // The ladder's own timer went with it: nothing starts again 5 s later.
+        await vi.advanceTimersByTimeAsync(2 * SLOW_RESTART_MS);
+        expect(starts(h)).toBe(4);
+        await h.svc.stop();
+      });
+
+      it("starts no retry closer than the minimum gap after the last one a device event started", async () => {
+        const h = harness({ automatic: true });
+        for (let i = 0; i < 4; i++) h.startResults.push(new Error("Could not open the audio device"));
+        await h.svc.start(params());
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(DEVICE_RETRY_SETTLE_MS);
+        expect(starts(h)).toBe(2); // the device retry failed too: the ladder waits again
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(DEVICE_RETRY_SETTLE_MS);
+        expect(starts(h)).toBe(2); // a flapping hub does not start a retry storm
+        await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[1]);
+        expect(starts(h)).toBe(3); // the ladder goes on by itself
+        await vi.advanceTimersByTimeAsync(DEVICE_RETRY_MIN_GAP_MS);
+        expect(starts(h)).toBe(4); // the next attempt failed as well; the ladder now waits 10 s
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(DEVICE_RETRY_SETTLE_MS);
+        expect(starts(h)).toBe(5); // far enough from the last device retry: this one goes
+        expect(h.receiver.onStart).toHaveBeenCalledTimes(1);
+        await h.svc.stop();
+      });
+
+      it("does nothing while a session runs, and nothing after a Stop", async () => {
+        const h = harness({ automatic: true });
+        await h.svc.start(params());
+        h.emit("audio:devices_changed", change);
+        await vi.advanceTimersByTimeAsync(2 * DEVICE_RETRY_SETTLE_MS);
+        expect(starts(h)).toBe(1);
+
+        const w = harness({ automatic: true });
+        w.startResults.push(new Error("Could not open the audio device"));
+        await w.svc.start(params());
+        w.emit("audio:devices_changed", change);
+        await w.svc.stop();
+        await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+        expect(starts(w)).toBe(1);
+        await h.svc.stop();
+      });
+    });
   });
 
   it("resets the restart count shown in the panel for each new session", async () => {

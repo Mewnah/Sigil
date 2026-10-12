@@ -75,6 +75,10 @@ impl CaptureBackend for CpalBackend {
         let capture = spawn_capture_thread(handle, sink, errors, device.loopback)?;
         Ok(Box::new(capture))
     }
+
+    fn input_device_names(&self) -> Option<Vec<String>> {
+        super::device_resolve::input_device_names(&cpal::default_host())
+    }
 }
 
 /// A running cpal stream on its owner thread.

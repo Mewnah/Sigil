@@ -85,73 +85,13 @@ pub(super) fn is_default_device(name: &str) -> bool {
     t.is_empty() || t.eq_ignore_ascii_case("default")
 }
 
-/// `name` lower-cased and trimmed, without Windows' endpoint numbering (`N- ` at the start of the
-/// name or right after an opening parenthesis).
-pub(super) fn device_family(name: &str) -> String {
-    let lower = name.trim().to_lowercase();
-    let mut out = String::with_capacity(lower.len());
-    let mut rest = lower.as_str();
-    let mut at_start = true;
-    while let Some(c) = rest.chars().next() {
-        if at_start {
-            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-            if digits > 0 && rest[digits..].starts_with("- ") {
-                rest = &rest[digits + 2..];
-                at_start = false;
-                continue;
-            }
-        }
-        out.push(c);
-        rest = &rest[c.len_utf8()..];
-        at_start = c == '(';
-    }
-    out
-}
-
-/// Index of the device `saved` names among `names`: the exact name, else the only device of the
-/// same family (`renamed = true`). `None` when it is absent or several devices share the family.
-pub(super) fn match_saved_device(saved: &str, names: &[String]) -> Option<(usize, bool)> {
-    let saved = saved.trim();
-    if let Some(i) = names.iter().position(|n| n.trim() == saved) {
-        return Some((i, false));
-    }
-    let family = device_family(saved);
-    let mut same = names
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| device_family(n) == family);
-    match (same.next(), same.next()) {
-        (Some((i, _)), None) => Some((i, true)),
-        _ => None,
-    }
-}
-
-/// Index of the device `saved` names while a run follows it after it disappeared: the exact name,
-/// else the one device of its family that was not present when it was lost (`present_at_loss`: the
-/// family's names then; `None`: this lookup takes that snapshot, so only the exact name counts). A
-/// device that was there all along never stands in for the lost one.
-pub(super) fn match_runtime_device(saved: &str, names: &[String], present_at_loss: Option<&[String]>) -> Option<(usize, bool)> {
-    let saved = saved.trim();
-    if let Some(i) = names.iter().position(|n| n.trim() == saved) {
-        return Some((i, false));
-    }
-    let present = present_at_loss?;
-    let family = device_family(saved);
-    let mut same = names
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| device_family(n) == family && !present.iter().any(|p| p.trim() == n.trim()));
-    match (same.next(), same.next()) {
-        (Some((i, _)), None) => Some((i, true)),
-        _ => None,
-    }
-}
-
-/// The names among `names` of `saved`'s family (the loss snapshot of [`match_runtime_device`]).
-pub(super) fn family_members(saved: &str, names: &[String]) -> Vec<String> {
-    let family = device_family(saved);
-    names.iter().filter(|n| device_family(n) == family).map(|n| n.trim().to_string()).collect()
-}
+// Both family rules are shared with the capture hub (`audio::device_resolve`), which reopens a lost
+// microphone by the runtime rule too, so a second identical microphone that was there all along
+// never stands in for it. `match_runtime_device` gives the index of the device `saved` names while a
+// run follows it after it disappeared: the exact name, else the one device of its family that was
+// not present when it was lost (`present_at_loss`: the family's names then; `None`: this lookup
+// takes that snapshot, so only the exact name counts).
+pub(super) use crate::services::audio::device_resolve::{family_members, match_runtime_device, match_saved_device};
 
 /// How a saved name is matched (see the module docs).
 #[derive(Clone, Copy, Debug)]
@@ -1191,6 +1131,7 @@ impl OutputPort {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    use crate::services::audio::device_resolve::device_family;
 
     #[test]
     fn device_family_drops_windows_endpoint_numbering() {

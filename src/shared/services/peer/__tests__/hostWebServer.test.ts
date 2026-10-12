@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 vi.mock("react-toastify", () => ({
-  toast: Object.assign(vi.fn(), { error: vi.fn(), warn: vi.fn(), success: vi.fn() }),
+  toast: Object.assign(vi.fn(), { error: vi.fn(), warn: vi.fn(), success: vi.fn(), dismiss: vi.fn() }),
 }));
 vi.mock("i18next", () => ({ default: { t: (key: string) => key } }));
 
@@ -205,6 +205,58 @@ describe("host LAN access sync", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     listeners.get("web:origin_rejected")!({ payload: { route: "peer", origin: "https://evil.example", remote: "127.0.0.1", reason: "foreign_origin" } });
     expect(vi.mocked(toast.warn)).toHaveBeenLastCalledWith("toasts.web_origin_rejected", expect.anything());
+  });
+
+  it("says the server keeps retrying, and takes the toast down when it is back", async () => {
+    settings.lanAccess.token = TOKEN;
+    const svc = new Service_PubSub();
+    await svc.attachHostWebServer(settings);
+    const dismiss = vi.mocked(toast.dismiss);
+    dismiss.mockClear();
+    const push = listeners.get("web:server_status")!;
+
+    push({ payload: { ...status(), state: "failed", error: "port in use" } });
+    expect(vi.mocked(toast.error)).toHaveBeenLastCalledWith("toasts.web_server_failed_retrying", expect.objectContaining({ toastId: "web-server-status" }));
+    // A repeat of the same failure (every quiet retry) does not stack another toast.
+    const shown = vi.mocked(toast.error).mock.calls.length;
+    push({ payload: { ...status(), state: "failed", error: "port in use" } });
+    expect(vi.mocked(toast.error).mock.calls).toHaveLength(shown);
+
+    push({ payload: status() });
+    expect(dismiss).toHaveBeenCalledWith("web-server-status");
+    expect(svc.webServer.status?.state).toBe("listening");
+
+    // Listening again with nothing shown dismisses nothing; a stopped server has its own wording.
+    dismiss.mockClear();
+    push({ payload: status() });
+    expect(dismiss).not.toHaveBeenCalled();
+    push({ payload: { ...status(), state: "stopped", error: "server ended" } });
+    expect(vi.mocked(toast.error)).toHaveBeenLastCalledWith("toasts.web_server_stopped_restarting", expect.objectContaining({ toastId: "web-server-status" }));
+  });
+
+  it("takes the toast down when the server comes back through 'starting'", async () => {
+    settings.lanAccess.token = TOKEN;
+    const svc = new Service_PubSub();
+    await svc.attachHostWebServer(settings);
+    const dismiss = vi.mocked(toast.dismiss);
+    const push = listeners.get("web:server_status")!;
+    const starting = { ...status(), state: "starting", error: null, lan: { ...status().lan, boundMode: null, boundAddress: null } };
+
+    // The supervisor's real sequences: stopped → starting → listening, and failed → starting → listening.
+    for (const down of [{ state: "stopped", error: "server ended" }, { state: "failed", error: "port in use" }]) {
+      dismiss.mockClear();
+      push({ payload: { ...status(), ...down } });
+      push({ payload: starting });
+      expect(dismiss).not.toHaveBeenCalled();
+      push({ payload: status() });
+      expect(dismiss).toHaveBeenCalledWith("web-server-status");
+    }
+
+    // Once taken down, a later bare listening dismisses nothing.
+    dismiss.mockClear();
+    push({ payload: starting });
+    push({ payload: status() });
+    expect(dismiss).not.toHaveBeenCalled();
   });
 });
 

@@ -1,10 +1,12 @@
+import type { SttStopOptions } from "./types";
+
 /** Shared start/stop bookkeeping for Rust-backed STT engines (Whisper, Vosk, Moonshine, local HTTP STT). */
 export class SttStartLifecycle {
     starting = false;
     startAborted = false;
     private stopNotified = false;
 
-    constructor(private readonly onStop: (error?: string) => void) {}
+    constructor(private readonly onStop: (error?: string, options?: SttStopOptions) => void) {}
 
     resetForStart(): void {
         this.startAborted = false;
@@ -28,10 +30,11 @@ export class SttStartLifecycle {
         return this.startAborted;
     }
 
-    notifyStopOnce(error?: string): void {
+    notifyStopOnce(error?: string, options?: SttStopOptions): void {
         if (this.stopNotified) return;
         this.stopNotified = true;
-        this.onStop(error);
+        if (options) this.onStop(error, options);
+        else this.onStop(error);
     }
 
     /** When true, caller should tear down and return (optionally notifying stop). */

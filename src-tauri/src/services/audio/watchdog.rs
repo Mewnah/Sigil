@@ -16,6 +16,12 @@
 //!   `audio:stream_recovered` (same epoch) follows once audio actually flows again (at once for
 //!   loopback, which is silent while nothing plays). A source whose last consumer detaches during
 //!   an outage gets `audio:stream_closed` instead, so no outage is left open.
+//! - **Renumbered microphones:** a reopen asks for the lost device's own name first. A device of the
+//!   same family (Windows renumbers a USB endpoint that moves to another port) stands in only if it
+//!   was **not** listed when the stream was lost, so a second identical microphone that was there
+//!   all along (two USB headsets, a headset beside a webcam) never takes over behind the consumer's
+//!   back; the stream keeps retrying the saved name instead ([`Supervisor::resolve_reopen`]). A
+//!   start (`attach`) keeps the more generous rule of `device_resolve::match_saved_device`.
 //! - **Stall clock:** measured from when the (re)open *completed* (opens may take seconds), with
 //!   [`HubConfig::first_data_timeout`] of grace until the first callback, and fed by the local
 //!   time of each callback (never the driver's capture stamp).
@@ -32,6 +38,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use super::consumer::ConsumerShared;
+use super::device_resolve::{family_members, match_runtime_device};
 use super::hub::{
     now_qpc_ns, ring_pair, CaptureBackend, CaptureStream, ConsumerOptions, ErrorSink, EventSlot, FanOutCmd, HubConfig,
     HubStatus, MuteGates, MuteGroup, ResolvedDevice, RingReader, Slot, SourceStatus, StreamEvent, StreamFormat,
@@ -157,6 +164,11 @@ struct Stream {
     /// Failures in a row with no audio in between (drives the backoff of chronic stalls).
     strikes: u32,
     format: Option<StreamFormat>,
+    /// A microphone's outage: the names of its family that were listed when it was lost (the loss
+    /// snapshot of [`match_runtime_device`]). Kept until audio flows again, so the reopen takes a
+    /// renumbered endpoint only if it was not there at the loss. `None`: no outage, or a backend
+    /// that cannot list devices.
+    family_at_loss: Option<Vec<String>>,
 }
 
 impl Stream {
@@ -170,6 +182,7 @@ impl Stream {
             failures: 0,
             strikes: 0,
             format: None,
+            family_at_loss: None,
         }
     }
 
@@ -491,13 +504,10 @@ impl Supervisor {
     /// Open (or reopen) stream `key` with fresh rings for all of its consumers. On error the
     /// stream's state is left as it was.
     fn open_stream(&mut self, key: &str, resolved: Option<ResolvedDevice>) -> Result<(), String> {
-        let (name, loopback, ids) = {
-            let s = self.streams.get(key).ok_or("unknown stream")?;
-            (s.name.clone(), s.loopback, s.consumers.clone())
-        };
+        let ids = self.streams.get(key).ok_or("unknown stream")?.consumers.clone();
         let device = match resolved {
             Some(device) => device,
-            None => self.backend.resolve(&SourceSpec::physical(&name, loopback))?,
+            None => self.resolve_reopen(key)?,
         };
         let format = device.format;
         if format.sample_rate == 0 || format.channels == 0 {
@@ -544,6 +554,39 @@ impl Supervisor {
             }
         }
         Ok(())
+    }
+
+    /// Resolve the device of stream `key` for a reopen. A microphone listed under its own name
+    /// reopens as before. One that is not listed is looked up by [`match_runtime_device`]: a
+    /// renumbered endpoint of its family stands in only if it was not listed when the stream was
+    /// lost (`family_at_loss`). A family member that was there all along never does: with two
+    /// identical USB microphones, unplugging the one a consumer chose (speech-to-text, the voice
+    /// changer) must not silently move it to the other. Such a stream keeps retrying the saved name.
+    fn resolve_reopen(&self, key: &str) -> Result<ResolvedDevice, String> {
+        let stream = self.streams.get(key).ok_or("unknown stream")?;
+        let spec = SourceSpec::physical(&stream.name, stream.loopback);
+        let SourceSpec::Input(saved) = &spec else {
+            return self.backend.resolve(&spec);
+        };
+        let Some(names) = self.backend.input_device_names() else {
+            return self.backend.resolve(&spec);
+        };
+        let not_found = || format!("Input device '{}' not found", saved.trim());
+        let (i, renamed) = match_runtime_device(saved, &names, stream.family_at_loss.as_deref()).ok_or_else(not_found)?;
+        let wanted = names[i].trim().to_string();
+        let device = self.backend.resolve(&SourceSpec::Input(wanted.clone()))?;
+        if device.name.trim() != wanted {
+            // The listed device vanished before it was opened: the backend's start rule picked another.
+            return Err(not_found());
+        }
+        if renamed {
+            tracing::info!(
+                target: LOG,
+                "stream {key}: input device '{}' is now listed as '{wanted}' (renumbered endpoint, not listed at the loss)",
+                saved.trim()
+            );
+        }
+        Ok(device)
     }
 
     /// Add consumer `id` to running stream `key` (a new ring through the command ring). When the
@@ -594,6 +637,13 @@ impl Supervisor {
             _ => false,
         };
         stream.failures += 1;
+        // The start of a microphone's outage: which devices of its family are listed now. Only a family
+        // member that appears after this can stand in for it while it is reopened (`resolve_reopen`).
+        if !stream.loopback && stream.family_at_loss.is_none() {
+            if let Some(names) = self.backend.input_device_names() {
+                stream.family_at_loss = Some(family_members(&stream.name, &names));
+            }
+        }
         // A stream that failed again without delivering any audio keeps backing off.
         stream.strikes = if delivered { 1 } else { stream.strikes.saturating_add(1) };
         let attempts = stream.strikes - 1;
@@ -780,6 +830,8 @@ impl Supervisor {
                     }
                     if live.health.frames() > 0 {
                         stream.strikes = 0;
+                        // The outage (if any) is over: the next loss takes a new snapshot.
+                        stream.family_at_loss = None;
                     }
                     // Loopback is silent while nothing plays: open counts as working.
                     if stream.loopback || live.health.frames() > 0 {

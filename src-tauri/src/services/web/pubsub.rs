@@ -13,11 +13,18 @@
 //!   token, legacy off, this PC only: 4401 / 4403).
 //! - Binary frames are refused (close 1003): the old unauthenticated "f32 PCM into Whisper" path is
 //!   gone.
+//! - An id belongs to one socket: a second connection with the same id takes it over and the older
+//!   socket is closed with 4409 ([`CLOSE_REPLACED`]). It used to stay open but unlisted, so it
+//!   looked connected and never received another broadcast. Ids are per socket: a client that
+//!   reconnects on close must send a fresh random id each time (Sigil's own pages do), and 4409
+//!   means "pick another id". Two clients that share a fixed id and both reconnect on close would
+//!   evict each other in a loop, so an id that was just taken over (within [`TAKEOVER_COOLDOWN`])
+//!   is not taken over again: the newcomer is closed with 4409 and the current holder stays.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -48,6 +55,26 @@ pub const CLOSE_POLICY_VIOLATION: u16 = 1008;
 /// Close reason sent with [`CLOSE_POLICY_VIOLATION`].
 pub const REVOKED_REASON: &str = "the Origin check was turned on";
 
+/// WebSocket close code (4xxx: application use) for a socket whose id another connection took
+/// over. A page that reconnects on close then comes back with a fresh id.
+pub const CLOSE_REPLACED: u16 = 4409;
+
+/// Close reason sent with [`CLOSE_REPLACED`].
+pub const REPLACED_REASON: &str = "another connection took this id";
+
+/// Close reason sent with [`CLOSE_REPLACED`] to a newcomer that is refused because its id was
+/// taken over a moment ago (see [`TAKEOVER_COOLDOWN`]).
+pub const ID_IN_USE_REASON: &str = "this id is in use by another connection; use a unique id per socket";
+
+/// An id that one connection just took over from another is not taken over again this soon: clients
+/// that fight over an id and reconnect on every close would otherwise swap it back and forth as
+/// fast as they reconnect, and both would lose events. A legitimate reconnect (a page that
+/// reloaded, a half-open socket) is a single takeover and is never affected.
+#[cfg(not(test))]
+const TAKEOVER_COOLDOWN: Duration = Duration::from_secs(10);
+#[cfg(test)]
+const TAKEOVER_COOLDOWN: Duration = Duration::from_millis(1000);
+
 /// Longest accepted `?id=` (clients use random ids of ~20–60 characters).
 pub const MAX_PEER_ID_LEN: usize = 256;
 
@@ -72,6 +99,8 @@ type PeerTx = mpsc::UnboundedSender<Result<Message, warp::Error>>;
 struct PeerEntry {
     conn: u64,
     tx: PeerTx,
+    /// When this connection took the id over from another one (not set for a first connection).
+    took_over_at: Option<Instant>,
 }
 
 type Peers = Arc<RwLock<HashMap<String, PeerEntry>>>;
@@ -169,13 +198,26 @@ async fn peer_handler(ws: WebSocket, peers: Peers, output: mpsc::Sender<String>,
     let (tx, rx) = mpsc::unbounded_channel();
     tauri::async_runtime::spawn(UnboundedReceiverStream::new(rx).forward(peer_tx));
 
-    // A reconnect with the same id replaces the old entry; `conn` keeps the old socket's cleanup
-    // from removing the new one.
+    // A connection with the same id replaces the old entry (`conn` keeps the old socket's cleanup
+    // from removing the new one). Host broadcasts go to the entries only, so the old socket would
+    // stay open and never hear anything again: close it, and its page reconnects.
     let conn = NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed);
-    peers
-        .write()
-        .await
-        .insert(id.clone(), PeerEntry { conn, tx: tx.clone() });
+    {
+        let mut map = peers.write().await;
+        let current = map.get(&id);
+        if current.is_some_and(|holder| holder.took_over_at.is_some_and(|at| at.elapsed() < TAKEOVER_COOLDOWN)) {
+            // Two clients are fighting over this id: the holder keeps it, the newcomer is told why.
+            tracing::debug!(target: "sigil::web", "[pubsub] id {id:?} was just taken over; refusing another connection with it");
+            let _ = tx.send(Ok(Message::close_with(CLOSE_REPLACED, ID_IN_USE_REASON)));
+            return;
+        }
+        let took_over_at = current.is_some().then(Instant::now);
+        let replaced = map.insert(id.clone(), PeerEntry { conn, tx: tx.clone(), took_over_at });
+        if let Some(old) = replaced {
+            tracing::debug!(target: "sigil::web", "[pubsub] id {id:?} taken over by a new connection; closing the old one");
+            let _ = old.tx.send(Ok(Message::close_with(CLOSE_REPLACED, REPLACED_REASON)));
+        }
+    }
 
     loop {
         let result = tokio::select! {
@@ -470,6 +512,110 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(msg.to_str().unwrap(), "still-here");
+    }
+
+    #[tokio::test]
+    async fn a_second_connection_with_the_same_id_closes_the_first() {
+        let h = harness();
+        // The first page stays connected (warp's test client cannot read close frames: a raw one can).
+        let (first, mut second) = tokio::join!(
+            raw_connect(h.route.clone(), "/pubsub?id=same", Some("http://localhost:3030"), WAIT),
+            async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                warp::test::ws()
+                    .path("/pubsub?id=same")
+                    .header("origin", "http://localhost:3030")
+                    .handshake(h.route.clone())
+                    .await
+                    .unwrap()
+            }
+        );
+        // It does not stay open and deaf: it is told, with a code a page can reconnect on.
+        assert_eq!(
+            first,
+            RawOutcome::Closed {
+                texts: vec![],
+                code: CLOSE_REPLACED,
+                reason: REPLACED_REASON.into()
+            }
+        );
+        // The old socket's cleanup leaves the new entry alone.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        h.to_peers.send("for-the-new-one".to_string()).await.unwrap();
+        let msg = tokio::time::timeout(WAIT, second.recv()).await.unwrap().unwrap();
+        assert_eq!(msg.to_str().unwrap(), "for-the-new-one");
+    }
+
+    #[tokio::test]
+    async fn clients_that_fight_over_an_id_settle_instead_of_evicting_each_other() {
+        let h = harness();
+        let origin = Some("http://localhost:3030");
+        // The first client holds the id until the second takes it over.
+        let first = tokio::spawn(raw_connect(h.route.clone(), "/pubsub?id=shared", origin, WAIT));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let mut second = warp::test::ws()
+            .path("/pubsub?id=shared")
+            .header("origin", "http://localhost:3030")
+            .handshake(h.route.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            first.await.unwrap(),
+            RawOutcome::Closed {
+                texts: vec![],
+                code: CLOSE_REPLACED,
+                reason: REPLACED_REASON.into()
+            }
+        );
+
+        // The evicted one reconnects on close (as a client that shares a fixed id would): this time
+        // it is the newcomer that is told no, and the holder keeps hearing the host.
+        let retry = raw_connect(h.route.clone(), "/pubsub?id=shared", origin, WAIT).await;
+        assert_eq!(
+            retry,
+            RawOutcome::Closed {
+                texts: vec![],
+                code: CLOSE_REPLACED,
+                reason: ID_IN_USE_REASON.into()
+            }
+        );
+        h.to_peers.send("for-the-holder".to_string()).await.unwrap();
+        let msg = tokio::time::timeout(WAIT, second.recv()).await.unwrap().unwrap();
+        assert_eq!(msg.to_str().unwrap(), "for-the-holder");
+
+        // Once the cooldown is over a takeover works again (a page that reloaded with its id).
+        tokio::time::sleep(TAKEOVER_COOLDOWN + Duration::from_millis(100)).await;
+        let mut third = warp::test::ws()
+            .path("/pubsub?id=shared")
+            .header("origin", "http://localhost:3030")
+            .handshake(h.route.clone())
+            .await
+            .unwrap();
+        let closed = tokio::time::timeout(WAIT, second.recv()).await.unwrap();
+        assert!(closed.is_err() || closed.unwrap().is_close(), "the old holder is closed");
+        h.to_peers.send("for-the-third".to_string()).await.unwrap();
+        let msg = tokio::time::timeout(WAIT, third.recv()).await.unwrap().unwrap();
+        assert_eq!(msg.to_str().unwrap(), "for-the-third");
+    }
+
+    #[tokio::test]
+    async fn a_first_connection_is_never_refused_for_its_id() {
+        let h = harness();
+        // Different ids never interact, and a lone reconnect after the old socket went away is a
+        // plain registration.
+        for id in ["a", "b", "a"] {
+            let mut socket = warp::test::ws()
+                .path(&format!("/pubsub?id={id}"))
+                .header("origin", "http://localhost:3030")
+                .handshake(h.route.clone())
+                .await
+                .unwrap();
+            h.to_peers.send(format!("for-{id}")).await.unwrap();
+            let msg = tokio::time::timeout(WAIT, socket.recv()).await.unwrap().unwrap();
+            assert_eq!(msg.to_str().unwrap(), format!("for-{id}"));
+            drop(socket);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     #[tokio::test]

@@ -630,6 +630,13 @@ pub trait CaptureBackend: Send + Sync + 'static {
     /// Start capturing `device` into `sink`. The backend calls `sink.push` from its audio callback
     /// and `errors.report` once if the stream dies.
     fn open(&self, device: ResolvedDevice, sink: StreamSink, errors: ErrorSink) -> Result<Box<dyn CaptureStream>, String>;
+    /// The names of the input devices listed now (`None`: this backend cannot list them). The
+    /// supervisor snapshots the family of a microphone when it is lost and, while it reopens it,
+    /// accepts a renumbered endpoint only if it was not listed at that moment (see
+    /// `watchdog::Supervisor::resolve_reopen`). Without a listing it reopens by `resolve` alone.
+    fn input_device_names(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// A running backend stream.

@@ -1,6 +1,7 @@
 import {
   ISTTReceiver,
   ISTTService,
+  SttStopOptions,
   SttTextMeta
 } from "../types";
 
@@ -10,6 +11,7 @@ import { STT_State } from "../schema";
 import { normalizeDeepgramLanguage } from "../stt_data";
 import { devLog } from "@/utils/devLog";
 import { baseLanguageTag } from "../rustCapturePolling";
+import { networkLooksUp } from "../restartPolicy";
 
 /** How often the recorder follows the STT mute. */
 export const DEEPGRAM_MUTE_POLL_MS = 250;
@@ -66,6 +68,27 @@ export function deepgramCloseMessage(opened: boolean, code: number, reason: stri
   if (wasClean && (code === 1000 || code === 1005)) return null;
   const detail = reason.trim() ? `${code}: ${reason.trim()}` : String(code);
   return i18n.t("stt.error_deepgram_lost", { detail });
+}
+
+/**
+ * WebSocket close codes after which a reconnect is worth trying: the connection dropped (1006), the server is going
+ * away, erroring or restarting (1001, 1011-1014), or the stream was closed normally (1000, 1005: Deepgram closes a
+ * stream that got no audio for a while). Anything else (1008 policy or authorization, 4xxx application codes, protocol
+ * and payload errors) is the service refusing this setup and needs the user.
+ */
+const RECONNECT_CLOSE_CODES: ReadonlySet<number> = new Set([1000, 1001, 1005, 1006, 1011, 1012, 1013, 1014]);
+
+/**
+ * How a lost Deepgram connection is reported: `retry` when it may pass (see {@link RECONNECT_CLOSE_CODES}), nothing
+ * when the service refused the setup. A socket that never opened is a refused handshake: a rejected key hides behind
+ * it, indistinguishable from a network error in a browser, so it is `unproven` (Service_STT retries it on the fast
+ * ladder and then stops with the message) unless the webview knows the network to be down. `code` is `null` when only
+ * an error event is known. Pure.
+ */
+export function deepgramStopOptions(opened: boolean, code: number | null, online: boolean): SttStopOptions | undefined {
+  if (!opened) return online ? { retry: true, unproven: true } : { retry: true };
+  if (code === null || RECONNECT_CLOSE_CODES.has(code)) return { retry: true };
+  return undefined;
 }
 
 export class STT_DeepgramService implements ISTTService {
@@ -167,7 +190,12 @@ export class STT_DeepgramService implements ISTTService {
         }
         this.socket = undefined;
         this.bindings.onStatus("");
-        this.bindings.onStop(this.#opened ? i18n.t("stt.error_deepgram_lost", { detail: "error" }) : i18n.t("stt.error_deepgram_connect"));
+        // A dropped connection may pass: Service_STT reconnects while the user still wants STT running. A refused
+        // one is retried on the fast ladder only until a session has connected (a rejected key looks the same).
+        this.#reportStop(
+          this.#opened ? i18n.t("stt.error_deepgram_lost", { detail: "error" }) : i18n.t("stt.error_deepgram_connect"),
+          deepgramStopOptions(this.#opened, null, networkLooksUp()),
+        );
       };
 
       this.socket.onopen = () => {
@@ -219,9 +247,17 @@ export class STT_DeepgramService implements ISTTService {
         this.sessionEnded = true;
         this.socket = undefined;
         this.bindings.onStatus("");
-        const message = deepgramCloseMessage(this.#opened, ev.code, ev.reason ?? "", ev.wasClean);
-        return this.bindings.onStop(message ?? undefined);
+        // Nobody asked for this close (a stop ends the session first): even a clean one (Deepgram closes a stream that
+        // got no audio for a while) is a lost connection, and the session reconnects.
+        const message = deepgramCloseMessage(this.#opened, ev.code, ev.reason ?? "", ev.wasClean) ?? i18n.t("stt.error_deepgram_closed");
+        // 1008 and application codes (4xxx) are the service refusing this setup: the message stands and nothing retries.
+        this.#reportStop(message, deepgramStopOptions(this.#opened, ev.code, networkLooksUp()));
       };
+  }
+
+  #reportStop(message: string, options: SttStopOptions | undefined): void {
+    if (options) this.bindings.onStop(message, options);
+    else this.bindings.onStop(message);
   }
 
   /**
@@ -297,6 +333,8 @@ export class STT_DeepgramService implements ISTTService {
 
   stop(): void {
     this.#startToken++;
+    // The close this causes is ours: it must not be reported as a lost connection.
+    this.sessionEnded = true;
     this.stopSocket();
     this.stopRecorder();
   }

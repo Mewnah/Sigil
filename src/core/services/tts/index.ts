@@ -8,6 +8,7 @@ import { toast } from "react-toastify";
 import { getVersion, proxy, subscribe } from "valtio";
 import { subscribeKey } from "valtio/utils";
 import { i18nReady } from "../stt/statusMessages";
+import { StreamStop } from "../stt/streamStop";
 import { TurnCommitGate } from "../vrc/turnCommit";
 import { pushSystemLog } from "../systemLog";
 import { planTtsDesktopDefault, profileUsesTts } from "./defaults";
@@ -156,6 +157,8 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
   /** Identity of the running instance's receiver; replaced on every start/stop. */
   #activeToken?: object;
   #errorThrottle = new ErrorThrottle();
+  /** "Stop with Twitch stream" (see `stt/streamStop.ts`). */
+  #streamStop?: StreamStop;
   /** The one-time Kokoro offer is due in this launch (`runStartupOffer`). */
   #pendingLocalOffer = false;
   /** Mirrors the voice changer's microphone setting into the TTS sink. */
@@ -231,12 +234,14 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
 
     if (this.data.autoStart)
       this.start();
-    const unsubStream = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
-      if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected) {
-        this.stop();
-      }
+    // "Stop with Twitch stream": stops when the stream stays offline, and starts again when it comes back.
+    this.#streamStop = new StreamStop({
+      enabled: () => this.data.stopWithStream,
+      active: () => this.serviceState.status !== ServiceNetworkState.disconnected,
+      stop: () => this.stop(),
+      start: () => this.start(),
     });
-    this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(unsubStream));
+    this.eventDisposers.push(this.#streamStop.attach());
   }
 
   /**
@@ -467,6 +472,7 @@ class Service_TTS implements IServiceInterface, ITTSReceiver {
   }
 
   start() {
+    this.#streamStop?.noteStart();
     this.stop();
     this.serviceState.error = "";
     this.#errorThrottle.reset();

@@ -34,7 +34,10 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
 import { useAppUIStore } from "@/core/ui/store";
 import { Services } from "@/services-registry";
-import Service_STT, { type SttBackendMap } from "../index";
+import { sttControlAction } from "../controls";
+import Service_STT, { connectingFallbackMs, type SttBackendMap } from "../index";
+import { MAX_RESTARTS, RESTART_DELAYS_MS, SLOW_RESTART_MS, STABLE_RUN_MS } from "../restartPolicy";
+import { STREAM_OFFLINE_CONFIRM_MS } from "../streamStop";
 import { Service_STT_Schema, STT_Backends, type STT_State } from "../schema";
 import { SttMuteState, type ISTTReceiver, type ISTTService } from "../types";
 
@@ -62,11 +65,14 @@ const last = () => FakeEngine.instances[FakeEngine.instances.length - 1];
 
 let publishText: ReturnType<typeof vi.fn>;
 let isApp = false;
+/** Handlers of the local pubsub topics the service subscribed to (`stream.on_ended`, `stream.on_started`). */
+let topics: Record<string, () => void>;
 
 function makeService(overrides: Partial<STT_State> = {}, rootOverrides: Record<string, unknown> = {}) {
   const data = proxy({ ...Service_STT_Schema.parse({}), ...overrides });
   const state = { services: { stt: { data } }, onboardingComplete: true, ...rootOverrides };
   publishText = vi.fn();
+  topics = {};
   vi.stubGlobal("window", {
     Config: { isApp: () => isApp },
     ApiServer: {
@@ -76,7 +82,10 @@ function makeService(overrides: Partial<STT_State> = {}, rootOverrides: Record<s
     ApiShared: {
       pubsub: {
         publishText,
-        subscribe: vi.fn(() => "stream-sub"),
+        subscribe: vi.fn((topic: string, fn: () => void) => {
+          topics[topic] = fn;
+          return `sub-${topic}`;
+        }),
         unsubscribe: vi.fn(),
         broadcastLocalWebSocketOnly: vi.fn(),
       },
@@ -616,5 +625,382 @@ describe("Service_STT language suggestion (the automatic backend on automatic la
     const again = await running({ local: never.data.local });
     for (let i = 0; i < 6; i++) say(again.engine);
     expect(again.service.languageOffer.view.language).toBeNull();
+  });
+});
+
+describe("Service_STT reconnect after a failure that may pass", () => {
+  const lost = "The connection to Deepgram was lost (1006).";
+
+  /** A running session on the engine of `backend`. */
+  async function running(backend = STT_Backends.deepgram, overrides: Partial<STT_State> = {}, options: { automatic?: boolean } = {}) {
+    const made = makeService({ backend, ...overrides });
+    made.service.start(options);
+    await flush();
+    last().receiver.onStart();
+    expect(made.service.serviceState.status).toBe(ServiceNetworkState.connected);
+    return made;
+  }
+
+  it("reconnects on the restart ladder with a status line and no error, and is connected again", async () => {
+    const { service } = await running();
+    const first = last();
+    first.receiver.onStop(lost, { retry: true });
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(service.serviceState.error).toBe("");
+    expect(toast).not.toHaveBeenCalled();
+    expect(service.serviceState.statusText).toBe("stt.status_reconnecting");
+    expect(service.serviceState.statusLevel).toBe("warning");
+    await flush();
+    expect(first.stopped).toBe(1); // the dead session is released (the microphone with it) while the wait runs
+
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0] - 1);
+    expect(FakeEngine.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeEngine.instances).toHaveLength(2);
+    expect((last() as unknown as { startAutomatic?: boolean }).startAutomatic).toBe(true);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(service.serviceState.statusText).toBe("");
+    expect(toast).not.toHaveBeenCalled();
+    // The old session is stale for good: it cannot end the new one.
+    first.receiver.onStop("late");
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+
+  it("keeps trying at the slow pace once the ladder is used up, never with an error toast", async () => {
+    const { service } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    // Each attempt fails to connect, the way an outage does.
+    for (const delay of RESTART_DELAYS_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+      last().receiver.onStop(lost, { retry: true });
+    }
+    expect(FakeEngine.instances).toHaveLength(1 + MAX_RESTARTS);
+    expect(service.serviceState.statusText).toBe("stt.status_reconnecting_slow");
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS - 1);
+      expect(FakeEngine.instances).toHaveLength(1 + MAX_RESTARTS + i);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeEngine.instances).toHaveLength(2 + MAX_RESTARTS + i);
+      last().receiver.onStop(lost, { retry: true });
+    }
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(toast).not.toHaveBeenCalled();
+    // The outage ends: the next attempt connects, and the streak is over.
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("a session that ran STABLE_RUN_MS begins a new streak; one that never connected keeps counting", async () => {
+    const { service } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    last().receiver.onStop(lost, { retry: true }); // failed to connect: the second wait
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[1] - 1);
+    expect(FakeEngine.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeEngine.instances).toHaveLength(3);
+    last().receiver.onStart();
+    await vi.advanceTimersByTimeAsync(STABLE_RUN_MS);
+    last().receiver.onStop(lost, { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(FakeEngine.instances).toHaveLength(4);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+  });
+
+  it("a failure that needs the user still stops with its message, also during a reconnect", async () => {
+    const { service } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    last().receiver.onStop("Deepgram rejected the key.");
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(service.serviceState.error).toBe("Deepgram rejected the key.");
+    expect(toast).toHaveBeenCalledWith("Deepgram rejected the key.", { type: "error", autoClose: false });
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(FakeEngine.instances).toHaveLength(2);
+  });
+
+  it("a Start by hand that fails keeps failing with its message; a start at launch is retried", async () => {
+    const manual = makeService({ backend: STT_Backends.deepgram });
+    manual.service.start();
+    await flush();
+    last().receiver.onStop(lost, { retry: true });
+    expect(manual.service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(toast).toHaveBeenCalledWith(lost, { type: "error", autoClose: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEngine.instances).toHaveLength(1);
+
+    FakeEngine.instances = [];
+    vi.mocked(toast).mockClear();
+    const launch = makeService({ backend: STT_Backends.deepgram });
+    launch.service.start({ automatic: true });
+    await flush();
+    last().receiver.onStop(lost, { retry: true });
+    expect(launch.service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(toast).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(FakeEngine.instances).toHaveLength(2);
+    last().receiver.onStart();
+    expect(launch.service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+
+  it("Stop ends the wait; a Start by hand reconnects at once and begins a new streak", async () => {
+    const stopped = await running();
+    last().receiver.onStop(lost, { retry: true });
+    stopped.service.stop();
+    expect(stopped.service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(stopped.service.serviceState.statusText).toBe("");
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(FakeEngine.instances).toHaveLength(1);
+
+    FakeEngine.instances = [];
+    const manual = await running();
+    last().receiver.onStop(lost, { retry: true });
+    manual.service.start();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(2);
+    last().receiver.onStart();
+    expect(manual.service.serviceState.status).toBe(ServiceNetworkState.connected);
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(FakeEngine.instances).toHaveLength(2);
+  });
+
+  it("gives up the wait when another engine was chosen meanwhile", async () => {
+    const { service, data } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    data.backend = STT_Backends.whisper;
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("says it is retrying for as long as it retries, so the controls offer Stop instead of a dead 'connecting'", async () => {
+    const { service } = await running();
+    const state = service.serviceState;
+    expect(state.retrying).toBe(false);
+    expect(sttControlAction(state)).toBe("stop");
+    last().receiver.onStop(lost, { retry: true });
+    expect(state.status).toBe(ServiceNetworkState.connecting);
+    expect(state.retrying).toBe(true);
+    expect(sttControlAction(state)).toBe("stop");
+    // The attempt itself is still a retry (the status reads 'connecting' while it opens the microphone).
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    last().receiver.onStatus("Opening the microphone...");
+    expect(state.retrying).toBe(true);
+    last().receiver.onStart();
+    expect(state.retrying).toBe(false);
+    // Stop ends a wait that has no end of its own.
+    last().receiver.onStop(lost, { retry: true });
+    expect(state.retrying).toBe(true);
+    service.stop();
+    expect(state.status).toBe(ServiceNetworkState.disconnected);
+    expect(state.retrying).toBe(false);
+    expect(sttControlAction(state)).toBe("start");
+    // A failure that needs the user is not a retry.
+    const rejected = await running();
+    last().receiver.onStop(lost, { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    last().receiver.onStop("Deepgram rejected the key.");
+    expect(rejected.service.serviceState.retrying).toBe(false);
+    expect(rejected.service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+  });
+
+  it("an engine's own retry wait (a status flagged 'retrying') also reads as retrying until it reports an empty status", async () => {
+    const { service } = await running(STT_Backends.whisper);
+    const state = service.serviceState;
+    last().receiver.onStatus("Trying again in 5 s", { level: "warning", retrying: true });
+    expect(state.retrying).toBe(true);
+    last().receiver.onStatus("Loading the model...");
+    expect(state.retrying).toBe(true);
+    last().receiver.onStatus("");
+    expect(state.retrying).toBe(false);
+    // Stop clears it even when the engine never got to.
+    last().receiver.onStatus("Trying again in 5 s", { level: "warning", retrying: true });
+    service.stop();
+    expect(state.retrying).toBe(false);
+  });
+
+  it("a refused handshake of a start at launch is retried on the fast ladder only, then stops with its message", async () => {
+    // A rejected key and a network error look the same to a browser: a wrong key must not loop for ever.
+    const refused = "Could not connect to Deepgram. Check the API key and your internet connection.";
+    const unproven = { retry: true, unproven: true };
+    const { service } = makeService({ backend: STT_Backends.deepgram });
+    service.start({ automatic: true });
+    await flush();
+    last().receiver.onStop(refused, unproven);
+    for (const delay of RESTART_DELAYS_MS) {
+      expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+      expect(toast).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(delay);
+      last().receiver.onStop(refused, unproven);
+    }
+    expect(FakeEngine.instances).toHaveLength(1 + MAX_RESTARTS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(service.serviceState.error).toBe(refused);
+    expect(service.serviceState.retrying).toBe(false);
+    expect(toast).toHaveBeenCalledWith(refused, { type: "error", autoClose: false });
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(FakeEngine.instances).toHaveLength(1 + MAX_RESTARTS);
+  });
+
+  it("the same refusal after a session connected is an outage: the retries go on at the slow pace", async () => {
+    const refused = "Could not connect to Deepgram. Check the API key and your internet connection.";
+    const { service } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    for (let i = 0; i < MAX_RESTARTS + 3; i++) {
+      await vi.advanceTimersByTimeAsync(i < MAX_RESTARTS ? RESTART_DELAYS_MS[i] : SLOW_RESTART_MS);
+      last().receiver.onStop(refused, { retry: true, unproven: true });
+    }
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(service.serviceState.retrying).toBe(true);
+    expect(toast).not.toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(1 + MAX_RESTARTS + 3);
+  });
+
+  it("a rate limit waits the slow pace before the first retry, with a line of its own", async () => {
+    const { service } = await running(STT_Backends.openai_audio);
+    last().receiver.onStop("5 utterances failed in a row; last error: rate_limited: slow down", { retry: true, slow: true });
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(service.serviceState.statusText).toBe("stt.status_reconnecting_limited");
+    await vi.advanceTimersByTimeAsync(SLOW_RESTART_MS - 1);
+    expect(FakeEngine.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeEngine.instances).toHaveLength(2);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("an attempt that hangs is a failed attempt: the connecting watchdog does not end the loop", async () => {
+    const { service } = await running();
+    last().receiver.onStop(lost, { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(FakeEngine.instances).toHaveLength(2); // the attempt never reports anything
+    await vi.advanceTimersByTimeAsync(connectingFallbackMs(STT_Backends.deepgram));
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(service.serviceState.retrying).toBe(true);
+    expect(service.serviceState.statusText).toBe("stt.status_reconnecting");
+    // The hung session is released, and the next wait of the ladder ends in a new attempt.
+    expect(FakeEngine.instances[1].stopped).toBe(1);
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[1]);
+    expect(FakeEngine.instances).toHaveLength(3);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+
+  it("a Start by hand that hangs is still stopped by the connecting watchdog", async () => {
+    const { service } = makeService({ backend: STT_Backends.deepgram });
+    service.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(connectingFallbackMs(STT_Backends.deepgram));
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+  });
+});
+
+describe("Service_STT stop with Twitch stream", () => {
+  async function running(overrides: Partial<STT_State> = {}) {
+    const made = makeService({ backend: STT_Backends.whisper, stopWithStream: true, ...overrides });
+    await made.service.init();
+    made.service.start();
+    await flush();
+    last().receiver.onStart();
+    expect(made.service.serviceState.status).toBe(ServiceNetworkState.connected);
+    return made;
+  }
+
+  it("stops when the stream stays offline, and starts again (automatically) when it comes back", async () => {
+    const { service } = await running();
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS - 1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(FakeEngine.instances).toHaveLength(1);
+
+    topics["stream.on_started"]();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(2);
+    expect((last() as unknown as { startAutomatic?: boolean }).startAutomatic).toBe(true);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+
+  it("a gap between broadcasts does not stop it, and a stop by hand is never undone", async () => {
+    const { service } = await running();
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS / 2);
+    topics["stream.on_started"]();
+    await vi.advanceTimersByTimeAsync(2 * STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeEngine.instances).toHaveLength(1);
+
+    service.stop();
+    topics["stream.on_started"]();
+    await flush();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("a Start by hand while the stop waits for its confirmation is not undone when the timer runs out", async () => {
+    const { service } = await running();
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS / 3);
+    service.start();
+    await flush();
+    last().receiver.onStart();
+    expect(FakeEngine.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2 * STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeEngine.instances[1].stopped).toBe(0);
+  });
+
+  it("resumes on the real live state of Twitch, the only thing that says the stream is back (nothing publishes stream.on_started)", async () => {
+    const made = makeService({ backend: STT_Backends.whisper, stopWithStream: true });
+    // The host's Twitch service: a valtio proxy whose liveStatus flips with every poll.
+    const twitch = { state: proxy({ liveStatus: ServiceNetworkState.connected }) };
+    (window as unknown as { ApiServer: Record<string, unknown> }).ApiServer.twitch = twitch;
+    await made.service.init();
+    made.service.start();
+    await flush();
+    last().receiver.onStart();
+    expect(made.service.serviceState.status).toBe(ServiceNetworkState.connected);
+
+    twitch.state.liveStatus = ServiceNetworkState.disconnected;
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS);
+    expect(made.service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    expect(FakeEngine.instances).toHaveLength(1);
+
+    twitch.state.liveStatus = ServiceNetworkState.connected;
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(2);
+    expect((last() as unknown as { startAutomatic?: boolean }).startAutomatic).toBe(true);
+    last().receiver.onStart();
+    expect(made.service.serviceState.status).toBe(ServiceNetworkState.connected);
+    made.service.dispose();
+  });
+
+  it("also stops a session that is reconnecting, and leaves it alone when the option is off", async () => {
+    const reconnecting = await running({ backend: STT_Backends.deepgram });
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS - 2_000);
+    // The connection drops just before the stop is due: the reconnect (connecting) is stopped like a running session.
+    last().receiver.onStop("The connection to Deepgram was lost (1006).", { retry: true });
+    expect(reconnecting.service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(reconnecting.service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    await vi.advanceTimersByTimeAsync(10 * SLOW_RESTART_MS);
+    expect(FakeEngine.instances).toHaveLength(2);
+    expect(toast).not.toHaveBeenCalled();
+
+    FakeEngine.instances = [];
+    const off = await running({ stopWithStream: false });
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(2 * STREAM_OFFLINE_CONFIRM_MS);
+    expect(off.service.serviceState.status).toBe(ServiceNetworkState.connected);
   });
 });

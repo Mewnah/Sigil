@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => false) }));
 import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
 import { pushSystemLog } from "../../systemLog";
+import { STREAM_OFFLINE_CONFIRM_MS } from "../../stt/streamStop";
 import Service_TTS, { TTSBackendMap } from "../index";
 import { Service_TTS_Schema, TTS_Backends, TTS_State } from "../schema";
 import { ITTSReceiver, ITTSService, TTS_OPTIONS_MISSING } from "../types";
@@ -49,9 +50,12 @@ class FakeBackend implements ITTSService {
 const fakeMap = Object.fromEntries(Object.values(TTS_Backends).map((b) => [b, FakeBackend])) as unknown as TTSBackendMap;
 
 let subscriptions: { source: string; fn: TextHandler }[];
+/** Handlers of the local pubsub topics the service subscribed to (`stream.on_ended`, `stream.on_started`). */
+let topics: Record<string, () => void>;
 
 function installWindow(data: TTS_State) {
   subscriptions = [];
+  topics = {};
   vi.stubGlobal("window", {
     ApiServer: {
       state: { services: { tts: { data } }, audioOutputDevice: "" },
@@ -61,7 +65,10 @@ function installWindow(data: TTS_State) {
     },
     ApiShared: {
       pubsub: {
-        subscribe: vi.fn(() => "stream-sub"),
+        subscribe: vi.fn((topic: string, fn: () => void) => {
+          topics[topic] = fn;
+          return `sub-${topic}`;
+        }),
         unsubscribe: vi.fn(),
         subscribeText: vi.fn((source: string, fn: TextHandler) => {
           subscriptions.push({ source, fn });
@@ -435,6 +442,89 @@ describe("Service_TTS desktop default (P2)", () => {
     await service.init();
     expect(data.backend).toBe(TTS_Backends.native);
     expect(data.desktopDefaultMigrated).toBe(false);
+    service.dispose();
+  });
+});
+
+describe("Service_TTS stop with Twitch stream", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops once the stream stayed offline, and starts again when it comes back", async () => {
+    const { service } = makeService({ stopWithStream: true });
+    await service.init();
+    service.start();
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+
+    vi.useFakeTimers();
+    topics["stream.on_ended"]();
+    // A single empty reply from Twitch is not the end of the stream.
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS - 1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+
+    topics["stream.on_started"]();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeBackend.instances).toHaveLength(2);
+    service.dispose();
+  });
+
+  it("starts again on Twitch's real live state, the only thing that says the stream is back", async () => {
+    const { service } = makeService({ stopWithStream: true });
+    // The host's Twitch service: a valtio proxy whose liveStatus flips with every poll. Nothing publishes stream.on_started.
+    const twitch = { state: proxy({ liveStatus: ServiceNetworkState.connected }) };
+    (window as unknown as { ApiServer: Record<string, unknown> }).ApiServer.twitch = twitch;
+    await service.init();
+    service.start();
+    last().receiver.onStart();
+    vi.useFakeTimers();
+    twitch.state.liveStatus = ServiceNetworkState.disconnected;
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    twitch.state.liveStatus = ServiceNetworkState.connected;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    last().receiver.onStart();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeBackend.instances).toHaveLength(2);
+    service.dispose();
+  });
+
+  it("keeps speaking through a gap between broadcasts, and never starts what the option did not stop", async () => {
+    const { service } = makeService({ stopWithStream: true });
+    await service.init();
+    service.start();
+    last().receiver.onStart();
+    vi.useFakeTimers();
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS / 2);
+    topics["stream.on_started"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS * 2);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeBackend.instances).toHaveLength(1);
+
+    // Stopped by the user: a stream coming back does not start it.
+    service.stop();
+    topics["stream.on_started"]();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    service.dispose();
+  });
+
+  it("does nothing while the option is off", async () => {
+    const { service } = makeService({ stopWithStream: false });
+    await service.init();
+    service.start();
+    last().receiver.onStart();
+    vi.useFakeTimers();
+    topics["stream.on_ended"]();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS * 2);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
     service.dispose();
   });
 });

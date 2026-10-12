@@ -62,7 +62,8 @@ class Service_Scenes implements IServiceInterface {
   }
 
   deleteScene(id: string) {
-    if (this.state.activeScene === id)
+    const wasActive = this.state.activeScene === id;
+    if (wasActive)
       this.state.activeScene = "main";
 
     window.ApiClient.document.patch((state) => {
@@ -74,6 +75,10 @@ class Service_Scenes implements IServiceInterface {
         }
       }
     });
+
+    // The switch above is local: a mirror still showing the deleted scene would draw nothing.
+    if (wasActive)
+      window.ApiShared.pubsub.publish("scenes:change", "main");
   }
 }
 export default Service_Scenes;

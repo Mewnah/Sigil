@@ -191,8 +191,8 @@ function Test-Disposable {
 }
 
 # Can a listener bind this loopback port right now? (Sigil binds 127.0.0.1 with lanAccess.mode = localhost, which the
-# seeded profile sets; its own start-up check shows a modal dialog when the bind fails, and a dialog is what this script
-# must never cause. Only loopback is tried: a wildcard listener makes Windows Firewall ask the person at the PC.)
+# seeded profile sets; its own start-up check waits for a taken port and then gives up (a box without
+# SIGIL_START_MINIMIZED), and neither the wait nor a box is something this script may cause. Only loopback is tried: a wildcard listener makes Windows Firewall ask the person at the PC.)
 function Test-PortFree([int]$Port) {
   $l = $null
   try {
@@ -1012,7 +1012,7 @@ try {
       # The window starts minimized and never takes the foreground (main.rs, SIGIL_START_MINIMIZED); gui-focus checks it.
       $guiEnv['SIGIL_START_MINIMIZED'] = $(if ($ShowWindow) { '' } else { '1' })
       foreach ($k in $guiEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k, 'Process'); [Environment]::SetEnvironmentVariable($k, $(if ($guiEnv[$k] -eq '') { $null } else { $guiEnv[$k] }), 'Process') }
-      # Sigil shows a modal "Port N is not available!" dialog when the bind fails: never launch into a taken port.
+      # A taken port makes Sigil wait and then give up (see Test-PortFree): never launch into a taken port.
       if (-not (Test-PortFree $port)) { $port = Get-FreePort -Exclude @($cdpPort) }
       $app = Start-Process -FilePath $exe -ArgumentList @('--port', "$port") -PassThru
       # Without the handle cached now, a process that exits at once (a missing DLL) can report HasExited = false and no ExitCode.

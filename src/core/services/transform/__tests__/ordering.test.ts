@@ -14,6 +14,7 @@ vi.mock("@/utils/processNonce", async (importOriginal) => ({ ...(await importOri
 
 import { toast } from "react-toastify";
 import Service_Transform, { TRANSFORM_TIMEOUT_MS, TransformEngineMap } from "../index";
+import { STREAM_OFFLINE_CONFIRM_MS } from "../../stt/streamStop";
 import { OrderedQueue } from "../ordering";
 import { Service_Transform_Schema, Transform_Backends, Transform_State } from "../schema";
 import {
@@ -116,9 +117,10 @@ type Handler = (e?: { type: TextEventType; value: string; id?: number }) => void
 type Published = { topic: string; type: TextEventType; value: string; id?: number };
 let sttHandler: Handler;
 let streamEnded: () => void;
+let streamStarted: () => void;
 let published: Published[];
 
-function makeService(patch: (s: Transform_State) => void = () => {}) {
+function makeService(patch: (s: Transform_State) => void = () => {}, twitch?: { state: object }) {
   const data = proxy(Service_Transform_Schema.parse({}));
   data.autoStart = false;
   patch(data);
@@ -128,11 +130,13 @@ function makeService(patch: (s: Transform_State) => void = () => {}) {
     ApiServer: {
       state: { services: { transform: transformState } },
       patchService: vi.fn((_key: string, fn: (s: typeof transformState) => void) => fn(transformState)),
+      ...(twitch ? { twitch } : {}),
     },
     ApiShared: {
       pubsub: {
         subscribe: vi.fn((topic: string, fn: () => void) => {
           if (topic === "stream.on_ended") streamEnded = fn;
+          if (topic === "stream.on_started") streamStarted = fn;
           return `sub-${topic}`;
         }),
         unsubscribe: vi.fn(),
@@ -157,8 +161,8 @@ const on = (topic: TextEventSource) =>
     .filter((p) => p.topic === topic)
     .map((p) => `${p.type === TextEventType.final ? "final" : "interim"}:${p.value}${p.id === undefined ? "" : `#${p.id}`}`);
 
-async function started(patch?: (s: Transform_State) => void) {
-  const s = makeService(patch);
+async function started(patch?: (s: Transform_State) => void, twitch?: { state: object }) {
+  const s = makeService(patch, twitch);
   s.service.start();
   await flush();
   expect(s.service.serviceState.status).toBe(ServiceNetworkState.connected);
@@ -333,15 +337,77 @@ describe("Service_Transform lifecycle", () => {
     expect(vi.mocked(window.ApiServer.patchService)).not.toHaveBeenCalled();
   });
 
-  it("stops when the stream ends if stopWithStream is on", async () => {
+  it("stops when the stream stays offline if stopWithStream is on, and starts again when it comes back", async () => {
     const { service } = await started((s) => (s.stopWithStream = true));
+    vi.useFakeTimers();
     streamEnded();
+    // One empty reply is not an ended stream: nothing stops before the offline state has lasted.
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS - 1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    streamStarted();
+    vi.useRealTimers();
+    await flush();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+
+  it("starts again on Twitch's real live state, the only thing that says the stream is back", async () => {
+    // The host's Twitch service: a valtio proxy whose liveStatus flips with every poll. Nothing publishes stream.on_started.
+    const twitch = { state: proxy({ liveStatus: ServiceNetworkState.connected }) };
+    const { service } = await started((s) => (s.stopWithStream = true), twitch);
+    vi.useFakeTimers();
+    twitch.state.liveStatus = ServiceNetworkState.disconnected;
+    streamEnded();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    twitch.state.liveStatus = ServiceNetworkState.connected;
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    await flush();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeEngine.instances).toHaveLength(2);
+  });
+
+  it("keeps running when the stream is back before the offline state is confirmed", async () => {
+    const { service } = await started((s) => (s.stopWithStream = true));
+    vi.useFakeTimers();
+    streamEnded();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS / 2);
+    streamStarted();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS * 2);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("does not start again when the option was switched off meanwhile", async () => {
+    const { service, data } = await started((s) => (s.stopWithStream = true));
+    vi.useFakeTimers();
+    streamEnded();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    data.stopWithStream = false;
+    streamStarted();
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+  });
+
+  it("does not start again what the user started and stopped by hand after the stream stopped it", async () => {
+    const { service } = await started((s) => (s.stopWithStream = true));
+    vi.useFakeTimers();
+    streamEnded();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
+    service.start();
+    service.stop();
+    streamStarted();
     expect(service.serviceState.status).toBe(ServiceNetworkState.disconnected);
   });
 
   it("keeps running when the stream ends if stopWithStream is off", async () => {
     const { service } = await started();
+    vi.useFakeTimers();
     streamEnded();
+    await vi.advanceTimersByTimeAsync(STREAM_OFFLINE_CONFIRM_MS * 2);
     expect(service.serviceState.status).toBe(ServiceNetworkState.connected);
   });
 

@@ -73,7 +73,11 @@ class FakeSocket {
   }
 }
 
-function loadPage(file: string, location: { search: string; hostname: string; port: string; protocol?: string }) {
+function loadPage(
+  file: string,
+  location: { search: string; hostname: string; port: string; protocol?: string },
+  globals: Record<string, unknown> = {},
+) {
   const html = readFileSync(fileURLToPath(new URL(`../../../../../public/${file}`, import.meta.url)), "utf8");
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
   const elements = new Map<string, El>();
@@ -107,6 +111,7 @@ function loadPage(file: string, location: { search: string; hostname: string; po
     console: { log() {}, error() {}, warn },
     localStorage: { getItem: () => null, setItem() {} },
     addEventListener() {},
+    ...globals,
   };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
@@ -211,6 +216,53 @@ describe("obs-captions.html", () => {
     page.socket().accept();
     page.advance(1_500);
     expect(status()).toBe("connected 192.168.1.50:3030");
+  });
+});
+
+describe("obs-captions.html socket ids", () => {
+  const idOf = (ws: FakeSocket) => new URL(ws.url).searchParams.get("id")!;
+
+  it("never gives two sockets the same id, not even in the same millisecond", () => {
+    // Sigil keys /pubsub sockets by id: a second socket with an id takes it over, and the first
+    // used to stay open but deaf. Two sources with one URL starting together hit that with
+    // `Date.now()`; the fake clock stands still here.
+    const pages = Array.from({ length: 50 }, () => loadPage("obs-captions.html", LAN_PAGE));
+    const ids = pages.map((p) => idOf(p.socket()));
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^obs-captions-[a-z0-9-]{16,}$/);
+
+    // And a page's own reconnects each get a fresh one.
+    const page = pages[0]!;
+    for (let i = 0; i < 3; i++) {
+      page.socket().closeWith(1006);
+      page.advance(30_000);
+    }
+    const own = page.sockets.map(idOf);
+    expect(own).toHaveLength(4);
+    expect(new Set(own).size).toBe(4);
+  });
+
+  it("uses crypto.randomUUID when there is one (a secure page), and getRandomValues on plain http", () => {
+    const uuid = loadPage("obs-captions.html", LAN_PAGE, { crypto: { randomUUID: () => "11111111-2222-3333-4444-555555555555" } });
+    expect(idOf(uuid.socket())).toBe("obs-captions-11111111-2222-3333-4444-555555555555");
+
+    // A LAN page over http has no randomUUID, but getRandomValues still works.
+    let n = 0;
+    const lan = loadPage("obs-captions.html", LAN_PAGE, {
+      crypto: { getRandomValues: (a: Uint32Array) => a.map(() => 123456789 + n++) },
+    });
+    expect(idOf(lan.socket())).toMatch(/^obs-captions-[a-z0-9]{20,}$/);
+  });
+
+  it("falls back to Math.random when crypto throws", () => {
+    const page = loadPage("obs-captions.html", LAN_PAGE, {
+      crypto: {
+        randomUUID: () => {
+          throw new Error("denied");
+        },
+      },
+    });
+    expect(idOf(page.socket())).toMatch(/^obs-captions-[a-z0-9]{16,}$/);
   });
 });
 

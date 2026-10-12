@@ -2,7 +2,8 @@
 //!
 //! Closing Sigil's window has to end the process. It owns the web server port (OBS caption pages and LAN
 //! clients are served from it), the audio devices and the helper processes, and a copy that lingers without a
-//! window can only be found in Task Manager and makes the next start fail on "Port is not available".
+//! window can only be found in Task Manager and holds the port: the next start waits for it (`port_precheck`)
+//! before it gives up.
 //!
 //! What was seen, and the cause (measured on 2026-10-10 with the packaged smoke test,
 //! `scripts/release/packaged-smoke-all.ps1`): the process outlived its closed window in about one automated launch

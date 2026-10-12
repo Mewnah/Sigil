@@ -24,10 +24,13 @@ import {
   ISTTServiceConstructor,
   SttMuteState,
   SttStatusLevel,
+  type SttStopOptions,
   type SttTextMeta,
 } from "./types";
 import { isAbortError, untilAborted } from "./abort";
-import { createScopedReceiver, EMPTY_STT_STATUS, SttStatus } from "./statusChannel";
+import { createScopedReceiver, EMPTY_STT_STATUS, normalizeSttStatus, SttStatus } from "./statusChannel";
+import { isSlowRestart, MAX_RESTARTS, networkLooksUp, restartDelayMs, SLOW_RESTART_MS, STABLE_RUN_MS } from "./restartPolicy";
+import { StreamStop } from "./streamStop";
 import { localOfferKindOf, planDesktopDefaultMigration, planRetiredBackendMigration, type LocalOfferKind, type WhisperMigration } from "./migrate";
 import { localOfferDialog, type LocalOfferDialogKind } from "./localOffer";
 import { findWhisperModel, formatModelSize } from "./whisperModels";
@@ -118,6 +121,8 @@ export function textEventMeta(meta: SttTextMeta | undefined): Pick<TextEvent, "s
 export interface SttStartOptions {
   /** Nobody pressed Start just now (auto-start at launch): engines must not ask questions such as download consent. */
   automatic?: boolean;
+  /** The service's own reconnect after a failure that may pass (see `SttStopOptions.retry`): keeps the retry count. */
+  reconnect?: boolean;
 }
 
 /** Settings carried over when a profile moves to the `local` backend (language and microphone of the old backend). */
@@ -192,6 +197,28 @@ class Service_STT implements IServiceInterface {
   #statusExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Session epoch the download progress toast was shown for (`null` = not shown). */
   #progressToastEpoch: number | null = null;
+  /**
+   * Reconnect of an engine that ended on a failure that may pass (`SttStopOptions.retry`: a lost connection, a service
+   * that closed the stream). It runs only while the user still wants STT running (a Stop, or a Start by hand, ends or
+   * restarts the count) and only for a session that connected, a start at launch, or a reconnect attempt itself: a
+   * Start the user just pressed that fails keeps failing with its message. Waits: the built-in engine's ladder
+   * (`restartPolicy.ts`), then one attempt every `SLOW_RESTART_MS`, shown as a status line and not as an error.
+   */
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Reconnects in the current failing streak. */
+  #reconnectAttempts = 0;
+  /** A streak is in progress (from the first failure until a session connects again). */
+  #reconnecting = false;
+  /** A session of the current streak connected (the service accepted this key, region and microphone at least once). */
+  #streakConnected = false;
+  /** The engine reported a wait between attempts of its own retry (`SttStatusOptions.retrying`). */
+  #engineRetrying = false;
+  /** Local time the current session connected (0 = not connected). */
+  #connectedAt = 0;
+  /** The start in progress may be reconnected when it fails with a failure that may pass. */
+  #mayReconnect = false;
+  /** "Stop with Twitch stream" (see `streamStop.ts`). */
+  #streamStop?: StreamStop;
 
   /**
    * The "Lock captions to your language?" suggestion of the automatic backend (`languageOffer.ts`): counts the finals
@@ -224,6 +251,11 @@ class Service_STT implements IServiceInterface {
     statusLevel: "info" as SttStatusLevel,
     /** 0-100 while a model download or copy reports progress, else null. */
     progress: null as number | null,
+    /**
+     * STT is retrying by itself (a first start tried again, a reconnect, an engine restart): the status can read
+     * "connecting" for hours, so Start / Stop controls offer Stop while this is set (`controls.ts`).
+     */
+    retrying: false as boolean,
   });
 
   isMuted() {
@@ -276,6 +308,12 @@ class Service_STT implements IServiceInterface {
         return;
       if (this.serviceState.status !== ServiceNetworkState.connecting)
         return;
+      if (this.#reconnecting) {
+        // An attempt of the reconnect loop that hangs (no answer from the service) is a failed attempt, not the end
+        // of the loop: the next wait of the ladder follows. Only Stop ends a reconnect.
+        this.#onStopScoped(epoch, i18n.t("stt.status_reconnect_no_answer"), { retry: true, unproven: networkLooksUp() });
+        return;
+      }
       toast.warning(i18n.t("toasts.stt_connecting_timeout"));
       this.stop();
     }, ms);
@@ -290,7 +328,7 @@ class Service_STT implements IServiceInterface {
     return createScopedReceiver({
       isCurrent: () => epoch === this.#sessionEpoch,
       start: () => this.#onStartScoped(epoch),
-      stop: (err) => this.#onStopScoped(epoch, err),
+      stop: (err, options) => this.#onStopScoped(epoch, err, options),
       interim: (v, meta) => void this.#sendInterim(v, meta),
       final: (v, meta) => {
         // The finals of the engine itself (not the "[...]" marker): the language suggestion counts them. It is a
@@ -325,6 +363,12 @@ class Service_STT implements IServiceInterface {
       clearTimeout(this.#statusExpiryTimer);
       this.#statusExpiryTimer = null;
     }
+    // The engine's own retry wait keeps the Stop control available; an empty status ends it (a restart succeeded).
+    if (status.retrying)
+      this.#engineRetrying = true;
+    else if (status.text === "")
+      this.#engineRetrying = false;
+    this.#syncRetrying();
     if (this.serviceState.statusText !== status.text)
       this.serviceState.statusText = status.text;
     if (this.serviceState.progress !== status.progress)
@@ -393,9 +437,25 @@ class Service_STT implements IServiceInterface {
     // Setup status (download, loading) is over; engines report anything newer after this.
     this.#clearEngineStatus();
     this.#setStatus(ServiceNetworkState.connected);
+    this.#connectedAt = Date.now();
+    this.#mayReconnect = true;
+    this.#streakConnected = true;
+    this.#engineRetrying = false;
+    if (this.#reconnecting) {
+      this.#reconnecting = false;
+      pushSystemLog("STT", i18n.t("stt.log_reconnected"), "info");
+    }
+    this.#syncRetrying();
   }
 
-  #onStopScoped(epoch: number, error?: string): void {
+  /** `serviceState.retrying` follows the reconnect loop of this service and the retry waits of the engine. */
+  #syncRetrying(): void {
+    const retrying = this.#reconnecting || this.#engineRetrying;
+    if (this.serviceState.retrying !== retrying)
+      this.serviceState.retrying = retrying;
+  }
+
+  #onStopScoped(epoch: number, error?: string, options?: SttStopOptions): void {
     if (epoch !== this.#sessionEpoch)
       return;
     this.#clearConnectingFallbackTimeout();
@@ -403,6 +463,13 @@ class Service_STT implements IServiceInterface {
     // The engine ended the session itself (error, dropped connection): close an open interim sentence and resolve a
     // pending unmute, exactly like a user stop, so neither leaks into the next session.
     this.#resetSentenceState();
+    const ranMs = this.#connectedAt > 0 ? Date.now() - this.#connectedAt : 0;
+    this.#connectedAt = 0;
+    if (error && options?.retry && this.#mayReconnect && this.#reconnectBudgetLeft(options)) {
+      this.#scheduleReconnect(error, ranMs, options);
+      return;
+    }
+    this.#resetReconnect();
     if (error) {
       toast(error, { type: "error", autoClose: false });
       this.serviceState.error = error;
@@ -465,11 +532,96 @@ class Service_STT implements IServiceInterface {
     }
   }
 
+  /** Forget the reconnect streak: its timer, count and permission (a Stop, or a Start by hand). */
+  #resetReconnect(): void {
+    this.#clearReconnectTimer();
+    this.#reconnectAttempts = 0;
+    this.#reconnecting = false;
+    this.#streakConnected = false;
+    this.#connectedAt = 0;
+    this.#mayReconnect = false;
+    this.#syncRetrying();
+  }
+
+  /**
+   * Whether a failure that may pass is still retried. One that came before the service ever accepted a connection
+   * (`SttStopOptions.unproven`: a refused handshake, which a rejected key also looks like) is retried on the fast
+   * ladder only while no session of this streak has connected, then stops with its message: a wrong key must not
+   * loop for ever behind a "reconnecting" line. After a session connected, the same failure is an outage and the
+   * retries go on at the slow pace for as long as the user wants STT running.
+   */
+  #reconnectBudgetLeft(options: SttStopOptions): boolean {
+    if (!options.unproven || this.#streakConnected)
+      return true;
+    return this.#reconnectAttempts < MAX_RESTARTS;
+  }
+
+  #clearReconnectTimer(): void {
+    if (this.#reconnectTimer !== null) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+  }
+
+  /**
+   * The engine of the current session ended on a failure that may pass: release it, show that STT is reconnecting (a
+   * warning line, status `connecting`, no error toast) and start again after the next wait of the ladder.
+   */
+  #scheduleReconnect(error: string, ranMs: number, options: SttStopOptions = {}): void {
+    // A session that ran for a while begins a new streak; attempts that failed to connect never ran and keep counting.
+    if (ranMs >= STABLE_RUN_MS)
+      this.#reconnectAttempts = 0;
+    this.#reconnectAttempts += 1;
+    const attempt = this.#reconnectAttempts;
+    // A rate limit waits the slow pace at once: trying again after a second only extends it.
+    const delay = options.slow ? SLOW_RESTART_MS : restartDelayMs(attempt);
+    const key = options.slow
+      ? "stt.status_reconnecting_limited"
+      : isSlowRestart(attempt) ? "stt.status_reconnecting_slow" : "stt.status_reconnecting";
+    const line = i18n.t(key, { detail: error, seconds: Math.ceil(delay / 1000) });
+    // The system log keeps the fast attempts and the start of the slow ones, not a line per slow attempt.
+    if (attempt <= MAX_RESTARTS + 1)
+      pushSystemLog("STT", line, "warning");
+    this.#reconnecting = true;
+    // This engine session is over: whatever it still reports is stale, and it gives the microphone back now.
+    this.#sessionEpoch++;
+    this.#releaseInstance();
+    this.serviceState.error = "";
+    this.#setStatus(ServiceNetworkState.connecting);
+    // `retrying`: the status reads "connecting" for as long as the outage lasts, and the controls offer Stop.
+    this.#applyEngineStatus(normalizeSttStatus(line, { level: "warning", retrying: true }));
+    const backend = this.data.backend;
+    this.#clearReconnectTimer();
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      if (this.data.backend !== backend) {
+        // The user chose another engine meanwhile: nothing left to reconnect.
+        this.#resetReconnect();
+        this.#clearEngineStatus();
+        this.#setStatus(ServiceNetworkState.disconnected);
+        return;
+      }
+      this.start({ automatic: true, reconnect: true });
+    }, delay);
+  }
+
+  /** Stops the engine instance in the background (its teardown is awaited by the next start). */
+  #releaseInstance(): void {
+    const inst = this.#serviceInstance;
+    this.#serviceInstance = undefined;
+    if (inst) {
+      this.#engineTeardown = this.#engineTeardown
+        .then(() => this.#finalizeStop(inst))
+        .catch(() => {});
+    }
+  }
+
   stop(): void {
     // Before the epoch bump: the engine's receiver must still be current to publish them.
     this.#commitEnginePending();
     this.#startAbortController?.abort();
     this.#startAbortController = null;
+    this.#resetReconnect();
     this.#sessionEpoch++;
     this.#clearExternalMicConnectingTimeout();
     this.#clearConnectingFallbackTimeout();
@@ -482,12 +634,8 @@ class Service_STT implements IServiceInterface {
     this.#setStatus(ServiceNetworkState.disconnected);
     this.#clearEngineStatus();
 
-    const inst = this.#serviceInstance;
-    this.#serviceInstance = undefined;
-    if (inst) {
-      this.#engineTeardown = this.#engineTeardown
-        .then(() => this.#finalizeStop(inst))
-        .catch(() => {});
+    if (this.#serviceInstance) {
+      this.#releaseInstance();
     }
     else if (ext && live) {
       window.ApiShared.pubsub.broadcastLocalWebSocketOnly({
@@ -589,12 +737,14 @@ class Service_STT implements IServiceInterface {
     this.eventDisposers.push(subscribeKey(this.data, "backend", () => this.languageOffer.settingsChanged()));
     this.eventDisposers.push(subscribeKey(this.data.local, "language", () => this.languageOffer.settingsChanged()));
 
-    const unsubStream = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
-      if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected) {
-        this.stop();
-      }
+    // "Stop with Twitch stream": stops when the stream stays offline, and starts again when it comes back.
+    this.#streamStop = new StreamStop({
+      enabled: () => this.data.stopWithStream,
+      active: () => this.serviceState.status !== ServiceNetworkState.disconnected,
+      stop: () => this.stop(),
+      start: () => this.start({ automatic: true }),
     });
-    this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(unsubStream));
+    this.eventDisposers.push(this.#streamStop.attach());
 
     // Starts queue behind the one-time legacy Settings input device migration (native cpal field) and behind
     // i18n (host services init before the translations load; engine status and errors are translated strings).
@@ -935,6 +1085,11 @@ class Service_STT implements IServiceInterface {
 
   #setStatus(value: ServiceNetworkState) {
     this.serviceState.status = value;
+    // A stopped service retries nothing (whatever flag a late status left behind).
+    if (value === ServiceNetworkState.disconnected) {
+      this.#engineRetrying = false;
+      this.#syncRetrying();
+    }
     this.#syncProgressToast();
   }
 
@@ -945,6 +1100,13 @@ class Service_STT implements IServiceInterface {
     const controller = new AbortController();
     this.#startAbortController = controller;
     const automatic = options.automatic === true;
+    if (options.reconnect !== true) {
+      // A start by hand (or at launch) begins a new streak: a failure of the first start of a launch is retried, one
+      // the user just pressed is shown as it happens.
+      this.#resetReconnect();
+      this.#mayReconnect = automatic;
+      this.#streamStop?.noteStart();
+    }
     this.#startChain = this.#startChain
       .then(() => this.#runStartAsync(controller.signal, automatic))
       .catch((e: unknown) => {
@@ -966,6 +1128,10 @@ class Service_STT implements IServiceInterface {
     // A new session starts with no open sentence (an engine that stopped mid-interim must not leave the next one
     // with a stale interim or a pending unmute that engines without interims can never resolve).
     this.#resetSentenceState();
+    // The retry wait of the engine this start replaces is over; the new engine reports its own, and a reconnect of
+    // this service keeps `retrying` through `#reconnecting`.
+    this.#engineRetrying = false;
+    this.#syncRetrying();
     this.#setStatus(ServiceNetworkState.connecting);
     // (Re)armed before awaiting the previous engine's teardown: if its stop() never settles, the fallback still
     // fires (toast + stop()) instead of leaving the status on "connecting" indefinitely.
@@ -982,6 +1148,7 @@ class Service_STT implements IServiceInterface {
     const serviceConstructor = this.engines[backend];
     if (!serviceConstructor) {
       this.#clearConnectingFallbackTimeout();
+      this.#resetReconnect();
       this.#setStatus(ServiceNetworkState.disconnected);
       return;
     }

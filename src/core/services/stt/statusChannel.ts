@@ -1,4 +1,4 @@
-import type { ISTTReceiver, SttStatusLevel, SttStatusOptions, SttTextMeta } from "./types";
+import type { ISTTReceiver, SttStatusLevel, SttStatusOptions, SttStopOptions, SttTextMeta } from "./types";
 
 /**
  * STT status channel: engine status (connecting, download / load progress, transient errors, rate-limit waits) is
@@ -16,6 +16,8 @@ export interface SttStatus {
   level: SttStatusLevel;
   /** Clear the line after this many ms unless a newer status replaced it (absent = until replaced). */
   expireMs?: number;
+  /** The line is a wait between attempts of an automatic retry (see `SttStatusOptions.retrying`). */
+  retrying?: boolean;
 }
 
 /** How long a transient warning (skipped speech) stays visible after its last occurrence. */
@@ -48,6 +50,7 @@ export function normalizeSttStatus(text: unknown, options?: SttStatusOptions): S
   };
   const expireMs = options?.expireMs;
   if (typeof expireMs === "number" && Number.isFinite(expireMs) && expireMs > 0) status.expireMs = expireMs;
+  if (options?.retrying === true) status.retrying = true;
   return status;
 }
 
@@ -56,7 +59,7 @@ export interface ScopedReceiverSinks {
   /** False once the session this receiver belongs to was stopped or replaced: every report is then dropped. */
   isCurrent(): boolean;
   start(): void;
-  stop(error?: string): void;
+  stop(error?: string, options?: SttStopOptions): void;
   /** Transcript text only (published as an interim), with the engine's segment metadata when it has any. */
   interim(text: string, meta?: SttTextMeta): void;
   /** Transcript text only (published as a final), with the engine's segment metadata when it has any. */
@@ -77,8 +80,10 @@ export function createScopedReceiver(sinks: ScopedReceiverSinks): ISTTReceiver {
     onStart: () => {
       if (sinks.isCurrent()) sinks.start();
     },
-    onStop: (error) => {
-      if (sinks.isCurrent()) sinks.stop(error);
+    onStop: (error, options) => {
+      if (!sinks.isCurrent()) return;
+      if (options) sinks.stop(error, options);
+      else sinks.stop(error);
     },
     onInterim: (value, meta) => {
       if (!sinks.isCurrent()) return;

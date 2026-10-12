@@ -948,6 +948,7 @@ fn real_two_pass_ja_with_vram_logged() {
                 assert!(latency <= 800, "{latency} ms");
             }
             TwoPassOutcome::Skipped { reason, .. } => panic!("skipped: {reason}"),
+            TwoPassOutcome::WorkerDied { detail } => panic!("the worker died: {detail}"),
         }
     }
     two_pass.shutdown();

@@ -5,16 +5,12 @@ use serde::{Deserialize, Serialize};
 use tauri::{command, Manager, State};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-use windows::{
-    core::{s, PCSTR},
-    Win32::UI::WindowsAndMessaging::{
-        MessageBoxA, ShowWindow, MB_ICONWARNING, MB_OK, SW_SHOWMINNOACTIVE,
-    },
-};
+use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
 
 use crate::services::AppConfiguration;
 
 mod exit_guard;
+mod port_precheck;
 mod services;
 
 #[derive(Parser, Debug)]
@@ -60,29 +56,30 @@ fn main() {
     }
 
     let args = InitArguments::parse();
+    let start_minimized = start_minimized();
 
-    // crash if port is not available. Checks the same address the web plugin's server binds
+    // Stop if the port is not available. Checks the same address the web plugin's server binds
     // (persisted `lanAccess.mode`: 0.0.0.0 for LAN, the default, or 127.0.0.1 for "This PC
     // only"), so the check matches what warp will do and never prompts the firewall needlessly.
-    let port_availability =
-        std::net::TcpListener::bind((services::web::startup_bind_ip(), args.port));
-    match port_availability {
-        Ok(l) => l.set_nonblocking(true).expect("Failed to set nonblocking"),
-        Err(_err) => {
-            // Native pre-webview errors stay English (P3: optional Tauri locale bridge if product needs localized OS dialogs).
-            unsafe {
-                MessageBoxA(
-                    None,
-                    PCSTR(format!("Port {} is not available!\0", args.port).as_ptr()),
-                    s!("Sigil"),
-                    MB_OK | MB_ICONWARNING,
-                );
+    // A held port is waited for first (a previous Sigil may still be exiting), and a running Sigil is
+    // brought to the front instead of failing; nothing is shown during the wait (see `port_precheck`).
+    // The check also logs what it found to the app log file (the logger starts later, inside Tauri).
+    match port_precheck::run(services::web::startup_bind_ip(), args.port, !start_minimized) {
+        port_precheck::Outcome::Free => {}
+        port_precheck::Outcome::Raised => return,
+        port_precheck::Outcome::Busy { error, holder } => {
+            let text = port_precheck::describe(args.port, &error, &holder);
+            if start_minimized {
+                // Automated run on a PC someone is using: no box, no focus. The exit code says it, and
+                // the log has the reason (a release build has no console to print it to).
+                port_precheck::log_line(&format!("Sigil did not start: {text}"));
+            } else {
+                port_precheck::show_message(&text);
             }
-            return;
+            std::process::exit(1);
         }
-    };
+    }
 
-    let start_minimized = start_minimized();
     let mut context = tauri::generate_context!();
     if start_minimized {
         // Created hidden and without focus; `setup` shows it minimized (see `show_minimized_without_focus`).

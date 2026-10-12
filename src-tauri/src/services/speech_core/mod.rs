@@ -43,6 +43,15 @@ pub mod utterance;
 
 use serde::{Deserialize, Serialize};
 
+/// The message of a panic payload (`catch_unwind`'s error): what the speech threads report when one of them panics.
+pub(crate) fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".to_string())
+}
+
 /// Sample rate of everything that leaves the speech front end.
 pub const SAMPLE_RATE: u32 = 16_000;
 /// Silero VAD v6 frame at 16 kHz (32 ms). The model also needs a 64-sample context per frame.

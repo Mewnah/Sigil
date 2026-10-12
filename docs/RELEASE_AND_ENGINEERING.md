@@ -59,13 +59,13 @@ Run before you cut a release candidate; update [Dependency audit notes](#depende
 
 ### Manual checks (installed or `tauri build` output)
 
-1. **Startup** — App opens with default embedded server port (3030 unless `--port` is set); no blank `#root` error overlay.
+1. **Startup** — App opens with default embedded server port (3030 unless `--port` is set); no blank `#root` error overlay. A port that is still held (the old copy takes up to 20 s to end, see `exit_guard.rs`) is waited for silently, up to about 25 s, instead of failing at once.
 2. **OAuth** — Twitch/Kick: loopback `http://localhost:17890/...` works; packaged webview redirects match [manual/03-integrations.md](manual/03-integrations.md#oauth-redirects-and-ports).
 3. **External STT / mic.html** — From STT inspector, open Chrome or Edge (or default browser on Linux/macOS); WebSocket pubsub connects; speech reaches the host.
-4. **Client mirror** — Open `/client` with `host`, `port`, `id` query params against the running host; canvas loads; disconnect shows a clear error.
+4. **Client mirror** — Open `http://localhost:<port>/client` (no query parameters) against the running host; canvas loads. Stop Sigil: the yellow "Lost connection to Sigil — reconnecting." bar shows; start it again (also after more than 8 minutes): captions return without touching the source. Load the page before Sigil is up: "Connecting to Sigil…" stays until it is.
 5. **i18n** — Switch languages; translations load from `/i18n/...` without JSON parse errors.
 6. **Local speech** — STT **Built-in (on your PC)**: Start asks before downloading, then captions arrive; TTS **Kokoro / Piper (local)**: the panel's download, **Preview**, then speech through the chosen device; optional HTTP sidecar (`scripts/neural-sidecar/tts_sidecar.py`) through **OpenAI-compatible (HTTP)**.
-7. **Second instance** — Launch a second Sigil while the first holds the port; expect the native port-unavailable dialog.
+7. **Second instance** — Launch a second Sigil while the first runs: the first window comes to the front, no dialog, the second process ends. Hold the port with another program instead (for example `node -e "require('net').createServer().listen(3030)"`): after about 3 s a box names the program and suggests `--port`. Two extra launches within the old copy's 20 s exit start only one Sigil.
 
 See also [Manual Tauri checklist](#manual-tauri-checklist) for a broader feature pass.
 
@@ -91,8 +91,9 @@ Automated Playwright tests use Vite preview only; native Tauri behavior requires
 
 ### Remote client (`/client`)
 
-- [ ] Open client URL with `host`, `port`, `id` query params; canvas loads when host is running.
-- [ ] Disconnect host — user sees a clear error (not a silent blank screen).
+- [ ] Open `http://localhost:<port>/client`; canvas loads when host is running.
+- [ ] Disconnect host — the yellow "Lost connection to Sigil — reconnecting." bar shows (not a silent blank screen); start the host again and the source recovers on its own, however long it was away.
+- [ ] Open the page before the host is running — "Connecting to Sigil…" stays and the canvas loads once the host is up.
 
 ### Packaging
 
@@ -108,7 +109,7 @@ CI [Playwright](https://playwright.dev/) tests run against **`vite preview`** on
 1. **Build** — `pnpm tauri build` (or your release profile). Note output paths under `src-tauri/target/release/` (`.exe` / installer per platform).
 2. **Launch** — Start the installed or freshly built executable (not `pnpm tauri dev`).
 3. **Window** — Main window appears; no persistent error overlay on `#root`.
-4. **Embedded server** — Status or footer shows expected host/port (default **3030** unless `--port`); no immediate bind error.
+4. **Embedded server** — Status or footer shows expected host/port (default **3030** unless `--port`); no immediate bind error. A held port is waited for (about 25 s for a Sigil that is still closing, about 3 s for another program) and a second launch brings the running window to the front. Runs with `SIGIL_START_MINIMIZED=1` never raise another window and never show the port box: a busy port ends the start with one stderr line (also written to `sigil.log` as `Sigil did not start: …`) and exit code 1.
 5. **Optional** — Open **Help** (book icon) and confirm manual markdown loads; spot-check one inspector if you changed native code.
 
 For deeper coverage, continue with the [Manual Tauri checklist](#manual-tauri-checklist) on the same build.
@@ -691,8 +692,8 @@ Inspect `stats/rollup-stats.html` after `ANALYZE=true npm run build`. Large deps
 
 - **Firewalls:** Allow inbound TCP on the configured Sigil port for `/client` and PeerJS (`/peer`).
 - **Reverse proxies:** If terminating TLS in front of Sigil, set WebSocket read/write timeouts above the app keepalive interval (`LINK_PUBSUB_KEEPALIVE_MS` in [`src/shared/services/pubsub/index.ts`](../src/shared/services/pubsub/index.ts), default 25s) or disable proxy idle timeout for that route.
-- **Background browser tabs:** Chrome may throttle timers; client uses reconnection logic — prefer keeping the client tab focused during live use.
-- **Service worker (`/client`):** Workbox precaches the production build. After a host update, clients may need a refresh so the SW picks up new assets; `index.tsx` already listens for `updatefound` and reloads when appropriate.
+- **Background browser tabs and OBS:** Chrome may throttle timers in a hidden tab, and an OBS browser source is not a tab that can be focused. The `/client` mirror retries without limit (1, 2, 4, 8, 16 s, then every 30 s) and abandons an attempt that stalls after 20 s, so a late timer only delays it. In OBS, **Shutdown source when not visible** is optional (CPU) and no longer a workaround for a stuck source. A manual **Refresh cache of current page** is needed only after a Sigil update or after the dark "Application failed to start" page ([the manual](manual/00-overview.md#if-the-connection-drops)).
+- **No service worker on `/client`:** the page unregisters any service worker it finds (`src/index.tsx`), so a host update needs no cache clearing beyond OBS's own refresh.
 
 ### Service lifecycle matrix (host)
 

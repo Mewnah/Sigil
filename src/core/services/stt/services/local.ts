@@ -17,10 +17,13 @@
  * `onInterim` / `onFinal` with `segmentId` / `revision` / `lang` / `turnEnd` metadata. `speech:status` feeds the
  * status line only (never published). Before Service_STT closes the open sentence (mute, stop), `commitPending`
  * publishes the finished sentences still held for their two-pass replacement. A pipeline that stops itself with a
- * retryable error (device lost, engine crash) is restarted automatically with back-off; after {@link MAX_RESTARTS}
- * failed restarts in a row (a session that ran {@link STABLE_RUN_MS} starts a new count), or on an error a restart
- * cannot fix (a model went missing, an unsupported or invalid request; see {@link restartCanFix}), the session stops
- * with a message.
+ * retryable error (device lost, engine crash) is restarted automatically with back-off, and so is a first start that
+ * fails with one (the microphone held by another app, an engine that failed to load: an automatic start at launch
+ * would otherwise leave captions off for good). After {@link MAX_RESTARTS} failed restarts in a row (a session that
+ * ran {@link STABLE_RUN_MS} starts a new count) the restarts slow down to one every {@link SLOW_RESTART_MS}, for as
+ * long as nobody pressed Stop, with a "trying again" status line instead of an error. An error a restart cannot fix
+ * (a model went missing, an unsupported or invalid request; see {@link restartCanFix}) stops the session with a
+ * message.
  *
  * Interim results (`stt.local.interim`, default on): off asks the router for a plan without the streaming model wherever
  * a final model runs next to it (`RustSpeechRouteRequest.interim`; the stream is not loaded or run, which saves its CPU),
@@ -35,6 +38,7 @@ import { confirm, message } from "@tauri-apps/plugin-dialog";
 import i18n from "i18next";
 import { proxy, subscribe } from "valtio";
 import {
+  AUDIO_DEVICE_EVENTS,
   SPEECH_EVENTS,
   type RustCatalogEntry,
   type RustModelEntryStatus,
@@ -78,6 +82,17 @@ import {
   routeRequest,
   specOnGpu,
 } from "../router";
+import {
+  isSlowRestart,
+  MAX_RESTARTS,
+  notInstalledId,
+  RESTART_DELAYS_MS,
+  restartCanFix,
+  restartDelayMs,
+  SLOW_RESTART_MS,
+  STABLE_RUN_MS,
+  startFailureCanRetry,
+} from "../restartPolicy";
 import { noteSttPipelineStart } from "../rustCapturePolling";
 import type { STT_State } from "../schema";
 import { TRANSIENT_WARNING_MS } from "../statusChannel";
@@ -117,53 +132,17 @@ export const MAX_HOLD_MISSES = 2;
 /** Finished segment ids remembered to ignore late events. */
 const FINISHED_MEMORY = 512;
 
-// Auto-restart.
-
-/** Waits before the automatic restarts after a pipeline error. */
-export const RESTART_DELAYS_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 20_000];
-/** Failed restarts in a row after which the session stops. */
-export const MAX_RESTARTS = RESTART_DELAYS_MS.length;
-/**
- * A session that failed after running this long (since its last successful start) begins a new restart budget. A
- * restart that fails at start never ran, so it never resets the budget.
- */
-export const STABLE_RUN_MS = 60_000;
-/** `speech:status` codes of a fatal error that a restart can fix. */
-const RETRYABLE_CODES: ReadonlySet<string> = new Set([
-  "capture_error",
-  "capture_gap",
-  "engine_error",
-  "engine_fallback",
-  "backlog_dropped",
-  "rate_limited",
-  "",
-]);
-/**
- * Rust engine error kinds (`AsrErrorKind`) that lead a fatal detail or a start error as `<kind>: message`
- * (`worker.rs` fatals them at once, `is_fatal`): the same setup fails the same way on every start.
- */
-const UNFIXABLE_KIND = /^\s*(invalid_input|unsupported|out_of_memory):/;
+// Auto-restart (the ladder, the slow retry and `restartCanFix` live in `../restartPolicy`, shared with Service_STT).
 
 /**
- * Whether restarting the pipeline can fix a fatal error: its `speech:status` code (`""` for a failed start) is one a
- * restart can fix, and its detail does not start with an engine error kind that fails on every start
- * (`invalid_input`, `unsupported`). `out_of_memory` is worth a restart only when the next start can land on a lighter
- * setup: the plan has a CPU fallback, or the tier is automatic (the router plans again with the VRAM the resource
- * governor grants now). Any restart stays bounded by {@link MAX_RESTARTS}.
+ * A device event while a restart waits retries after this long: one plug or unplug raises several events within
+ * moments, and the microphone is listed only after the last of them.
  */
-export function restartCanFix(
-  code: string,
-  detail: string,
-  plan: Pick<RustSpeechRoutePlan, "fallback"> | null,
-  tier: RustSpeechTier | undefined,
-): boolean {
-  if (code === "not_installed" || !RETRYABLE_CODES.has(code)) return false;
-  if (notInstalledId(detail)) return false;
-  const kind = UNFIXABLE_KIND.exec(detail)?.[1];
-  if (!kind) return true;
-  if (kind === "out_of_memory") return !!plan?.fallback || (tier ?? "auto") === "auto";
-  return false;
-}
+export const DEVICE_RETRY_SETTLE_MS = 800;
+/** Least time between two retries that device events started (a flapping USB hub must not make a restart storm). */
+export const DEVICE_RETRY_MIN_GAP_MS = 5_000;
+
+export { MAX_RESTARTS, RESTART_DELAYS_MS, SLOW_RESTART_MS, STABLE_RUN_MS, notInstalledId, restartCanFix };
 
 // Downloads.
 
@@ -282,12 +261,6 @@ export function speechStatusLine(ev: RustSpeechStatus, title: (id: string) => st
       if (!detail) return null;
       return ev.level === "info" ? [i18n.t("stt.local_status_info", { detail })] : [i18n.t("stt.local_status_warning", { detail }), transient];
   }
-}
-
-/** Catalog id named by a Rust `not_installed: <id>[: why]` error, if any. */
-export function notInstalledId(error: string): string | null {
-  const m = /not_installed:\s*([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/.exec(error);
-  return m ? m[1] : null;
 }
 
 /** A readable message for a failed `start_pipeline` (or a fatal `speech:status` detail). */
@@ -907,8 +880,16 @@ export class STT_LocalService implements ISTTService {
   #interim = true;
   /** A session is live (started, not failed or stopped). */
   #running = false;
+  /** `onStart` went to the receiver for this start (a first start that is retried reports it on its first success). */
+  #startReported = false;
+  /** The raw error of a failed `start_pipeline` of the first start (and the plan it ran), while it may be retried. */
+  #startFailure: { error: string; plan: RustSpeechRoutePlan } | null = null;
   #stopRequested = false;
   #restartTimer: unknown = null;
+  /** Waits for the device events of a plug or unplug to settle before a retry that one asked for. */
+  #deviceTimer: unknown = null;
+  /** Local time of the last retry a device event started (0 = none yet). */
+  #deviceRetryAt = 0;
   /** Restarts in the current failing streak (see {@link STABLE_RUN_MS}). */
   #restartAttempts = 0;
   /** Local time of the last successful (re)start. */
@@ -935,6 +916,9 @@ export class STT_LocalService implements ISTTService {
   async start(params: STT_State): Promise<void> {
     this.#lifecycle.beginStart();
     this.#stopRequested = false;
+    this.#startReported = false;
+    this.#startFailure = null;
+    this.#earlyFatal = null;
     this.#restartAttempts = 0;
     this.#plan = null;
     this.#interim = params.local?.interim !== false;
@@ -966,12 +950,14 @@ export class STT_LocalService implements ISTTService {
             this.#floor = lastEpoch.get(LOCAL_PIPELINE_ID) ?? this.#floor;
             continue;
           }
+          this.#startFailure = { error: errorText(e), plan };
           throw new Error(startErrorMessage(e, (id) => this.#title(id)));
         }
       }
       this.#throwIfAborted(signal);
       if (!started) throw new Error(i18n.t("stt.local_error_no_engine"));
       this.#onStarted(started);
+      this.#startReported = true;
       this.receiver.onStart();
       this.#takeEarlyFatal(started.epoch);
     } catch (error) {
@@ -979,6 +965,7 @@ export class STT_LocalService implements ISTTService {
         this.#detach();
         return;
       }
+      if (this.#retryFirstStart()) return;
       this.#detach();
       // Downloads live only as long as the start that asked for them (the Models tab is for background ones).
       this.#cancelDownloads();
@@ -1046,6 +1033,8 @@ export class STT_LocalService implements ISTTService {
     await on<RustSpeechFinal>(SPEECH_EVENTS.final, (ev) => this.#publisherFor(ev.epoch).final(ev));
     await on<RustSpeechUtterance>(SPEECH_EVENTS.utterance, (ev) => this.#publisherFor(ev.epoch).utterance(ev));
     await on<RustSpeechTurnEnd>(SPEECH_EVENTS.turnEnd, (ev) => this.#publisherFor(ev.epoch).turnEnd(ev));
+    // Not a pipeline event: any device that comes or goes. It only matters while a restart waits (`#onDevicesChanged`).
+    this.#unlisteners.push(await this.#deps.listen<unknown>(AUDIO_DEVICE_EVENTS.devicesChanged, () => this.#onDevicesChanged(), signal));
   }
 
   /** The plan to run and the models it needs, installed (with consent). */
@@ -1423,17 +1412,42 @@ export class STT_LocalService implements ISTTService {
     this.#scheduleRestart(detail);
   }
 
-  #scheduleRestart(detail: string): void {
+  /**
+   * A first start whose `start_pipeline` failed with something a restart can fix (the microphone held by another app,
+   * an engine that failed to load right now) is tried again on the restart ladder instead of ending the session:
+   * the listeners stay, the receiver is told about the start on the first success. True when a retry is scheduled.
+   */
+  #retryFirstStart(): boolean {
+    const failure = this.#startFailure;
+    this.#startFailure = null;
+    if (!failure || this.#stopRequested || !this.#config) return false;
+    if (!startFailureCanRetry(failure.error, failure.plan, this.#config.route?.tier)) return false;
+    const capture = this.#earlyFatal?.code === "capture_error";
+    this.#earlyFatal = null;
+    this.#running = false;
+    this.#epoch = null;
+    this.#floor = lastEpoch.get(LOCAL_PIPELINE_ID) ?? this.#floor;
+    this.#scheduleRestart(failure.error, capture ? "capture" : "start");
+    return true;
+  }
+
+  /** `kind`: what failed, for the status line (a running session, a first start, a first start's microphone). */
+  #scheduleRestart(detail: string, kind: "restart" | "start" | "capture" = "restart"): void {
     const clock = this.#deps.clock;
     this.#restartAttempts += 1;
-    if (this.#restartAttempts > MAX_RESTARTS) {
-      this.#fail(i18n.t("stt.local_error_gave_up", { attempts: MAX_RESTARTS, detail }));
-      return;
-    }
-    const delay = RESTART_DELAYS_MS[Math.min(this.#restartAttempts - 1, RESTART_DELAYS_MS.length - 1)];
-    const line = i18n.t("stt.local_status_restarting", { detail, seconds: Math.ceil(delay / 1000) });
-    this.receiver.onStatus(line, { level: "warning" });
-    this.#deps.log(line, "warning");
+    const slow = isSlowRestart(this.#restartAttempts);
+    const delay = restartDelayMs(this.#restartAttempts);
+    const key = slow
+      ? "stt.local_status_retrying"
+      : kind === "capture"
+        ? "stt.local_status_start_retry_capture"
+        : kind === "start"
+          ? "stt.local_status_start_retry"
+          : "stt.local_status_restarting";
+    const line = i18n.t(key, { detail, seconds: Math.ceil(delay / 1000) });
+    this.receiver.onStatus(line, { level: "warning", retrying: true });
+    // The system log keeps the fast restarts and the start of the slow ones, not one line per slow attempt.
+    if (this.#restartAttempts <= MAX_RESTARTS + 1) this.#deps.log(line, "warning");
     this.#clearRestart();
     this.#restartTimer = clock.setTimeout(() => {
       this.#restartTimer = null;
@@ -1450,6 +1464,11 @@ export class STT_LocalService implements ISTTService {
       this.#onStarted(started);
       this.receiver.onStatus("");
       this.#deps.log(i18n.t("stt.local_log_restarted"), "info");
+      if (!this.#startReported) {
+        // The first start never reported: the service is still connecting and learns now that it is listening.
+        this.#startReported = true;
+        this.receiver.onStart();
+      }
       this.#takeEarlyFatal(started.epoch);
     } catch (e) {
       if (this.#stopRequested || isAbortError(e)) return;
@@ -1469,6 +1488,32 @@ export class STT_LocalService implements ISTTService {
       this.#deps.clock.clearTimeout(this.#restartTimer);
       this.#restartTimer = null;
     }
+    if (this.#deviceTimer !== null) {
+      this.#deps.clock.clearTimeout(this.#deviceTimer);
+      this.#deviceTimer = null;
+    }
+  }
+
+  /**
+   * A device came or went while a restart waits for its turn on the ladder (a microphone that is not listed yet, one
+   * a game holds, a USB hub that re-enumerates): try now, once the events have settled, instead of waiting up to 45 s.
+   * The start finds the microphone by its saved name, or by the one device of its family when Windows renumbered it
+   * (the capture hub's rule), so a microphone that comes back under a new name is picked up too. A retry that fails
+   * goes back to the ladder; device events never start retries closer than {@link DEVICE_RETRY_MIN_GAP_MS}.
+   */
+  #onDevicesChanged(): void {
+    if (this.#stopRequested || this.#restartTimer === null || this.#deviceTimer !== null) return;
+    const clock = this.#deps.clock;
+    this.#deviceTimer = clock.setTimeout(() => {
+      this.#deviceTimer = null;
+      // The wait may have ended meanwhile (the ladder's own retry ran, or the session stopped).
+      if (this.#stopRequested || this.#restartTimer === null) return;
+      const now = clock.now();
+      if (this.#deviceRetryAt > 0 && now - this.#deviceRetryAt < DEVICE_RETRY_MIN_GAP_MS) return;
+      this.#deviceRetryAt = now;
+      this.#clearRestart();
+      void this.#restart();
+    }, DEVICE_RETRY_SETTLE_MS);
   }
 
   /** The session cannot go on: release everything and report it. */

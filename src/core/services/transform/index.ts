@@ -11,6 +11,7 @@ import i18n from "i18next";
 import { toast } from "react-toastify";
 import { proxy } from "valtio";
 import { i18nReady } from "../stt/statusMessages";
+import { StreamStop } from "../stt/streamStop";
 import { pushSystemLog } from "../systemLog";
 import { raceWithSignal } from "../translation/abort";
 import { isCancelMarker } from "../translation/sequencer";
@@ -117,6 +118,7 @@ class Service_Transform implements IServiceInterface {
     private eventDisposers: (() => void)[] = [];
 
     #initialized = false;
+    #streamStop?: StreamStop;
     #engine: ITransformEngine | null = null;
     /** Bumped on every start and stop; async work of an older session must not touch state. */
     #epoch = 0;
@@ -160,11 +162,14 @@ class Service_Transform implements IServiceInterface {
         );
         this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(subId));
 
-        const streamSub = window.ApiShared.pubsub.subscribe("stream.on_ended", () => {
-            if (this.data.stopWithStream && this.serviceState.status === ServiceNetworkState.connected)
-                this.stop();
+        // "Stop with Twitch stream": stops when the stream stays offline, and starts again when it comes back.
+        this.#streamStop = new StreamStop({
+            enabled: () => this.data.stopWithStream,
+            active: () => this.serviceState.status !== ServiceNetworkState.disconnected,
+            stop: () => this.stop(),
+            start: () => this.start({ auto: true }),
         });
-        this.eventDisposers.push(() => window.ApiShared.pubsub.unsubscribe(streamSub));
+        this.eventDisposers.push(this.#streamStop.attach());
 
         this.#migrateSettings();
 
@@ -198,6 +203,7 @@ class Service_Transform implements IServiceInterface {
      *   simply not set up yet; a start the user asked for explains what is missing.
      */
     start(options: { auto?: boolean } = {}) {
+        this.#streamStop?.noteStart();
         this.#teardown();
         const epoch = ++this.#epoch;
         this.serviceState.error = "";

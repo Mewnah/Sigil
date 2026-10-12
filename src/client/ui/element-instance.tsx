@@ -44,19 +44,24 @@ const getVariants = (config: AnimationConfig): Variants => {
 
 export const ElementInstance: FC<{ id: string; }> = memo(({ id }) => {
   const { activeScene } = useSnapshot(window.ApiClient.scenes.state);
-  const { type, scenes } = useGetState(state => state.elements[id]);
+  // The element can be gone or lack the active scene (a scene switch on a multi-scene template, a
+  // scene deleted while a mirror shows it): every hook below runs on every render, whatever the
+  // scene, or React throws on the render where the count changes and unmounts the whole page.
+  const element = useGetState(state => state.elements[id]);
+  const type = element?.type;
+  const scenes = element?.scenes;
 
   const animation = useMemo(() => {
-    return scenes[activeScene]?.animation;
+    return scenes?.[activeScene]?.animation;
   }, [scenes, activeScene]);
-
-  if (!(activeScene in scenes))
-    return <></>;
 
   const variants = useMemo(() => {
     if (!animation?.enter || animation.enter.type === 'none') return undefined;
     return getVariants(animation.enter);
   }, [animation?.enter]);
+
+  if (!scenes || !(activeScene in scenes))
+    return <></>;
 
   function render() {
     switch (type) {

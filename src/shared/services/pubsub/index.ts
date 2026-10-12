@@ -167,6 +167,8 @@ class Service_PubSub implements IServiceInterface {
   /** {@link lanAccessKey} of the `lanAccess` values last handled (pushed or regenerated). */
   #lastLanKey = "";
   #lastServerStatusToast = "";
+  /** Whether the "web-server-status" toast is (or may still be) on screen. */
+  #statusToastShown = false;
   #lastOriginToastAt = 0;
   /** Local web server status (host app only; null until known). */
   webServer = proxy<{ status: WebServerStatus | null }>({ status: null });
@@ -353,6 +355,13 @@ class Service_PubSub implements IServiceInterface {
   #onServerStatus(status: WebServerStatus) {
     this.webServer.status = status;
     if (status.state !== "failed" && status.state !== "stopped") {
+      // The Rust supervisor restarts the server by itself: take the "unavailable" toast down once it is back.
+      // Real sequences pass through "starting" (stopped → starting → listening), which resets the
+      // de-duplication key, so whether a toast is up is tracked on its own.
+      if (status.state === "listening" && this.#statusToastShown) {
+        toast.dismiss("web-server-status");
+        this.#statusToastShown = false;
+      }
       this.#lastServerStatusToast = "";
       return;
     }
@@ -361,8 +370,12 @@ class Service_PubSub implements IServiceInterface {
       return;
     this.#lastServerStatusToast = key;
     console.error("[pubsub] local web server:", status.state, status.error);
+    this.#statusToastShown = true;
     toast.error(
-      i18n.t("toasts.web_server_failed", { port: status.port, error: status.error ?? status.state }),
+      i18n.t(status.state === "failed" ? "toasts.web_server_failed_retrying" : "toasts.web_server_stopped_restarting", {
+        port: status.port,
+        error: status.error ?? status.state,
+      }),
       { toastId: "web-server-status", autoClose: 20_000 }
     );
   }

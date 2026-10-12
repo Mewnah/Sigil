@@ -557,11 +557,14 @@ pub(crate) fn batch_policy(spec: &EngineSpec) -> Option<Arc<dyn BatchPolicy>> {
 #[derive(Debug, PartialEq)]
 pub(crate) enum Failure {
     Cancelled,
-    /// Worth another attempt (network, timeout, 408 / 425 / 5xx).
+    /// Worth another attempt (network, timeout, 408 / 425 / 5xx, a reply that is not the API's:
+    /// an HTML page or an unreadable body, which a captive portal, a proxy or a cut connection
+    /// produces and the next request may not).
     Retryable(String),
     /// HTTP 429.
     RateLimited { retry_after: Option<Duration>, message: String },
-    /// Retrying cannot help (bad key / model / URL, unreadable response).
+    /// Retrying cannot help: the API itself refused the request (bad key / model / URL, an error
+    /// it reported in its answer).
     Fatal(String),
 }
 
@@ -572,14 +575,31 @@ pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
     (secs.is_finite() && secs >= 0.0).then(|| Duration::from_secs_f64(secs.min(86_400.0)))
 }
 
+/// Whether an error reply passes by itself. 408, 425 and 5xx do. So does an HTML error page that is
+/// not about the key or the URL: no transcription API answers HTML, so a captive portal, a proxy
+/// or a firewall in the way did (401, 403, 404, 407 and 410 stay the user's to fix, whatever the
+/// body). Any other 4xx is the API refusing the request and is fatal.
+fn status_passes(status: StatusCode, html: bool) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status.as_u16() == 425
+        || status.is_server_error()
+        || (html && status.is_client_error() && !matches!(status.as_u16(), 401 | 403 | 404 | 407 | 410))
+}
+
+/// Whether a `Content-Type` is HTML.
+fn is_html(content_type: &str) -> bool {
+    content_type.trim_start().to_ascii_lowercase().starts_with("text/html")
+}
+
 /// Classify a non-success response (reads a bounded part of the body for the message).
 async fn failure_of(what: &str, resp: reqwest::Response) -> Failure {
     let status = resp.status();
     let retry_after = parse_retry_after(resp.headers());
+    let html = is_html(resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""));
     let message = describe_api_error(what, resp).await;
     if status == StatusCode::TOO_MANY_REQUESTS {
         Failure::RateLimited { retry_after, message }
-    } else if status == StatusCode::REQUEST_TIMEOUT || status.as_u16() == 425 || status.is_server_error() {
+    } else if status_passes(status, html) {
         Failure::Retryable(message)
     } else {
         Failure::Fatal(message)
@@ -615,7 +635,10 @@ pub(crate) fn parse_transcription(what: &str, content_type: &str, body: &[u8]) -
         Err(_) if content_type.starts_with("text/plain") => {
             Ok(String::from_utf8_lossy(body).trim().to_string())
         }
-        Err(_) => Err(Failure::Fatal(format!("{what}: the server returned a response that is not JSON"))),
+        // A login page or a proxy's answer, or a body cut short: not the API's verdict on the request.
+        Err(_) => Err(Failure::Retryable(format!(
+            "{what}: the server returned a response that is not JSON (a login page or proxy in the way?)"
+        ))),
     }
 }
 
@@ -1102,7 +1125,17 @@ mod tests {
             Err(Failure::Fatal(m)) if m.contains("bad model")
         ));
         assert_eq!(parse_transcription("t", "text/plain; charset=utf-8", b" plain "), Ok("plain".into()));
-        assert!(matches!(parse_transcription("t", "text/html", b"<html>"), Err(Failure::Fatal(_))));
+        // An unreadable reply is not the API's verdict: a captive portal's page, a cut body, an empty one.
+        for (content_type, body) in [
+            ("text/html", &b"<html>"[..]),
+            ("application/json", &br#"{"text":"cut off"#[..]),
+            ("application/json", &b""[..]),
+        ] {
+            assert!(
+                matches!(parse_transcription("t", content_type, body), Err(Failure::Retryable(_))),
+                "{content_type} {body:?}"
+            );
+        }
         let mut h = HeaderMap::new();
         assert_eq!(parse_retry_after(&h), None);
         h.insert(RETRY_AFTER, "2".parse().unwrap());
@@ -1111,6 +1144,29 @@ mod tests {
         assert_eq!(parse_retry_after(&h), Some(Duration::from_millis(1500)));
         h.insert(RETRY_AFTER, "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap());
         assert_eq!(parse_retry_after(&h), None);
+    }
+
+    #[test]
+    fn error_pages_of_a_proxy_pass_and_api_refusals_do_not() {
+        let st = |c: u16| StatusCode::from_u16(c).unwrap();
+        // Transient statuses pass whatever the body.
+        for code in [408, 425, 500, 502, 503, 504] {
+            assert!(status_passes(st(code), false), "{code}");
+        }
+        // The API refusing the request (JSON or plain body) is fatal.
+        for code in [400, 401, 403, 404, 413, 415, 422] {
+            assert!(!status_passes(st(code), false), "{code}");
+        }
+        // An HTML error page is a proxy's, a portal's or a firewall's, except where it is about the
+        // key or the URL.
+        for code in [400, 405, 409, 413, 418, 451] {
+            assert!(status_passes(st(code), true), "html {code}");
+        }
+        for code in [401, 403, 404, 407, 410] {
+            assert!(!status_passes(st(code), true), "html {code}");
+        }
+        assert!(is_html("text/html; charset=utf-8") && is_html(" Text/HTML"));
+        assert!(!is_html("application/json") && !is_html(""));
     }
 
     #[test]
@@ -1273,6 +1329,32 @@ mod tests {
         assert_eq!(err.kind, AsrErrorKind::InvalidInput);
         assert!(err.message.contains("401") && err.message.contains("Invalid API Key"), "{err}");
         assert!(!err.message.contains("sk-secret-123"), "the key never appears in errors");
+    }
+
+    /// A captive portal answers with its own page (HTTP 200, or an error status): the next
+    /// request, once the network is fine again, is a normal one.
+    #[test]
+    fn a_login_page_in_the_way_is_retried() {
+        let page = |status: &str| {
+            let body = "<html><body>Sign in to the network</body></html>";
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        // A 200 page, then the real answer.
+        let (base, seen) = serve(vec![
+            (page("200 OK"), Duration::ZERO),
+            (reply("200 OK", "", r#"{"text":"back online"}"#), Duration::ZERO),
+        ]);
+        let mut e = engine(&base);
+        assert_eq!(e.transcribe(&[0.1; 1600], &DecodeOptions::default()).unwrap().text, "back online");
+        assert_eq!(seen.try_iter().count(), 2);
+        // A 403 page is about the key: fatal at once, as before.
+        let (base, seen) = serve(vec![(page("403 Forbidden"), Duration::ZERO)]);
+        let err = engine(&base).transcribe(&[0.1; 1600], &DecodeOptions::default()).unwrap_err();
+        assert_eq!(err.kind, AsrErrorKind::InvalidInput, "{err}");
+        assert_eq!(seen.try_iter().count(), 1);
     }
 
     #[test]

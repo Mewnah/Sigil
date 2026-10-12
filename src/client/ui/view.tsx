@@ -6,7 +6,7 @@ import { useSnapshot } from "valtio";
 
 export const ElementSimpleTransform: FC<{ id: string }> = memo(({ id }) => {
   const {activeScene} = useSnapshot(window.ApiClient.scenes.state);
-  const rect = useGetState(state => state.elements[id].scenes[activeScene]?.rect);
+  const rect = useGetState(state => state.elements[id]?.scenes?.[activeScene]?.rect);
   return <div
     className="absolute transition-all duration-100"
     style={{

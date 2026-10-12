@@ -41,6 +41,35 @@ export interface SttStatusOptions {
    * Omitted = shown until the engine replaces or clears it.
    */
   expireMs?: number;
+  /**
+   * The line is the wait between two attempts of the engine's own automatic retry (a first start that is tried
+   * again, a restart after an error). Service_STT shows it as `serviceState.retrying` until the engine reports an
+   * empty status, connects or stops, so the UI can offer Stop while the status still reads "connecting".
+   */
+  retrying?: boolean;
+}
+
+/** Options of {@link ISTTReceiver.onStop}. */
+export interface SttStopOptions {
+  /**
+   * The session ended on a failure that may pass by itself: a lost connection, a network error, a service that closed
+   * the stream. While the user still wants STT running, Service_STT then reconnects with the restart ladder of the
+   * built-in engine (a status line, no error toast) instead of leaving the session stopped. Never set for a rejected
+   * key, bad settings or a user stop.
+   */
+  retry?: boolean;
+  /**
+   * With `retry`: the failure needs a long pause before the next try (a rate limit), so the first reconnect waits the
+   * slow pace of the ladder instead of a second.
+   */
+  slow?: boolean;
+  /**
+   * With `retry`: the service never accepted a connection (a refused handshake looks the same as a network error,
+   * and a rejected key hides behind it). While no session of the streak has connected, Service_STT retries it on the
+   * fast ladder only and then stops with the message; once one has connected, the failure is an outage and it
+   * retries at the slow pace for as long as the user wants STT running. Leave it off when the network is known down.
+   */
+  unproven?: boolean;
 }
 
 /**
@@ -50,7 +79,7 @@ export interface SttStatusOptions {
  */
 export interface ISTTReceiver {
   onStart(): void;
-  onStop(error?: string): void;
+  onStop(error?: string, options?: SttStopOptions): void;
   /**
    * A partial hypothesis of recognized speech. Only transcript text: never status, progress or placeholders. `""`
    * abandons the open sentence (nothing is published). `meta` (speech-pipeline engines) is published with the text.

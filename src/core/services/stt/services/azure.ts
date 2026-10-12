@@ -7,10 +7,11 @@ import type {
 import i18n from "i18next";
 import { isEmptyValue } from "../../../../utils";
 import { isAbortError, raceWithAbort } from "../abort";
+import { networkLooksUp } from "../restartPolicy";
 import { baseLanguageTag, errorText, shortDetail } from "../rustCapturePolling";
 import { STT_State } from "../schema";
 import { azureSegmentationSilenceMs } from "../sttOptions";
-import { ISTTReceiver, ISTTService, SttTextMeta } from "../types";
+import { ISTTReceiver, ISTTService, SttStopOptions, SttTextMeta } from "../types";
 
 type AzureSdk = typeof import("microsoft-cognitiveservices-speech-sdk");
 
@@ -56,6 +57,34 @@ export function azureCancelMessage(code: string | undefined, details: unknown): 
 }
 
 /**
+ * Whether an Azure cancellation (`CancellationErrorCode` name) is a failure that may pass by itself: the connection
+ * failed or timed out, or the service had an error. A rejected key, bad parameters or a used-up quota need the user.
+ */
+export function azureCancelRetryable(code: string | undefined): boolean {
+  switch (code) {
+    case "ConnectionFailure":
+    case "ServiceTimeout":
+    case "ServiceError":
+    case "ServiceUnavailable":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * How an Azure cancellation is reported: `retry` when it may pass (`azureCancelRetryable`), nothing when it needs the
+ * user. A connection that failed or timed out before the session ever started (`started`) may be a wrong region
+ * rather than an outage, and a browser cannot tell: it is `unproven` (Service_STT retries it on the fast ladder and
+ * then stops with the message) unless the webview knows the network to be down. Pure.
+ */
+export function azureStopOptions(code: string | undefined, started: boolean, online: boolean): SttStopOptions | undefined {
+  if (!azureCancelRetryable(code)) return undefined;
+  const refusable = code === "ConnectionFailure" || code === "ServiceTimeout";
+  return refusable && !started && online ? { retry: true, unproven: true } : { retry: true };
+}
+
+/**
  * Azure Speech in the webview (continuous recognition, optional second language through continuous language ID).
  * Interims and finals carry the detected language as `lang`.
  */
@@ -66,6 +95,8 @@ export class STT_AzureService implements ISTTService {
   #token = 0;
   /** A partial is on screen (a `NoMatch` result then abandons it). */
   #interimOpen = false;
+  /** The session reported its end (Azure follows a cancellation with a session stop). */
+  #ended = false;
 
   constructor(private readonly bindings: ISTTReceiver) {}
 
@@ -122,7 +153,18 @@ export class STT_AzureService implements ISTTService {
     }
     this.#instance = recognizer;
     this.#interimOpen = false;
+    this.#ended = false;
     const current = () => token === this.#token;
+    /** The session reached the service (`sessionStarted`): a failure after that is an outage, not a refused setup. */
+    let started = false;
+    /** Reports the end of the session once; `options.retry`: a failure that may pass (Service_STT reconnects). */
+    const end = (message: string, options?: SttStopOptions) => {
+      if (this.#ended) return;
+      this.#ended = true;
+      this.bindings.onStatus("");
+      if (options) this.bindings.onStop(message, options);
+      else this.bindings.onStop(message);
+    };
     const meta = (result: SpeechRecognitionResult): SttTextMeta | undefined => {
       try {
         const lang = baseLanguageTag(sdk.AutoDetectSourceLanguageResult.fromResult(result).language);
@@ -133,16 +175,21 @@ export class STT_AzureService implements ISTTService {
     };
 
     recognizer.sessionStarted = () => {
-      if (current()) this.bindings.onStart();
+      if (!current()) return;
+      started = true;
+      this.bindings.onStart();
     };
     recognizer.sessionStopped = () => {
-      if (current()) this.bindings.onStop();
+      // A stop of ours makes the session stale first, so this is the service or the connection ending it.
+      if (current()) end(i18n.t("stt.error_azure_closed"), { retry: true });
     };
     recognizer.canceled = (_r, e: SpeechRecognitionCanceledEventArgs) => {
       if (!current()) return;
-      const message = azureCancelMessage(sdk.CancellationErrorCode[e.errorCode], e.errorDetails);
-      this.bindings.onStatus("");
-      this.bindings.onStop(message ?? undefined);
+      const code = sdk.CancellationErrorCode[e.errorCode];
+      const message = azureCancelMessage(code, e.errorDetails);
+      // A cancellation without an error is the stream ending under a running session: it reconnects too.
+      if (message === null) end(i18n.t("stt.error_azure_closed"), { retry: true });
+      else end(message, azureStopOptions(code, started, networkLooksUp()));
     };
     recognizer.recognizing = (_r, e: SpeechRecognitionEventArgs) => {
       if (!current() || !az.interim || !e.result.text) return;

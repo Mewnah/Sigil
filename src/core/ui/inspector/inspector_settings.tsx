@@ -23,6 +23,7 @@ import Tooltip from "../dropdown/Tooltip";
 import Logo from "../logo";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
+import { webServerStatusLine } from "./webServerStatus";
 import { InputCheckbox, InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import DiagnosticsPanel from "@/core/services/diagnostics/DiagnosticsPanel";
 import { useTranslation } from "react-i18next";
@@ -236,10 +237,10 @@ const WebServerSection: FC = () => {
   const { t } = useTranslation();
   const { lanOriginCheck } = useSnapshot(window.ApiServer.state);
   const { status } = useSnapshot(window.ApiShared.pubsub.webServer);
+  const statusLine = webServerStatusLine(status);
   return <>
     <Inspector.SubHeader>{t("settings.section_web_server")}</Inspector.SubHeader>
-    {status?.state === "listening" && <span className="text-xs text-base-content/70">{t("settings.web_server_status_listening", { port: status.port })}</span>}
-    {(status?.state === "failed" || status?.state === "stopped") && <span className="text-xs text-error">{t("settings.web_server_status_failed", { error: status.error ?? status.state })}</span>}
+    {statusLine && <span className={statusLine.error ? "text-xs text-error" : "text-xs text-base-content/70"}>{t(statusLine.key, statusLine.values)}</span>}
     <InputCheckbox label="settings.field_lan_origin_check" value={lanOriginCheck} onChange={v => window.ApiServer.state.lanOriginCheck = v} />
     <Inspector.Description>
       <span className="text-base-content/60 text-xs">{t("settings.lan_origin_check_hint")}</span>

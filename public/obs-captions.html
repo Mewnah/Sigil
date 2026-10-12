@@ -128,6 +128,22 @@
       const CONFIRM_MS = 1500;
       let refusalStatus = "";
 
+      // One id per connection, never shared with another page: Sigil keys /pubsub sockets by id and
+      // gives an id to the newest socket only. A timestamp alone repeats when two sources start in
+      // the same millisecond. crypto.randomUUID needs a secure context (undefined on a plain-http
+      // LAN page), getRandomValues does not.
+      const newSocketId = () => {
+        try {
+          if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+          if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+            return Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(36)).join("");
+          }
+        } catch (_) {
+          // fall through
+        }
+        return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      };
+
       const setStatus = (text, ok) => {
         statusEl.textContent = text;
         statusEl.className = ok ? "ok" : "";
@@ -157,7 +173,7 @@
         if (!refusalStatus) setStatus(`connecting to ${host}:${port}`, false);
         let ws;
         try {
-          ws = new WebSocket(`ws://${host}:${port}/pubsub?id=obs-captions-${Date.now()}${tokenQuery}`);
+          ws = new WebSocket(`ws://${host}:${port}/pubsub?id=obs-captions-${newSocketId()}${tokenQuery}`);
         } catch (_) {
           setStatus("invalid host/port in URL", false);
           return;

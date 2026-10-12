@@ -12,6 +12,7 @@ use super::hub::{
     MAX_CONSUMERS_PER_STREAM,
 };
 use super::consumer::ReadInfo;
+use super::device_resolve::match_saved_device;
 use crate::services::speech_core::resample::StreamResampler;
 
 const STEREO_48K: StreamFormat = StreamFormat {
@@ -135,6 +136,16 @@ impl FakeBackend {
         }
     }
 
+    /// A new input device appears (a USB mic re-plugged into another port is listed under a new name).
+    fn add_input(&self, name: &'static str) {
+        self.0.devices.lock().unwrap().push(FakeDevice {
+            name,
+            loopback: false,
+            format: STEREO_48K,
+            present: true,
+        });
+    }
+
     fn set_present(&self, name: &str, present: bool) {
         for d in self.0.devices.lock().unwrap().iter_mut().filter(|d| d.name == name) {
             d.present = present;
@@ -175,7 +186,16 @@ impl CaptureBackend for FakeBackend {
     fn resolve(&self, spec: &SourceSpec) -> Result<ResolvedDevice, String> {
         let (name, loopback) = match spec {
             SourceSpec::DefaultInput => (self.0.default_input.lock().unwrap().map(str::to_string), false),
-            SourceSpec::Input(n) => (Some(n.clone()), false),
+            // Like the cpal backend: the exact name, else the one renumbered device of its family.
+            SourceSpec::Input(n) => {
+                let devices = self.0.devices.lock().unwrap();
+                let names: Vec<String> = devices
+                    .iter()
+                    .filter(|d| !d.loopback && d.present)
+                    .map(|d| d.name.to_string())
+                    .collect();
+                (Some(match_saved_device(n, &names).map_or_else(|| n.clone(), |(i, _)| names[i].clone())), false)
+            }
             SourceSpec::DefaultLoopback => (self.0.default_output.lock().unwrap().map(str::to_string), true),
             SourceSpec::Loopback(n) => (Some(n.clone()), true),
             SourceSpec::Process(exe) => (Some(format!("process:{exe}")), true),
@@ -192,6 +212,11 @@ impl CaptureBackend for FakeBackend {
             format: device.format,
             handle: None,
         })
+    }
+
+    fn input_device_names(&self) -> Option<Vec<String>> {
+        let devices = self.0.devices.lock().unwrap();
+        Some(devices.iter().filter(|d| !d.loopback && d.present).map(|d| d.name.to_string()).collect())
     }
 
     fn open(&self, device: ResolvedDevice, sink: StreamSink, errors: ErrorSink) -> Result<Box<dyn CaptureStream>, String> {
@@ -520,6 +545,203 @@ fn unplug_then_replug_recovers_quickly_after_a_device_change() {
     assert_eq!(events.events()[1].1.epoch, c.epoch());
     let (out, _) = read_all(&mut c);
     assert!(!out.is_empty());
+}
+
+#[test]
+fn a_microphone_replugged_under_a_renumbered_name_is_followed_under_the_same_epoch() {
+    // The mic moved to another USB port: Windows lists it as "(2- USB Audio)", not "(USB Audio)".
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    let mut c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    let epoch = c.epoch();
+    fake.unplug("Mic (USB Audio)");
+    wait_until("stream_error", || events.count("error") == 1);
+    // Other microphones never stand in for it, not even after a device change.
+    hub.devices_changed();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(fake.opens(), 1, "Mic A and Mic B are other families: nothing to open");
+    assert!(c.is_recovering());
+
+    fake.add_input("Mic (2- USB Audio)");
+    hub.devices_changed();
+    wait_until("reopened on the renamed endpoint", || fake.opens() == 2);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (2- USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    wait_until("stream_recovered", || events.count("recovered") == 1);
+    assert_eq!(events.events()[1].1.epoch, epoch, "same source epoch: STT never restarts");
+    assert_eq!(c.epoch(), epoch);
+    assert!(!c.is_recovering());
+    let (out, _) = read_all(&mut c);
+    assert!(!out.is_empty());
+}
+
+#[test]
+fn a_start_with_a_saved_name_that_was_renumbered_opens_the_one_device_of_its_family() {
+    // The saved name is from before the mic moved to another USB port; nothing else may stand in for it.
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (2- USB Audio)");
+    let mut c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    assert_eq!(c.source(), "Mic (USB Audio)", "events and status keep the saved name");
+    assert_eq!(fake.opens(), 1);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (2- USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    assert!(!read_all(&mut c).0.is_empty());
+    assert_eq!(events.count("error"), 0);
+
+    // A name of no listed family still fails the start (never the system default, which is "Mic A" here).
+    let err = hub
+        .attach(SourceSpec::Input("Yeti Stereo Microphone".into()), ConsumerOptions::speech("other"))
+        .err()
+        .expect("an unknown microphone does not open");
+    assert!(err.contains("not found"), "{err}");
+    assert_eq!(fake.opens(), 1);
+}
+
+#[test]
+fn two_candidates_of_the_family_are_not_guessed_between() {
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    let c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    fake.unplug("Mic (USB Audio)");
+    wait_until("stream_error", || events.count("error") == 1);
+    fake.add_input("Mic (2- USB Audio)");
+    fake.add_input("Mic (3- USB Audio)");
+    hub.devices_changed();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(fake.opens(), 1, "ambiguous: neither takes over");
+    assert!(c.is_recovering());
+    // The exact name returning wins again.
+    fake.set_present("Mic (USB Audio)", true);
+    hub.devices_changed();
+    wait_until("reopened under the saved name", || fake.opens() == 2);
+    assert!(fake.push("in:Mic (USB Audio)", &vec![0.1; BLOCK * 2]));
+}
+
+#[test]
+fn a_second_identical_microphone_that_was_there_all_along_never_stands_in() {
+    // Two USB devices list as the same family (a headset and a webcam). STT chose the headset.
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    fake.add_input("Mic (2- USB Audio)");
+    let mut c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    let epoch = c.epoch();
+    assert_eq!(fake.opens(), 1);
+    fake.unplug("Mic (USB Audio)");
+    wait_until("stream_error", || events.count("error") == 1);
+    // The webcam's microphone is the only family member, and it is not the lost device: the hub
+    // keeps asking for the headset, device changes included.
+    hub.devices_changed();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(fake.opens(), 1, "the other microphone must not open");
+    assert!(c.is_recovering(), "no stand-in: the consumer still waits for its own device");
+    assert_eq!(events.count("recovered"), 0);
+    assert!(!fake.push("in:Mic (2- USB Audio)", &vec![0.1; BLOCK * 2]), "the sibling has no stream");
+
+    // The headset returns under its own name: it reopens, same epoch.
+    fake.set_present("Mic (USB Audio)", true);
+    hub.devices_changed();
+    wait_until("reopened under the saved name", || fake.opens() == 2);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    wait_until("stream_recovered", || events.count("recovered") == 1);
+    assert_eq!(c.epoch(), epoch);
+    assert!(!read_all(&mut c).0.is_empty());
+}
+
+#[test]
+fn a_renumbered_endpoint_that_appears_after_the_loss_takes_over_even_with_a_sibling_listed() {
+    // The headset and the webcam microphone are both "USB Audio"; the headset is re-plugged into
+    // another port and comes back as "(3- USB Audio)": the one family member that was not listed
+    // when it was lost. The webcam's microphone stays out of it.
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    fake.add_input("Mic (2- USB Audio)");
+    let c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    let epoch = c.epoch();
+    fake.unplug("Mic (USB Audio)");
+    wait_until("stream_error", || events.count("error") == 1);
+    fake.add_input("Mic (3- USB Audio)");
+    hub.devices_changed();
+    wait_until("reopened on the new endpoint", || fake.opens() == 2);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (3- USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    assert!(!fake.push("in:Mic (2- USB Audio)", &vec![0.1; BLOCK * 2]), "the sibling stays closed");
+    wait_until("stream_recovered", || events.count("recovered") == 1);
+    assert_eq!(events.events()[1].1.epoch, epoch);
+}
+
+#[test]
+fn a_busy_microphone_is_retried_by_name_and_never_swapped_for_its_sibling() {
+    // The headset is still listed, but another app holds it (exclusive mode): the reopen fails by
+    // name. The webcam's microphone (same family) must not be opened instead.
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    fake.add_input("Mic (2- USB Audio)");
+    let c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    fake.0.refuse_open.lock().unwrap().insert("in:Mic (USB Audio)".to_string());
+    fake.fail("in:Mic (USB Audio)", "driver reset");
+    wait_until("stream_error", || events.count("error") == 1);
+    hub.devices_changed();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(fake.opens(), 1, "no stream opened: the headset is busy, the sibling is not a stand-in");
+    assert!(c.is_recovering());
+    let status = hub.status().unwrap();
+    assert_eq!(status.streams.len(), 1, "no stream was created for the sibling");
+
+    fake.0.refuse_open.lock().unwrap().clear();
+    wait_until("reopened once the headset is free", || fake.opens() == 2);
+    assert!(fake.push("in:Mic (USB Audio)", &vec![0.1; BLOCK * 2]));
+}
+
+#[test]
+fn the_loss_snapshot_is_taken_again_for_every_outage() {
+    // First outage: the sibling "(2- ...)" was there all along. After the headset recovered, the
+    // sibling is unplugged and the headset is lost again: now a returning "(2- ...)" is a newcomer.
+    let (hub, fake, events) = hub_with(fast_config());
+    fake.add_input("Mic (USB Audio)");
+    fake.add_input("Mic (2- USB Audio)");
+    let c = hub
+        .attach(SourceSpec::Input("Mic (USB Audio)".into()), ConsumerOptions::speech("stt"))
+        .unwrap();
+    let epoch = c.epoch();
+    fake.unplug("Mic (USB Audio)");
+    wait_until("first stream_error", || events.count("error") == 1);
+    fake.set_present("Mic (USB Audio)", true);
+    hub.devices_changed();
+    wait_until("reopened", || fake.opens() == 2);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    wait_until("first recovery", || events.count("recovered") == 1);
+
+    // Second outage: both are gone, then only the sibling's name comes back.
+    fake.set_present("Mic (2- USB Audio)", false);
+    fake.unplug("Mic (USB Audio)");
+    wait_until("second stream_error", || events.count("error") == 2);
+    fake.set_present("Mic (2- USB Audio)", true);
+    hub.devices_changed();
+    wait_until("reopened on the family member that was not listed at this loss", || fake.opens() == 3);
+    for _ in 0..5 {
+        assert!(fake.push("in:Mic (2- USB Audio)", &vec![0.1; BLOCK * 2]));
+    }
+    wait_until("second recovery", || events.count("recovered") == 2);
+    assert_eq!(c.epoch(), epoch);
 }
 
 #[test]

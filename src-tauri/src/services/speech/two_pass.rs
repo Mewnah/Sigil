@@ -44,6 +44,7 @@
 //! - [`TwoPass::shutdown`]: cancel, join the worker; no `on_outcome` call after it returns.
 
 use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
@@ -162,6 +163,9 @@ pub enum TwoPassOutcome {
     /// No replacement: the first-pass final stands. `reason`: `budget`, `queue_full`, `empty`,
     /// `cancelled`, `engine_error` ([`skip`]).
     Skipped { segment_id: u64, reason: String },
+    /// The worker thread panicked (`detail`: the panic message). The jobs still waiting were
+    /// reported `Skipped`/`engine_error` first, and the queue refuses new jobs from now on.
+    WorkerDied { detail: String },
 }
 
 fn skipped(segment_id: u64, reason: &str) -> TwoPassOutcome {
@@ -259,7 +263,11 @@ impl TwoPass {
         };
         let handle = thread::Builder::new()
             .name("sigil-speech-two-pass".into())
-            .spawn(move || worker.run())
+            .spawn(move || {
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| worker.run())) {
+                    worker.died(&crate::services::speech_core::panic_text(payload.as_ref()));
+                }
+            })
             .map_err(|e| AsrError::runtime(format!("cannot start the two-pass worker: {e}")))?;
         let worker_id = handle.thread().id();
         Ok(Self {
@@ -394,6 +402,28 @@ impl Worker {
             }
         }
         tracing::debug!(target: LOG, "two-pass worker stopped");
+    }
+
+    /// The worker panicked: refuse new jobs, report the waiting ones as failed and tell
+    /// `on_outcome` the thread is gone, so the pipeline can end the session (the job it was
+    /// decoding is lost with the unwind).
+    fn died(&mut self, detail: &str) {
+        tracing::error!(target: LOG, "the two-pass worker panicked: {detail}");
+        let notices = {
+            let mut st = self.shared.lock();
+            st.shutdown = true;
+            st.running = false;
+            let ids: Vec<u64> = st.queue.drain(..).map(|q| q.job.segment_id).collect();
+            let mut notices = std::mem::take(&mut st.notices);
+            notices.extend(ids.into_iter().map(|id| skipped(id, skip::ENGINE_ERROR)));
+            notices
+        };
+        for outcome in notices {
+            (self.on_outcome)(outcome);
+        }
+        (self.on_outcome)(TwoPassOutcome::WorkerDied {
+            detail: detail.to_string(),
+        });
     }
 
     fn cancel_requested(&self) -> bool {
@@ -823,6 +853,42 @@ mod tests {
         tp.shutdown();
     }
 
+    /// A panic in a decode ends the worker thread alone. The jobs still waiting are reported
+    /// failed, the dead queue refuses new jobs, and the owner is told (`WorkerDied`): the pipeline
+    /// ends the session on that, so final-only segments are not dropped one by one.
+    #[test]
+    fn a_panicking_worker_reports_its_queue_and_its_death() {
+        let (g, open) = gate();
+        let script: Script = {
+            let g = Arc::clone(&g);
+            Box::new(move |_, _, cancel| {
+                wait_gate(&g, cancel);
+                panic!("scripted decode panic");
+            })
+        };
+        let (engine, _h) = fake(EngineKind::Transcribe, "gpu", "cuda", script);
+        let (on, rx) = collector();
+        let tp = TwoPass::spawn(engine, None, TwoPassConfig::default(), on).unwrap();
+        let now = Instant::now();
+        assert!(tp.submit(job(1, 100, Some("a"), now))); // running (blocked on the gate)
+        let started = Instant::now();
+        while !tp.shared.lock().queue.is_empty() || !tp.shared.lock().running {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(tp.submit(job(2, 200, None, now)));
+        assert!(tp.submit(job(3, 300, Some("c"), now)));
+        open();
+        assert_eq!(skip_reason(&recv(&rx)), Some((2, skip::ENGINE_ERROR)));
+        assert_eq!(skip_reason(&recv(&rx)), Some((3, skip::ENGINE_ERROR)));
+        match recv(&rx) {
+            TwoPassOutcome::WorkerDied { detail } => assert!(detail.contains("scripted decode panic"), "{detail}"),
+            other => panic!("expected the worker's death, got {other:?}"),
+        }
+        assert!(!tp.submit(job(4, 400, None, now)), "a dead queue refuses jobs");
+        tp.shutdown();
+    }
+
     #[test]
     fn empty_results_and_empty_audio_are_skipped() {
         let (engine, _h) = fake(EngineKind::SherpaOffline, "cpu", "cpu", Box::new(|_, _, _| Ok(text("   "))));
@@ -874,6 +940,7 @@ mod tests {
             match recv(&rx) {
                 TwoPassOutcome::Final { segment_id, .. } => finals.push(segment_id),
                 TwoPassOutcome::Skipped { segment_id, reason } => skips.push((segment_id, reason)),
+                TwoPassOutcome::WorkerDied { detail } => panic!("the worker died: {detail}"),
             }
         }
         skips.sort();

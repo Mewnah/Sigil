@@ -10,14 +10,12 @@ import {
   type PeerClientMirrorDetail,
 } from "./provider";
 import { lanClientUrl, normalizeLanToken } from "./lanAccess";
+import { invalidKeyMessage, MirrorRefusedError, MirrorStartError } from "./errors";
 import AppConfiguration from "@/config";
 import { getApiClient, getApiShared, getConfig } from "@/runtime/host";
 import { sanitizeClientPubSubFrame } from "@/shared/services/pubsub/inbound";
 
-/** Shown on a `/client` mirror the host refused because of the LAN token (P6-D). */
-function invalidKeyMessage() {
-  return i18n.t("client.peer_invalid_key");
-}
+export { MirrorRefusedError, MirrorStartError };
 
 class Service_Peer implements IServiceInterface {
   #provider?: PeerProvider;
@@ -26,6 +24,8 @@ class Service_Peer implements IServiceInterface {
   clientMirrorState = proxy({
     phase: "idle" as "idle" | "connecting" | "synced" | "reconnecting" | "failed",
     lastError: "",
+    /** Attempts that failed since the last time the mirror was in sync (the loading view's hint). */
+    failures: 0,
   });
 
   broadcast(msg: BaseEvent) {
@@ -77,11 +77,13 @@ class Service_Peer implements IServiceInterface {
       port: getConfig().serverNetwork.port,
     });
   }
+  /** Set until the first `peers:init_data` arrives (it answers `startClient`). */
   private onConfigReceived?: (data: any) => any;
 
   async startClient() {
     this.clientMirrorState.phase = "connecting";
     this.clientMirrorState.lastError = "";
+    this.clientMirrorState.failures = 0;
     this.#initializePeer();
     const onMirror: EventListener = (e) => {
       if (!(e instanceof CustomEvent)) return;
@@ -90,21 +92,27 @@ class Service_Peer implements IServiceInterface {
       if (d.phase === "synced") {
         this.clientMirrorState.phase = "synced";
         this.clientMirrorState.lastError = "";
+        this.clientMirrorState.failures = 0;
       } else if (d.phase === "reconnecting") {
         this.clientMirrorState.phase = "reconnecting";
       } else if (d.phase === "failed") {
         this.clientMirrorState.phase = "failed";
         this.clientMirrorState.lastError = detail(d.message);
+        this.clientMirrorState.failures++;
       } else if (d.phase === "error") {
         this.clientMirrorState.lastError = detail(d.message);
         this.clientMirrorState.phase = "reconnecting";
+        this.clientMirrorState.failures++;
       }
     };
     this.#provider?.addEventListener(PEER_CLIENT_MIRROR_EVENT, onMirror);
+    // The runtime config the host sends first on every channel it opens. Ready before connecting,
+    // so the first copy can never arrive ahead of its receiver.
+    const runtimeConfig = new Promise<AppConfiguration["clientInitialState"]>((res) => this.onConfigReceived = res);
     this.#provider?.addEventListener("on_event_received", (e) => {
       if (e instanceof CustomEvent) try {
         if (e.detail.topic === "peers:init_data")
-          this.onConfigReceived?.(e.detail.data);
+          this.#onHostConfig(e.detail.data);
         else {
           // Frames from the host are still validated: text.* must match TextEventSchema, emotes keep
           // only safe CDN URLs and markup in the text is neutralized; other topics pass through.
@@ -118,6 +126,8 @@ class Service_Peer implements IServiceInterface {
     });
     const network = getConfig().clientNetwork;
     try {
+      // Resolves on the first open channel, however many attempts that takes; rejects only for a
+      // refused LAN token (and the errors no retry can fix).
       await this.#provider?.connectClient({
         id: "server",
         host: network.host,
@@ -126,13 +136,39 @@ class Service_Peer implements IServiceInterface {
       });
     } catch (err) {
       this.clientMirrorState.phase = "failed";
-      // PeerJS's own invalid-key message quotes the key (the token): replace it.
-      const refused = peerErrorType(err) === PEER_INVALID_KEY;
-      this.clientMirrorState.lastError = refused ? invalidKeyMessage() : err instanceof Error ? err.message : String(err);
-      throw refused ? new Error(invalidKeyMessage()) : err;
+      // Everything connectClient rejects with is final: the refused token, a browser without
+      // WebRTC, a Peer that cannot be constructed. PeerJS's own invalid-key message quotes the key
+      // (the token), and so can the browser's error for a bad URL: neither is shown as it is.
+      const final = peerErrorType(err) === PEER_INVALID_KEY ? new MirrorRefusedError() : new MirrorStartError(err, network.token);
+      this.clientMirrorState.lastError = final.message;
+      throw final;
     }
     // wait for runtime config
-    return new Promise<AppConfiguration["clientInitialState"]>((res) => this.onConfigReceived = res);
+    return runtimeConfig;
+  }
+
+  /**
+   * `peers:init_data` from the host: the active scene and UI language. The host sends it on every
+   * channel it opens, so a copy after the first means this mirror reconnected: whatever changed
+   * while it was away (a scene switch, the language) is applied now. The Yjs document needs no
+   * help, the host resends all of it.
+   */
+  #onHostConfig(data: AppConfiguration["clientInitialState"]) {
+    const first = this.onConfigReceived;
+    if (first) {
+      this.onConfigReceived = undefined;
+      first(data);
+      return;
+    }
+    if (!data || typeof data !== "object") return;
+    // A later reader (Service_Scenes.init, while the first start-up is still running) sees it too.
+    getConfig().clientInitialState = data;
+    // Not through `scenes:change`, which ignores scenes the mirror's document does not hold yet:
+    // the host sends this before the document, and the elements draw once the scene arrives.
+    if (typeof data.scene === "string" && data.scene)
+      getApiClient().scenes.state.activeScene = data.scene;
+    if (typeof data.uiLanguage === "string" && data.uiLanguage && data.uiLanguage !== i18n.language)
+      void i18n.changeLanguage(data.uiLanguage);
   }
 
   async init() {

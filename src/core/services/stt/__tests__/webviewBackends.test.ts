@@ -87,7 +87,7 @@ vi.mock("@/utils/rustAudioInput", () => ({ resolveRustInputDeviceForInvoke: () =
 vi.mock("@/shared/services/pubsub", () => ({ PUBSUB_STT_EXTERNAL_COMMAND: "stt.external.command" }));
 
 import { STT_Backends, Service_STT_Schema, type STT_State } from "../schema";
-import { azureCancelMessage, STT_AzureService } from "../services/azure";
+import { azureCancelMessage, azureCancelRetryable, azureStopOptions, STT_AzureService } from "../services/azure";
 import {
   DEEPGRAM_KEEPALIVE_MS,
   DEEPGRAM_MUTE_POLL_MS,
@@ -191,10 +191,87 @@ describe("Azure", () => {
     await new STT_AzureService(r).start(settings(azure));
     h.recognizers[0].canceled!(null, { errorCode: 1, errorDetails: "WebSocket upgrade failed: Authentication error (401)" });
     expect(r.onStop).toHaveBeenCalledWith("Azure rejected the key or the region. Check both in the Azure settings.");
-    const r2 = receiver();
-    await new STT_AzureService(r2).start(settings(azure));
+    // A rejected key is not worth reconnecting: no retry flag.
+    expect(r.onStop.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("an end nobody asked for reconnects: a lost connection, a cancellation without an error, a session stop", async () => {
+    // The connection failed or timed out: it may pass.
+    const lost = receiver();
+    await new STT_AzureService(lost).start(settings(azure));
+    h.recognizers[0].sessionStarted!();
+    h.recognizers[0].canceled!(null, { errorCode: 5, errorDetails: "Connection was closed by the remote host" });
+    expect(lost.onStop).toHaveBeenCalledTimes(1);
+    expect(lost.onStop).toHaveBeenCalledWith("Could not connect to Azure Speech. Check your internet connection and the region.", { retry: true });
+    // Azure follows a cancellation with a session stop: still one report.
+    h.recognizers[0].sessionStopped!();
+    expect(lost.onStop).toHaveBeenCalledTimes(1);
+
+    // A cancellation without an error is the stream ending under a running session.
+    const quiet = receiver();
+    await new STT_AzureService(quiet).start(settings(azure));
     h.recognizers[1].canceled!(null, { errorCode: 0, errorDetails: "" });
-    expect(r2.onStop).toHaveBeenCalledWith(undefined);
+    expect(quiet.onStop).toHaveBeenCalledWith("The connection to Azure Speech ended.", { retry: true });
+
+    // The session stopped on its own while running.
+    const stopped = receiver();
+    await new STT_AzureService(stopped).start(settings(azure));
+    h.recognizers[2].sessionStarted!();
+    h.recognizers[2].sessionStopped!();
+    expect(stopped.onStop).toHaveBeenCalledWith("The connection to Azure Speech ended.", { retry: true });
+    expect(stopped.onStatus).toHaveBeenLastCalledWith("");
+
+    // A key, a bad request and a used-up quota need the user.
+    for (const [index, code] of [[1, 1], [2, 2], [3, 3]] as const) {
+      const r = receiver();
+      await new STT_AzureService(r).start(settings(azure));
+      h.recognizers[h.recognizers.length - 1].canceled!(null, { errorCode: code, errorDetails: "x" });
+      expect(r.onStop, String(index)).toHaveBeenCalledTimes(1);
+      expect(r.onStop.mock.calls[0], String(index)).toHaveLength(1);
+    }
+  });
+
+  it("a connection that failed before the session ever started is unproven: a wrong region looks the same", async () => {
+    const r = receiver();
+    await new STT_AzureService(r).start(settings(azure));
+    h.recognizers[0].canceled!(null, { errorCode: 5, errorDetails: "Unable to contact server" });
+    expect(r.onStop).toHaveBeenCalledWith("Could not connect to Azure Speech. Check your internet connection and the region.", {
+      retry: true,
+      unproven: true,
+    });
+  });
+
+  it("azureStopOptions: unproven only for a refused connection before the session started, while the network looks up", () => {
+    expect(azureStopOptions("ConnectionFailure", false, true)).toEqual({ retry: true, unproven: true });
+    expect(azureStopOptions("ServiceTimeout", false, true)).toEqual({ retry: true, unproven: true });
+    // After the session started, or with the network known down, it is an outage.
+    expect(azureStopOptions("ConnectionFailure", true, true)).toEqual({ retry: true });
+    expect(azureStopOptions("ConnectionFailure", false, false)).toEqual({ retry: true });
+    // Service-side errors are not about this setup; the others need the user.
+    expect(azureStopOptions("ServiceError", false, true)).toEqual({ retry: true });
+    expect(azureStopOptions("ServiceUnavailable", false, true)).toEqual({ retry: true });
+    expect(azureStopOptions("AuthenticationFailure", false, true)).toBeUndefined();
+    expect(azureStopOptions("TooManyRequests", true, true)).toBeUndefined();
+    expect(azureStopOptions(undefined, false, true)).toBeUndefined();
+  });
+
+  it("a stop of ours is not an end nobody asked for", async () => {
+    const r = receiver();
+    const svc = new STT_AzureService(r);
+    await svc.start(settings(azure));
+    const rec = h.recognizers[0];
+    svc.stop();
+    rec.sessionStopped!();
+    rec.canceled!(null, { errorCode: 5, errorDetails: "closed" });
+    // Only the stop's own report (after the recognizer closed), never a retry.
+    for (const call of r.onStop.mock.calls) expect(call).toEqual([]);
+  });
+
+  it("azureCancelRetryable: network-class cancellations only", () => {
+    for (const code of ["ConnectionFailure", "ServiceTimeout", "ServiceError", "ServiceUnavailable"])
+      expect(azureCancelRetryable(code), code).toBe(true);
+    for (const code of ["AuthenticationFailure", "Forbidden", "BadRequestParameters", "TooManyRequests", "RuntimeError", "NoError", undefined, ""])
+      expect(azureCancelRetryable(code), String(code)).toBe(false);
   });
 
   it("azureCancelMessage", () => {
@@ -359,7 +436,12 @@ describe("Deepgram", () => {
     svc.start(settings(deepgram));
     await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
     FakeSocket.instances[0].remoteClose(1006, "", false);
-    expect(r.onStop).toHaveBeenCalledWith("Could not connect to Deepgram. Check the API key and your internet connection.");
+    // A handshake that never opened may be a rejected key (browsers hide the status): "unproven" lets Service_STT
+    // bound the retries until a session has connected.
+    expect(r.onStop).toHaveBeenCalledWith("Could not connect to Deepgram. Check the API key and your internet connection.", {
+      retry: true,
+      unproven: true,
+    });
     expect(track.stopped).toBe(true);
 
     FakeSocket.instances = [];
@@ -367,7 +449,67 @@ describe("Deepgram", () => {
     const r2 = receiver();
     const { socket } = await connected(r2);
     socket.remoteClose(1011, "NET-0001", true);
-    expect(r2.onStop).toHaveBeenCalledWith("The connection to Deepgram was lost (1011: NET-0001).");
+    expect(r2.onStop).toHaveBeenCalledWith("The connection to Deepgram was lost (1011: NET-0001).", { retry: true });
+  });
+
+  it("a refused connection is not unproven while the webview knows the network is down", async () => {
+    vi.stubGlobal("navigator", { onLine: false, mediaDevices: { enumerateDevices: async () => [], getUserMedia } });
+    const r = receiver();
+    const svc = new STT_DeepgramService(r);
+    svc.start(settings(deepgram));
+    await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+    FakeSocket.instances[0].remoteClose(1006, "", false);
+    expect(r.onStop).toHaveBeenCalledWith("Could not connect to Deepgram. Check the API key and your internet connection.", { retry: true });
+  });
+
+  it("a close that means the service refused this setup (policy, auth, application codes) is never retried", async () => {
+    for (const code of [1008, 1002, 1003, 1007, 1009, 4000, 4001, 4401]) {
+      FakeSocket.instances = [];
+      FakeRecorder.instances = [];
+      const r = receiver();
+      const { socket } = await connected(r);
+      socket.remoteClose(code, "DATA-0000", true);
+      expect(r.onStop, String(code)).toHaveBeenCalledTimes(1);
+      expect(r.onStop.mock.calls[0], String(code)).toHaveLength(1);
+      expect(r.onStop.mock.calls[0][0]).toBe(`The connection to Deepgram was lost (${code}: DATA-0000).`);
+    }
+    // The transient ones are.
+    for (const code of [1001, 1006, 1011, 1012, 1013, 1014]) {
+      FakeSocket.instances = [];
+      FakeRecorder.instances = [];
+      const r = receiver();
+      const { socket } = await connected(r);
+      socket.remoteClose(code, "", false);
+      expect(r.onStop.mock.calls[0][1], String(code)).toEqual({ retry: true });
+    }
+  });
+
+  it("a close nobody asked for reconnects even when it is clean; a stop of ours reports nothing", async () => {
+    // Deepgram closes a stream that got no audio for a while with a clean 1000: the session must not just end.
+    const r = receiver();
+    const { socket } = await connected(r);
+    socket.remoteClose(1000, "", true);
+    expect(r.onStop).toHaveBeenCalledTimes(1);
+    expect(r.onStop).toHaveBeenCalledWith("Deepgram closed the connection.", { retry: true });
+    expect(track.stopped).toBe(true);
+
+    // A socket error is followed by a close: one report.
+    FakeSocket.instances = [];
+    FakeRecorder.instances = [];
+    const r2 = receiver();
+    const failing = await connected(r2);
+    failing.socket.onerror?.();
+    failing.socket.remoteClose(1006, "", false);
+    expect(r2.onStop).toHaveBeenCalledTimes(1);
+    expect(r2.onStop).toHaveBeenCalledWith("The connection to Deepgram was lost (error).", { retry: true });
+
+    // The user's stop closes the socket, which raises a clean close: not a lost connection.
+    FakeSocket.instances = [];
+    FakeRecorder.instances = [];
+    const r3 = receiver();
+    const stopping = await connected(r3);
+    stopping.svc.stop();
+    expect(r3.onStop).not.toHaveBeenCalled();
   });
 
   it("pauses the recorder while muted and keeps the socket alive; resumes on unmute", async () => {

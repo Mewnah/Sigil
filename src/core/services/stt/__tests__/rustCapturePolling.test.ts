@@ -31,7 +31,7 @@ import {
 } from "../rustCapturePolling";
 import { Service_STT_Schema, type STT_State } from "../schema";
 import { TRANSIENT_WARNING_MS } from "../statusChannel";
-import type { ISTTReceiver } from "../types";
+import type { ISTTReceiver, SttStopOptions } from "../types";
 import { initSttTestI18n, translated } from "./sttTestI18n";
 import { PROCESS_NONCE } from "@/utils/processNonce";
 
@@ -369,6 +369,53 @@ describe("RustUtteranceService (speech pipeline driver)", () => {
     const r2 = receiver();
     await startedEngine(r2);
     expect(r2.onStop.mock.calls[0][0]).toBe("TestSTT could not start: the Moonshine server does not answer");
+  });
+
+  it("a fatal status that may pass (a network failure, a busy microphone, a rate limit) is flagged for a reconnect; one that needs the user is not", async () => {
+    const cases: [code: string, detail: string, retry: SttStopOptions | false][] = [
+      ["engine_error", "5 utterances failed in a row; last error: network: connection refused (failed 3 times)", { retry: true }],
+      // A page a captive portal or a proxy answered with: the next request, on a working network, is a normal one.
+      ["engine_error", "5 utterances failed in a row; last error: network: HTTP transcription: the server returned a response that is not JSON (a login page or proxy in the way?) (failed 4 times)", { retry: true }],
+      ["capture_error", "no input device named 'USB'", { retry: true }],
+      ["engine_error", "invalid_input: HTTP transcription: HTTP 401 Unauthorized: Invalid API Key", false],
+      ["engine_error", "unsupported: no such model", false],
+      // Groq's per-minute limit ends by itself; it waits the slow pace, a quick retry only extends it.
+      ["rate_limited", "5 utterances failed in a row; last error: the request limit is used up for now (the next request would wait 42 min)", { retry: true, slow: true }],
+      ["not_installed", "stt/whatever", false],
+      // A model nobody chose (bring-your-own) is not installed by a restart, with or without a catalog id.
+      ["engine_error", "not_installed: Model whisper/custom is bring-your-own: choose its .bin file", false],
+    ];
+    for (const [code, detail, retry] of cases) {
+      const r = receiver();
+      await startedEngine(r);
+      emit("speech:status", status(epoch, "error", code, detail, "error"));
+      await vi.waitFor(() => expect(r.onStop).toHaveBeenCalledTimes(1), { timeout: 2_000 });
+      const call = r.onStop.mock.calls[0];
+      if (retry) expect(call[1], `${code}: ${detail}`).toEqual(retry);
+      else expect(call, `${code}: ${detail}`).toHaveLength(1);
+    }
+  });
+
+  it("a failed start is flagged for a reconnect unless a restart cannot fix it", async () => {
+    const cases: [error: string, retry: boolean][] = [
+      ["Could not open the audio device 'USB'", true],
+      ["network: the Moonshine server does not answer at http://127.0.0.1:8000", true],
+      ["invalid_input: the server address is not valid", false],
+      ["no speech engine for this request (language xx)", false],
+      ["cancelled", false],
+    ];
+    for (const [error, retry] of cases) {
+      startImpl = async () => {
+        ++epoch;
+        throw error;
+      };
+      const r = receiver();
+      await startedEngine(r);
+      expect(r.onStop, error).toHaveBeenCalledTimes(1);
+      const call = r.onStop.mock.calls[0];
+      if (retry) expect(call[1], error).toEqual({ retry: true });
+      else expect(call, error).toHaveLength(1);
+    }
   });
 
   it("prepare errors stop before any listener or pipeline exists", async () => {

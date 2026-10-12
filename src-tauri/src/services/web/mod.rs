@@ -14,7 +14,11 @@
 //! `plugin:web|set_lan_access`). Clients on other machines need the persistent LAN token; this PC
 //! never does. The mode chooses the listen address (`lan` = `0.0.0.0`, `localhost` = `127.0.0.1`)
 //! and a change rebinds live ([`serve_supervised`]); if the new address cannot be bound, the
-//! server keeps listening on the previous one and reports why.
+//! server keeps listening on the previous one and reports why. The supervisor never gives up while
+//! the app runs: a bind that keeps failing (on the requested address, and on the previous mode's
+//! when a switch failed), a server that ends or panics by itself, or a supervisor that panics, is
+//! retried with a capped backoff (`DOWN_RETRY_DELAYS_MS`) until it listens again. The first
+//! `Listening` also ends the start's turn of the pre-check (`port_precheck::release_start_turn`).
 //!
 //! Commands: `config`, `pubsub_broadcast`, `open_browser`, `server_status`, `set_origin_check`,
 //! `set_lan_access`, `regenerate_lan_token`.
@@ -26,10 +30,11 @@ use futures::future::BoxFuture;
 use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     process::Command,
     sync::{Arc, Mutex, PoisonError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{
     async_runtime::Mutex as AsyncMutex,
@@ -62,6 +67,15 @@ pub const ORIGIN_REJECTED_EVENT: &str = "web:origin_rejected";
 
 /// Delays between bind attempts: a previous Sigil instance may still be releasing the port.
 const BIND_RETRY_DELAYS_MS: [u64; 5] = [250, 500, 1_000, 2_000, 4_000];
+
+/// Delays between the quiet bind attempts while nothing listens (every bind attempt of a round
+/// failed, or the server ended by itself). The last delay repeats for as long as Sigil runs, so a
+/// port that frees up later, or a listener that died, comes back without anyone touching Settings.
+const DOWN_RETRY_DELAYS_MS: [u64; 5] = [1_000, 2_000, 5_000, 10_000, 15_000];
+
+/// A server that ran this long before it ended starts over at the first (shortest) delay; one that
+/// keeps ending sooner backs off instead of restarting in a tight loop.
+const STABLE_UPTIME: Duration = Duration::from_secs(60);
 
 /// How long in-flight HTTP requests may finish after a bind-mode switch closed the old listener.
 /// Upgraded WebSockets are separate tasks: the access rules close the ones the new mode refuses.
@@ -174,9 +188,11 @@ pub enum ServerState {
     /// Binding (including retries and bind-mode switches).
     Starting,
     Listening,
-    /// Could not bind after every retry; `error` says why.
+    /// Could not bind after every start-up retry; `error` says why. The supervisor keeps trying in
+    /// the background and reports `Listening` when it works.
     Failed,
-    /// The server future ended (should not happen while the app runs).
+    /// The server future ended or panicked, or the supervisor itself did (should not happen while
+    /// the app runs); it is bound again after a short wait, so `Starting` and `Listening` follow.
     Stopped,
 }
 
@@ -508,7 +524,56 @@ where
             server: Box::pin(server),
             stop,
         }),
-        Err(e) => Err(format!("could not listen on {addr}: {e}")),
+        Err(e) => Err(bind_error_text(addr, &e)),
+    }
+}
+
+/// `could not listen on <addr>: <error>`, plus a reason when Windows refused the bind outright
+/// (access denied, WSAEACCES): a port inside a range Windows reserved (Hyper-V, WSL, Docker) never
+/// frees up by itself, unlike a port another program holds for a while.
+fn bind_error_text(addr: SocketAddr, error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = format!("could not listen on {addr}: {error}");
+    if is_access_denied(error) {
+        text.push_str(". Windows may have reserved this port");
+    }
+    text
+}
+
+/// Whether `error`, or anything it wraps, is an I/O error with kind `PermissionDenied`.
+fn is_access_denied(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(e) = current {
+        if e.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied) {
+            return true;
+        }
+        current = e.source();
+    }
+    false
+}
+
+/// The serving future on a task of its own. A panic in it (the accept loop, a request filter) ends
+/// that task only and comes back as a `JoinError`, instead of unwinding through the supervisor; and
+/// the task is aborted when this is dropped, so a listener never outlives the supervisor's round.
+struct ServerTask(tokio::task::JoinHandle<()>);
+
+impl ServerTask {
+    fn spawn(server: BoxFuture<'static, ()>) -> Self {
+        Self(tokio::spawn(server))
+    }
+}
+
+impl Drop for ServerTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Why a serving task ended, for the `Stopped` report.
+fn server_end_text(ended: Result<(), tokio::task::JoinError>) -> String {
+    match ended {
+        Ok(()) => "the local web server stopped unexpectedly".to_string(),
+        Err(e) if e.is_panic() => "the local web server crashed".to_string(),
+        Err(e) => format!("the local web server task was cancelled ({e})"),
     }
 }
 
@@ -519,15 +584,57 @@ async fn next_mode_change(modes: &mut watch::Receiver<BindMode>) {
     }
 }
 
-/// Bind `addr`, retrying after each of `retry_delays_ms` while the port is busy.
-async fn bind_retrying<F>(routes: &F, addr: SocketAddr, retry_delays_ms: &[u64], modes: &mut watch::Receiver<BindMode>) -> Result<Running, BindError>
+/// Timing of [`serve_supervised`] (a parameter so tests run in milliseconds).
+#[derive(Clone, Copy)]
+struct Retry {
+    /// Delays between the bind attempts of one round (`Starting`): a previous Sigil may still hold the port.
+    bind_ms: &'static [u64],
+    /// Delays between the quiet bind attempts while nothing listens; the last one repeats.
+    down_ms: &'static [u64],
+    /// How long a server must have run for the next restart to start over at the first delay.
+    stable_uptime: Duration,
+}
+
+impl Retry {
+    const APP: Retry = Retry {
+        bind_ms: &BIND_RETRY_DELAYS_MS,
+        down_ms: &DOWN_RETRY_DELAYS_MS,
+        stable_uptime: STABLE_UPTIME,
+    };
+}
+
+/// Capped backoff over a delay list: each call returns the next delay and the last one repeats.
+struct Backoff {
+    delays_ms: &'static [u64],
+    step: usize,
+}
+
+impl Backoff {
+    fn new(delays_ms: &'static [u64]) -> Self {
+        Self { delays_ms, step: 0 }
+    }
+
+    /// Never zero, so a bad list cannot make the supervisor spin.
+    fn next_delay(&mut self) -> Duration {
+        let last = self.delays_ms.len().saturating_sub(1);
+        let ms = self.delays_ms.get(self.step.min(last)).copied().unwrap_or(1_000).max(1);
+        self.step = self.step.saturating_add(1);
+        Duration::from_millis(ms)
+    }
+
+    fn reset(&mut self) {
+        self.step = 0;
+    }
+}
+
+/// Bind `addr` with `bind`, retrying after each of `retry_delays_ms` while the port is busy.
+async fn bind_retrying<B>(bind: &B, addr: SocketAddr, retry_delays_ms: &[u64], modes: &mut watch::Receiver<BindMode>) -> Result<Running, BindError>
 where
-    F: Filter + Clone + Send + Sync + 'static,
-    F::Extract: warp::Reply,
+    B: Fn(SocketAddr) -> Result<Running, String>,
 {
     let mut attempt = 0usize;
     loop {
-        match try_bind(routes, addr) {
+        match bind(addr) {
             Ok(running) => return Ok(running),
             Err(error) => {
                 let Some(delay) = retry_delays_ms.get(attempt) else {
@@ -544,25 +651,103 @@ where
     }
 }
 
-/// Serve `routes` on the address of the requested [`BindMode`] (`addr_for`), rebinding whenever
-/// `modes` is notified. Every state change goes to `report`; never panics or busy-loops.
+/// A server bound while the requested mode was down.
+struct Rebound {
+    /// The mode it serves: the requested one, or the previous one when only that could be bound.
+    mode: BindMode,
+    running: Running,
+    /// Why the requested mode is not served (`Some` only for the previous mode).
+    error: Option<String>,
+}
+
+/// Bind again, quietly, while nothing listens (every bind attempt of a round failed): one attempt
+/// after each `backoff` delay, the last delay repeating, until a bind works (`Some`) or the requested
+/// mode is notified (`None`: the caller starts a full round at once).
 ///
-/// - A bind is retried after each of `retry_delays_ms` (a previous Sigil may still hold the port).
+/// Each attempt tries the requested mode (`wanted`) first. When it still fails and `previous` is
+/// set (the mode that served before, which a failed switch could not fall back to), that one is
+/// tried too, so the server comes back on whichever address works instead of staying down while the
+/// requested one is blocked.
+///
+/// `Starting` is never reported from here, and `Failed` only when the requested mode's error text
+/// differs from `reported`, so the front end (which toasts once per status and error) does not nag
+/// at every attempt; the caller reports `Listening` for the `Some` it gets.
+async fn rebind_while_down<B>(
+    bind: &B,
+    wanted: (BindMode, SocketAddr),
+    previous: Option<(BindMode, SocketAddr)>,
+    backoff: &mut Backoff,
+    modes: &mut watch::Receiver<BindMode>,
+    report: &impl Fn(ServerEvent),
+    mut reported: String,
+) -> Option<Rebound>
+where
+    B: Fn(SocketAddr) -> Result<Running, String>,
+{
+    let mut attempts = 0u32;
+    loop {
+        let delay = backoff.next_delay();
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = next_mode_change(modes) => return None,
+        }
+        attempts += 1;
+        let error = match bind(wanted.1) {
+            Ok(running) => {
+                tracing::info!(target: "sigil::web", "bound {} after {attempts} quiet retries", wanted.1);
+                return Some(Rebound { mode: wanted.0, running, error: None });
+            }
+            Err(error) => error,
+        };
+        if error == reported {
+            tracing::debug!(target: "sigil::web", "{error}; still retrying (attempt {attempts})");
+        } else {
+            tracing::warn!(target: "sigil::web", "{error}; still retrying (attempt {attempts})");
+            report(ServerEvent::Failed { error: error.clone() });
+            reported = error.clone();
+        }
+        if let Some((mode, addr)) = previous {
+            match bind(addr) {
+                Ok(running) => {
+                    tracing::warn!(
+                        target: "sigil::web",
+                        "{error}; listening on {} ({} mode) again after {attempts} quiet retries",
+                        running.addr,
+                        mode.as_str()
+                    );
+                    return Some(Rebound { mode, running, error: Some(error) });
+                }
+                Err(e) => tracing::debug!(target: "sigil::web", "{e} (the {} mode, attempt {attempts})", mode.as_str()),
+            }
+        }
+    }
+}
+
+/// Serve on the address of the requested [`BindMode`] (`addr_for`), rebinding whenever `modes` is
+/// notified. `bind` opens a listener on an address ([`try_bind`] on the routes in the app). Every
+/// state change goes to `report`. Never panics or busy-loops, and never gives up while the app runs:
+///
+/// - A bind round is retried after each of `retry.bind_ms` (a previous Sigil may still hold the port).
 /// - On a switch the old listener closes at once (graceful shutdown), in-flight requests get
 ///   [`DRAIN_TIMEOUT`], and the new address is bound.
 /// - If the new address fails, the previous mode is bound again and reported as `Listening` with
 ///   the error, so OBS and the pages on this PC keep working; a later notification retries.
-/// - With nothing to fall back to, `Failed` is reported and the next notification retries.
-async fn serve_supervised<F>(routes: F, mut modes: watch::Receiver<BindMode>, addr_for: impl Fn(BindMode) -> SocketAddr, retry_delays_ms: &[u64], report: impl Fn(ServerEvent))
+/// - With nothing to fall back to (or a fallback that fails too), `Failed` is reported and the bind
+///   is retried quietly after each of `retry.down_ms` (the last repeats), the previous mode as well
+///   as the requested one, until one works; a notification starts a full round at once.
+/// - If the server ends by itself (or its task panics), `Stopped` is reported and, after the next
+///   `retry.down_ms` delay (back to the first once a server ran for `retry.stable_uptime`, or at
+///   once on a notification), a full round binds it again.
+async fn serve_supervised<B>(bind: B, mut modes: watch::Receiver<BindMode>, addr_for: impl Fn(BindMode) -> SocketAddr, retry: Retry, report: impl Fn(ServerEvent))
 where
-    F: Filter + Clone + Send + Sync + 'static,
-    F::Extract: warp::Reply,
+    B: Fn(SocketAddr) -> Result<Running, String>,
 {
     let mut last_good: Option<BindMode> = None;
+    let mut backoff = Backoff::new(retry.down_ms);
     loop {
         let wanted = *modes.borrow_and_update();
         report(ServerEvent::Starting { mode: wanted });
-        let running = match bind_retrying(&routes, addr_for(wanted), retry_delays_ms, &mut modes).await {
+        let running = match bind_retrying(&bind, addr_for(wanted), retry.bind_ms, &mut modes).await {
             Ok(running) => {
                 tracing::info!(target: "sigil::web", "local web server listening on {} ({} mode)", running.addr, wanted.as_str());
                 last_good = Some(wanted);
@@ -575,15 +760,14 @@ where
             }
             Err(BindError::ModeChanged) => continue,
             Err(BindError::Failed(error)) => {
-                let fallback = last_good
-                    .filter(|previous| *previous != wanted)
-                    .and_then(|previous| match try_bind(&routes, addr_for(previous)) {
-                        Ok(running) => Some((previous, running)),
-                        Err(e) => {
-                            tracing::warn!(target: "sigil::web", "{e} (falling back to the {} mode)", previous.as_str());
-                            None
-                        }
-                    });
+                let previous = last_good.filter(|previous| *previous != wanted);
+                let fallback = previous.and_then(|previous| match bind(addr_for(previous)) {
+                    Ok(running) => Some((previous, running)),
+                    Err(e) => {
+                        tracing::warn!(target: "sigil::web", "{e} (falling back to the {} mode)", previous.as_str());
+                        None
+                    }
+                });
                 match fallback {
                     Some((previous, running)) => {
                         tracing::warn!(
@@ -602,32 +786,86 @@ where
                     None => {
                         tracing::error!(
                             target: "sigil::web",
-                            "{error}. /client, OBS, mic.html and Link apps are unavailable until the port is free (switch LAN access or restart Sigil)."
+                            "{error}. /client, OBS, mic.html and Link apps are unavailable until the port is free; Sigil keeps retrying (changing LAN access retries at once)."
                         );
-                        report(ServerEvent::Failed { error });
-                        next_mode_change(&mut modes).await;
-                        continue;
+                        report(ServerEvent::Failed { error: error.clone() });
+                        let wanted_at = (wanted, addr_for(wanted));
+                        let previous_at = previous.map(|previous| (previous, addr_for(previous)));
+                        match rebind_while_down(&bind, wanted_at, previous_at, &mut backoff, &mut modes, &report, error).await {
+                            Some(Rebound { mode, running, error }) => {
+                                tracing::info!(target: "sigil::web", "local web server listening on {} ({} mode)", running.addr, mode.as_str());
+                                last_good = Some(mode);
+                                report(ServerEvent::Listening {
+                                    mode,
+                                    addr: running.addr,
+                                    error,
+                                });
+                                running
+                            }
+                            None => {
+                                backoff.reset();
+                                continue;
+                            }
+                        }
                     }
                 }
             }
         };
 
-        let Running { addr, mut server, stop } = running;
+        let up_since = Instant::now();
+        let Running { addr, server, stop } = running;
+        let mut server = ServerTask::spawn(server);
         tokio::select! {
-            () = &mut server => {
-                let error = "the local web server stopped unexpectedly".to_string();
+            ended = &mut server.0 => {
+                let error = server_end_text(ended);
                 tracing::error!(target: "sigil::web", "{error} ({addr})");
                 report(ServerEvent::Stopped { error });
-                return;
+                if up_since.elapsed() >= retry.stable_uptime {
+                    backoff.reset();
+                }
+                let delay = backoff.next_delay();
+                tracing::warn!(target: "sigil::web", "binding {addr} again in {delay:?}");
+                tokio::select! {
+                    () = tokio::time::sleep(delay) => {}
+                    () = next_mode_change(&mut modes) => backoff.reset(),
+                }
             }
             () = next_mode_change(&mut modes) => {
                 tracing::info!(target: "sigil::web", "closing {addr} to apply the LAN access mode");
                 let _ = stop.send(());
-                if tokio::time::timeout(DRAIN_TIMEOUT, &mut server).await.is_err() {
+                if tokio::time::timeout(DRAIN_TIMEOUT, &mut server.0).await.is_err() {
                     tracing::warn!(target: "sigil::web", "requests on {addr} did not finish within {DRAIN_TIMEOUT:?}; dropping them");
                 }
+                backoff.reset();
             }
         }
+    }
+}
+
+/// Runs a whole [`serve_supervised`] round (`round` makes it) as a task of its own and, whenever
+/// that task ends, reports `Stopped` and starts a new round after the next `retry.down_ms` delay
+/// (back to the first once a round ran for `retry.stable_uptime`). A round never returns by itself,
+/// so an end is a panic in the supervisor: without this the listener would be gone for the rest of
+/// the session while the status still said `listening`.
+async fn keep_supervised<Fut>(round: impl Fn() -> Fut, retry: Retry, report: impl Fn(ServerEvent))
+where
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let mut backoff = Backoff::new(retry.down_ms);
+    loop {
+        let started = Instant::now();
+        let error = match tokio::spawn(round()).await {
+            Ok(()) => "the local web server supervisor ended".to_string(),
+            Err(e) if e.is_panic() => "the local web server supervisor crashed".to_string(),
+            Err(e) => format!("the local web server supervisor was cancelled ({e})"),
+        };
+        if started.elapsed() >= retry.stable_uptime {
+            backoff.reset();
+        }
+        let delay = backoff.next_delay();
+        tracing::error!(target: "sigil::web", "{error}; starting it again in {delay:?}");
+        report(ServerEvent::Stopped { error });
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -715,18 +953,35 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     .or(pubsub::path(pubsub_input_rx, pubsub_output_tx, access))
                     .or(assets::path(a));
 
+                let report: Arc<dyn Fn(ServerEvent) + Send + Sync> = Arc::new(move |event| {
+                    if matches!(event, ServerEvent::Listening { .. }) {
+                        // The port is held by the server now: the next start of Sigil (a double click
+                        // that waited for its turn, see `port_precheck`) finds this copy and its window.
+                        crate::port_precheck::release_start_turn();
+                    }
+                    server.apply(&event);
+                    let _ = status_handle.emit(SERVER_STATUS_EVENT, server.status());
+                });
+                let supervisor_report = report.clone();
+
                 // `lan`: all IPv4 interfaces, as upstream Curses (so `http://localhost:PORT/client`
                 // and LAN clients work; a 127.0.0.1-only bind rejected some localhost paths there).
-                // `localhost`: 127.0.0.1 only.
-                serve_supervised(
-                    routes,
-                    modes_rx,
-                    move |mode| mode.socket_addr(app_port),
-                    &BIND_RETRY_DELAYS_MS,
-                    move |event| {
-                        server.apply(&event);
-                        let _ = status_handle.emit(SERVER_STATUS_EVENT, server.status());
+                // `localhost`: 127.0.0.1 only. The supervisor runs as a task that is started again
+                // if it ever panics.
+                keep_supervised(
+                    move || {
+                        let routes = routes.clone();
+                        let report = report.clone();
+                        serve_supervised(
+                            move |addr| try_bind(&routes, addr),
+                            modes_rx.clone(),
+                            move |mode| mode.socket_addr(app_port),
+                            Retry::APP,
+                            move |event| report(event),
+                        )
                     },
+                    Retry::APP,
+                    move |event| supervisor_report(event),
                 )
                 .await;
             });
@@ -768,8 +1023,142 @@ mod tests {
         panic!("no {what} event: {:?}", seen.lock().unwrap());
     }
 
+    /// Wait until the recorded events satisfy `cond`.
+    async fn wait_events(seen: &Seen, what: &str, cond: impl Fn(&[ServerEvent]) -> bool) {
+        for _ in 0..500 {
+            if cond(&seen.lock().unwrap()) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no {what}: {:?}", seen.lock().unwrap());
+    }
+
     fn routes() -> impl Filter<Extract = (String,), Error = warp::Rejection> + Clone + Send + Sync + 'static {
         warp::path!("ping").map(|| "pong".to_string())
+    }
+
+    /// The bind the app uses (real sockets on the test's loopback addresses).
+    fn real_bind() -> impl Fn(SocketAddr) -> Result<Running, String> + Send + Sync + 'static {
+        let routes = routes();
+        move |addr| try_bind(&routes, addr)
+    }
+
+    /// Millisecond timing: `bind_ms` between the bind attempts of a round, 5 ms between the quiet
+    /// attempts while down.
+    fn retry(bind_ms: &'static [u64]) -> Retry {
+        Retry {
+            bind_ms,
+            down_ms: &[5],
+            stable_uptime: Duration::from_secs(60),
+        }
+    }
+
+    /// How a fake server ends.
+    enum Ending {
+        /// The future returns, like a listener that died.
+        End,
+        /// The future panics, like a bug in the accept loop.
+        Crash,
+    }
+
+    /// Servers without sockets: a bind works unless `fail` (every address) or `fail_at` (one
+    /// address) set an error, and a server ends when `end_latest` or `crash_latest` says so (or when
+    /// the supervisor stops it), like a listener that died. `panic_next_bind` makes the next bind
+    /// panic, like a bug in the supervisor itself.
+    #[derive(Default)]
+    struct FakeServers {
+        error: StdMutex<Option<String>>,
+        errors_at: StdMutex<Vec<(SocketAddr, String)>>,
+        ends: StdMutex<Vec<oneshot::Sender<Ending>>>,
+        binds: std::sync::atomic::AtomicUsize,
+        bind_times: StdMutex<Vec<Instant>>,
+        panic_next_bind: std::sync::atomic::AtomicBool,
+    }
+
+    impl FakeServers {
+        fn bind(&self, addr: SocketAddr) -> Result<Running, String> {
+            if self.panic_next_bind.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                panic!("fake supervisor bug");
+            }
+            self.bind_times.lock().unwrap().push(Instant::now());
+            let error = self
+                .errors_at
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(at, _)| *at == addr)
+                .map(|(_, error)| error.clone())
+                .or_else(|| self.error.lock().unwrap().clone());
+            let result = match error {
+                Some(error) => Err(error),
+                None => {
+                    let (end, end_rx) = oneshot::channel::<Ending>();
+                    let (stop, stop_rx) = oneshot::channel::<()>();
+                    self.ends.lock().unwrap().push(end);
+                    let server = async move {
+                        tokio::select! {
+                            ending = end_rx => {
+                                if matches!(ending, Ok(Ending::Crash)) {
+                                    panic!("fake server crash");
+                                }
+                            }
+                            _ = stop_rx => {}
+                        }
+                    };
+                    Ok(Running {
+                        addr,
+                        server: Box::pin(server),
+                        stop,
+                    })
+                }
+            };
+            // Counted last, so a test that waited for the n-th bind can already end its server.
+            self.binds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            result
+        }
+
+        fn fail(&self, error: Option<&str>) {
+            *self.error.lock().unwrap() = error.map(str::to_string);
+        }
+
+        /// Binds to `addr` fail with `error` (or work again with `None`), whatever `fail` says.
+        fn fail_at(&self, addr: SocketAddr, error: Option<&str>) {
+            let mut errors = self.errors_at.lock().unwrap();
+            errors.retain(|(at, _)| *at != addr);
+            if let Some(error) = error {
+                errors.push((addr, error.to_string()));
+            }
+        }
+
+        fn end_latest(&self) {
+            let end = self.ends.lock().unwrap().pop().expect("a running server");
+            let _ = end.send(Ending::End);
+        }
+
+        fn crash_latest(&self) {
+            let end = self.ends.lock().unwrap().pop().expect("a running server");
+            let _ = end.send(Ending::Crash);
+        }
+
+        fn binds(&self) -> usize {
+            self.binds.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// When the n-th (1-based) bind was tried.
+        fn bind_time(&self, n: usize) -> Instant {
+            self.bind_times.lock().unwrap()[n - 1]
+        }
+
+        async fn wait_binds(&self, n: usize) {
+            for _ in 0..500 {
+                if self.binds() >= n {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            panic!("only {} binds, wanted {n}", self.binds());
+        }
     }
 
     fn loopback(port: u16) -> SocketAddr {
@@ -799,22 +1188,418 @@ mod tests {
         let addr = holder.local_addr().unwrap();
         let (seen, report) = recorder();
         let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
-        let task = tokio::spawn(async move { serve_supervised(routes(), modes_rx, move |_| addr, &[1, 1], report).await });
+        let task = tokio::spawn(async move { serve_supervised(real_bind(), modes_rx, move |_| addr, retry(&[1, 1]), report).await });
 
         let failed = wait_for(&seen, "failed", |e| matches!(e, ServerEvent::Failed { .. })).await;
         let ServerEvent::Failed { error } = failed else { unreachable!() };
         assert!(error.contains(&addr.to_string()), "{error}");
         assert_eq!(seen.lock().unwrap()[0], ServerEvent::Starting { mode: BindMode::Lan });
-        assert!(!task.is_finished(), "it waits for a retry instead of ending");
+        assert!(!task.is_finished(), "it keeps retrying instead of ending");
         task.abort();
         drop(holder);
+    }
+
+    #[tokio::test]
+    async fn a_failed_bind_retries_quietly_until_the_port_frees() {
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = holder.local_addr().unwrap();
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let task = tokio::spawn(async move { serve_supervised(real_bind(), modes_rx, move |_| addr, retry(&[1]), report).await });
+        wait_for(&seen, "failed", |e| matches!(e, ServerEvent::Failed { .. })).await;
+
+        // Many quiet attempts fail the same way: no new Starting (the front end would toast again) and
+        // no repeated Failed.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(!task.is_finished());
+        let failed_only = seen.lock().unwrap().clone();
+        assert_eq!(failed_only.len(), 2, "{failed_only:?}");
+        assert!(matches!(failed_only[0], ServerEvent::Starting { .. }));
+        assert!(matches!(failed_only[1], ServerEvent::Failed { .. }));
+
+        // The port frees up and nobody does anything: the supervisor binds it by itself.
+        drop(holder);
+        let listening = wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        let ServerEvent::Listening { mode, addr: bound, error } = listening else { unreachable!() };
+        assert_eq!((mode, bound, error), (BindMode::Lan, addr, None), "a successful bind clears the error");
+        assert!(ping(addr).await.ends_with("pong"));
+        let events = seen.lock().unwrap().clone();
+        assert!(!events[2..].iter().any(|e| matches!(e, ServerEvent::Starting { .. } | ServerEvent::Failed { .. })), "{events:?}");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_new_error_while_down_is_reported_once_and_recovery_clears_it() {
+        let fake = Arc::new(FakeServers::default());
+        fake.fail(Some("could not listen on A: busy"));
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), retry(&[]), report).await });
+        wait_events(&seen, "first failure", |e| e.len() >= 2).await;
+        fake.wait_binds(4).await; // several quiet attempts with the same error
+        fake.fail(Some("could not listen on A: access denied"));
+        wait_events(&seen, "second error", |e| e.len() >= 3).await;
+        fake.wait_binds(fake.binds() + 3).await;
+        fake.fail(None);
+        wait_events(&seen, "listening", |e| e.iter().any(|x| matches!(x, ServerEvent::Listening { .. }))).await;
+
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            [
+                ServerEvent::Starting { mode: BindMode::Lan },
+                ServerEvent::Failed { error: "could not listen on A: busy".into() },
+                ServerEvent::Failed { error: "could not listen on A: access denied".into() },
+                ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: None },
+            ]
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn changing_the_mode_while_down_binds_at_once() {
+        // The quiet retry would only come in an hour: the notification has to do it.
+        let fake = Arc::new(FakeServers::default());
+        fake.fail(Some("busy"));
+        let (seen, report) = recorder();
+        let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let plan = Retry {
+            bind_ms: &[],
+            down_ms: &[3_600_000],
+            stable_uptime: Duration::from_secs(60),
+        };
+        let task = tokio::spawn(async move {
+            serve_supervised(move |a| servers.bind(a), modes_rx, |mode| loopback(if mode == BindMode::Lan { 3030 } else { 3031 }), plan, report).await
+        });
+        wait_for(&seen, "failed", |e| matches!(e, ServerEvent::Failed { .. })).await;
+        fake.fail(None);
+        modes_tx.send_replace(BindMode::Localhost);
+        let event = wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        assert_eq!(event, ServerEvent::Listening { mode: BindMode::Localhost, addr: loopback(3031), error: None });
+        assert!(seen.lock().unwrap().contains(&ServerEvent::Starting { mode: BindMode::Localhost }));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_server_that_ends_is_bound_again() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), retry(&[]), report).await });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+
+        fake.end_latest();
+        wait_events(&seen, "listening again", |e| e.iter().filter(|x| matches!(x, ServerEvent::Listening { .. })).count() == 2).await;
+        assert!(!task.is_finished(), "the supervisor does not return when the server ends");
+        assert_eq!(fake.binds(), 2);
+        let events = seen.lock().unwrap().clone();
+        let listening = ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: None };
+        assert_eq!(events.len(), 5, "{events:?}");
+        assert_eq!(events[0], ServerEvent::Starting { mode: BindMode::Lan });
+        assert_eq!(events[1], listening);
+        assert!(matches!(&events[2], ServerEvent::Stopped { error } if error.contains("stopped unexpectedly")));
+        assert_eq!(events[3], ServerEvent::Starting { mode: BindMode::Lan });
+        assert_eq!(events[4], listening);
+
+        // It serves again: ending it once more is picked up the same way.
+        fake.end_latest();
+        fake.wait_binds(3).await;
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_server_that_keeps_ending_backs_off() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let plan = Retry {
+            bind_ms: &[],
+            down_ms: &[20, 80],
+            stable_uptime: Duration::from_secs(60),
+        };
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), plan, report).await });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+
+        // Each server ends right after it started (well before `stable_uptime`): 20 ms, then 80 ms, then 80 ms again.
+        for (n, least) in [(2, 20), (3, 80), (4, 80)] {
+            let ended = Instant::now();
+            fake.end_latest();
+            fake.wait_binds(n).await;
+            assert!(ended.elapsed() >= Duration::from_millis(least), "restart {n} came after {:?}", ended.elapsed());
+            tokio::time::sleep(Duration::from_millis(5)).await; // let the new server register its end handle
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_server_that_ran_stably_restarts_after_the_first_delay() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        // A stable server (any uptime counts) starts over at the 10 ms delay; the 1 hour one is never reached.
+        let plan = Retry {
+            bind_ms: &[],
+            down_ms: &[10, 3_600_000],
+            stable_uptime: Duration::ZERO,
+        };
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), plan, report).await });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        for n in 2..=4 {
+            fake.end_latest();
+            fake.wait_binds(n).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_mode_change_cuts_short_the_wait_after_a_server_ended() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        // The restart would only come in an hour: the notification has to do it.
+        let plan = Retry {
+            bind_ms: &[],
+            down_ms: &[3_600_000],
+            stable_uptime: Duration::from_secs(60),
+        };
+        let task = tokio::spawn(async move {
+            serve_supervised(move |a| servers.bind(a), modes_rx, |mode| loopback(if mode == BindMode::Lan { 3030 } else { 3031 }), plan, report).await
+        });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        fake.end_latest();
+        wait_for(&seen, "stopped", |e| matches!(e, ServerEvent::Stopped { .. })).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(fake.binds(), 1, "it is waiting out the delay");
+
+        modes_tx.send_replace(BindMode::Localhost);
+        let event = wait_for(&seen, "localhost listening", |e| matches!(e, ServerEvent::Listening { mode: BindMode::Localhost, .. })).await;
+        assert_eq!(event, ServerEvent::Listening { mode: BindMode::Localhost, addr: loopback(3031), error: None });
+        assert_eq!(fake.binds(), 2);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_server_that_ends_and_cannot_be_bound_again_retries_quietly_with_the_backoff_that_is_left() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        // Two delays: the wait after Stopped uses the first (20 ms); the quiet retries that follow are the shared
+        // backoff's next steps, so they start at the second (60 ms), not over at 20 ms.
+        let plan = Retry {
+            bind_ms: &[],
+            down_ms: &[20, 60],
+            stable_uptime: Duration::from_secs(60),
+        };
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), plan, report).await });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+
+        fake.fail(Some("busy"));
+        fake.end_latest();
+        fake.wait_binds(3).await; // 2: the round after the wait fails; 3: the first quiet retry
+        assert!(fake.bind_time(3) - fake.bind_time(2) >= Duration::from_millis(60), "the quiet retry came {:?} after the round", fake.bind_time(3) - fake.bind_time(2));
+
+        fake.fail(None);
+        wait_events(&seen, "listening again", |e| e.iter().filter(|x| matches!(x, ServerEvent::Listening { .. })).count() == 2).await;
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(events.len(), 6, "{events:?}");
+        assert_eq!(events[0], ServerEvent::Starting { mode: BindMode::Lan });
+        assert!(matches!(&events[2], ServerEvent::Stopped { .. }), "{events:?}");
+        assert_eq!(events[3], ServerEvent::Starting { mode: BindMode::Lan });
+        assert_eq!(events[4], ServerEvent::Failed { error: "busy".into() }, "reported once, however many quiet retries failed");
+        assert_eq!(events[5], ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: None });
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_fallback_listener_that_ends_is_replaced_and_its_error_clears_once_the_requested_mode_binds() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let task = tokio::spawn(async move {
+            serve_supervised(move |a| servers.bind(a), modes_rx, |mode| loopback(if mode == BindMode::Lan { 3030 } else { 3031 }), retry(&[]), report).await
+        });
+        wait_for(&seen, "lan listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+
+        // The switch fails: the previous mode keeps serving, with the error.
+        fake.fail_at(loopback(3031), Some("busy"));
+        modes_tx.send_replace(BindMode::Localhost);
+        wait_events(&seen, "fallback", |e| e.len() == 4).await;
+
+        // That fallback listener ends: it is bound again (the requested mode is tried first and still fails).
+        fake.end_latest();
+        wait_events(&seen, "fallback again", |e| e.len() == 7).await;
+
+        // The requested mode works by the time the fallback ends the next time: it takes over and the error is gone.
+        fake.fail_at(loopback(3031), None);
+        fake.end_latest();
+        wait_events(&seen, "requested mode", |e| e.len() == 10).await;
+
+        let lan = |error: Option<&str>| ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: error.map(str::to_string) };
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(events[..4], [ServerEvent::Starting { mode: BindMode::Lan }, lan(None), ServerEvent::Starting { mode: BindMode::Localhost }, lan(Some("busy"))]);
+        assert!(matches!(&events[4], ServerEvent::Stopped { .. }), "{events:?}");
+        assert_eq!(events[5], ServerEvent::Starting { mode: BindMode::Localhost });
+        assert_eq!(events[6], lan(Some("busy")), "still the previous mode, still with the reason");
+        assert!(matches!(&events[7], ServerEvent::Stopped { .. }), "{events:?}");
+        assert_eq!(events[8], ServerEvent::Starting { mode: BindMode::Localhost });
+        assert_eq!(events[9], ServerEvent::Listening { mode: BindMode::Localhost, addr: loopback(3031), error: None });
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn while_down_the_previous_mode_is_retried_as_well() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let task = tokio::spawn(async move {
+            serve_supervised(move |a| servers.bind(a), modes_rx, |mode| loopback(if mode == BindMode::Lan { 3030 } else { 3031 }), retry(&[]), report).await
+        });
+        wait_for(&seen, "lan listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        seen.lock().unwrap().clear();
+
+        // The switch fails and so does binding the previous mode again (an antivirus hook, a network change).
+        fake.fail_at(loopback(3030), Some("hook"));
+        fake.fail_at(loopback(3031), Some("busy"));
+        modes_tx.send_replace(BindMode::Localhost);
+        wait_for(&seen, "failed", |e| matches!(e, ServerEvent::Failed { .. })).await;
+
+        // Only the previous mode's address works again: the quiet retry brings the server back on it.
+        fake.fail_at(loopback(3030), None);
+        let event = wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        assert_eq!(event, ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: Some("busy".into()) });
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert_eq!(events[0], ServerEvent::Starting { mode: BindMode::Localhost });
+        assert_eq!(events[1], ServerEvent::Failed { error: "busy".into() });
+
+        // The next notification (the host re-sends the setting) tries the requested mode again.
+        fake.fail_at(loopback(3031), None);
+        modes_tx.send_modify(|_| {});
+        let event = wait_for(&seen, "localhost listening", |e| matches!(e, ServerEvent::Listening { mode: BindMode::Localhost, .. })).await;
+        assert_eq!(event, ServerEvent::Listening { mode: BindMode::Localhost, addr: loopback(3031), error: None });
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_server_that_panics_is_reported_and_bound_again() {
+        let fake = Arc::new(FakeServers::default());
+        let (seen, report) = recorder();
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let servers = fake.clone();
+        let task = tokio::spawn(async move { serve_supervised(move |a| servers.bind(a), modes_rx, |_| loopback(3030), retry(&[]), report).await });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+
+        fake.crash_latest();
+        wait_events(&seen, "listening again", |e| e.iter().filter(|x| matches!(x, ServerEvent::Listening { .. })).count() == 2).await;
+        assert!(!task.is_finished(), "a panic in the server does not take the supervisor with it");
+        let events = seen.lock().unwrap().clone();
+        assert!(matches!(&events[2], ServerEvent::Stopped { error } if error.contains("crashed")), "{events:?}");
+        assert_eq!(events[3], ServerEvent::Starting { mode: BindMode::Lan });
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_supervisor_that_panics_is_started_again() {
+        let fake = Arc::new(FakeServers::default());
+        fake.panic_next_bind.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (seen, report) = recorder();
+        let report = Arc::new(report);
+        let (_modes_tx, modes_rx) = watch::channel(BindMode::Lan);
+        let (round_report, restart_report) = (report.clone(), report.clone());
+        let servers = fake.clone();
+        let task = tokio::spawn(async move {
+            keep_supervised(
+                move || {
+                    let servers = servers.clone();
+                    let report = round_report.clone();
+                    serve_supervised(move |a| servers.bind(a), modes_rx.clone(), |_| loopback(3030), retry(&[]), move |e| report(e))
+                },
+                retry(&[]),
+                move |e| restart_report(e),
+            )
+            .await
+        });
+        wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(events.len(), 4, "{events:?}");
+        assert_eq!(events[0], ServerEvent::Starting { mode: BindMode::Lan });
+        assert!(matches!(&events[1], ServerEvent::Stopped { error } if error.contains("supervisor crashed")), "{events:?}");
+        assert_eq!(events[2], ServerEvent::Starting { mode: BindMode::Lan });
+        assert_eq!(events[3], ServerEvent::Listening { mode: BindMode::Lan, addr: loopback(3030), error: None });
+        assert!(!task.is_finished());
+        task.abort();
+    }
+
+    #[test]
+    fn an_access_denied_bind_says_why_and_other_failures_do_not() {
+        let addr = SocketAddr::from(([0, 0, 0, 0], 3030));
+        // WSAEACCES (10013): a port inside a range Windows reserved.
+        let denied = std::io::Error::from_raw_os_error(10013);
+        assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
+        let text = bind_error_text(addr, &denied);
+        assert!(text.starts_with("could not listen on 0.0.0.0:3030: "), "{text}");
+        assert!(text.contains("os error 10013") && text.ends_with("Windows may have reserved this port"), "{text}");
+
+        // The io error can sit behind other errors, as it does in hyper's.
+        #[derive(Debug)]
+        struct Wrapper(std::io::Error);
+        impl std::fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error creating server listener")
+            }
+        }
+        impl std::error::Error for Wrapper {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert!(bind_error_text(addr, &Wrapper(std::io::Error::from_raw_os_error(10013))).ends_with("Windows may have reserved this port"));
+
+        // Address in use (10048): another program holds it for now; no claim about reservations.
+        let busy = bind_error_text(addr, &Wrapper(std::io::Error::from_raw_os_error(10048)));
+        assert!(busy.starts_with("could not listen on 0.0.0.0:3030: error creating server listener"), "{busy}");
+        assert!(!busy.contains("reserved"), "{busy}");
+    }
+
+    #[tokio::test]
+    async fn a_busy_port_reports_the_listen_error_without_a_reservation_hint() {
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = holder.local_addr().unwrap();
+        let Err(error) = try_bind(&routes(), addr) else { panic!("the port is held") };
+        assert!(error.starts_with(&format!("could not listen on {addr}: ")), "{error}");
+        assert!(!error.contains("reserved"), "{error}");
+    }
+
+    #[test]
+    fn backoff_walks_the_list_then_repeats_the_last_delay_until_reset() {
+        let mut backoff = Backoff::new(&DOWN_RETRY_DELAYS_MS);
+        let secs: Vec<u64> = (0..8).map(|_| backoff.next_delay().as_secs()).collect();
+        assert_eq!(secs, [1, 2, 5, 10, 15, 15, 15, 15]);
+        backoff.reset();
+        assert_eq!(backoff.next_delay(), Duration::from_secs(1));
+
+        // A bad list never yields a zero delay (no spinning).
+        let mut empty = Backoff::new(&[]);
+        assert!(empty.next_delay() > Duration::ZERO);
+        let mut zero = Backoff::new(&[0]);
+        assert!(zero.next_delay() > Duration::ZERO);
     }
 
     #[tokio::test]
     async fn binds_and_reports_listening() {
         let (seen, report) = recorder();
         let (_modes_tx, modes_rx) = watch::channel(BindMode::Localhost);
-        let task = tokio::spawn(async move { serve_supervised(routes(), modes_rx, |_| loopback(0), &[], report).await });
+        let task = tokio::spawn(async move { serve_supervised(real_bind(), modes_rx, |_| loopback(0), retry(&[]), report).await });
         let event = wait_for(&seen, "listening", |e| matches!(e, ServerEvent::Listening { .. })).await;
         let ServerEvent::Listening { mode, addr, error } = event else { unreachable!() };
         assert_eq!(mode, BindMode::Localhost);
@@ -832,13 +1617,13 @@ mod tests {
         let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
         let task = tokio::spawn(async move {
             serve_supervised(
-                routes(),
+                real_bind(),
                 modes_rx,
                 move |mode| match mode {
                     BindMode::Lan => loopback(0),
                     BindMode::Localhost => loopback(localhost_port),
                 },
-                &[1, 1, 1],
+                retry(&[1, 1, 1]),
                 report,
             )
             .await
@@ -866,13 +1651,13 @@ mod tests {
         let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
         let task = tokio::spawn(async move {
             serve_supervised(
-                routes(),
+                real_bind(),
                 modes_rx,
                 move |mode| match mode {
                     BindMode::Lan => loopback(0),
                     BindMode::Localhost => loopback(busy),
                 },
-                &[1, 1],
+                retry(&[1, 1]),
                 report,
             )
             .await
@@ -906,7 +1691,13 @@ mod tests {
         let addr = holder.local_addr().unwrap();
         let (seen, report) = recorder();
         let (modes_tx, modes_rx) = watch::channel(BindMode::Lan);
-        let task = tokio::spawn(async move { serve_supervised(routes(), modes_rx, move |_| addr, &[1], report).await });
+        // The quiet retry would only come in an hour: the notification has to do it.
+        let plan = Retry {
+            bind_ms: &[1],
+            down_ms: &[3_600_000],
+            stable_uptime: Duration::from_secs(60),
+        };
+        let task = tokio::spawn(async move { serve_supervised(real_bind(), modes_rx, move |_| addr, plan, report).await });
         wait_for(&seen, "failed", |e| matches!(e, ServerEvent::Failed { .. })).await;
         drop(holder);
         assert!(should_rebind(BindMode::Lan, BindMode::Lan, None));
@@ -966,15 +1757,15 @@ mod tests {
         assert_eq!(primary_ip(None, &[]), ip("127.0.0.1"));
     }
 
-    #[test]
-    fn status_never_carries_the_token() {
+    /// A `WebServer` in its initial state, with the LAN rules of the tests.
+    fn test_server() -> WebServer {
         let (modes, _rx) = watch::channel(BindMode::Lan);
         let rules = origin::OriginRules { port: 3030, dev_port: None };
         let access = Arc::new(AccessGuard::new(
             OriginGuard::new(rules, true, None, Box::new(test_support::NoInterfaces)),
             test_support::lan_policy(),
         ));
-        let server = WebServer {
+        WebServer {
             port: 3030,
             access,
             lifecycle: Mutex::new(Lifecycle {
@@ -983,7 +1774,37 @@ mod tests {
                 bound: None,
             }),
             modes,
-        };
+        }
+    }
+
+    #[test]
+    fn a_restarted_server_clears_the_error_it_showed() {
+        let server = test_server();
+        let addr = SocketAddr::from(([0, 0, 0, 0], 3030));
+        let listening = |error: Option<&str>| ServerEvent::Listening { mode: BindMode::Lan, addr, error: error.map(str::to_string) };
+
+        // A fallback listener shows why the requested mode is not served ...
+        server.apply(&listening(Some("busy")));
+        assert_eq!(server.status().error.as_deref(), Some("busy"));
+        // ... then it ends: stopped, with its own reason and nothing bound ...
+        server.apply(&ServerEvent::Stopped { error: "the local web server stopped unexpectedly".into() });
+        let status = server.status();
+        assert_eq!(status.state, ServerState::Stopped);
+        assert_eq!(status.error.as_deref(), Some("the local web server stopped unexpectedly"));
+        assert!(status.lan.bound_mode.is_none() && status.lan.bound_address.is_none());
+        // ... and the restart that binds the requested mode reports no error, with or without a Starting in between.
+        server.apply(&listening(None));
+        assert_eq!((server.status().state, server.status().error), (ServerState::Listening, None));
+        server.apply(&ServerEvent::Stopped { error: "x".into() });
+        server.apply(&ServerEvent::Starting { mode: BindMode::Lan });
+        assert_eq!((server.status().state, server.status().error), (ServerState::Starting, None));
+        server.apply(&listening(None));
+        assert_eq!((server.status().state, server.status().error), (ServerState::Listening, None));
+    }
+
+    #[test]
+    fn status_never_carries_the_token() {
+        let server = test_server();
         server.apply(&ServerEvent::Listening {
             mode: BindMode::Lan,
             addr: SocketAddr::from(([0, 0, 0, 0], 3030)),

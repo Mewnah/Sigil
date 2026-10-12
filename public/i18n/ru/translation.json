@@ -477,7 +477,17 @@
     "local_offer_message_edge": "You're using Edge's speech recognition, which sends your voice to Microsoft. Sigil now has its own speech recognition that runs on your PC. In our English test it made about {{ours}} mistakes per 100 words, versus about {{theirs}} for Edge. It also works without internet and keeps your voice on your PC. Sigil starts with your system's default microphone and detects your language automatically; you can change both in Speech to Text. The first time you press Start, Sigil asks before downloading the speech models (about {{size}}).",
     "local_offer_message_other": "Switch to Sigil's built-in speech recognition, which runs on your PC? Your microphone and language stay the same. The first time you press Start, Sigil asks before downloading the speech models (about {{size}}).",
     "local_offer_keep_chrome": "Keep Chrome",
-    "local_offer_keep_edge": "Keep Edge"
+    "local_offer_keep_edge": "Keep Edge",
+    "local_status_retrying": "Speech recognition is not running ({{detail}}). Trying again in {{seconds}} s…",
+    "local_status_start_retry": "Speech recognition could not start ({{detail}}). Trying again in {{seconds}} s…",
+    "local_status_start_retry_capture": "Speech recognition could not open the microphone ({{detail}}). Another app may be using it. Trying again in {{seconds}} s…",
+    "status_reconnecting": "{{detail}} Reconnecting in {{seconds}} s…",
+    "status_reconnecting_slow": "{{detail}} Still trying: the next attempt is in {{seconds}} s…",
+    "log_reconnected": "Speech recognition reconnected.",
+    "error_deepgram_closed": "Deepgram closed the connection.",
+    "error_azure_closed": "The connection to Azure Speech ended.",
+    "status_reconnect_no_answer": "The service did not answer.",
+    "status_reconnecting_limited": "{{detail}} The service is limiting requests, so the next attempt is in {{seconds}} s…"
   },
   "tts": {
     "title": "Преобразование текста в речь",
@@ -1550,7 +1560,7 @@
     "lan_origin_check_hint": "Blocks websites open in your browser from reading or sending captions through Sigil. The app, /client, OBS, the mic page, captions page and Link apps keep working. Turn this off only if a tool you trust is being refused.",
     "lan_origin_check_env_forced": "Set by the SIGIL_LAN_ORIGIN_CHECK environment variable; this switch has no effect until it is removed.",
     "web_server_status_listening": "Listening on port {{port}}",
-    "web_server_status_failed": "Not running: {{error}}",
+    "web_server_status_failed": "Not running: {{error}}. Sigil keeps trying every few seconds.",
     "section_shortcuts": "Shortcuts",
     "field_shortcut_mute_sound": "Mute / unmute sound effects",
     "shortcuts_hint": "Global shortcuts also work while Sigil is in the background, for example in VRChat. The speech-to-text start and mute shortcuts are in the Speech-to-text panel.",
@@ -1578,7 +1588,8 @@
     "lan_legacy_no_token_caution": "Caution: with this on, any device on your network can read your captions and send text to Sigil. Use it only to keep an old setup working until you have copied its new link.",
     "field_link_remote_token": "Remote token",
     "link_remote_token_hint": "The other Sigil's LAN token (Settings → LAN access there). \"Copy my address\" on that PC copies its address with the token; paste it into the address field to fill both.",
-    "link_remote_token_invalid": "This is not a LAN token (26 letters and digits)."
+    "link_remote_token_invalid": "This is not a LAN token (26 letters and digits).",
+    "web_server_status_stopped": "Stopped: {{error}}. Starting again."
   },
   "word_replacements": {
     "title": "Замены слов",
@@ -1594,7 +1605,8 @@
     "peer_reconnecting": "Потеряна связь с Сигилом — подключение восстанавливается.",
     "peer_failed": "Отключен от Сигила. Оставьте настольное приложение включенным, перезагрузите исходный код браузера или снова скопируйте URL-адрес клиента из инспектора OBS.",
     "peer_error_detail": "({{detail}})",
-    "peer_invalid_key": "Sigil refused this link: its LAN token is missing or out of date, or the Sigil PC accepts only its own PC. Copy the LAN link again in Sigil (Settings → LAN access)."
+    "peer_invalid_key": "Sigil refused this link: its LAN token is missing or out of date, or the Sigil PC accepts only its own PC. Copy the LAN link again in Sigil (Settings → LAN access).",
+    "loading_still_trying": "Still trying to reach Sigil at {{address}}. Keep the desktop app running and check that nothing (a firewall, VPN or security tool) blocks that address."
   },
   "obs": {
     "title": "ОБС Студия",
@@ -1911,7 +1923,6 @@
     "tts_play_failed": "Text-to-Speech could not speak a line: {{error}}",
     "sound_playback_failed": "Could not play audio: {{error}}",
     "sound_playback_failed_device": "Could not play audio on \"{{device}}\": {{error}}",
-    "web_server_failed": "Sigil's local web server could not start on port {{port}} ({{error}}). /client, OBS, the mic page and Link apps will not work until Sigil restarts with the port free.",
     "web_origin_rejected": "Blocked a connection to Sigil from {{origin}}. If this is a tool you trust, turn off \"Only allow Sigil pages to connect\" in Settings.",
     "lan_token_regenerated": "New LAN token made. Copy the LAN links again for your other devices.",
     "lan_token_regenerate_failed": "Could not make a LAN token: {{error}}",
@@ -1919,7 +1930,9 @@
     "web_lan_disabled_refused": "Refused a device on your network ({{remote}}): LAN access is set to This PC only.",
     "link_token_refused": "The other Sigil refused the link: its LAN token is missing or out of date. Copy its address again (with the token).",
     "link_lan_disabled": "The other Sigil accepts connections only from its own PC (LAN access is set to This PC only there).",
-    "lan_access_this_pc_only": "Copied, but LAN access is set to This PC only, so other devices cannot use this address."
+    "lan_access_this_pc_only": "Copied, but LAN access is set to This PC only, so other devices cannot use this address.",
+    "web_server_failed_retrying": "Sigil's local web server could not start on port {{port}} ({{error}}). /client, OBS, the mic page and Link apps will not work until it does. Sigil keeps trying every few seconds. If this does not clear, close the program that uses the port, or start Sigil with --port and a different number.",
+    "web_server_stopped_restarting": "Sigil's local web server stopped ({{error}}) and is starting again. If OBS shows no captions, refresh the browser source."
   },
   "settings_export": {
     "menu_title": "Экспортировать шаблон",

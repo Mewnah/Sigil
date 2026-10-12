@@ -8,6 +8,8 @@ import React, { ReactNode, Suspense } from "react";
 import AppConfiguration from "@/config";
 import ApiShared from "@/shared";
 import ClientLoadingView from "./client/ui/view_loading";
+import { ClientErrorBoundary, scheduleClientReload } from "./client/ui/clientRecovery";
+import { handleStartupFailure, isObsBrowserSource } from "./client/ui/clientStartup";
 import { changeLanguage, initI18n } from "@/i18n";
 import { clientQueryWithoutForeignServer } from "@/utils/localPages";
 
@@ -103,7 +105,7 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
     if (window.Config.isClient()) {
       const hostLang = window.Config.clientInitialState?.uiLanguage ?? "en";
       await changeLanguage(hostLang);
-      renderView(<ClientView />);
+      renderView(<ClientErrorBoundary><ClientView /></ClientErrorBoundary>);
     } else {
       // Assume Server/App Mode if not explicitly Client
       if (!window.ApiServer) {
@@ -123,11 +125,17 @@ import SigilRoot from "./core/ui/sigil/SigilRoot";
     }
   } catch (error: any) {
     console.error("App initialization failed:", error);
-    const isClient = window.Config?.isClient?.() === true;
-    const cn = window.Config?.clientNetwork;
     // Rendered through the React root: a direct DOM write would be wiped by the pending commit of
     // the loading view, and JSX escapes the /client ?host=/?port= values (no HTML injection).
-    renderView(<StartupErrorView error={error} client={isClient && cn ? { host: cn.host, port: cn.port } : undefined} />);
+    // What shows, and whether the page reloads itself, depends on the failure (a connection that
+    // merely fails is retried in place and never gets here): see clientStartup.tsx.
+    handleStartupFailure(error, {
+      isClient: window.Config?.isClient?.() === true,
+      clientNetwork: window.Config?.clientNetwork,
+      obs: isObsBrowserSource(),
+      renderView,
+      scheduleReload: scheduleClientReload,
+    });
   }
 })();
 
@@ -146,29 +154,4 @@ function pinClientToServingHost() {
   // Same-origin path, so this does not throw in practice; if it ever did, startup stops here
   // (fails closed) instead of connecting to the foreign host.
   window.history.replaceState(window.history.state, "", `${pathname}${cleaned}${hash}`);
-}
-
-/** Shown when initialization fails; every dynamic value is rendered as text. */
-function StartupErrorView({ error, client }: { error: any; client?: { host: string; port: string } }) {
-  const address = client ? `${client.host}:${client.port}` : "";
-  return (
-    <div style={{ padding: 24, color: "#f87171", background: "#1a1a1a", height: "100vh", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ color: "#fff", marginTop: 0 }}>Application failed to start</h1>
-      {client && (
-        <>
-          <p style={{ color: "#ccc", margin: "12px 0" }}>
-            The OBS browser source could not connect to Sigil (PeerJS). Keep the desktop app running on this PC, use{" "}
-            <code>{`http://${address}/client`}</code> (same pattern as Curses), and check that nothing blocks WebSockets
-            to that host and port.
-          </p>
-          <p style={{ color: "#888", fontSize: 13 }}>
-            Trying Peer server: <code>{address}</code>
-          </p>
-        </>
-      )}
-      <pre style={{ color: "#fca5a5", whiteSpace: "pre-wrap", fontSize: 12 }}>
-        {[String(error?.message || error), String(error?.stack || "")].join("\n")}
-      </pre>
-    </div>
-  );
 }
