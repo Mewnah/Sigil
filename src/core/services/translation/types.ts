@@ -76,6 +76,14 @@ export interface TranslationEngineHost {
    * read per line). The router's CPU-tier routes (`routingTable.ts`) apply only while this is true; absent = false.
    */
   translatorOnCpu?(): boolean;
+  /**
+   * Whether the model store reports catalog entry `id` installed (`window.ApiServer.models`), read when a member's start is due.
+   * The router does not start a member again after its start failed on a missing model (`TranslationError.missing`) that this
+   * reports not installed, until every missing id is installed: a retry on a timer posts the "model missing" status card again
+   * each time. A start that failed on a model this already reports installed (the store is stale) is retried on the timer
+   * (`ROUTER_START_RETRY_MS`), like an absent `modelInstalled`.
+   */
+  modelInstalled?(id: string): boolean;
 }
 
 /**

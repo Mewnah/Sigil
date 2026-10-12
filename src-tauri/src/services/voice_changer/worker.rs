@@ -1184,8 +1184,9 @@ fn run_chunk_frames(st: &VoiceChangerState, setting: u32, rate: u32) -> (usize, 
     if slot.is_empty() || !matches!(super::factory::slot_format(Path::new(slot)), Ok(SlotFormat::SigilRvc)) {
         return (configured, Some("the voice is not a Sigil template voice"));
     }
-    // The Streamer on the processor with the block on automatic runs the 120 ms block it can keep up
-    // with (`presets::cpu_streamer_block`): for the divisor that is an explicit block.
+    // The Streamer on the processor with the block on automatic runs the block it can keep up with, by
+    // this PC's physical cores: 120, 160 or 200 ms (`presets::cpu_streamer_block`): for the divisor that is
+    // an explicit block.
     let profile = RvcPresetProfile::from_str(&rvc.preset);
     let ep = effective_rvc_ep(&rvc.execution_provider, profile);
     let block_ms = (rvc.block_ms > 0.0)

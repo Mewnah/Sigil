@@ -577,7 +577,8 @@ fn build_sve(p: &RvcPlan, preset_override: Option<EnginePreset>) -> Result<(Sigi
         .ok_or("the bundled vc-templates folder was not found")?;
     let (pitch, mut notes) = pitch_for(p)?;
     let preset = preset_override.unwrap_or_else(|| {
-        // The Streamer on the processor with the block on automatic takes the app's 120 ms block.
+        // The Streamer on the processor with the block on automatic takes the app's block for this PC's physical cores
+        // (120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer; `SIGIL_VC_PHYSICAL_CORES` stands in for a smaller PC).
         cpu_streamer_block(
             engine_preset(p.preset, p.block_ms, p.chunk_frames, p.device_rate, p.extra_context_ms, p.precision),
             p.ep,

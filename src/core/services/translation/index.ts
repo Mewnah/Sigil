@@ -48,6 +48,14 @@ export function translatorOnCpuNow(): boolean {
   return bundledTranslatorOnCpu(window.ApiServer.state.services.translation.data.llm, llmServerUi.status);
 }
 
+/**
+ * `TranslationPipelineOptions.modelInstalled`: the model store (`window.ApiServer.models`) reports catalog entry `id` installed.
+ * The router starts a member that failed on a missing model again only when this turns true.
+ */
+export function modelInstalledNow(id: string): boolean {
+  return window.ApiServer?.models?.state.states[id]?.state === "installed";
+}
+
 /** Input streams, sequenced independently: speech and typed text are separate utterance streams. */
 type TranslationStream = "stt" | "textfield";
 
@@ -72,6 +80,7 @@ class Service_Translation implements IServiceInterface {
       engines,
       publish: (event) => window.ApiShared.pubsub.publishText(TextEventSource.translation, event),
       translatorOnCpu: translatorOnCpuNow,
+      modelInstalled: modelInstalledNow,
     });
   }
 

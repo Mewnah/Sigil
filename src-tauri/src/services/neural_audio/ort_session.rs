@@ -415,13 +415,33 @@ pub fn vc_threads(
     vc_threads_with(preset, ep, priority, explicit, vc_streamer_threads())
 }
 
-/// [`streamer_threads_for`] this CPU's physical cores, or `SIGIL_VC_STREAMER_THREADS` ([`VC_STREAMER_THREADS_ENV`]).
+/// [`streamer_threads_for`] this CPU's physical cores ([`vc_physical_cores`]), or `SIGIL_VC_STREAMER_THREADS` ([`VC_STREAMER_THREADS_ENV`]).
 pub fn vc_streamer_threads() -> usize {
     if let Some(n) = std::env::var(VC_STREAMER_THREADS_ENV).ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| (1..=16).contains(n)) {
         return n;
     }
+    streamer_threads_for(vc_physical_cores())
+}
+
+/// `SIGIL_VC_PHYSICAL_CORES=<n>` (1-64): the physical core count the voice changer's CPU rules read instead of the probe's. The
+/// probe reads the whole machine and ignores a process affinity mask, so a benchmark that restricts the process to a slice of the
+/// cores (to stand in for a smaller PC) sets this to the slice's core count: both the Streamer's thread policy
+/// ([`streamer_threads_for`]) and its automatic block on the processor (`presets::cpu_streamer_block_for_cores`) then follow the slice.
+pub const VC_PHYSICAL_CORES_ENV: &str = "SIGIL_VC_PHYSICAL_CORES";
+
+/// The value of [`VC_PHYSICAL_CORES_ENV`] (`None` for unset, not a whole number, or outside 1-64).
+pub fn parse_physical_cores_override(value: Option<&str>) -> Option<u32> {
+    value?.trim().parse::<u32>().ok().filter(|n| (1..=64).contains(n))
+}
+
+/// The physical core count of this PC as the voice changer's CPU rules see it: the system probe (read once, the same one the
+/// Streamer thread policy uses), or [`VC_PHYSICAL_CORES_ENV`]. 0 only when the probe could not tell.
+pub fn vc_physical_cores() -> u32 {
+    if let Some(n) = parse_physical_cores_override(std::env::var(VC_PHYSICAL_CORES_ENV).ok().as_deref()) {
+        return n;
+    }
     static PHYSICAL: OnceLock<u32> = OnceLock::new();
-    streamer_threads_for(*PHYSICAL.get_or_init(|| crate::services::sysinfo::cpu::probe().physical_cores))
+    *PHYSICAL.get_or_init(|| crate::services::sysinfo::cpu::probe().physical_cores)
 }
 
 /// `SIGIL_VC_DENORMAL_ZERO=0|1`: ONNX Runtime's `session.set_denormal_as_zero` (flush-to-zero and
@@ -1647,6 +1667,18 @@ mod tests {
         assert_eq!((STREAMER_MIN_THREADS, STREAMER_MAX_THREADS, STREAMER_SPARE_CORES), (4, 6, 2));
         // The dev rig's 8 cores measured best at 6 (RTF p99 0.83 offline / 0.74 paced, 2.8 paced cores).
         assert_eq!(streamer_threads_for(8), 6);
+    }
+
+    #[test]
+    fn the_physical_core_override_reads_a_small_whole_number_only() {
+        assert_eq!(VC_PHYSICAL_CORES_ENV, "SIGIL_VC_PHYSICAL_CORES");
+        assert_eq!(parse_physical_cores_override(None), None);
+        assert_eq!(parse_physical_cores_override(Some("6")), Some(6));
+        assert_eq!(parse_physical_cores_override(Some(" 4 ")), Some(4));
+        assert_eq!(parse_physical_cores_override(Some("64")), Some(64));
+        for bad in ["", "0", "65", "-4", "4.5", "six", "4 cores"] {
+            assert_eq!(parse_physical_cores_override(Some(bad)), None, "{bad:?}");
+        }
     }
 
     #[test]

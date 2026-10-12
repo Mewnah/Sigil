@@ -1,0 +1,18 @@
+{
+  "description": "The block (ms) the Streamer preset takes on the processor by itself (Block size on Auto), by the PC's physical cores: 120 ms from 7 cores, 160 ms with exactly 6, 200 ms with 5 or fewer (0: the system probe could not tell, counted as the smallest PC). Shared by Rust presets.rs (cpu_streamer_block_for_cores) and options.ts (streamerAutoBlockMs); both test against these rows.",
+  "rows": [
+    { "cores": 0, "blockMs": 200 },
+    { "cores": 1, "blockMs": 200 },
+    { "cores": 2, "blockMs": 200 },
+    { "cores": 3, "blockMs": 200 },
+    { "cores": 4, "blockMs": 200 },
+    { "cores": 5, "blockMs": 200 },
+    { "cores": 6, "blockMs": 160 },
+    { "cores": 7, "blockMs": 120 },
+    { "cores": 8, "blockMs": 120 },
+    { "cores": 10, "blockMs": 120 },
+    { "cores": 12, "blockMs": 120 },
+    { "cores": 16, "blockMs": 120 },
+    { "cores": 64, "blockMs": 120 }
+  ]
+}

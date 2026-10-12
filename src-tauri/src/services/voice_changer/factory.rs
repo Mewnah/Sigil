@@ -671,13 +671,15 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
         request.extra_context_ms,
         request.precision,
     );
-    // The Streamer on the processor with the block on automatic takes the 120 ms block it can keep up
-    // with (the 20 ms the device block derives is several times slower than real time there).
+    // The Streamer on the processor with the block on automatic takes the block it can keep up with, by
+    // the PC's physical cores (120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer; the 20 ms the
+    // device block derives is several times slower than real time there).
     let preset = presets::cpu_streamer_block(derived_preset, &request.ep, request.block_ms);
     let auto_cpu_block = preset.block_ms != derived_preset.block_ms;
+    let physical_cores = crate::services::neural_audio::ort_session::vc_physical_cores();
     if auto_cpu_block {
         tracing::info!(
-            "voice changer: engine block {:.0} ms (automatic for the Streamer on the processor; the {:.0} ms the device block gives cannot keep up there; set a Block size to choose another, SIGIL_VC_STREAMER_BLOCK=0 restores the old rule)",
+            "voice changer: engine block {:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores; the {:.0} ms the device block gives cannot keep up there; set a Block size to choose another, SIGIL_VC_STREAMER_BLOCK=0 restores the old rule)",
             preset.block_ms,
             derived_preset.block_ms,
         );
@@ -770,7 +772,7 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
     levers.notes.extend(light_note);
     levers.notes.extend(lookahead_note);
     if auto_cpu_block {
-        levers.notes.push(cpu_streamer_block_note(preset.block_ms));
+        levers.notes.push(cpu_streamer_block_note(preset.block_ms, physical_cores));
     }
     let output_sample_rate = engine.output_sample_rate();
     // The engine's own block (its plan), else the preset's: the floor sizes the output queue for the
@@ -835,9 +837,9 @@ fn block_floor(
 
 /// The lever note of the Streamer's automatic block on the processor
 /// ([`presets::cpu_streamer_block`]).
-fn cpu_streamer_block_note(block_ms: f64) -> String {
+fn cpu_streamer_block_note(block_ms: f64, physical_cores: u32) -> String {
     format!(
-        "block: {block_ms:.0} ms (automatic for the Streamer on the processor: the shorter block the device block gives cannot keep up there; set a Block size to choose another)"
+        "block: {block_ms:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores: the shorter block the device block gives cannot keep up there, and fewer cores take a longer block; set a Block size to choose another)"
     )
 }
 
@@ -2120,6 +2122,23 @@ mod tests {
         let note = block_floor_note((110.0, 136.0), Some(1_920));
         assert!(note.starts_with(BLOCK_FLOOR_NOTE), "{note}");
         assert!(note.contains("110 / 136 ms") && note.contains("120 ms blocks"), "{note}");
+    }
+
+    /// The Streamer's automatic-block note names the block and the PC's cores, whatever the core count, and the output floor
+    /// its block gets is the one the rule gives (110 / 136 ms at 120 ms, 145 / 171 at 160, 180 / 206 at 200).
+    #[test]
+    fn the_automatic_block_note_names_the_block_and_the_cores_and_each_block_has_its_floor() {
+        for (cores, block, floor) in [(8u32, 120.0, (110.0, 136.0)), (7, 120.0, (110.0, 136.0)), (6, 160.0, (145.0, 171.0)), (5, 200.0, (180.0, 206.0)), (4, 200.0, (180.0, 206.0))] {
+            let ms = presets::cpu_streamer_block_for_cores(cores);
+            assert_eq!(ms, block, "{cores} cores");
+            let note = cpu_streamer_block_note(ms, cores);
+            assert!(note.starts_with(&format!("block: {block:.0} ms (automatic for the Streamer on the processor")), "{note}");
+            assert!(note.contains(&format!("{cores} physical cores")), "{note}");
+            // The block is planned as given, and its voice gets the floor the table in the benchmark document lists.
+            let block_16k = engine::plan::block_frames(ms).ok().map(|frames| frames * 160);
+            assert_eq!(block_16k, Some(ms as usize * 16), "{cores} cores");
+            assert_eq!(block_floor(&sessions(&[("vc.flowdec", "cpu", "cpu")]), "cpu", block_16k, 512, 48_000, true), Some(floor), "{cores} cores");
+        }
     }
 
     pub(crate) fn test_request(slot: &Path) -> EngineRequest {

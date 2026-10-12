@@ -101,6 +101,12 @@ export interface TranslationPipelineOptions {
    * turns interim translations off (`interimPolicy.ts`); default: never.
    */
   translatorOnCpu?: () => boolean;
+  /**
+   * The model store reports catalog entry `id` installed. Given to the engines as `TranslationEngineHost.modelInstalled`:
+   * the router holds a member whose model was missing at its start until this says it is installed. Default: the router
+   * retries such a member on its timer.
+   */
+  modelInstalled?: (id: string) => boolean;
 }
 
 export interface TranslationPipeline {
@@ -289,6 +295,7 @@ class TranslationPipelineImpl implements TranslationPipeline {
           if (epoch === this.#epoch) this.#applyStatus(update);
         },
         translatorOnCpu: () => this.#o.translatorOnCpu?.() ?? false,
+        ...(this.#o.modelInstalled ? { modelInstalled: (id: string) => this.#o.modelInstalled?.(id) ?? false } : {}),
       });
       starting = Promise.resolve(engine.start(engineSettings, controller.signal));
     } catch (e) {

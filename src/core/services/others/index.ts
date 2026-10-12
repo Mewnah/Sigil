@@ -5,7 +5,7 @@ import { subscribeKey } from "valtio/utils";
 import { entryTitle } from "@/core/services/models/format";
 import { i18nReady } from "@/core/services/stt/statusMessages";
 import { pushSystemLog } from "@/core/services/systemLog";
-import { createTranslationPipeline, TRANSLATION_ENGINES, translatorOnCpuNow, type TranslationEngineMap, type TranslationPipeline } from "../translation";
+import { createTranslationPipeline, modelInstalledNow, TRANSLATION_ENGINES, translatorOnCpuNow, type TranslationEngineMap, type TranslationPipeline } from "../translation";
 import { OthersSpeechDriver, type OthersDriverDeps, type OthersDriverState } from "./driver";
 import { OthersPublisher } from "./publish";
 import type { Others_State } from "./schema";
@@ -42,6 +42,7 @@ class Service_Others implements IServiceInterface {
       pair: () => this.translationPair(),
       logSource: LOG_SOURCE,
       translatorOnCpu: translatorOnCpuNow,
+      modelInstalled: modelInstalledNow,
     });
     this.#publisher = new OthersPublisher({
       publish: (topic, event) => window.ApiShared.pubsub.publishText(topic, event),

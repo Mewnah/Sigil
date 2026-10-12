@@ -69,7 +69,7 @@ function setup(patch: (s: Translation_State) => void = () => {}) {
   patch(state);
   const router = new Translation_RouterService();
   router.attach(host);
-  return { router, ctl, statuses, state, onCpu };
+  return { router, ctl, statuses, state, onCpu, host };
 }
 
 const live = () => new AbortController().signal;
@@ -385,6 +385,130 @@ describe("Translation_RouterService translate", () => {
     vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
     await expect(router.translate(req("b"), live())).resolves.toBe("nllb:b");
     expect(ctl.nllb.starts).toBe(2);
+  });
+
+  describe("a member whose model is not installed (the host can tell what the model store reports)", () => {
+    const NLLB_MODEL = "mt/nllb-200-distilled-600m-int8";
+    /** NLLB first for en -> ja through a pair rule (so the test does not depend on the built-in routes), the card posted at every start. */
+    function sticky(missing: string[] = [NLLB_MODEL]) {
+      const t = setup((s) => (s.auto.pairOverrides = [{ from: "en", to: "ja", chain: [B.nllb, B.llm] }]));
+      const installed = new Set<string>();
+      t.host.modelInstalled = (id) => installed.has(id);
+      t.ctl.nllb.start = () => {
+        t.host.status({ text: "NLLB model missing", level: "warning", missing });
+        return Promise.reject(new TranslationError("not installed", { missing }));
+      };
+      const cards = () => t.statuses.filter((s) => s.text === "NLLB model missing").length;
+      return { ...t, installed, cards };
+    }
+
+    it("is not started again on the retry timer: the status card is posted once, however many minutes pass", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state, cards } = sticky();
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      expect(ctl.nllb.starts).toBe(1);
+      expect(cards()).toBe(1);
+      for (let minute = 1; minute <= 5; minute++) {
+        vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+        await expect(router.translate(req(`line ${minute}`), live())).resolves.toBe(`llm:line ${minute}`);
+      }
+      expect(ctl.nllb.starts).toBe(1);
+      expect(cards()).toBe(1);
+      expect(router.supports("en", "ja")).toBe(true); // the AI model is ready; the held member is settled, not pending
+    });
+
+    it("is started as soon as the model store reports the model installed, without waiting for the timer", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state, installed, statuses } = sticky();
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS * 3);
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(1);
+      installed.add(NLLB_MODEL); // downloaded or imported
+      ctl.nllb.start = undefined;
+      await expect(router.translate(req("c"), live())).resolves.toBe("nllb:c");
+      expect(ctl.nllb.starts).toBe(2);
+      expect(statuses.some((s) => s.text === "transl.router_status_fallback")).toBe(false);
+    });
+
+    it("waits for every model it lacked", async () => {
+      vi.useFakeTimers();
+      const other = "runtime/other";
+      const { router, ctl, state, installed } = sticky([NLLB_MODEL, other]);
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      installed.add(NLLB_MODEL);
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(1);
+      installed.add(other);
+      ctl.nllb.start = undefined;
+      await expect(router.translate(req("c"), live())).resolves.toBe("nllb:c");
+    });
+
+    it("still retries on the timer when the start failed for another reason", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state } = sticky();
+      ctl.nllb.start = fail("session create failed");
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS - 1);
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(1);
+      vi.advanceTimersByTime(1);
+      await expect(router.translate(req("c"), live())).resolves.toBe("llm:c");
+      expect(ctl.nllb.starts).toBe(2);
+    });
+
+    it("is retried on the timer, not on every line, when the store already says the model is installed (the files are gone)", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state, installed, cards } = sticky();
+      installed.add(NLLB_MODEL); // the store's state is stale: it says installed while the engine finds no files
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      for (let line = 0; line < 20; line++) await expect(router.translate(req(`line ${line}`), live())).resolves.toBe(`llm:line ${line}`);
+      expect(ctl.nllb.starts).toBe(1);
+      expect(cards()).toBe(1);
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS - 1);
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(1);
+      vi.advanceTimersByTime(1);
+      await expect(router.translate(req("c"), live())).resolves.toBe("llm:c");
+      expect(ctl.nllb.starts).toBe(2); // once per ROUTER_START_RETRY_MS, as before the hold existed
+      for (let line = 0; line < 20; line++) await expect(router.translate(req(`again ${line}`), live())).resolves.toBe(`llm:again ${line}`);
+      expect(ctl.nllb.starts).toBe(2);
+      expect(cards()).toBe(2);
+    });
+
+    it("falls back to the timer when the hold is released and the start fails again with the model reported installed", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state, installed, cards } = sticky();
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      expect(ctl.nllb.starts).toBe(1);
+      installed.add(NLLB_MODEL); // the store flips, the engine still fails (a partial install, say)
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(2); // the release: started at once
+      for (let line = 0; line < 20; line++) await expect(router.translate(req(`line ${line}`), live())).resolves.toBe(`llm:line ${line}`);
+      expect(ctl.nllb.starts).toBe(2); // and not again on every line
+      expect(cards()).toBe(2);
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+      await expect(router.translate(req("c"), live())).resolves.toBe("llm:c");
+      expect(ctl.nllb.starts).toBe(3);
+    });
+
+    it("keeps the timed retry for a host that cannot tell", async () => {
+      vi.useFakeTimers();
+      const { router, ctl, state, host } = sticky();
+      delete host.modelInstalled;
+      await router.start(state, live());
+      await expect(router.translate(req("a"), live())).resolves.toBe("llm:a");
+      vi.advanceTimersByTime(ROUTER_START_RETRY_MS);
+      await expect(router.translate(req("b"), live())).resolves.toBe("llm:b");
+      expect(ctl.nllb.starts).toBe(2);
+    });
   });
 
   it("counts an attempt timeout as an ordinary failure, not a severe one", async () => {

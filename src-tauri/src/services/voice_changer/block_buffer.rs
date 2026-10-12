@@ -272,6 +272,40 @@ mod tests {
         assert_eq!(rule(120.0, 10.0), Some((105.0, 129.0)));
     }
 
+    /// The Streamer's automatic blocks (120 ms from 7 physical cores, 160 ms with 6, 200 ms with 5 or fewer) get a valid floor on
+    /// the benchmark's chunk and on the other device chunks: the prefill stays at or under the first-call limit (the gate opens
+    /// before the first model call), is above the 35 ms default, covers 0.9 of the block when the limit allows, and the pair sits
+    /// inside `clamp_output_buffer_ms` (the clamp changes nothing).
+    #[test]
+    fn the_streamers_small_pc_blocks_get_a_valid_floor() {
+        use crate::services::neural_audio::vc::engine::presets::cpu_streamer_block_for_cores;
+        // The floor of each tier on the benchmark's chunk (the 6-core tier's 160 ms block gets 145 / 171 ms).
+        assert_eq!(cpu_streamer_block_for_cores(6), 160.0);
+        assert_eq!(rule(cpu_streamer_block_for_cores(6), D_512_48K), Some((145.0, 171.0)));
+        assert_eq!(rule(160.0, D_512_48K), Some((145.0, 171.0)));
+        assert_eq!(rule(200.0, D_512_48K), Some((180.0, 206.0)));
+        for cores in [0u32, 1, 4, 5, 6, 7, 8, 16] {
+            let b = cpu_streamer_block_for_cores(cores);
+            for (frames, rate) in [(512.0, 48_000.0), (512.0, 44_100.0), (480.0, 48_000.0), (256.0, 48_000.0), (1_024.0, 48_000.0), (1_024.0, 44_100.0)] {
+                let d = frames * 1000.0 / rate;
+                let (prefill, queue) = rule(b, d).unwrap_or_else(|| panic!("no floor for {b} ms blocks on {frames} frames at {rate} Hz"));
+                let n = pushes_before_first_call(b, d).expect("a block of several chunks");
+                let limit = f64::from(n) * d - TRAP_MARGIN_MS;
+                assert!(prefill <= limit + 1e-9, "{b} ms / {frames}@{rate}: prefill {prefill} over the first-call limit {limit}");
+                assert!(prefill > PREFILL_MS_LOW, "{b} ms / {frames}@{rate}: prefill {prefill}");
+                assert!(prefill >= ceil5(COVER_RTF * b).min(floor5(limit)) - 1e-9, "{b} ms / {frames}@{rate}: prefill {prefill} does not cover the call");
+                assert!(queue >= prefill + 2.0 * d + QUEUE_HEADROOM_MS - 1.0, "{b} ms / {frames}@{rate}: queue {queue}");
+                assert_eq!(clamp_output_buffer_ms(prefill, queue), (prefill, queue), "{b} ms / {frames}@{rate}: the clamp moved the floor");
+                assert!(prefill <= 300.0 && queue <= 600.0, "{b} ms / {frames}@{rate}: {prefill} / {queue}");
+            }
+        }
+        // Not on a GPU rung, and not with the rule off.
+        for b in [160.0, 200.0] {
+            assert_eq!(min_output_buffer_ms(b, D_512_48K, false, true), None);
+            assert_eq!(min_output_buffer_ms(b, D_512_48K, true, false), None);
+        }
+    }
+
     /// Tripwire: the first model call happens at push 11 on 120 ms / 512 frames and at push 3 on 40 ms,
     /// which is what the recorded timelines show. If the fixed-block lead or the resampler jitter
     /// change, the rule's 0.4 ms must follow them.

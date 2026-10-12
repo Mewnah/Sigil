@@ -155,29 +155,81 @@ pub fn engine_preset(
 /// Longest block derived from the device block (the plan's longest block).
 pub const MAX_DERIVED_BLOCK_MS: f64 = (MAX_BLOCK_FRAMES * 10) as f64;
 
-/// The engine block (ms) the Streamer preset takes on the processor when no block is set: the 120 ms
-/// shape the CPU rows of the benchmark measure (RTF p99 0.74-0.89 on the 6-thread policy). The block
-/// derived from the device block (20 ms at the default 512 frames) cannot keep up on the processor:
-/// a call has a large fixed part (the content encoder's context, the F0 window) however short the
-/// block is: a headless paced run of the 20 ms shape on 6 threads measured a call of p50 57 ms and p99
-/// 76 ms, a real-time factor of 3.8 (the 120 ms rows: p99 89-107 ms), with 26 s of 40 s of input
-/// dropped; a call longer than its block falls behind for ever. The
-/// longer block adds latency, not distortion (the block is only how much new audio each call takes):
-/// about 270 ms end to end at 120 ms against a voice that breaks up. An explicit block (the setting, or
-/// Autotune's pick) always wins, and so does a derived one of [`CPU_STREAMER_KEEP_FROM_MS`] or more.
+/// The engine block (ms) the Streamer preset takes on the processor when no block is set, on a PC with
+/// [`CPU_STREAMER_FULL_CORES`] or more physical cores: the 120 ms shape the CPU rows of the benchmark
+/// measure (RTF p99 0.74-0.89 on the 6-thread policy; 8 cores at 120 ms dropped no input under the game
+/// stand-in). The block derived from the device block (20 ms at the default 512 frames) cannot keep up
+/// on the processor: a call has a large fixed part (the content encoder's context, the F0 window) however
+/// short the block is: a headless paced run of the 20 ms shape on 6 threads measured a call of p50 57 ms
+/// and p99 76 ms, a real-time factor of 3.8 (the 120 ms rows: p99 89-107 ms), with 26 s of 40 s of input
+/// dropped; a call longer than its block falls behind for ever. The longer block adds latency, not
+/// distortion (the block is only how much new audio each call takes): about 270 ms end to end at 120 ms
+/// against a voice that breaks up. An explicit block (the setting, or Autotune's pick) always wins, and so
+/// does a derived one of [`CPU_STREAMER_KEEP_FROM_MS`] or more. Fewer cores take a longer block, see
+/// [`cpu_streamer_block_for_cores`].
 pub const CPU_STREAMER_AUTO_BLOCK_MS: f64 = 120.0;
+
+/// The automatic Streamer block on the processor of a PC with exactly [`CPU_STREAMER_SIX_CORES`] (6) physical cores:
+/// 160 ms, the user's decision of 2026-10-11 between 160 and 200 ms. At 120 ms, 6 cores dropped 9.5 % of the input under
+/// the game stand-in (three passes). At 160 ms the two cells on file dropped none (RTF p99 0.88 paced and 1.06 under the
+/// game, 5.3 % of the blocks over budget there; 99.7 % and 99.4 % of the converted audio played; about 355 ms end to end).
+/// One quick check of the rule with the PC busy (44 % total CPU) dropped 0.5 % of the input and played 99.04 % of the
+/// converted audio (p50 345 ms, RTF p99 1.29); the same check at 200 ms dropped none and played 97.86 % (p50 411 ms). The
+/// user judged the 160 ms run's drop to be the busy PC and chose 160 ms for its lower delay (about 60 ms less than 200 ms).
+/// (`docs/benchmarks/VC_BENCHMARKS.md` -> "The Streamer's automatic block by physical cores").
+pub const CPU_STREAMER_AUTO_BLOCK_6_CORES_MS: f64 = 160.0;
+
+/// The automatic Streamer block on the processor of a PC with fewer than [`CPU_STREAMER_SIX_CORES`] physical cores
+/// (5 or fewer, and 0 when the probe could not tell). At 120 ms, 5 and 4 cores dropped 13.9 % and 19.7 % of the input
+/// under the game stand-in (three passes). At 200 ms none of the 4-core runs under the game dropped any input (RTF p99
+/// 0.83-0.96, except 1.06 for one game cell; a single check of the rule: 0.0 % dropped, 98.90 % played, p50 421 ms). The price
+/// is delay (about 390-490 ms end to end) and an output queue with little margin at 200 ms blocks (an open item of the
+/// benchmark document: 0.4-2.0 s of dry output a minute and 96.4-99.4 % of the converted audio played). 5 cores were
+/// never run on a longer block and take the same figure; 1 to 3 cores were not run at all. On a small PC the least input
+/// dropped matters more than the delay (`docs/benchmarks/VC_BENCHMARKS.md` -> "The Streamer's automatic block by
+/// physical cores").
+pub const CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS: f64 = 200.0;
+
+/// Physical cores from which the automatic block is [`CPU_STREAMER_AUTO_BLOCK_MS`] (120 ms). 7 cores were not
+/// run: they sit between the 8-core rows that keep up and the 6-core rows that do not.
+pub const CPU_STREAMER_FULL_CORES: u32 = 7;
+
+/// The physical core count whose automatic block is [`CPU_STREAMER_AUTO_BLOCK_6_CORES_MS`] (160 ms): fewer cores take
+/// [`CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS`] (200 ms), more take [`CPU_STREAMER_AUTO_BLOCK_MS`] (120 ms).
+pub const CPU_STREAMER_SIX_CORES: u32 = 6;
+
+/// The block (ms) the Streamer on the processor takes by itself on a PC with `physical_cores` physical cores, in three
+/// tiers: 120 ms from 7 cores, 160 ms with exactly 6, 200 ms with 5 or fewer (0, the probe could not tell, counts as the
+/// smallest PC, as the Streamer's thread policy does). It is the block of a derived block shorter than
+/// [`CPU_STREAMER_KEEP_FROM_MS`] (see [`cpu_streamer_block`]); the inspector (`options.ts`
+/// `streamerAutoBlockMs`) carries the same table, and a test of each side pins it.
+pub fn cpu_streamer_block_for_cores(physical_cores: u32) -> f64 {
+    if physical_cores >= CPU_STREAMER_FULL_CORES {
+        CPU_STREAMER_AUTO_BLOCK_MS
+    } else if physical_cores >= CPU_STREAMER_SIX_CORES {
+        CPU_STREAMER_AUTO_BLOCK_6_CORES_MS
+    } else {
+        CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS
+    }
+}
 
 /// A block derived from the device block that is this long (ms) or longer is a deliberate big device
 /// chunk (the default 512 frames derive 10.7 ms) and is kept as it is: only the shorter ones are
-/// raised to [`CPU_STREAMER_AUTO_BLOCK_MS`].
+/// raised to the block of the PC's cores ([`cpu_streamer_block_for_cores`]).
 pub const CPU_STREAMER_KEEP_FROM_MS: f64 = 60.0;
 const _: () = assert!(CPU_STREAMER_KEEP_FROM_MS < CPU_STREAMER_AUTO_BLOCK_MS);
+// Fewer cores take a longer block: 120 ms (7 or more), 160 ms (6), 200 ms (5 or fewer).
+const _: () = assert!(CPU_STREAMER_AUTO_BLOCK_MS < CPU_STREAMER_AUTO_BLOCK_6_CORES_MS);
+const _: () = assert!(CPU_STREAMER_AUTO_BLOCK_6_CORES_MS < CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS);
+const _: () = assert!(CPU_STREAMER_SIX_CORES < CPU_STREAMER_FULL_CORES);
+// The longest block must be one the shape plan builds (the plan's longest block).
+const _: () = assert!(CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS <= MAX_DERIVED_BLOCK_MS);
 
 /// `SIGIL_VC_STREAMER_BLOCK=0|off|false|no` keeps the block derived from the device block for the
-/// Streamer on the processor ([`CPU_STREAMER_AUTO_BLOCK_MS`]).
+/// Streamer on the processor ([`cpu_streamer_block_for_cores`]).
 pub const CPU_STREAMER_BLOCK_ENV: &str = "SIGIL_VC_STREAMER_BLOCK";
 
-/// Whether [`CPU_STREAMER_AUTO_BLOCK_MS`] applies in this process ([`CPU_STREAMER_BLOCK_ENV`] not off).
+/// Whether the Streamer's automatic block on the processor applies in this process ([`CPU_STREAMER_BLOCK_ENV`] not off).
 pub fn cpu_streamer_block_enabled() -> bool {
     let value = std::env::var(CPU_STREAMER_BLOCK_ENV).ok().map(|v| v.trim().to_ascii_lowercase());
     !matches!(value.as_deref(), Some("0" | "off" | "false" | "no"))
@@ -185,11 +237,20 @@ pub fn cpu_streamer_block_enabled() -> bool {
 
 /// `preset` (from [`engine_preset`]) with the Streamer's processor block applied: for the Streamer on
 /// the CPU rung `base_ep` (`cpu`), with no block set (`requested_block_ms` not above 0), a derived block
-/// shorter than [`CPU_STREAMER_KEEP_FROM_MS`] becomes [`CPU_STREAMER_AUTO_BLOCK_MS`]. Every other preset,
-/// rung, explicit block and longer derived block is returned as it is. The voice changer's factory and the benchmark's builds both call
-/// it, so a spec that leaves the block on automatic measures what the app runs.
+/// shorter than [`CPU_STREAMER_KEEP_FROM_MS`] becomes the block of this PC's physical cores
+/// ([`cpu_streamer_block_for_cores`] of `ort_session::vc_physical_cores`, the count the Streamer's thread policy
+/// reads: 120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer). Every other preset, rung, explicit block
+/// (the Block size setting or Autotune's pick) and longer derived block is returned as it is. The voice changer's
+/// factory and the benchmark's builds both call it, so a spec that leaves the block on automatic measures what
+/// the app runs.
 pub fn cpu_streamer_block(preset: EnginePreset, base_ep: &str, requested_block_ms: f64) -> EnginePreset {
-    cpu_streamer_block_with(preset, base_ep, requested_block_ms, cpu_streamer_block_enabled())
+    cpu_streamer_block_with(
+        preset,
+        base_ep,
+        requested_block_ms,
+        cpu_streamer_block_enabled(),
+        crate::services::neural_audio::ort_session::vc_physical_cores(),
+    )
 }
 
 /// The block (ms) the Streamer on the processor takes when none is set, for a device block of
@@ -200,8 +261,9 @@ pub fn cpu_streamer_auto_block_ms(profile: RvcPresetProfile, base_ep: &str, chun
     (got.block_ms != derived.block_ms).then_some(got.block_ms)
 }
 
-/// [`cpu_streamer_block`] with the kill switch passed in (tests never touch the environment).
-pub fn cpu_streamer_block_with(preset: EnginePreset, base_ep: &str, requested_block_ms: f64, enabled: bool) -> EnginePreset {
+/// [`cpu_streamer_block`] with the kill switch and the PC's physical core count passed in (tests never touch the
+/// environment or the machine).
+pub fn cpu_streamer_block_with(preset: EnginePreset, base_ep: &str, requested_block_ms: f64, enabled: bool, physical_cores: u32) -> EnginePreset {
     let unset = !requested_block_ms.is_finite() || requested_block_ms <= 0.0;
     if enabled
         && unset
@@ -209,7 +271,7 @@ pub fn cpu_streamer_block_with(preset: EnginePreset, base_ep: &str, requested_bl
         && base_ep.trim().eq_ignore_ascii_case("cpu")
         && preset.block_ms < CPU_STREAMER_KEEP_FROM_MS
     {
-        return EnginePreset { block_ms: CPU_STREAMER_AUTO_BLOCK_MS, ..preset };
+        return EnginePreset { block_ms: cpu_streamer_block_for_cores(physical_cores), ..preset };
     }
     preset
 }
@@ -278,11 +340,12 @@ mod tests {
     }
 
     /// The Streamer on the processor takes a block it can keep up with when none is set; nothing else
-    /// does, and nothing explicit or longer is shortened.
+    /// does, and nothing explicit or longer is shortened. (8 physical cores: the 120 ms block; the other core
+    /// counts are in `the_cpu_streamer_block_follows_the_physical_cores`.)
     #[test]
     fn the_cpu_streamer_takes_a_long_block_only_when_none_is_set() {
         let derived = |profile, block, chunk| engine_preset(profile, block, chunk, 48_000, 64.0, PrecisionMode::Auto);
-        let on = |p: EnginePreset, ep: &str, block: f64| cpu_streamer_block_with(p, ep, block, true).block_ms;
+        let on = |p: EnginePreset, ep: &str, block: f64| cpu_streamer_block_with(p, ep, block, true, 8).block_ms;
         // The app's default: 512 frames at 48 kHz derive 10.67 ms (planned to 20 ms).
         let s = derived(RvcPresetProfile::Streamer, 0.0, 512);
         assert!(s.block_ms < 20.0);
@@ -291,7 +354,7 @@ mod tests {
         assert_eq!(on(s, "cpu", -1.0), CPU_STREAMER_AUTO_BLOCK_MS);
         assert_eq!(on(s, "cpu", f64::NAN), CPU_STREAMER_AUTO_BLOCK_MS);
         // The rest of the preset is untouched.
-        let got = cpu_streamer_block_with(s, "cpu", 0.0, true);
+        let got = cpu_streamer_block_with(s, "cpu", 0.0, true, 8);
         assert_eq!((got.profile, got.extra_context_ms, got.precision), (s.profile, s.extra_context_ms, s.precision));
         // A GPU rung, the other presets and the kill switch keep the derived block.
         for ep in ["cuda", "dml", "", "tensorrt_rtx"] {
@@ -301,7 +364,7 @@ mod tests {
             let p = derived(profile, 0.0, 512);
             assert_eq!(on(p, "cpu", 0.0), p.block_ms, "{profile:?}");
         }
-        assert_eq!(cpu_streamer_block_with(s, "cpu", 0.0, false).block_ms, s.block_ms, "kill switch");
+        assert_eq!(cpu_streamer_block_with(s, "cpu", 0.0, false, 8).block_ms, s.block_ms, "kill switch");
         // An explicit block is the user's, shorter or longer.
         for explicit in [10.0, 20.0, 40.0, 80.0, 120.0, 200.0] {
             let p = derived(RvcPresetProfile::Streamer, explicit, 512);
@@ -325,6 +388,81 @@ mod tests {
         assert_eq!(on(unknown, "cpu", 0.0), CPU_STREAMER_AUTO_BLOCK_MS);
         // The environment switch reads like the other engine switches.
         assert_eq!(CPU_STREAMER_BLOCK_ENV, "SIGIL_VC_STREAMER_BLOCK");
+    }
+
+    /// The automatic block follows the physical cores in three tiers: 7 or more cores 120 ms, exactly 6 cores 160 ms, 5 or
+    /// fewer (and 0, an unknown count) 200 ms. Only the automatic case moves; every block is one the shape plan builds.
+    #[test]
+    fn the_cpu_streamer_block_follows_the_physical_cores() {
+        assert_eq!(
+            (CPU_STREAMER_AUTO_BLOCK_MS, CPU_STREAMER_AUTO_BLOCK_6_CORES_MS, CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS),
+            (120.0, 160.0, 200.0)
+        );
+        assert_eq!((CPU_STREAMER_FULL_CORES, CPU_STREAMER_SIX_CORES), (7, 6));
+        for cores in [7u32, 8, 10, 12, 16, 64] {
+            assert_eq!(cpu_streamer_block_for_cores(cores), 120.0, "{cores} cores");
+        }
+        // Exactly 6 cores is the middle tier (the user's decision of 2026-10-11).
+        assert_eq!(cpu_streamer_block_for_cores(6), 160.0, "6 cores");
+        // 0 is a probe that could not tell: the smallest PC, like the thread policy (4 threads).
+        for cores in [0u32, 1, 2, 3, 4, 5] {
+            assert_eq!(cpu_streamer_block_for_cores(cores), 200.0, "{cores} cores");
+        }
+        // The tier edges: 5 cores 200 ms, 6 cores 160 ms, 7 cores 120 ms.
+        assert_eq!((5u32..=7).map(cpu_streamer_block_for_cores).collect::<Vec<_>>(), [200.0, 160.0, 120.0]);
+        // Longer blocks for fewer cores, never shorter.
+        let table: Vec<f64> = (0u32..=16).map(cpu_streamer_block_for_cores).collect();
+        assert!(table.windows(2).all(|w| w[0] >= w[1]), "{table:?}");
+        // Every automatic block is one the plan builds (the longest is the plan's longest).
+        for block in [120.0, 160.0, 200.0] {
+            assert!(super::super::plan::block_frames(block).is_ok(), "{block} ms");
+        }
+
+        let derived = |block, chunk| engine_preset(RvcPresetProfile::Streamer, block, chunk, 48_000, 64.0, PrecisionMode::Auto);
+        let auto = derived(0.0, 512);
+        let on = |p: EnginePreset, ep: &str, block: f64, cores: u32| cpu_streamer_block_with(p, ep, block, true, cores).block_ms;
+        assert_eq!((on(auto, "cpu", 0.0, 8), on(auto, "cpu", 0.0, 6), on(auto, "cpu", 0.0, 4)), (120.0, 160.0, 200.0));
+        for cores in [2u32, 4, 5, 6, 7, 8, 16] {
+            let want = cpu_streamer_block_for_cores(cores);
+            assert_eq!(on(auto, "cpu", 0.0, cores), want, "{cores} cores");
+            assert_eq!(on(auto, " CPU ", -1.0, cores), want, "{cores} cores, rung and block as written by the setting");
+            // An explicit Block size, or Autotune's pick (both arrive as a block above 0), wins at any size of PC.
+            for explicit in [20.0, 40.0, 80.0, 120.0, 160.0, 200.0] {
+                assert_eq!(on(derived(explicit, 512), "cpu", explicit, cores), explicit, "block {explicit} on {cores} cores");
+            }
+            // A deliberately big device chunk (60 ms or more) is kept whatever the PC.
+            for (chunk, ms) in [(2_880u32, 60.0), (3_840, 80.0), (5_760, 120.0), (9_600, 200.0)] {
+                assert_eq!(on(derived(0.0, chunk), "cpu", 0.0, cores), ms, "{chunk} frames on {cores} cores");
+            }
+            // The GPU rungs and the other presets keep the derived block.
+            for ep in ["cuda", "dml", "", "tensorrt_rtx"] {
+                assert_eq!(on(auto, ep, 0.0, cores), auto.block_ms, "{ep:?} on {cores} cores");
+            }
+            for profile in [RvcPresetProfile::LowLatency, RvcPresetProfile::Quality, RvcPresetProfile::StudioTrt] {
+                let other = engine_preset(profile, 0.0, 512, 48_000, 64.0, PrecisionMode::Auto);
+                assert_eq!(on(other, "cpu", 0.0, cores), other.block_ms, "{profile:?} on {cores} cores");
+            }
+            assert_eq!(cpu_streamer_block_with(auto, "cpu", 0.0, false, cores).block_ms, auto.block_ms, "kill switch, {cores} cores");
+        }
+        // The rest of the preset is untouched at any size.
+        let got = cpu_streamer_block_with(auto, "cpu", 0.0, true, 4);
+        assert_eq!((got.profile, got.extra_context_ms, got.precision), (auto.profile, auto.extra_context_ms, auto.precision));
+    }
+
+    /// The inspector's table (`options.ts` `streamerAutoBlockMs`) is this one: both sides test against the same rows.
+    #[test]
+    fn agrees_with_the_inspectors_table() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/core/services/voice_changer/__tests__/streamerBlock.fixture.json");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let fixture: serde_json::Value = serde_json::from_str(&text).expect("streamerBlock.fixture.json parses");
+        let rows = fixture["rows"].as_array().expect("rows is a list");
+        assert!(rows.len() >= 10, "{} rows", rows.len());
+        for row in rows {
+            let cores = u32::try_from(row["cores"].as_u64().expect("cores")).expect("cores fit");
+            let want = row["blockMs"].as_f64().expect("blockMs");
+            assert_eq!(cpu_streamer_block_for_cores(cores), want, "{cores} cores");
+        }
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import { proxy } from "valtio";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined), isTauri: () => false }));
@@ -12,7 +13,9 @@ vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
 import { toast } from "react-toastify";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { initSttTestI18n } from "@/core/services/stt/__tests__/sttTestI18n";
-import { Service_Translation_Schema } from "@/core/services/translation/schema";
+import type { TranslationEngineMap } from "@/core/services/translation";
+import { Service_Translation_Schema, Translation_Backends } from "@/core/services/translation/schema";
+import type { ITranslationEngine, TranslationEngineHost } from "@/core/services/translation/types";
 import Service_Others from "../index";
 import { Service_Others_Schema } from "../schema";
 
@@ -60,3 +63,39 @@ describe("Service_Others", () => {
     service.dispose();
   });
 });
+
+describe("Service_Others reverse translation", () => {
+  it("gives its translation engine the model store's view, so a translator whose model is missing is held (not retried every minute)", async () => {
+    const hosts: TranslationEngineHost[] = [];
+    class HostEngine implements ITranslationEngine {
+      attach(host: TranslationEngineHost) {
+        hosts.push(host);
+      }
+      async start() {}
+      async translate(request: { text: string }) {
+        return request.text;
+      }
+      stop() {}
+    }
+    const engines = Object.fromEntries(Object.values(Translation_Backends).map((b) => [b, HostEngine])) as unknown as TranslationEngineMap;
+    const othersData = proxy(Service_Others_Schema.parse({}));
+    const win = window as unknown as { ApiServer: { state: { services: { others: { data: unknown } } }; models?: unknown } };
+    win.ApiServer.state.services.others.data = othersData;
+    const service = new Service_Others(engines, { available: () => false });
+    service.init();
+    service.serviceState.phase = "running"; // reverse translation follows the switch while the capture runs
+    othersData.translate = true;
+    await settle();
+    expect(hosts).toHaveLength(1);
+    const modelInstalled = hosts[0].modelInstalled;
+    expect(modelInstalled).toBeTypeOf("function");
+    const states = (state: string) => ({ state: { states: { "mt/nllb": { state } } } });
+    win.ApiServer.models = states("not_installed");
+    expect(modelInstalled?.("mt/nllb")).toBe(false);
+    win.ApiServer.models = states("installed");
+    expect(modelInstalled?.("mt/nllb")).toBe(true);
+    service.serviceState.phase = "idle";
+    service.dispose();
+  });
+});
+

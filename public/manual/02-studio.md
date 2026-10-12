@@ -42,6 +42,26 @@ Sidebar → **Canvas and Elements**. Use the **Scenes** vs **Elements** subtabs 
 
 Switch **active scene** from the canvas inspector to edit different layouts (for example “Just Chatting” vs “BRB”).
 
+### Event text
+
+Wherever a setting pairs an **event** with a line of **text**, the text can use values from the event. Put them between `${` and `}`, or between `<%=` and `%>`:
+
+| You write | Sigil shows |
+|-----------|-------------|
+| `${event}` or `<%= event %>` | The event's value |
+| `${event.user.name}` or `<%= event.user.name %>` | A field inside the value |
+| `${event.items[0]}` or `${event["first name"]}` | A list item, or a field whose name is not a single word |
+| `<%- event.user.name %>` | The same field with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`, for text that ends up in HTML |
+
+For example, `Welcome ${event.user.name}, you have <%= event.count %> points` shows `Welcome Ada, you have 3 points` for the value `{user: {name: "Ada"}, count: 3}`.
+
+- A **path** is the word `event` followed by `.name`, `[0]`, `["key"]` or `['key']` (`?.name` means the same as `.name`). Spaces are allowed inside the delimiters and inside the square brackets. A plain name is made of letters, digits, `_` and `$` and does not start with a digit; any other name goes in `["…"]`.
+- A field that does not exist shows nothing, and so do `null` and `undefined`. Numbers and true/false show as text, a list as its items joined by commas, and any other object as `[object Object]` (pick one of its fields instead).
+- `${…}` and `<%= … %>` insert the value as it is. Use `<%- … %>` where the text is shown as HTML.
+- A path only reads the fields an object or list holds itself: not what it inherits, and it never runs a getter. The field names `constructor`, `prototype` and `__proto__` are refused.
+- **Nothing in event text is ever run.** Whatever Sigil does not understand is shown exactly as you typed it: `<% … %>` blocks, function calls such as `event.name.toUpperCase()`, operators and conditions, and names other than `event` (such as `window`). If you see your own `${…}` or `<% … %>` on screen, the reader refused it. Blocks are not stripped because that would quietly change what a text like `<% if (event.live) { %>LIVE<% } %>` shows.
+- This is deliberate. A scene file from someone else can carry event text, and opening it must never run that person's code on your PC. Earlier versions gave event text to a JavaScript template engine, so `<% … %>` blocks and expressions used to work; they no longer do. Move the logic into the event, or into one text per event.
+
 ### Tips
 
 - **Double-click** the canvas background may focus **Scenes** (per current editor behavior).  

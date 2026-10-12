@@ -1,4 +1,4 @@
-import template from "lodash/template";
+import { compileEventText } from "./eventText";
 
 export type StyleEvent = {
   event: string;
@@ -147,28 +147,28 @@ export type TemplateEvent = {
   text: string;
 };
 
+/**
+ * Subscribe each `{event, text}` pair: when `event` is published, `fn` gets the pair's text rendered with the
+ * event's value. The text is an *event text* (see `./eventText`): it never runs code, so a text that came with
+ * an imported scene document is safe to render. Returns the pubsub subscription tokens.
+ */
 export function templateEventsSubscriber(
   events: TemplateEvent[],
   fn: (event: string, value: string) => void
 ) {
-  return (
-    events
-      .filter((e) => e.event && e.text)
-      .map?.((e) => {
+  if (!Array.isArray(events)) return [];
+  return events
+    .filter((e) => e && typeof e.event === "string" && e.event && typeof e.text === "string" && e.text)
+    .map((e) => {
+      const render = compileEventText(e.text);
+      return window.ApiShared.pubsub.subscribe(e.event, (value) => {
+        let text: string;
         try {
-          const eventTemplate = template(e.text);
-          return window.ApiShared.pubsub.subscribe(e.event, (value) => {
-            try {
-              fn?.(e.event, eventTemplate({ event: value }));
-            } catch (_error) {
-              fn?.(e.event, "_invalid_value_");
-            }
-          });
-        } catch {
-          return window.ApiShared.pubsub.subscribe(e.event, (value) =>
-            fn(e.event, "_invalid_template_")
-          );
+          text = render(value);
+        } catch (_error) {
+          text = "_invalid_value_"; // only an exotic value (a throwing Proxy) can get here
         }
-      }) || []
-  );
+        fn?.(e.event, text);
+      });
+    });
 }

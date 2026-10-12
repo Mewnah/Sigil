@@ -223,41 +223,62 @@ export function generalLeverNotes(running: VcEffectiveLevers | null, levers: rea
 }
 
 /**
- * Physical cores at or under which the Streamer preset on the processor falls behind while a game is
- * running. The headless benchmark of the final build (`docs/benchmarks/VC_BENCHMARKS.md` -> "The CPU
- * Streamer on 4, 5 and 6 physical cores") with the game stand-in (4 threads at 60 %): on 6 cores the voice
- * skipped 7-10 % of the audio, on 5 cores 14 %, on 4 cores 19-20 % (3 passes each); an 8-core PC skipped none.
+ * Physical cores at or under which the Streamer preset on the processor does not keep up at 120 ms while a game is
+ * running, and so takes a longer block by itself. The headless benchmark of the final build
+ * (`docs/benchmarks/VC_BENCHMARKS.md` -> "The CPU Streamer on 4, 5 and 6 physical cores") with the game stand-in
+ * (4 threads at 60 %), 120 ms blocks: on 6 cores the voice skipped 7-10 % of the audio, on 5 cores 14 %, on 4 cores
+ * 19-20 % (3 passes each); an 8-core PC skipped none.
  */
 export const STREAMER_FEW_CORES_MAX = 6;
 
-/**
- * The Block size (ms) from which the Streamer kept up under that stand-in on a 6-core slice: 160 ms dropped nothing
- * in one run, and so did 200 ms.
- */
-export const STREAMER_KEEPS_UP_BLOCK_MS = 160;
+/** Physical cores from which the Streamer's automatic block on the processor is {@link STREAMER_AUTO_BLOCK_MS}. */
+export const STREAMER_FULL_CORES = 7;
+
+/** The physical core count whose automatic block is {@link STREAMER_AUTO_BLOCK_MS_6_CORES} (Rust `CPU_STREAMER_SIX_CORES`). */
+export const STREAMER_SIX_CORES = 6;
+
+/** Rust `CPU_STREAMER_AUTO_BLOCK_MS`: the automatic block on a PC with {@link STREAMER_FULL_CORES} or more physical cores. */
+export const STREAMER_AUTO_BLOCK_MS = 120;
 
 /**
- * The same for 5 cores and fewer: 200 ms is the only longer block that was run on 4 cores (nothing dropped under the
- * stand-in, one run; its paced run missed the 98 % played requirement with 2 s of dry output a minute), and 5 cores
- * were never run on a longer block, so they take the 4-core figure. 160 ms is not measured on those PCs and
- * must not hide the note. 1 to 3 cores were not measured at all and are treated like 4.
+ * Rust `CPU_STREAMER_AUTO_BLOCK_6_CORES_MS`: the automatic block on a PC with exactly 6 physical cores, the user's decision
+ * of 2026-10-11. At 120 ms the game stand-in made 6 cores drop 9.5 % of the input. At 160 ms the two cells on file dropped
+ * none (RTF p99 0.88 paced, 1.06 under the stand-in with 5.3 % of the blocks over budget; about 355 ms end to end). One quick
+ * check with the PC busy (44 % total CPU) dropped 0.5 % of the input and played 99.04 % of the converted audio (p50 345 ms);
+ * the same check at 200 ms dropped none and played 97.86 % (p50 411 ms). The user judged the 160 ms run's drop to be the
+ * busy PC and chose 160 ms for its lower delay.
  */
-export const STREAMER_KEEPS_UP_BLOCK_MS_FEW = 200;
+export const STREAMER_AUTO_BLOCK_MS_6_CORES = 160;
 
-/** Cores from which {@link STREAMER_KEEPS_UP_BLOCK_MS} (160 ms) is the measured remedy; fewer take the 200 ms figure. */
-export const STREAMER_CORES_FOR_160_MS = 6;
+/**
+ * Rust `CPU_STREAMER_AUTO_BLOCK_FEW_CORES_MS`: the automatic block on a PC with 5 or fewer physical cores. At 120 ms the
+ * game stand-in made 5 and 4 cores drop 13.9 % and 19.7 % of the input. At 200 ms none of the 4-core runs under the
+ * stand-in dropped any input (RTF p99 0.83-0.96, except 1.06 for one game cell). The price is delay (about 390-490 ms end to
+ * end) and an output queue with little margin at 200 ms blocks (0.4-2.0 s of dry output a minute, 96.4-99.4 % of the
+ * converted audio played). 5 cores were never run on a longer block and 1 to 3 cores not at all; they take the same figure.
+ */
+export const STREAMER_AUTO_BLOCK_MS_FEW = 200;
 
-/** The Block size (ms) from which the note hides on a PC with `cores` physical cores. */
-export function streamerKeepsUpBlockMs(cores: number): number {
-    return cores >= STREAMER_CORES_FOR_160_MS ? STREAMER_KEEPS_UP_BLOCK_MS : STREAMER_KEEPS_UP_BLOCK_MS_FEW;
+/**
+ * The block (ms) the Streamer on the processor takes by itself on a PC with `cores` physical cores, in three tiers: 120 ms
+ * from 7 cores, 160 ms with exactly 6, 200 ms with 5 or fewer (an unknown count, 0, counts as the smallest PC). The same
+ * table as Rust `presets::cpu_streamer_block_for_cores` (`__tests__/streamerBlock.fixture.json` is shared and both sides
+ * test against it).
+ */
+export function streamerAutoBlockMs(cores: number): number {
+    if (cores >= STREAMER_FULL_CORES) return STREAMER_AUTO_BLOCK_MS;
+    if (cores >= STREAMER_SIX_CORES) return STREAMER_AUTO_BLOCK_MS_6_CORES;
+    return STREAMER_AUTO_BLOCK_MS_FEW;
 }
 
 /**
- * Whether the Streamer preset runs on a processor with so few physical cores that it does not keep up while a
- * game is running: the Streamer preset on the CPU rung (an unset EP follows the preset), a known core count of
- * 1 to [`STREAMER_FEW_CORES_MAX`], and a Block size under [`streamerKeepsUpBlockMs`] for that core count (0 is
- * Auto, which the Streamer on the processor turns into 120 ms). Returns the core count and the Block size that
- * kept up, for the note, or `null` for no note.
+ * Whether a Block size that was set by hand (or applied by Autotune, which stores it the same way) is shorter than the
+ * Streamer preset on the processor takes by itself on **this PC**, so the PC may not keep up with it while a game is running:
+ * the Streamer preset on the CPU rung (an unset EP follows the preset), a known core count of 1 to
+ * [`STREAMER_FEW_CORES_MAX`], and an explicit Block size (above 0) under [`streamerAutoBlockMs`] for that core count (160 ms
+ * on 6 cores, 200 ms on 5 or fewer: a 160 ms Block size on 6 cores gets no note, the same Block size on 5 cores does).
+ * **Auto (0) gets no note**: the engine picks this PC's block itself. Returns the core count, the Block size set and the
+ * block Auto would take on this PC, for the note (which names both sizes), or `null` for no note.
  */
 export function streamerFewCoresNote(input: {
     profile: RvcProfileId;
@@ -265,13 +286,15 @@ export function streamerFewCoresNote(input: {
     /** `null` / `undefined` / 0 while the system probe has not answered. */
     physicalCores: number | null | undefined;
     blockMs: number;
-}): { cores: number; blockMs: number } | null {
+}): { cores: number; blockMs: number; currentMs: number } | null {
     if (input.profile !== "streamer") return null;
     if (rvcBaseEp(effectiveRvcEp(input.ep, input.profile)) !== "cpu") return null;
     const cores = input.physicalCores;
     if (typeof cores !== "number" || !Number.isFinite(cores) || cores < 1 || cores > STREAMER_FEW_CORES_MAX) return null;
+    const currentMs = input.blockMs;
+    if (!Number.isFinite(currentMs) || currentMs <= 0) return null;
     const whole = Math.trunc(cores);
-    const blockMs = streamerKeepsUpBlockMs(whole);
-    if (input.blockMs >= blockMs) return null;
-    return { cores: whole, blockMs };
+    const blockMs = streamerAutoBlockMs(whole);
+    if (currentMs >= blockMs) return null;
+    return { cores: whole, blockMs, currentMs };
 }

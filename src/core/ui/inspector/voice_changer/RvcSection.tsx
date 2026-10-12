@@ -38,7 +38,9 @@ const PresetSelect: FC = () => {
     const sysinfo = useSnapshot(window.ApiServer.sysinfo.state);
     const options = profileOptions(snap.capabilities as typeof window.ApiServer.voiceChanger.state.capabilities, vc.rvcProfile);
     const current = options.find((o) => o.value === vc.rvcProfile);
-    // The Streamer runs on the processor: with 6 or fewer physical cores it falls behind while a game runs.
+    // The Streamer runs on the processor. On Auto the engine takes the block this PC's cores keep up with (120 ms from 7
+    // physical cores, 160 ms with 6, 200 ms with 5 or fewer); the note is for a Block size set by hand (or by Autotune) that
+    // is shorter than THIS PC's block, on a PC with 6 or fewer physical cores, and it names both sizes.
     const fewCores = streamerFewCoresNote({
         profile: vc.rvcProfile,
         ep: vc.rvcExecutionProvider,
@@ -67,7 +69,7 @@ const PresetSelect: FC = () => {
             ) : null}
             {fewCores ? (
                 <div className="alert alert-warning alert-soft text-xs leading-snug">
-                    {t("voice_changer.rvc_streamer_few_cores_note", { cores: fewCores.cores, block: fewCores.blockMs })}
+                    {t("voice_changer.rvc_streamer_few_cores_note", { cores: fewCores.cores, block: fewCores.blockMs, current: fewCores.currentMs })}
                 </div>
             ) : null}
         </>

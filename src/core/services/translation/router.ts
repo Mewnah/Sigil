@@ -19,7 +19,11 @@ import {
  *
  * - Members are the other engines, created from the host's constructors. `start` starts every member of the
  *   configured pair's chain concurrently and resolves as soon as one is ready (the rest keep starting; members of
- *   other pairs' chains start on first use). A member whose start failed is retried after `ROUTER_START_RETRY_MS`.
+ *   other pairs' chains start on first use). A member whose start failed is retried after `ROUTER_START_RETRY_MS`; one
+ *   whose model is not installed (`TranslationError.missing`, and the model store agrees it is not installed) is not
+ *   retried until the model store reports it installed (`TranslationEngineHost.modelInstalled`), so its "model missing"
+ *   status card is posted once, not every minute. When the store already reports the model installed at the failure, the
+ *   timed retry applies (no install event would ever release the member).
  * - Every attempt is bounded (a hung engine is aborted and the next one tried), so the chain falls through within
  *   one budget per member: `auto.attemptTimeoutMs` for caption-length text, proportionally more for a long final
  *   (`routerAttemptBudgetMs`). Waiting for a member that is still starting is bounded by `attemptTimeoutMs` too, and
@@ -218,6 +222,13 @@ interface Member {
   ready: boolean;
   startError: unknown;
   startFailedAt: number;
+  /**
+   * The last start failed on a missing model that the model store still reported not installed at that moment: hold the
+   * member until the store reports every missing model installed. False when the store already said installed (it and the
+   * engine disagree, so waiting for an install event would never end), for any other failure and for a host that cannot tell:
+   * the member is then retried on the timer.
+   */
+  waitForInstall: boolean;
   lifetime: AbortController;
 }
 
@@ -418,7 +429,7 @@ export class Translation_RouterService implements ITranslationEngine {
       const m = this.#members.get(id);
       if (m?.ready && m.engine) {
         if (m.engine.supports?.(from, to) !== false) return true;
-      } else if (!m || m.starting || !this.#startFailedRecently(m)) {
+      } else if (!m || m.starting || !this.#startHeld(m)) {
         unsettled = true;
       }
     }
@@ -441,7 +452,7 @@ export class Translation_RouterService implements ITranslationEngine {
   #member(id: TranslationEngineId): Member {
     let m = this.#members.get(id);
     if (!m) {
-      m = { id, engine: null, starting: null, ready: false, startError: undefined, startFailedAt: 0, lifetime: new AbortController() };
+      m = { id, engine: null, starting: null, ready: false, startError: undefined, startFailedAt: 0, waitForInstall: false, lifetime: new AbortController() };
       this.#members.set(id, m);
     }
     return m;
@@ -505,18 +516,41 @@ export class Translation_RouterService implements ITranslationEngine {
   #usable(m: Member, from: string, to: string): boolean {
     if (m.ready && m.engine) return m.engine.supports?.(from, to) !== false;
     if (m.starting) return true;
-    return !this.#startFailedRecently(m);
+    return !this.#startHeld(m);
   }
 
-  /** The member's last start failed less than `ROUTER_START_RETRY_MS` ago (it is not retried before then). */
-  #startFailedRecently(m: Member): boolean {
-    return m.startError !== undefined && this.#now() - m.startFailedAt < ROUTER_START_RETRY_MS;
+  /**
+   * The member's last start failed and it is not started again yet. A start that failed on a model the model store reported
+   * not installed waits until the store reports every missing model installed, however long that takes (each retry would post
+   * the "model missing" status card again, and the card is the user's cue). Every other failure is retried
+   * `ROUTER_START_RETRY_MS` after it: a host that cannot tell, an error without missing ids, and a model the store already
+   * reports installed (the store's state is stale, as when the files were deleted outside the app), which no install event
+   * would ever release.
+   */
+  #startHeld(m: Member): boolean {
+    if (m.startError === undefined) return false;
+    if (m.waitForInstall) return !this.#missingInstalled(m.startError);
+    return this.#now() - m.startFailedAt < ROUTER_START_RETRY_MS;
+  }
+
+  /** The model store reports every model that `error` (a start failure) says is missing installed. */
+  #missingInstalled(error: unknown): boolean {
+    const installed = this.#host?.modelInstalled;
+    if (!installed || !(error instanceof TranslationError) || error.missing.length === 0) return false;
+    return error.missing.every((id) => installed.call(this.#host, id) === true);
+  }
+
+  /** Whether a start that failed with `error` should wait for the model store: it lacks a model that the store does not list installed. */
+  #shouldWaitForInstall(error: unknown): boolean {
+    const host = this.#host;
+    if (!host?.modelInstalled || !(error instanceof TranslationError) || error.missing.length === 0) return false;
+    return !this.#missingInstalled(error);
   }
 
   #ensureStarted(m: Member): Promise<void> {
     if (m.ready) return Promise.resolve();
     if (m.starting) return m.starting;
-    if (this.#startFailedRecently(m)) return Promise.reject(m.startError);
+    if (this.#startHeld(m)) return Promise.reject(m.startError);
     const host = this.#host;
     const state = this.#state;
     const Engine = host?.engines[m.id];
@@ -526,6 +560,7 @@ export class Translation_RouterService implements ITranslationEngine {
     m.engine = engine;
     m.lifetime = new AbortController();
     m.startError = undefined;
+    m.waitForInstall = false;
     const lifetime = m.lifetime.signal;
     engine.attach?.({ engines: host.engines, status: (u) => this.#memberStatus(u) });
     const starting = Promise.resolve()
@@ -542,6 +577,7 @@ export class Translation_RouterService implements ITranslationEngine {
             m.engine = null;
             m.startError = error;
             m.startFailedAt = this.#now();
+            m.waitForInstall = this.#shouldWaitForInstall(error);
             try {
               engine.stop();
             } catch {

@@ -80,6 +80,7 @@ interface MakeOptions {
   pair?: () => { from?: string; to?: string };
   engines?: Partial<TranslationEngineMap>;
   translatorOnCpu?: () => boolean;
+  modelInstalled?: (id: string) => boolean;
 }
 
 function make(patch: (s: Translation_State) => void = () => {}, options: MakeOptions = {}): Harness {
@@ -96,6 +97,7 @@ function make(patch: (s: Translation_State) => void = () => {}, options: MakeOpt
     publish: (e) => events.push(e),
     pair: options.pair,
     translatorOnCpu: options.translatorOnCpu,
+    modelInstalled: options.modelInstalled,
   });
   return {
     pipeline,
@@ -728,6 +730,18 @@ describe("automatic interim switch (P7: off while the bundled translator runs on
     h.pipeline.stop();
     const plain = await started();
     expect(engine().host?.translatorOnCpu?.()).toBe(false);
+    plain.pipeline.stop();
+  });
+
+  it("hands the engine what the model store reports (read when asked), and nothing without an option", async () => {
+    const installed = new Set<string>();
+    const h = await started(undefined, { modelInstalled: (id) => installed.has(id) });
+    expect(engine().host?.modelInstalled?.("mt/nllb")).toBe(false);
+    installed.add("mt/nllb");
+    expect(engine().host?.modelInstalled?.("mt/nllb")).toBe(true);
+    h.pipeline.stop();
+    const plain = await started();
+    expect(engine().host?.modelInstalled).toBeUndefined(); // the router then keeps its timed retry
     plain.pipeline.stop();
   });
 

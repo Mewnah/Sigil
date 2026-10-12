@@ -12,10 +12,10 @@ vi.mock("@/utils/devLog", () => ({ devLog: () => {} }));
 
 import { toast } from "react-toastify";
 import { pushSystemLog } from "../../systemLog";
-import Service_Translation, { TranslationEngineMap } from "../index";
+import Service_Translation, { modelInstalledNow, TranslationEngineMap } from "../index";
 import { Service_Translation_Schema, Translation_Backends, Translation_State } from "../schema";
 import { CANCEL_MARKER } from "../sequencer";
-import { ITranslationEngine, TranslationError, TranslationRequest } from "../types";
+import { ITranslationEngine, TranslationEngineHost, TranslationError, TranslationRequest } from "../types";
 
 type Call = { request: TranslationRequest; signal: AbortSignal; resolve: (v: string) => void; reject: (e: unknown) => void };
 
@@ -24,8 +24,12 @@ class FakeEngine implements ITranslationEngine {
   static startImpl: (signal: AbortSignal) => Promise<void> = async () => {};
   calls: Call[] = [];
   stopped = 0;
+  host: TranslationEngineHost | null = null;
   constructor() {
     FakeEngine.instances.push(this);
+  }
+  attach(host: TranslationEngineHost) {
+    this.host = host;
   }
   start(_state: Translation_State, signal: AbortSignal) {
     return FakeEngine.startImpl(signal);
@@ -110,7 +114,60 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The model store as `window.ApiServer.models` shows it to `modelInstalledNow` (only `state.states[id].state` is read). */
+const modelStates = (states: Record<string, string>) => ({
+  state: { states: Object.fromEntries(Object.entries(states).map(([id, state]) => [id, { state }])) },
+});
+
+describe("modelInstalledNow (the router's view of the model store)", () => {
+  it("is true only for a model whose state is installed", () => {
+    vi.stubGlobal("window", {
+      ApiServer: {
+        models: modelStates({
+          "mt/ready": "installed",
+          "mt/absent": "not_installed",
+          "mt/queued": "queued",
+          "mt/downloading": "downloading",
+          "mt/verifying": "verifying",
+          "mt/extracting": "extracting",
+          "mt/failed": "failed",
+          "mt/cancelled": "cancelled",
+        }),
+      },
+    });
+    expect(modelInstalledNow("mt/ready")).toBe(true);
+    for (const id of ["absent", "queued", "downloading", "verifying", "extracting", "failed", "cancelled", "never-listed"]) {
+      expect(modelInstalledNow(`mt/${id}`), id).toBe(false);
+    }
+  });
+
+  it("reads the store at the time of the call, and is false while the store is not up", () => {
+    const models = modelStates({ "mt/nllb": "downloading" });
+    vi.stubGlobal("window", { ApiServer: { models } });
+    expect(modelInstalledNow("mt/nllb")).toBe(false);
+    models.state.states["mt/nllb"] = { state: "installed" };
+    expect(modelInstalledNow("mt/nllb")).toBe(true);
+    delete (models.state.states as Record<string, unknown>)["mt/nllb"]; // the entry is gone: not installed
+    expect(modelInstalledNow("mt/nllb")).toBe(false);
+    vi.stubGlobal("window", { ApiServer: {} }); // host services not built yet
+    expect(modelInstalledNow("mt/nllb")).toBe(false);
+    vi.stubGlobal("window", {});
+    expect(modelInstalledNow("mt/nllb")).toBe(false);
+  });
+});
+
 describe("Service_Translation", () => {
+  it("gives the engine the model store's view, so the router can hold a member whose model is missing", async () => {
+    await started();
+    const host = engine().host;
+    expect(host?.modelInstalled).toBeTypeOf("function");
+    const win = window as unknown as { ApiServer: Record<string, unknown> };
+    win.ApiServer.models = modelStates({ "mt/nllb": "not_installed" });
+    expect(host?.modelInstalled?.("mt/nllb")).toBe(false);
+    win.ApiServer.models = modelStates({ "mt/nllb": "installed" });
+    expect(host?.modelInstalled?.("mt/nllb")).toBe(true);
+  });
+
   it("publishes a final while an interim from the next utterance is in flight (acceptance)", async () => {
     await started();
     stt(TextEventType.interim, "good");
