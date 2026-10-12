@@ -123,12 +123,30 @@ fn order_lan_addresses(interfaces: Vec<(String, IpAddr)>, primary: Option<IpAddr
     ranked.into_iter().map(|(_, _, address)| address).collect()
 }
 
+/// The address the app advertises for this PC. `default_route_ip` is `local_ip()`, which on Windows needs a
+/// default route and is `None` on a PC that is offline (no network at all, airplane mode, a cable that is not
+/// plugged in, Windows Sandbox with networking off) or on a LAN without a gateway. That must not stop the app
+/// from starting (it used to: the front end showed "Application failed to start: Error retrieving local IP"), so:
+/// the default-route address, else the first usable LAN address, else loopback.
+fn primary_ip(default_route_ip: Option<IpAddr>, interfaces: &[(String, IpAddr)]) -> IpAddr {
+    default_route_ip
+        .or_else(|| {
+            order_lan_addresses(interfaces.to_vec(), None)
+                .first()
+                .and_then(|a| a.ip.parse::<Ipv4Addr>().ok())
+                .map(IpAddr::V4)
+        })
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
 #[command]
 async fn config(config: State<'_, AppConfiguration>) -> Result<WebConfig, String> {
-    let Ok(ip) = local_ip() else {
-        return Err("Error retrieving local IP".to_string());
-    };
     let interfaces = local_ip_address::list_afinet_netifas().unwrap_or_default();
+    let default_route_ip = local_ip().ok();
+    if default_route_ip.is_none() {
+        tracing::info!(target: "sigil::web", "no default route (offline?): advertising the first LAN address, else loopback");
+    }
+    let ip = primary_ip(default_route_ip, &interfaces);
     Ok(WebConfig {
         local_ip: ip.to_string(),
         port: config.port.to_string(),
@@ -929,6 +947,23 @@ mod tests {
         assert_eq!(ips, ["192.168.1.50", "172.28.16.1", "10.0.0.7", "100.101.102.103"]);
         assert_eq!(ordered[0].interface, "Ethernet");
         assert!(order_lan_addresses(vec![], None).is_empty());
+    }
+
+    #[test]
+    fn an_offline_pc_still_gets_an_address() {
+        let ip = |s: &str| -> IpAddr { s.parse().unwrap() };
+        let lan = vec![
+            ("Loopback".to_string(), ip("127.0.0.1")),
+            ("APIPA".to_string(), ip("169.254.10.10")),
+            ("Ethernet".to_string(), ip("192.168.1.50")),
+        ];
+        // Normal case: the default-route address wins.
+        assert_eq!(primary_ip(Some(ip("10.0.0.7")), &lan), ip("10.0.0.7"));
+        // A LAN without a gateway: the first usable address.
+        assert_eq!(primary_ip(None, &lan), ip("192.168.1.50"));
+        // Offline (Windows Sandbox with networking off, airplane mode): loopback, never an error.
+        assert_eq!(primary_ip(None, &[("Loopback".to_string(), ip("127.0.0.1")), ("APIPA".to_string(), ip("169.254.10.10"))]), ip("127.0.0.1"));
+        assert_eq!(primary_ip(None, &[]), ip("127.0.0.1"));
     }
 
     #[test]

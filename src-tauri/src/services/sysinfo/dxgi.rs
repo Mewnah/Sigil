@@ -40,6 +40,7 @@ pub fn d3d12_support() -> BTreeMap<String, D3d12Support> {
 #[cfg(windows)]
 mod imp {
     use super::{D3d12Support, FEATURE_LEVELS};
+    use crate::services::diagnostics::gpu_mem::is_software_adapter;
     use libloading::os::windows::{Library, LOAD_LIBRARY_SEARCH_SYSTEM32};
     use std::collections::BTreeMap;
     use std::ffi::c_void;
@@ -78,7 +79,11 @@ mod imp {
             let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
                 continue;
             };
-            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 {
+            // The same rule as `gpu_mem::adapters`: the flag alone misses the Basic Render Driver's unflagged twins.
+            let name_len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+            let name = String::from_utf16_lossy(&desc.Description[..name_len]);
+            let flagged = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+            if is_software_adapter(flagged, desc.VendorId, desc.DeviceId, name.trim()) {
                 continue;
             }
             let luid = format!("{:08x}:{:08x}", desc.AdapterLuid.HighPart as u32, desc.AdapterLuid.LowPart);

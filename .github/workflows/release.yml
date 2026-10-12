@@ -13,6 +13,12 @@
 # Settings → GPU & diagnostics). See docs/adr/0003-gpu-ep-delivery.md, docs/adr/0007-native-runtime-packs.md
 # and scripts/release/verify-bundle.ps1.
 #
+# Visual C++ runtime: the same overlay stages vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll and msvcp140_1.dll
+# next to Sigil.exe in both installers and the portable zip. Sigil.exe imports them at load time and a clean Windows has
+# none (it exited with 0xC0000135 in Windows Sandbox). They come from this runner's Visual Studio redistributable folder
+# (VC\Redist\MSVC\<version>\x64\Microsoft.VC14*.CRT, found with vswhere), never from System32 and never downloaded;
+# the step "Visual C++ runtime" below fails in seconds when they are not there, instead of after the compile.
+#
 # Release gates (scripts/release/README.md): the catalog pin check runs before the compile (every
 # published model and runtime hash-pinned, the release set immutable); verify-bundle.ps1 checks both
 # installers; packaged-smoke-all.ps1 then installs the NSIS setup on this clean runner (no GPU, no
@@ -85,6 +91,8 @@ jobs:
         run: pnpm typecheck
       - name: Unit tests (vitest)
         run: pnpm test:unit
+      - name: Visual C++ runtime (redistributable files to ship next to Sigil.exe)
+        run: node scripts/release/stage-native-dlls.mjs --check-vc
       - name: Frontend build (dist/ is embedded by generate_context!, also in cargo test)
         run: pnpm build
       - name: Rust tests
@@ -121,7 +129,8 @@ jobs:
           path: ${{ runner.temp }}/packaged-smoke/smoke-result.json
           if-no-files-found: ignore
 
-      # Portable build: Sigil.exe alone cannot load the GPU providers, so ship it with them.
+      # Portable build: Sigil.exe alone cannot load the GPU providers or the Visual C++ runtime, so ship it with them
+      # (native-bundle holds the three ONNX Runtime provider DLLs and the four Visual C++ runtime DLLs).
       - name: Portable zip
         shell: pwsh
         run: |

@@ -735,6 +735,17 @@ mod tests {
         let (ep, notes) = assess(&base(vec![adapter(0, gpu_mem::VENDOR_MICROSOFT, true)], true, true));
         assert_eq!(ep, "cpu");
         assert!(notes.iter().any(|n| n.contains("No hardware GPU")));
+        // A clean Windows (Windows Sandbox) lists the Basic Render Driver three times, two without the DXGI software
+        // flag: the startup log used to say "recommended DirectML" there while `--headless ep-probe` said CPU.
+        let warp = |flagged| gpu_mem::is_software_adapter(flagged, gpu_mem::VENDOR_MICROSOFT, 0x8C, "Microsoft Basic Render Driver");
+        let clean = vec![
+            adapter(0, gpu_mem::VENDOR_MICROSOFT, warp(true)),
+            adapter(1, gpu_mem::VENDOR_MICROSOFT, warp(false)),
+            adapter(2, gpu_mem::VENDOR_MICROSOFT, warp(false)),
+        ];
+        let (ep, notes) = assess(&base(clean, true, true));
+        assert_eq!(ep, "cpu");
+        assert!(notes.iter().any(|n| n.contains("No hardware GPU")));
     }
 
     #[test]

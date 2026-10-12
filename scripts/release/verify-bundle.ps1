@@ -1,18 +1,22 @@
 <#
 .SYNOPSIS
-  Verify a Sigil Windows release build: GPU provider DLLs staged and inside both installers, no new
-  load-time DLL imports, and (optionally) the installed layout passing the headless EP probe.
+  Verify a Sigil Windows release build: GPU provider DLLs and the Visual C++ runtime staged and
+  inside both installers, no new load-time DLL imports, and (optionally) the installed layout
+  passing the headless EP probe.
 
 .DESCRIPTION
   Run after `pnpm tauri build --config scripts/release/tauri.release.conf.json`. Checks:
-    1. Sigil.exe exists; the staged provider DLLs (src-tauri/target/native-bundle) match their
-       manifest (written by stage-native-dlls.mjs).
+    1. Sigil.exe exists; the staged DLLs (src-tauri/target/native-bundle: the three ONNX Runtime
+       provider DLLs and the four Visual C++ runtime DLLs vcruntime140, vcruntime140_1, msvcp140 and
+       msvcp140_1) match their manifest (written by stage-native-dlls.mjs).
     2. `dumpbin /DEPENDENTS Sigil.exe`: no CUDA / cuDNN / ONNX Runtime / ggml / OpenVR / sherpa DLL
-       is a load-time import (they must load lazily so Sigil starts on any PC), and every other
-       import is in scripts/release/expected-imports.txt (new ones are warnings, errors with -Strict).
+       is a load-time import (they must load lazily so Sigil starts on any PC), every other
+       import is in scripts/release/expected-imports.txt (new ones are warnings, errors with -Strict),
+       and every Visual C++ runtime import is one of the four DLLs the installers carry (a clean
+       Windows has none of them: without them Sigil.exe exits with 0xC0000135).
     3. MSI (administrative install into a temp dir) and NSIS (listed/extracted with 7-Zip) put
-       onnxruntime_providers_shared.dll, onnxruntime_providers_cuda.dll and DirectML.dll next to
-       Sigil.exe, byte-identical to the staged copies.
+       the three provider DLLs and the four Visual C++ runtime DLLs next to Sigil.exe,
+       byte-identical to the staged copies.
     4. Unless -SkipProbe: runs the installed-layout `Sigil.exe --headless ep-probe` and checks that
        the provider DLLs are found next to the exe; prints the EP test results. -RequireCuda makes a
        failed CUDA test an error (manual acceptance on an NVIDIA PC with the runtime pack installed).
@@ -44,6 +48,10 @@ $stagingDir = Join-Path $RepoRoot 'src-tauri\target\native-bundle'
 $manifestPath = Join-Path $RepoRoot 'src-tauri\target\native-bundle.json'
 $expectedImportsPath = Join-Path $PSScriptRoot 'expected-imports.txt'
 $providerDlls = @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'DirectML.dll')
+# The Visual C++ runtime, app-local: load-time imports of Sigil.exe (expected-imports.txt) that neither a clean Windows
+# nor the old installers had (stage-native-dlls.mjs VC_RUNTIME_DLLS).
+$vcRuntimeDlls = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll')
+$bundledDlls = @($providerDlls) + @($vcRuntimeDlls)
 # Shipped by the MSI only: the WiX bundler adds every *.dll next to the built exe, and ort-sys copies both TensorRT
 # providers there. They are small, load nothing at start-up and need TensorRT runtime DLLs the installer does not
 # carry (the TensorRT-RTX route takes them from the opt-in runtime/tensorrt-rtx pack, neural_audio/gpu/trt.rs).
@@ -66,7 +74,7 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
   Fail "staging manifest missing ($manifestPath): build with --config scripts/release/tauri.release.conf.json"
 } else {
   $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-  foreach ($name in $providerDlls) {
+  foreach ($name in $bundledDlls) {
     $entry = @($manifest.files | Where-Object { $_.name -ieq $name })
     $path = Join-Path $stagingDir $name
     if ($entry.Count -eq 0) { Fail "$name is not in the staging manifest"; continue }
@@ -74,9 +82,12 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
     $h = Hash $path
     if ($h -ne $entry[0].sha256) { Fail "$name in the staging dir does not match its manifest"; continue }
     $staged[$name.ToLowerInvariant()] = $h
-    Pass "staged $name ($([math]::Round($entry[0].size / 1MB, 1)) MB)"
+    if ($vcRuntimeDlls -contains $name) { Pass "staged $name ($([math]::Round($entry[0].size / 1KB)) KB, Visual C++ runtime)" }
+    else { Pass "staged $name ($([math]::Round($entry[0].size / 1MB, 1)) MB)" }
   }
-  $extra = @(Get-ChildItem -LiteralPath $stagingDir -File | Where-Object { $providerDlls -notcontains $_.Name })
+  $vcInfo = $manifest.PSObject.Properties['vc_redist']
+  if ($vcInfo -and $vcInfo.Value) { Write-Host "       Visual C++ runtime $($vcInfo.Value.version) from $($vcInfo.Value.dir)" }
+  $extra = @(Get-ChildItem -LiteralPath $stagingDir -File | Where-Object { $bundledDlls -notcontains $_.Name })
   foreach ($x in $extra) { Fail "unexpected file in the staging dir (it would be installed): $($x.Name)" }
 }
 
@@ -111,6 +122,12 @@ if (-not $dumpbin) {
   $system32 = Join-Path $env:SystemRoot 'System32'
   foreach ($dll in $imports) {
     if ($dll -match $forbidden) { Fail "Sigil.exe load-time imports $dll (GPU/runtime DLLs must be loaded lazily)"; continue }
+    # The Visual C++ runtime is in System32 on a PC that ever installed a program built with it, which is why a dev PC
+    # never notices: a clean Windows has none, so every import of it has to be one of the four DLLs shipped next to Sigil.exe.
+    if ($dll -match '^(vcruntime|msvcp|concrt|vcomp|vccorlib|vcamp)' -and ($vcRuntimeDlls -notcontains $dll)) {
+      Fail "Sigil.exe load-time imports $dll (Visual C++ runtime), which the installers do not carry: add it to VC_RUNTIME_DLLS in stage-native-dlls.mjs, to verify-bundle.ps1 and to expected-imports.txt"
+      continue
+    }
     $known = $false
     foreach ($pattern in $expected) { if ($dll -like $pattern) { $known = $true; break } }
     if ($known) { continue }
@@ -133,14 +150,15 @@ function Test-InstalledLayout([string]$label, [string]$root) {
   $exes = @(Get-ChildItem -LiteralPath $root -Recurse -Filter 'Sigil.exe' -File -ErrorAction SilentlyContinue)
   if ($exes.Count -eq 0) { Fail "${label}: Sigil.exe not found in the package"; return $null }
   $dir = $exes[0].DirectoryName
-  foreach ($name in $providerDlls) {
+  foreach ($name in $bundledDlls) {
     $p = Join-Path $dir $name
     if (-not (Test-Path -LiteralPath $p)) { Fail "${label}: $name is not next to Sigil.exe"; continue }
     $want = $staged[$name.ToLowerInvariant()]
-    if ($want -and (Hash $p) -ne $want) { Fail "${label}: $name differs from the staged copy"; continue }
+    if (-not $want) { Fail "${label}: $name has no staged copy to compare with"; continue }
+    if ((Hash $p) -ne $want) { Fail "${label}: $name differs from the staged copy"; continue }
     Pass "${label}: $name next to Sigil.exe"
   }
-  $extras = @(Get-ChildItem -LiteralPath $dir -Filter '*.dll' -File | Where-Object { $providerDlls -notcontains $_.Name })
+  $extras = @(Get-ChildItem -LiteralPath $dir -Filter '*.dll' -File | Where-Object { $bundledDlls -notcontains $_.Name })
   foreach ($x in $extras) {
     if ($knownExtraDlls -contains $x.Name) { Write-Host "       ${label}: also ships $($x.Name) (unused)" }
     else { Warn "${label}: unexpected DLL next to Sigil.exe: $($x.Name)" }

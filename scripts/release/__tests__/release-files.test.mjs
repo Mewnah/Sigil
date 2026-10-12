@@ -65,7 +65,7 @@ describe("packaged-smoke-all.ps1 runs in Windows PowerShell 5.1 (the Sandbox gue
 describe("packaged-smoke-all.ps1 contract", () => {
   it("offers the documented modes and switches", () => {
     for (const m of ["Extract", "Portable", "Layout", "Installed", "Sandbox"]) expect(SMOKE).toContain(`'${m}'`);
-    for (const p of ["ExpectNoGpu", "Online", "OnlineModel", "PackStore", "SkipGui", "RequireGui", "AllowInstall", "Strict", "ResultsDir", "InstallerPath"]) {
+    for (const p of ["ExpectNoGpu", "Online", "OnlineModel", "PackStore", "SkipGui", "RequireGui", "NoDevTools", "AllowInstall", "Strict", "ResultsDir", "InstallerPath"]) {
       expect(SMOKE, p).toMatch(new RegExp(`\\$${p}\\b`));
     }
     expect(SMOKE).toContain("sigil-packaged-smoke/1");
@@ -232,7 +232,7 @@ function runHelpers(shell, dir, body, env = process.env) {
 describe.runIf(process.platform === "win32")("the smoke script's helper functions (run for real in 5.1 and 7)", () => {
   it("has the helper region the tests (and exit-probe.ps1) extract", () => {
     expect(REGION, "#region testable-helpers").toBeTruthy();
-    for (const f of ["Test-Disposable", "Test-PortFree", "Get-FreePort", "Get-FetchFailureKind", "Get-RequiredTier", "Get-BuildInputsNewerThan"]) {
+    for (const f of ["Test-Disposable", "Test-PortFree", "Get-FreePort", "Get-FetchFailureKind", "Get-RequiredTier", "Get-BuildInputsNewerThan", "Get-Text", "Format-ExitCode", "Get-FrontendBootEvidence", "Test-Elevated"]) {
       expect(REGION, f).toContain(`function ${f}`);
     }
   });
@@ -311,6 +311,94 @@ describe.runIf(process.platform === "win32")("the smoke script's helper function
         );
         if (!out) return;
         expect(Object.fromEntries(out.map((l) => l.split("="))), shell).toEqual(Object.fromEntries(cases.map((c) => [c.name, c.kind])));
+      });
+    }
+  });
+
+  // The 0.5.0 Windows Sandbox run: .Stderr.Trim() on an empty stderr threw in 5.1 and hid the exit code (0xC0000135).
+  it("Get-Text never returns null (an empty file read with Get-Content -Raw is nothing in 5.1) and Format-ExitCode prints hex", () => {
+    for (const shell of SHELLS) {
+      withTemp((dir) => {
+        const empty = path.join(dir, "empty.txt");
+        fs.writeFileSync(empty, "");
+        const out = runHelpers(
+          shell,
+          dir,
+          [
+            `$raw = if (Test-Path -LiteralPath '${empty}') { Get-Content -Raw -LiteralPath '${empty}' } else { '' }`,
+            "$o = [pscustomobject]@{ Stderr = \"$raw\"; Bare = $raw }",
+            "'stderr-trim=' + ($o.Stderr.Trim().Length)",
+            "'get-text-null=' + ($null -eq (Get-Text $o.Bare))",
+            "'get-text-of-null=' + ((Get-Text $null).Length)",
+            "'get-text-keeps=' + (Get-Text ' abc ').Trim()",
+            "'dll=' + (Format-ExitCode -1073741515)",
+            "'dll-unsigned=' + (Format-ExitCode ([int]-1073741515))",
+            "'zero=' + (Format-ExitCode 0)",
+            "'one=' + (Format-ExitCode 1)",
+            "'none=' + (Format-ExitCode $null)",
+          ].join("\n"),
+        );
+        if (!out) return;
+        const got = Object.fromEntries(out.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+        expect(got["stderr-trim"], shell).toBe("0");
+        expect(got["get-text-null"], shell).toBe("False");
+        expect(got["get-text-of-null"], shell).toBe("0");
+        expect(got["get-text-keeps"], shell).toBe("abc");
+        expect(got.dll, shell).toBe("-1073741515 (0xC0000135) STATUS_DLL_NOT_FOUND: a DLL that Sigil.exe imports is missing");
+        expect(got["dll-unsigned"], shell).toContain("0xC0000135");
+        expect(got.zero, shell).toBe("0 (0x00000000)");
+        expect(got.one, shell).toBe("1 (0x00000001)");
+        expect(got.none, shell).toBe("unknown");
+      });
+    }
+    // No bare .Stderr.Trim() is left to throw on a null.
+    const code = powershellCode(SMOKE);
+    expect(code).not.toMatch(/\.Stderr\.Trim\(\)/);
+    expect(code).not.toMatch(/\.Stdout\.Trim\(\)/);
+  });
+
+  // Windows Sandbox 26100 with WebView2 155 ignores the WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS override (Edge itself opens the port
+  // from its command line), so gui-page cannot read the page there. The log decides instead: the 0.5.0 run on a PC without a
+  // network stopped after the start-up probe (6 lines, no front-end line); the fixed build logged 19 lines including the page's own.
+  it("Get-FrontendBootEvidence: a log with the page's own start-up line is a booted front end, one that stops after the probe is not", () => {
+    const bad = [
+      "2026-10-12T05:34:09.941267Z  INFO main sigil::diagnostics: ===== Sigil 0.5.0 started (pid 8116, release build) =====",
+      "2026-10-12T05:34:09.946557Z  INFO tokio-runtime-worker sigil::web: local web server listening on 0.0.0.0:49670 (lan mode)",
+      "2026-10-12T05:34:09.978840Z  INFO       sigil-ep-probe sigil::diagnostics: startup EP probe: recommended DirectML; compiled EPs [cpu, cuda, dml]",
+    ];
+    const good = [
+      ...bad,
+      "2026-10-12T06:15:36.081051Z  INFO tokio-runtime-worker sigil::web: no default route (offline?): advertising the first LAN address, else loopback",
+      "2026-10-12T06:15:36.292904Z  INFO                 main sigil::frontend: [System] Monitoring STT, TTS, Translation, Rewrite, OBS WebSocket, and voice changer state.",
+      "2026-10-12T06:15:36.293265Z  INFO                 main sigil::frontend: [STT] Disconnected",
+    ];
+    // Front-end lines that are not the start-up line (an early error) do not count as booted.
+    const early = [...bad, "2026-10-12T06:15:36.300000Z ERROR                 main sigil::frontend: [Diagnostics] Diagnostics bridge unavailable: boom"];
+    for (const shell of SHELLS) {
+      withTemp((dir) => {
+        const files = { bad, good, early };
+        for (const [name, lines] of Object.entries(files)) fs.writeFileSync(path.join(dir, `${name}.log`), lines.join("\n") + "\n");
+        const out = runHelpers(
+          shell,
+          dir,
+          [
+            ...Object.keys(files).map(
+              (n) => `$e = Get-FrontendBootEvidence '${path.join(dir, `${n}.log`)}'; '${n}=' + $e.Booted + ',' + $e.FrontendLines + ',' + $e.Line.Length`,
+            ),
+            `$e = Get-FrontendBootEvidence '${path.join(dir, "missing.log")}'; 'missing=' + $e.Booted + ',' + $e.FrontendLines`,
+            "$e = Get-FrontendBootEvidence ''; 'empty-path=' + $e.Booted",
+            "'elevated-is-bool=' + ((Test-Elevated) -is [bool])",
+          ].join("\n"),
+        );
+        if (!out) return;
+        const got = Object.fromEntries(out.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+        expect(got.bad, shell).toBe("False,0,0");
+        expect(got.good.startsWith("True,2,"), `${shell} ${got.good}`).toBe(true);
+        expect(Number(got.good.split(",")[2]), shell).toBeGreaterThan(20);
+        expect(got.early, shell).toBe("False,1,0");
+        expect(got.missing, shell).toBe("False,0");
+        expect(got["empty-path"], shell).toBe("False");
+        expect(got["elevated-is-bool"], shell).toBe("True");
       });
     }
   });
@@ -456,6 +544,8 @@ function buildFakeSigil(dir) {
     "public static class FakeSigil {",
     "  public static int Main(string[] a) {",
     '    string joined = string.Join(" ", a);',
+    '    string fakeExit = Environment.GetEnvironmentVariable("FAKE_EXIT");',
+    "    if (fakeExit != null && fakeExit.Length > 0) return int.Parse(fakeExit);", // silent: a loader failure writes nothing
     '    bool sherpa = joined.IndexOf("sherpa", StringComparison.Ordinal) >= 0;',
     '    if (joined.IndexOf("fetch", StringComparison.Ordinal) >= 0 && joined.IndexOf("--list", StringComparison.Ordinal) < 0) {',
     '      Console.Error.WriteLine(Environment.GetEnvironmentVariable(sherpa ? "FAKE_STDERR_SHERPA" : "FAKE_STDERR_SMALL") ?? "fetch: boom");',
@@ -546,6 +636,26 @@ describe.runIf(process.platform === "win32")("packaged-smoke-all.ps1 end to end 
     });
   }, 240_000);
 
+  // Windows Sandbox, 0.5.0: Sigil.exe died with 0xC0000135 and printed nothing; the harness threw a null-reference on the empty
+  // stderr instead of naming the exit code.
+  it("reports an app that dies silently with its exit code in hex, not a null reference", () => {
+    withTemp((dir) => {
+      const layout = buildFakeSigil(dir);
+      const repo = buildFakeRepo(dir, "repo", -3600);
+      const run = runSmoke(dir, layout, repo, [], { FAKE_EXIT: "-1073741515" });
+      for (const id of ["sysinfo", "catalog", "ep-probe"]) {
+        const c = run.status(id);
+        expect(c?.status, run.r.stdout + run.r.stderr).toBe("fail");
+        expect(c?.detail, id).toContain("0xC0000135");
+        expect(c?.detail, id).toContain("STATUS_DLL_NOT_FOUND");
+        expect(c?.detail, id).not.toContain("null-valued");
+      }
+      // A plain folder only gets a note about the Visual C++ runtime; the ONNX Runtime providers are still required.
+      expect(run.status("layout")?.status).toBe("fail");
+      expect(run.status("layout")?.detail).toContain("not next to Sigil.exe");
+    });
+  }, 240_000);
+
   it("refuses contradictory switches with exit code 2 before it does anything", () => {
     withTemp((dir) => {
       const layout = path.join(dir, "empty");
@@ -621,5 +731,38 @@ describe("scripts/release/README.md", () => {
 
   it("states the whisper-rs decision", () => {
     expect(README).toMatch(/## Why whisper-rs stays/);
+  });
+});
+
+describe("the Visual C++ runtime is app-local and every place that lists it agrees", () => {
+  const STAGE = read(RELEASE, "stage-native-dlls.mjs");
+  const VERIFY = read(RELEASE, "verify-bundle.ps1");
+  const IMPORTS = read(RELEASE, "expected-imports.txt");
+  const names = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll"];
+
+  it("is staged, verified in both installers, listed as expected imports and required by the smoke's layout check", () => {
+    for (const n of names) {
+      expect(STAGE, n).toContain(`"${n}"`);
+      expect(VERIFY, n).toContain(`'${n}'`);
+      expect(IMPORTS.toLowerCase(), n).toContain(n);
+      expect(SMOKE, n).toContain(`'${n}'`);
+    }
+    // verify-bundle: staged copy compared, MSI and NSIS layouts both go through Test-InstalledLayout.
+    expect(VERIFY).toContain("$bundledDlls");
+    expect(VERIFY).toMatch(/Test-InstalledLayout "MSI/);
+    expect(VERIFY).toMatch(/Test-InstalledLayout "NSIS/);
+    // The overlay maps the staging directory (where the DLLs go) to the install root; the base config lists no generated file.
+    const overlay = JSON.parse(read(RELEASE, "tauri.release.conf.json"));
+    expect(overlay.bundle.resources["target/native-bundle"]).toBe(".");
+    expect(overlay.build.beforeBundleCommand).toContain("stage-native-dlls.mjs --stage");
+    const base = read(ROOT, "src-tauri", "tauri.conf.json");
+    expect(base).not.toMatch(/native-bundle|vcruntime|msvcp/);
+  });
+
+  it("is staged by the release workflow's compile through the same overlay, found before the compile, and zipped into the portable build", () => {
+    expect(WORKFLOW).toContain("--config scripts/release/tauri.release.conf.json");
+    expect(WORKFLOW).toContain("stage-native-dlls.mjs --check-vc");
+    expect(WORKFLOW.indexOf("run: node scripts/release/stage-native-dlls.mjs --check-vc")).toBeLessThan(WORKFLOW.indexOf("run: pnpm tauri build --config"));
+    expect(WORKFLOW).toContain("src-tauri/target/native-bundle");
   });
 });

@@ -12,7 +12,7 @@
     Extract    default. Unpacks the NSIS installer with 7-Zip into the results folder and runs it from there
                against a scratch Windows profile (USERPROFILE / APPDATA / LOCALAPPDATA redirected). Nothing is
                installed; the real %APPDATA%\com.sigil.app is never touched (the script checks that).
-    Portable   the same with the portable zip (Sigil.exe plus the provider DLLs).
+    Portable   the same with the portable zip (Sigil.exe plus the provider DLLs and the Visual C++ runtime).
     Layout     the same with a folder that already holds Sigil.exe (-LayoutDir).
     Installed  runs the NSIS installer silently (per-user), tests the installed app, then uninstalls it. Only
                on a disposable machine: a GitHub-hosted runner (GITHUB_ACTIONS=true and RUNNER_ENVIRONMENT=
@@ -27,7 +27,9 @@
   Checks (see the result file for the exact list)
     build-fresh   with the repository at hand: no source file that goes into the app is newer than the build.
                   A stale build is a skip (so -Strict fails it): the other checks would vouch for another tree.
-    layout        Sigil.exe and the three ONNX Runtime provider DLLs sit together
+    layout        Sigil.exe, the three ONNX Runtime provider DLLs and the four Visual C++ runtime DLLs sit together
+                  (a clean Windows has no Visual C++ runtime; without it Sigil.exe exits with 0xC0000135). A plain
+                  -Mode Layout folder only gets a note about the Visual C++ runtime.
     sysinfo       `--headless sysinfo` reports CPU, memory and GPUs; with -ExpectNoGpu there is no hardware GPU
     catalog       `--headless fetch --list` lists the whole embedded catalog and nothing is installed
     ep-probe      `--headless ep-probe` finishes, finds the provider DLLs next to the exe, no CUDA with -ExpectNoGpu
@@ -82,6 +84,9 @@ param(
   [switch]$RequireGui,
   # Start the app the normal way (window in front) instead of minimized without focus. For a manual run only.
   [switch]$ShowWindow,
+  # Start the app without asking WebView2 for a DevTools port, which is what happens where WebView2 ignores the environment
+  # override (Windows Sandbox, see gui-page): the page checks then fall back to the app's own log. For testing that fallback.
+  [switch]$NoDevTools,
   [switch]$AllowInstall,
   [switch]$KeepFiles,
   [switch]$Strict,
@@ -270,20 +275,105 @@ function Get-BuildInputsNewerThan([string]$Root, [datetime]$Stamp) {
   }
   return @($found | Sort-Object LastWriteTimeUtc -Descending)
 }
+# A string that is never $null. In Windows PowerShell 5.1, Get-Content -Raw on an empty file yields nothing and a [string] cast of
+# that nothing is $null, so `$r.Stderr.Trim()` threw "You cannot call a method on a null-valued expression" and hid the exit
+# code it was about to report (found by the 0.5.0 Windows Sandbox run). Interpolation always gives a string.
+function Get-Text($Value) { return "$Value" }
+
+# An exit code as decimal and hex, with the name of the loader failures: Sigil.exe on a clean Windows without the Visual C++
+# runtime exits with 0xC0000135, which says nothing as -1073741515.
+function Format-ExitCode($Code) {
+  if ($null -eq $Code) { return 'unknown' }
+  try { $n = [int]$Code } catch { return [string]$Code }
+  $name = switch ($n) {
+    -1073741515 { ' STATUS_DLL_NOT_FOUND: a DLL that Sigil.exe imports is missing' }
+    -1073741701 { ' STATUS_INVALID_IMAGE_FORMAT: a DLL has the wrong architecture' }
+    -1073741502 { ' STATUS_DLL_INIT_FAILED' }
+    default { '' }
+  }
+  return ('{0} (0x{1:X8}){2}' -f $n, $n, $name)
+}
+# Did the page's front end boot? The page relays its own system log to sigil.log (target sigil::frontend), and its first line,
+# "[System] Monitoring ...", is written after the host services have initialized (ApiServer.init) and before the UI renders. A page
+# that died earlier has none: with no default route the first IPC call failed ("Error retrieving local IP", found by the 0.5.0
+# Windows Sandbox run) and the log stopped after the start-up probe. Weaker than looking at the page, so it is only used where
+# the page cannot be reached (gui-page).
+function Get-FrontendBootEvidence([string]$LogPath) {
+  $result = [pscustomobject]@{ Booted = $false; FrontendLines = 0; Line = '' }
+  if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return $result }
+  $lines = @(Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue | Where-Object { $_ -match 'sigil::frontend' })
+  $result.FrontendLines = $lines.Count
+  $first = @($lines | Where-Object { $_ -match '\[System\] Monitoring' } | Select-Object -First 1)
+  if ($first.Count -gt 0) { $result.Booted = $true; $result.Line = (([string]$first[0]) -replace '\s+', ' ').Trim() }
+  return $result
+}
+
+# Is this process running elevated (an administrator token with UAC off, as in Windows Sandbox and on a GitHub-hosted runner)?
+function Test-Elevated {
+  try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { return $false }
+}
 #endregion testable-helpers
+
+# What the machine says about a WebView that never exposed its DevTools page: the Sigil and msedgewebview2 processes with
+# their command lines (does the browser process carry --remote-debugging-port?), the listening TCP sockets, and what
+# /json/version answers. Written to gui-page-diag.txt and summarized in the failure, so one run in Windows Sandbox is enough
+# to tell "the flag never arrived" from "the port is not reachable" from "the page failed".
+function Get-WebViewDiagnostics([int]$AppPid, [int]$CdpPort, [int]$AppPort) {
+  $lines = New-Object System.Collections.Generic.List[string]
+  $flagSeen = $false
+  $webviews = 0
+  $pids = @{}
+  try {
+    foreach ($proc in @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -match '^(Sigil|msedgewebview2)\.exe$' })) {
+      $pids[[int]$proc.ProcessId] = $true
+      $cmd = Get-Text $proc.CommandLine
+      if ($proc.Name -match '^msedgewebview2') { $webviews++ }
+      if ($cmd -match ('--remote-debugging-port=' + $CdpPort)) { $flagSeen = $true }
+      if ($cmd.Length -gt 600) { $cmd = $cmd.Substring(0, 600) + '...' }
+      $lines.Add(("process {0} (parent {1}) {2}: {3}" -f $proc.ProcessId, $proc.ParentProcessId, $proc.Name, $cmd))
+    }
+  } catch { $lines.Add('processes: ' + $_.Exception.Message) }
+  $listening = $false
+  try {
+    foreach ($l in @(& netstat.exe -ano -p tcp 2>$null | Where-Object { $_ -match 'LISTENING' })) {
+      $f = @(($l -replace '^\s+', '') -split '\s+')
+      $owner = 0
+      [void][int]::TryParse($f[$f.Count - 1], [ref]$owner)
+      if ($pids.ContainsKey($owner) -or $l -match (':' + $CdpPort + '\s') -or $l -match (':' + $AppPort + '\s')) {
+        $lines.Add('listening: ' + (($l -replace '\s+', ' ').Trim()))
+        if ($l -match (':' + $CdpPort + '\s')) { $listening = $true }
+      }
+    }
+  } catch { $lines.Add('netstat: ' + $_.Exception.Message) }
+  $probe = ''
+  foreach ($url in @(('http://127.0.0.1:{0}/json/version' -f $CdpPort), ('http://localhost:{0}/json/version' -f $CdpPort))) {
+    try {
+      $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 5
+      $body = Get-Text $resp.Content
+      if ($body.Length -gt 300) { $body = $body.Substring(0, 300) + '...' }
+      $lines.Add(("GET {0}: HTTP {1} {2}" -f $url, $resp.StatusCode, ($body -replace '\s+', ' ')))
+      if (-not $probe) { $probe = "HTTP $($resp.StatusCode)" }
+    } catch {
+      $lines.Add(("GET {0}: {1}" -f $url, $_.Exception.Message))
+      if (-not $probe) { $probe = $_.Exception.Message }
+    }
+  }
+  $summary = "{0} msedgewebview2 process(es), --remote-debugging-port={1} on a command line: {2}, port {1} listening: {3}, GET /json/version: {4}, this script elevated: {5}" -f $webviews, $CdpPort, $(if ($flagSeen) { 'yes' } else { 'no' }), $(if ($listening) { 'yes' } else { 'no' }), $probe, $(if (Test-Elevated) { 'yes' } else { 'no' })
+  return [pscustomobject]@{ Summary = $summary; Text = (@($summary) + @($lines)) -join [Environment]::NewLine }
+}
 
 # A `--headless fetch` result: return when it worked, skip when no host could be reached, fail when a host answered wrongly.
 function Assert-FetchSucceeded($Result, [string]$What) {
   if (-not $Result.TimedOut -and $Result.ExitCode -eq 0) { return }
-  $lines = @($Result.Stderr -split "`r?`n" | Where-Object { $_.Trim() })
+  $lines = @((Get-Text $Result.Stderr) -split "`r?`n" | Where-Object { $_.Trim() })
   $line = @($lines | Where-Object { $_ -match '^\s*fetch:' } | Select-Object -Last 1)
   $text = if ($line.Count -gt 0) { [string]$line[0] } elseif ($lines.Count -gt 0) { [string]$lines[-1] } else { '' }
   if ($text.Length -gt 400) { $text = $text.Substring(0, 400) + '...' }
-  $kind = Get-FetchFailureKind $Result.Stderr $Result.TimedOut
+  $kind = Get-FetchFailureKind (Get-Text $Result.Stderr) $Result.TimedOut
   if ($kind.Kind -eq 'network') {
-    Skip-Check ("{0}: no host could be reached ({1}); exit {2}: {3}" -f $What, $kind.Why, $Result.ExitCode, $text)
+    Skip-Check ("{0}: no host could be reached ({1}); exit {2}: {3}" -f $What, $kind.Why, (Format-ExitCode $Result.ExitCode), $text)
   }
-  throw ("{0} failed ({1}); exit {2}: {3}" -f $What, $kind.Why, $Result.ExitCode, $text)
+  throw ("{0} failed ({1}); exit {2}: {3}" -f $What, $kind.Why, (Format-ExitCode $Result.ExitCode), $text)
 }
 
 function Get-WebView2Version {
@@ -471,7 +561,7 @@ function Invoke-Exe([string]$Exe, [string[]]$Arguments, [int]$TimeoutSec = 120, 
   $stdout = if (Test-Path -LiteralPath "$outFile.out") { Get-Content -Raw -LiteralPath "$outFile.out" } else { '' }
   $stderr = if (Test-Path -LiteralPath "$outFile.err") { Get-Content -Raw -LiteralPath "$outFile.err" } else { '' }
   Remove-Item -LiteralPath "$outFile.out", "$outFile.err" -Force -ErrorAction SilentlyContinue
-  return [pscustomobject]@{ ExitCode = $code; Stdout = [string]$stdout; Stderr = [string]$stderr; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $timedOut }
+  return [pscustomobject]@{ ExitCode = $code; Stdout = "$stdout"; Stderr = "$stderr"; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $timedOut }
 }
 
 function Read-JsonFile([string]$Path) {
@@ -621,6 +711,7 @@ function Get-MachineFacts {
     webview2     = Get-WebView2Version
     disposable   = Test-Disposable
     in_sandbox   = [bool]$InSandbox
+    elevated     = Test-Elevated
     user         = $env:USERNAME
   }
 }
@@ -682,7 +773,7 @@ try {
         }
         $installRoot = Join-Path $ResultsDir 'installed'
         $p = Start-Process -FilePath $InstallerPath -ArgumentList @('/S', ('/D=' + $installRoot)) -PassThru -Wait
-        if ($p.ExitCode -ne 0) { throw "the installer exited with code $($p.ExitCode)" }
+        if ($p.ExitCode -ne 0) { throw "the installer exited with code $(Format-ExitCode $p.ExitCode)" }
         $exe = Join-Path $installRoot 'Sigil.exe'
         $uninstall = Join-Path $installRoot 'uninstall.exe'
       }
@@ -749,6 +840,15 @@ try {
       $need = @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'DirectML.dll')
       $missing = @($need | Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_)) })
       if ($missing.Count -gt 0) { throw ("not next to Sigil.exe: " + ($missing -join ', ')) }
+      # The Visual C++ runtime is not part of Windows: Sigil.exe imports these four at load time and exits with 0xC0000135
+      # on a clean PC without them, so the installers ship them next to the exe (stage-native-dlls.mjs). A plain folder
+      # (-Mode Layout, e.g. a cargo target directory) only gets a note: it was never packaged.
+      $vc = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll')
+      $vcMissing = @($vc | Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_)) })
+      if ($vcMissing.Count -gt 0) {
+        $why = "the Visual C++ runtime is not next to Sigil.exe (" + ($vcMissing -join ', ') + "): a clean Windows cannot start it (exit 0xC0000135)"
+        if ($Mode -eq 'Layout') { Add-Note $why } else { throw $why }
+      }
       $sizes = ($need | ForEach-Object {
         $len = (Get-Item -LiteralPath (Join-Path $exeDir $_)).Length
         if ($len -lt 1MB) { "{0} {1} KB" -f $_, [math]::Round($len / 1KB) } else { "{0} {1} MB" -f $_, [math]::Round($len / 1MB, 1) }
@@ -762,7 +862,7 @@ try {
       $out = Join-Path $ResultsDir 'sysinfo.json'
       $r = Invoke-Exe $exe @('--headless', 'sysinfo', '--out', $out) 120 $headlessEnv
       if ($r.TimedOut) { throw 'timed out after 120 s' }
-      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f $r.ExitCode, $r.Stderr.Trim()) }
+      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f (Format-ExitCode $r.ExitCode), (Get-Text $r.Stderr).Trim()) }
       $script:sysinfo = Read-JsonFile $out
       $s = $script:sysinfo.system
       if (-not $s -or $s.cpu.logical_cores -lt 1 -or $s.total_ram_mb -lt 512) { throw 'the report has no CPU / memory facts' }
@@ -782,12 +882,13 @@ try {
     # --- catalog: everything not installed
     Invoke-Check 'catalog' {
       $r = Invoke-Exe $exe @('--headless', 'fetch', '--list') 60 $headlessEnv
-      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f $r.ExitCode, $r.Stderr.Trim()) }
+      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f (Format-ExitCode $r.ExitCode), (Get-Text $r.Stderr).Trim()) }
       $rows = @($r.Stdout -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Skip 1)
       if ($rows.Count -lt 100) { throw "only $($rows.Count) catalog rows" }
       $installed = @($rows | Where-Object { $_ -notmatch '\snot_installed\s' })
       if ($installed.Count -gt 0) { throw ("entries already installed on a clean profile: " + (($installed | Select-Object -First 3) -join ' | ')) }
       if ($null -ne $expectedCatalog -and $rows.Count -ne $expectedCatalog) { throw "the build lists $($rows.Count) entries, the repository catalog has $expectedCatalog (stale build?)" }
+      $script:catalogEntries = $rows.Count
       "$($rows.Count) entries, none installed" + $(if ($null -ne $expectedCatalog) { ' (equals the repository catalog)' } else { '' })
     }
 
@@ -796,7 +897,7 @@ try {
       $out = Join-Path $ResultsDir 'ep-probe.json'
       $r = Invoke-Exe $exe @('--headless', 'ep-probe', '--out', $out) 240 $headlessEnv
       if ($r.TimedOut) { throw 'timed out after 240 s' }
-      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f $r.ExitCode, $r.Stderr.Trim()) }
+      if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f (Format-ExitCode $r.ExitCode), (Get-Text $r.Stderr).Trim()) }
       $p = Read-JsonFile $out
       foreach ($d in @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'DirectML.dll')) {
         $hit = @($p.provider_dlls | Where-Object { $_.name -ieq $d })
@@ -822,7 +923,7 @@ try {
           if (-not (Test-Path -LiteralPath $wav)) { Skip-Check "not in the pack store: $($case.wav)" }
           $out = Join-Path $ResultsDir ($case.id + '.json')
           $r = Invoke-Exe $exe @('--headless', 'engine-probe', 'sherpa', $case.model, $wav, '--out', $out) 240 @{ SIGIL_APP_DATA_DIR = $PackStore; APPDATA = $roaming; LOCALAPPDATA = $localApp }
-          if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f $r.ExitCode, ($r.Stderr -split "`r?`n" | Select-Object -Last 2) -join ' ') }
+          if ($r.ExitCode -ne 0) { throw ("exit code {0}: {1}" -f (Format-ExitCode $r.ExitCode), ((Get-Text $r.Stderr) -split "`r?`n" | Select-Object -Last 2) -join ' ') }
           $j = Read-JsonFile $out
           $text = [string]$j.output.text
           if ($text -notmatch $case.expect) { throw "the transcript has no '$($case.expect)': $text" }
@@ -848,7 +949,7 @@ try {
         Assert-FetchSucceeded $r 'fetch runtime/sherpa-onnx'
         $out = Join-Path $ResultsDir 'online-sherpa.json'
         $p = Invoke-Exe $exe @('--headless', 'engine-probe', 'sherpa', '--out', $out) 120 $storeEnv
-        if ($p.ExitCode -ne 0) { throw ("engine-probe exit {0}: {1}" -f $p.ExitCode, $p.Stderr.Trim()) }
+        if ($p.ExitCode -ne 0) { throw ("engine-probe exit {0}: {1}" -f (Format-ExitCode $p.ExitCode), (Get-Text $p.Stderr).Trim()) }
         $j = Read-JsonFile $out
         if (-not $j.runtime.version) { throw 'the runtime reported no version' }
         "sherpa-onnx $($j.runtime.version) (ONNX Runtime $($j.runtime.onnxruntime_version)) loaded next to Sigil's ONNX Runtime $($j.sigil_onnxruntime_version) in $([math]::Round($j.runtime_load_ms)) ms"
@@ -861,7 +962,7 @@ try {
           if (-not $model) { throw 'the installed model has no test_wavs\en.wav' }
           $out = Join-Path $ResultsDir 'online-sensevoice.json'
           $p = Invoke-Exe $exe @('--headless', 'engine-probe', 'sherpa', 'stt/sense-voice-small-int8', $model.FullName, '--out', $out) 240 $storeEnv
-          if ($p.ExitCode -ne 0) { throw ("engine-probe exit {0}: {1}" -f $p.ExitCode, $p.Stderr.Trim()) }
+          if ($p.ExitCode -ne 0) { throw ("engine-probe exit {0}: {1}" -f (Format-ExitCode $p.ExitCode), (Get-Text $p.Stderr).Trim()) }
           $text = [string](Read-JsonFile $out).output.text
           if ($text -notmatch 'chieftain') { throw "unexpected transcript: $text" }
           "downloaded SenseVoice (163 MB) and decoded: '$($text.Substring(0, [math]::Min(60, $text.Length)))'"
@@ -907,13 +1008,15 @@ try {
       }
       $guiEnv = @{}
       foreach ($k in $profileEnv.Keys) { $guiEnv[$k] = $profileEnv[$k] }
-      $guiEnv['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = "--remote-debugging-port=$cdpPort"
+      if (-not $NoDevTools) { $guiEnv['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = "--remote-debugging-port=$cdpPort" }
       # The window starts minimized and never takes the foreground (main.rs, SIGIL_START_MINIMIZED); gui-focus checks it.
       $guiEnv['SIGIL_START_MINIMIZED'] = $(if ($ShowWindow) { '' } else { '1' })
       foreach ($k in $guiEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k, 'Process'); [Environment]::SetEnvironmentVariable($k, $(if ($guiEnv[$k] -eq '') { $null } else { $guiEnv[$k] }), 'Process') }
       # Sigil shows a modal "Port N is not available!" dialog when the bind fails: never launch into a taken port.
       if (-not (Test-PortFree $port)) { $port = Get-FreePort -Exclude @($cdpPort) }
       $app = Start-Process -FilePath $exe -ArgumentList @('--port', "$port") -PassThru
+      # Without the handle cached now, a process that exits at once (a missing DLL) can report HasExited = false and no ExitCode.
+      try { $null = $app.Handle } catch { }
       foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
       $saved = @{}
       if (-not $ShowWindow) {
@@ -931,7 +1034,7 @@ try {
         while ((Get-Date) -lt $deadline -and -not $app.HasExited) {
           try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $up = $true; break } catch { Start-Sleep -Milliseconds 500 }
         }
-        if ($app.HasExited) { throw "Sigil exited during start-up with code $($app.ExitCode)" }
+        if ($app.HasExited) { throw "Sigil exited during start-up with code $(Format-ExitCode $app.ExitCode)" }
         if (-not $up) { throw "the web server did not answer on port $port within $GuiTimeoutSec s" }
         $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 20
         if ($root.StatusCode -ne 200 -or $root.Content -notmatch 'id="root"') { throw "/ did not serve the app shell (HTTP $($root.StatusCode))" }
@@ -944,15 +1047,41 @@ try {
 
       Invoke-Check 'gui-page' {
         $target = $null
+        $appLog = Join-Path $localApp 'com.sigil.app\logs\sigil.log'
+        $bootSeen = $null
         $deadline = (Get-Date).AddSeconds($GuiTimeoutSec)
-        while ((Get-Date) -lt $deadline -and -not $target) {
+        while ((Get-Date) -lt $deadline -and -not $target -and -not $NoDevTools) {
           try {
             $list = Invoke-RestMethod -Uri "http://127.0.0.1:$cdpPort/json" -TimeoutSec 5
             $target = @($list | Where-Object { $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and $_.url -notlike 'devtools:*' }) | Select-Object -First 1
           } catch { }
-          if (-not $target) { Start-Sleep -Seconds 1 }
+          if (-not $target) {
+            # The port opens within seconds of the page booting where it opens at all: do not wait out the whole timeout once the
+            # front end has been up for 20 s without a DevTools page.
+            if (-not $bootSeen -and (Get-FrontendBootEvidence $appLog).Booted) { $bootSeen = Get-Date }
+            if ($bootSeen -and ((Get-Date) - $bootSeen).TotalSeconds -gt 20) { break }
+            Start-Sleep -Seconds 1
+          }
         }
-        if (-not $target) { throw 'the WebView never exposed a page over DevTools' }
+        if (-not $target) {
+          # No DevTools page. Where WebView2 does not apply the WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS override (Windows Sandbox 26100 with
+          # WebView2 155: the browser process starts without --remote-debugging-port even from an explicit environment block, while Edge
+          # itself opens the port from its command line) the page cannot be inspected. The app's own log still tells whether the
+          # front end came up, and that is what failed on a PC without a network (no log line from the page at all).
+          $diag = Get-WebViewDiagnostics $app.Id $cdpPort $port
+          try { Set-Content -Encoding UTF8 -LiteralPath (Join-Path $ResultsDir 'gui-page-diag.txt') -Value $diag.Text } catch { }
+          $deadlineLog = (Get-Date).AddSeconds(30)
+          $boot = Get-FrontendBootEvidence $appLog
+          while (-not $boot.Booted -and -not $app.HasExited -and (Get-Date) -lt $deadlineLog) { Start-Sleep -Seconds 1; $boot = Get-FrontendBootEvidence $appLog }
+          if ($boot.Booted -and -not $app.HasExited) {
+            $script:pageFromLogOnly = $true
+            Add-Note ('DevTools was not available (' + $diag.Summary + '), so the page itself was not inspected; the front end is judged by the app log (details in gui-page-diag.txt)')
+            return ("DevTools is not available in this WebView, so the page was not inspected; the app log shows the front end booted (" + $boot.Line + ")")
+          }
+          $why = if ($NoDevTools) { '-NoDevTools' } else { 'the WebView never exposed a page over DevTools' }
+          if ($app.HasExited) { throw ("$why, and the app exited with code " + (Format-ExitCode $app.ExitCode)) }
+          throw ("$why (" + $diag.Summary + "; details in gui-page-diag.txt), and the app log has no front-end start-up line after 30 s ($($boot.FrontendLines) front-end line(s)): the page did not come up, or it failed before the host services started")
+        }
         $script:cdpWs = $target.webSocketDebuggerUrl
         $probe = @'
 (async () => {
@@ -979,6 +1108,17 @@ try {
       }
 
       Invoke-Check 'gui-models' {
+        if (-not $script:cdpWs -and $script:pageFromLogOnly -and $script:catalogEntries) {
+          # No page to ask. The same model store answers --headless fetch --list (the catalog check), and the profile on disk shows
+          # that nothing was installed behind its back; gui-idle checks the same files again after the start-up settles.
+          $files = @()
+          foreach ($d in @('models', 'runtimes')) {
+            $dir = Join-Path $appData $d
+            if (Test-Path -LiteralPath $dir) { $files += @(Get-ChildItem -LiteralPath $dir -Recurse -File -ErrorAction SilentlyContinue) }
+          }
+          if ($files.Count -gt 0) { throw ("files appeared in models / runtimes on a fresh profile: " + (($files | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', ')) }
+          return ("not read from the page (no DevTools): the catalog check listed $($script:catalogEntries) entries, none installed, and the fresh profile has no model or runtime file")
+        }
         if (-not $script:cdpWs) { Skip-Check 'no DevTools page' }
         $js = @'
 (async () => {
@@ -1017,7 +1157,7 @@ try {
         # foreground window since the process was created; what is left is the end state.
         if ($ShowWindow) { Skip-Check '-ShowWindow: the window was allowed to come to the front' }
         $sampler.Join()
-        if ($app.HasExited) { throw "Sigil exited before the focus check finished (exit code $($app.ExitCode))" }
+        if ($app.HasExited) { throw "Sigil exited before the focus check finished (exit code $(Format-ExitCode $app.ExitCode))" }
         # Windows a person could see: not the event loop's invisible helpers (tao's thread event target counts as visible
         # but is 0 x 0, layered, transparent and a tool window).
         $wins = @(Get-AppWindows $app.Id | Where-Object { $_.Visible -and -not $_.ToolWindow -and ($_.Minimized -or ($_.Width * $_.Height) -gt 0) })
@@ -1050,7 +1190,7 @@ try {
       foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
       if ($app) {
         Invoke-Check 'gui-exit' {
-          if ($app.HasExited) { throw "the app had already exited with code $($app.ExitCode)" }
+          if ($app.HasExited) { throw "the app had already exited with code $(Format-ExitCode $app.ExitCode)" }
           Initialize-WindowHelper
           $app.Refresh()
           $t0 = Get-Date

@@ -790,6 +790,34 @@ mod tests {
         assert_eq!(back, info);
     }
 
+    /// Windows Sandbox with the virtual GPU off (found by the 0.5.0 packaged smoke): DXGI lists the Basic Render Driver
+    /// three times (vendor 0x1414, device 0x8C), only the first with DXGI_ADAPTER_FLAG_SOFTWARE. The other two used to
+    /// count as hardware GPUs: the smoke's no-gpu check failed and the startup probe recommended DirectML.
+    #[test]
+    fn a_clean_windows_with_unflagged_basic_render_drivers_has_no_hardware_gpu() {
+        use crate::services::diagnostics::gpu_mem::is_software_adapter;
+        const NAME: &str = "Microsoft Basic Render Driver";
+        let warp = |index: u32, dxgi_flag: bool| GpuAdapter {
+            software: is_software_adapter(dxgi_flag, VENDOR_MICROSOFT, 0x8C, NAME),
+            ..adapter(index, VENDOR_MICROSOFT, 0x8C, NAME, 0, None)
+        };
+        let info = assemble(RawProbe {
+            adapters: vec![warp(0, true), warp(1, false), warp(2, false)],
+            windows: true,
+            gpu_probe: GpuProbe::Complete,
+            ..RawProbe::default()
+        });
+        assert_eq!(info.gpus.len(), 3);
+        assert!(info.gpus.iter().all(|g| g.adapter.software && g.arch.is_none() && !g.integrated), "{:?}", info.gpus);
+        assert_eq!(info.gpus.iter().filter(|g| !g.adapter.software).count(), 0, "no hardware GPU");
+        assert_eq!(info.primary_gpu, None);
+        assert!(!info.eps.directml.eligible);
+        assert_eq!(info.eps.directml.code, eps::SOFTWARE_ONLY);
+        assert!(!info.eps.cuda.eligible);
+        // The regression itself: an entry without the DXGI flag is software too.
+        assert!(warp(1, false).software);
+    }
+
     #[test]
     fn falls_back_without_nvml_and_nvcuda() {
         let mut raw = dev_rig_raw();

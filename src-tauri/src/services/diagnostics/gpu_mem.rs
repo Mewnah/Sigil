@@ -15,6 +15,22 @@ pub const VENDOR_AMD: u32 = 0x1002;
 pub const VENDOR_INTEL: u32 = 0x8086;
 pub const VENDOR_MICROSOFT: u32 = 0x1414;
 
+/// Device ids Microsoft gives its software renderer (WARP, "Microsoft Basic Render Driver") under
+/// [`VENDOR_MICROSOFT`]: `0x8C` (Windows 10 and 11) and `0x8E`.
+const MICROSOFT_SOFTWARE_DEVICE_IDS: [u32; 2] = [0x8C, 0x8E];
+
+/// Whether a DXGI adapter is a software renderer, never a GPU. `dxgi_software_flag` is
+/// `DXGI_ADAPTER_FLAG_SOFTWARE`, but the flag alone is not enough: on a clean Windows (Windows
+/// Sandbox, a VM, a PC without a graphics driver) DXGI lists the Basic Render Driver several times
+/// and only one of the entries carries the flag. The others have vendor 0x1414, device 0x8C / 0x8E
+/// and the same name. Counted as hardware, they made the startup probe recommend DirectML and
+/// `--headless sysinfo` report GPUs where there are none.
+pub fn is_software_adapter(dxgi_software_flag: bool, vendor_id: u32, device_id: u32, name: &str) -> bool {
+    dxgi_software_flag
+        || (vendor_id == VENDOR_MICROSOFT
+            && (MICROSOFT_SOFTWARE_DEVICE_IDS.contains(&device_id) || name.to_ascii_lowercase().contains("basic render driver")))
+}
+
 /// This process's VRAM use on one adapter (local segment group), in MiB.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VramUsage {
@@ -94,7 +110,7 @@ pub fn process_vram_usage(index: u32) -> Option<VramUsage> {
 
 #[cfg(windows)]
 mod imp {
-    use super::{nvidia_driver_from_umd, umd_version_parts, vendor_name, GpuAdapter, VramUsage, VENDOR_NVIDIA};
+    use super::{is_software_adapter, nvidia_driver_from_umd, umd_version_parts, vendor_name, GpuAdapter, VramUsage, VENDOR_NVIDIA};
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{
         CreateDXGIFactory1, IDXGIAdapter1, IDXGIAdapter3, IDXGIDevice, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
@@ -138,7 +154,8 @@ mod imp {
             let name = String::from_utf16_lossy(&desc.Description[..name_len]).trim().to_string();
             // SAFETY: IDXGIDevice's IID is the documented key for the UMD driver version.
             let umd = unsafe { adapter.CheckInterfaceSupport(&IDXGIDevice::IID) }.ok();
-            let software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+            let flagged = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+            let software = is_software_adapter(flagged, desc.VendorId, desc.DeviceId, &name);
             out.push(GpuAdapter {
                 index,
                 name,
@@ -216,6 +233,24 @@ mod tests {
         };
         let list = vec![mk(0, VENDOR_INTEL, false), mk(1, VENDOR_NVIDIA, false), mk(2, VENDOR_MICROSOFT, true)];
         assert_eq!(nvidia_adapter_indices(&list), vec![1]);
+    }
+
+    #[test]
+    fn the_basic_render_driver_is_software_whatever_the_dxgi_flag_says() {
+        const WARP: &str = "Microsoft Basic Render Driver";
+        // The flagged entry and the unflagged twins a clean Windows lists next to it (Windows Sandbox: three entries,
+        // vendor 0x1414, device 0x8C, only one with DXGI_ADAPTER_FLAG_SOFTWARE).
+        assert!(is_software_adapter(true, VENDOR_MICROSOFT, 0x8C, WARP));
+        assert!(is_software_adapter(false, VENDOR_MICROSOFT, 0x8C, WARP));
+        assert!(is_software_adapter(false, VENDOR_MICROSOFT, 0x8E, ""));
+        assert!(is_software_adapter(false, VENDOR_MICROSOFT, 0x1234, "microsoft basic render driver"));
+        // The flag alone is enough, for any vendor.
+        assert!(is_software_adapter(true, VENDOR_NVIDIA, 0x2684, "Reference Rasterizer"));
+        // Real GPUs stay hardware, even with a device id that Microsoft's software renderer also uses.
+        assert!(!is_software_adapter(false, VENDOR_NVIDIA, 0x2684, "NVIDIA GeForce RTX 4090"));
+        assert!(!is_software_adapter(false, VENDOR_AMD, 0x8C, "AMD Radeon(TM) Graphics"));
+        assert!(!is_software_adapter(false, VENDOR_INTEL, 0x8E, "Intel(R) UHD Graphics"));
+        assert!(!is_software_adapter(false, VENDOR_MICROSOFT, 0x1234, "Microsoft Something Else"));
     }
 
     #[test]

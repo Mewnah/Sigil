@@ -34,7 +34,11 @@ api-ms-win-core-*.dll
 # P1/P6 through the `windows` and wasapi crates) and propsys.dll (the property store of an audio endpoint). Both ship
 # with every Windows since Vista, so Sigil starts everywhere.
 
-# Universal CRT and the Visual C++ runtime
+# Universal CRT and the Visual C++ runtime. The Universal CRT is part of Windows 10 and 11. The four Visual C++ runtime
+# DLLs are NOT part of Windows: a clean install has none (Sigil.exe then exits with 0xC0000135 before it shows anything),
+# so the release installers ship them app-local next to Sigil.exe (scripts/release/stage-native-dlls.mjs, taken from the
+# Visual Studio redistributable folder; verify-bundle.ps1 checks both installers and fails on any other vcruntime /
+# msvcp import). Importing one more of them means adding it to VC_RUNTIME_DLLS there and to verify-bundle.ps1.
 api-ms-win-crt-*.dll
 msvcp140.dll
 msvcp140_1.dll
