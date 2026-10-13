@@ -66,7 +66,7 @@ export function StartupErrorView({ error, client, retryInSeconds }: { error: any
         <>
           <p style={{ color: "#ccc", margin: "12px 0" }}>
             The OBS browser source could not connect to Sigil (PeerJS). Keep the desktop app running on this PC, use{" "}
-            <code>{`http://${address}/client`}</code> (same pattern as Curses), and check that nothing blocks WebSockets
+            <code>{`http://${address}/client`}</code> as the browser source URL, and check that nothing blocks WebSockets
             to that host and port.
           </p>
           <p style={{ color: "#888", fontSize: 13 }}>

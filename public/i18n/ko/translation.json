@@ -1532,7 +1532,7 @@
     "field_language": "언어",
     "field_ip_address": "IP 주소",
     "credits_mmpneo": "Curses를 만들고 오픈소스로 제공한 mmpneo에게 큰 감사를 드립니다. 그 기반이 없으면 인장은 존재하지 않을 것입니다.",
-    "tooltip_curses_github_title": "GitHub의 저주",
+    "tooltip_curses_github_title": "GitHub의 Curses",
     "tooltip_curses_github_body": "Sigil이 기반으로 하는 mmpneo의 오리지널 앱입니다. 그들의 작업이 도움이 되었다면 저장소에 별표를 표시하세요.",
     "footer_vrchat": "VRChat 커뮤니티를 위해 제작됨",
     "hero_tagline": "당신의 목소리, 당신의 방식 ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "캡션 글꼴 크기(px)",
     "field_browser_max_lines": "캡션 최대 줄",
     "clarify_two_paths": "두 가지 다른 기능: 브라우저 URL은 OBS(장면에 입력한 텍스트/이미지)의 Sigil 캔버스를 미러링합니다. 이는 obs-websocket을 사용하고 브라우저 URL이 필요하지 않은 아래의 \"네이티브 스트림 캡션\"과는 별개입니다.",
-    "checklist_browser_mirror": "빠른 체크리스트:\n• 이 PC에서 Sigil 데스크톱이 실행되고 있습니다.\n• 브라우저 소스 URL이 Curses: <code>http://localhost:PORT/client</code>와 일치합니다(Sigil에 표시된 포트를 사용하세요. OBS 탭에서 복사하면 이 포트가 채워집니다).\n• 활성 장면에는 하나 이상의 텍스트 요소가 있습니다. 텍스트 소스(예: Speech-to-Text)를 설정합니다.\n• OBS에서 소스가 숨겨져 있을 때 업데이트가 중단되는 경우 \"표시되지 않을 때 소스 종료\"를 끄십시오.",
+    "checklist_browser_mirror": "빠른 체크리스트:\n• 이 PC에서 Sigil 데스크톱이 실행되고 있습니다.\n• 브라우저 소스 URL은 http://localhost:PORT/client입니다(Sigil에 표시된 포트를 사용하세요. OBS 탭에서 복사하면 이 주소가 채워집니다).\n• 활성 장면에는 하나 이상의 텍스트 요소가 있습니다. 텍스트 소스(예: Speech-to-Text)를 설정합니다.\n• OBS에서 소스가 숨겨져 있을 때 업데이트가 중단되는 경우 \"표시되지 않을 때 소스 종료\"를 끄십시오.",
     "native_captions_explain": "WebSocket이 연결되면 기본 스트림 캡션은 SendStreamCaption(스트림 포함 캡션)을 통해 선택한 텍스트 소스를 OBS로 보냅니다. 해당 경로에는 브라우저 소스가 필요하지 않습니다.",
     "browser_source_desc": "새 브라우저 소스를 만들고, 링크를 붙여넣고 창 크기를 {{width}}x{{height}} 픽셀로 설정하세요.",
-    "browser_source_tips": "OBS는 설치된 Chrome이 아닌 내장 브라우저(CEF)를 사용합니다. URL이 Chrome/Edge에서는 작동하지만 OBS에서는 작동하지 않는 경우 OBS를 업데이트하고 설정 → 고급 → \"브라우저 소스 하드웨어 가속 활성화\"를 활성화한 다음 브라우저 소스를 마우스 오른쪽 버튼으로 클릭 → 새로고침하세요.\n로컬 서버는 원래 Curses 설정을 따릅니다. <code>http://localhost:PORT/client</code>를 사용합니다(포트에 Curses의 <code>localhost:3030/client</code>와 동일).\n스트리밍하는 동안 Sigil을 계속 실행하세요.\n캡션이 표시되길 원하는 경우 활성 장면의 캔버스에 텍스트 요소를 추가하세요.\nOBS에서 소스가 숨겨졌을 때 정지되는 경우 \"표시되지 않을 때 소스 종료\"를 끄십시오.",
+    "browser_source_tips": "OBS는 설치된 Chrome이 아닌 내장 브라우저(CEF)를 사용합니다. URL이 Chrome/Edge에서는 작동하지만 OBS에서는 작동하지 않는 경우 OBS를 업데이트하고 설정 → 고급 → \"브라우저 소스 하드웨어 가속 활성화\"를 활성화한 다음 브라우저 소스를 마우스 오른쪽 버튼으로 클릭 → 새로고침하세요.\nSigil의 로컬 서버는 캔버스 미러를 http://localhost:PORT/client에서 제공하며, PORT는 Sigil에 표시된 포트입니다. OBS 탭의 복사를 누르면 정확한 URL을 얻을 수 있습니다.\n스트리밍하는 동안 Sigil을 계속 실행하세요.\n캡션이 표시되길 원하는 경우 활성 장면의 캔버스에 텍스트 요소를 추가하세요.\nOBS에서 소스가 숨겨졌을 때 정지되는 경우 \"표시되지 않을 때 소스 종료\"를 끄십시오.",
     "btn_copy_browser_source_link": "브라우저 소스 URL 복사",
     "btn_setup_browser_source": "OBS에서 브라우저 소스 설정",
     "section_websocket": "웹소켓 연결",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "활성 OBS 장면에 맞게 Sigil 장면을 자동으로 변경합니다.",
     "field_fallback_scene": "대체 장면",
     "field_map_scenes": "지도 장면",
-    "btn_copy_lan_browser_source_link": "LAN 링크 복사(다른 PC의 OBS)"
+    "btn_copy_lan_browser_source_link": "LAN 링크 복사(다른 PC의 OBS)",
+    "stale_page_hint": "OBS에 이전 페이지나 영어 텍스트 \"connecting...\"이 계속 표시되면, Sigil이 실행 중일 때 소스가 다음에 로드되면서 Sigil이 이전 페이지를 자동으로 제거합니다(OBS를 다시 시작하거나, 장면이 활성화될 때 소스를 새로 고치도록 설정했다면 장면을 전환하세요). 바로 지우려면 브라우저 소스를 마우스 오른쪽 버튼으로 클릭하고 속성을 연 다음 목록 맨 아래의 \"Refresh cache of current page\"를 클릭하세요(OBS는 이 이름을 OBS 자체 언어로 표시합니다)."
   },
   "twitch": {
     "title": "경련",

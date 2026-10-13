@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "字幕字号 (px)",
     "field_browser_max_lines": "字幕最大行数",
     "clarify_two_paths": "这是两套不同功能：浏览器 URL 会在 OBS 中镜像 Sigil 画布上的内容（你在场景中放置的文字/图片）。这与下方的「原生字幕流」无关——后者通过 obs-websocket 工作，不需要浏览器 URL。",
-    "checklist_browser_mirror": "快速检查：\n• 本机 Sigil 桌面版正在运行。\n• 浏览器源 URL 与 Curses 一致：<code>http://localhost:端口/client</code>（端口以 Sigil 为准，OBS 面板里「复制」会自动带上）。\n• 当前场景至少有一个文本元素，并设置其文本来源（例如语音转文字）。\n• 若隐藏源时画面停更，请在 OBS 中关闭「在不可见时关闭源」。",
+    "checklist_browser_mirror": "快速检查：\n• 本机 Sigil 桌面版正在运行。\n• 浏览器源 URL 是 http://localhost:PORT/client（端口以 Sigil 为准，OBS 面板里「复制」会自动带上）。\n• 当前场景至少有一个文本元素，并设置其文本来源（例如语音转文字）。\n• 若隐藏源时画面停更，请在 OBS 中关闭「在不可见时关闭源」。",
     "native_captions_explain": "WebSocket 连接成功后，「原生字幕流」会将所选文本来源通过 SendStreamCaption 发送到 OBS（内嵌直播字幕）。该路径不需要浏览器源。",
     "browser_source_desc": "创建一个新的浏览器源, 粘贴 URL 并且设置窗口的大小为 {{width}}x{{height}} 像素",
-    "browser_source_tips": "OBS 使用内置浏览器（CEF），不是本机 Chrome。若 Chrome 正常而 OBS 空白，请更新 OBS，在 设置 → 高级 开启「浏览器源硬件加速」，并右键浏览器源 → 刷新。\n本地服务与原版 Curses 一致：使用 <code>http://localhost:端口/client</code>（与 Curses 的 <code>localhost:3030/client</code> 相同形式，端口换成本机实际端口）。\n推流时请保持 Sigil 运行。\n若需要可见字幕，请在画布上添加文本元素。\n在 OBS 中关闭「在不可见时关闭源」，避免隐藏时停更。",
+    "browser_source_tips": "OBS 使用内置浏览器（CEF），不是本机 Chrome。若 Chrome 正常而 OBS 空白，请更新 OBS，在 设置 → 高级 开启「浏览器源硬件加速」，并右键浏览器源 → 刷新。\nSigil 的本地服务在 http://localhost:PORT/client 提供画布镜像，其中 PORT 是 Sigil 中显示的端口。OBS 面板里的「复制」会直接给出完整的 URL。\n推流时请保持 Sigil 运行。\n若需要可见字幕，请在画布上添加文本元素。\n在 OBS 中关闭「在不可见时关闭源」，避免隐藏时停更。",
     "btn_copy_browser_source_link": "复制浏览器源 URL",
     "btn_setup_browser_source": "在 OBS 中创建浏览器源",
     "section_websocket": "Websocket 连接",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "自动更改 Sigil 的场景以匹配 OBS 的场景",
     "field_fallback_scene": "默认场景",
     "field_map_scenes": "场景地图",
-    "btn_copy_lan_browser_source_link": "复制局域网链接（另一台电脑上的 OBS）"
+    "btn_copy_lan_browser_source_link": "复制局域网链接（另一台电脑上的 OBS）",
+    "stale_page_hint": "如果 OBS 一直显示旧页面，或英文文字「connecting...」，只要 Sigil 在运行，下次加载该源时 Sigil 会自动清除旧页面（重启 OBS，或在源设置为场景激活时刷新的情况下切换场景）。要立即清除，请右键浏览器源，打开「属性」，点击列表底部的「Refresh cache of current page」（OBS 会用它自己的语言显示此名称）。"
   },
   "twitch": {
     "title": "Twitch",

@@ -1532,7 +1532,7 @@
     "field_language": "Sprache",
     "field_ip_address": "IP-Adresse",
     "credits_mmpneo": "Vielen Dank an mmpneo für die Erstellung und Open-Source-Veröffentlichung von Curses. Ohne dieses Fundament gäbe es Sigil nicht.",
-    "tooltip_curses_github_title": "Flüche auf GitHub",
+    "tooltip_curses_github_title": "Curses auf GitHub",
     "tooltip_curses_github_body": "Die Original-App von mmpneo, auf der Sigil aufbaut. Markieren Sie das Repo, wenn Ihnen ihre Arbeit geholfen hat.",
     "footer_vrchat": "Gemacht für die VRChat-Community",
     "hero_tagline": "Deine Stimme, dein Weg ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "Schriftgröße der Beschriftung (px)",
     "field_browser_max_lines": "Maximale Anzahl an Zeilen für die Beschriftung",
     "clarify_two_paths": "Zwei verschiedene Funktionen: Die Browser-URL spiegelt Ihre Sigil-Leinwand in OBS wider (unabhängig davon, welchen Text/welche Bilder Sie in die Szene einfügen). Dies unterscheidet sich von „Native Stream-Untertitel“ unten, die obs-websocket verwenden und keine Browser-URL benötigen.",
-    "checklist_browser_mirror": "Kurze Checkliste:\n• Sigil Desktop läuft auf diesem PC.\n• Browser-Quell-URL stimmt mit Curses: <code>http://localhost:PORT/client</code> überein (verwenden Sie den in Sigil angezeigten Port; durch Kopieren in der Registerkarte „OBS“ wird dies ausgefüllt).\n• Die aktive Szene verfügt über mindestens ein Textelement; Legen Sie die Textquelle fest (z. B. Speech-to-Text).\n• Deaktivieren Sie in OBS „Quelle herunterfahren, wenn nicht sichtbar“, wenn Updates einfrieren, wenn die Quelle ausgeblendet ist.",
+    "checklist_browser_mirror": "Kurze Checkliste:\n• Sigil Desktop läuft auf diesem PC.\n• Die Browser-Quell-URL lautet http://localhost:PORT/client (verwenden Sie den in Sigil angezeigten Port; durch Kopieren in der Registerkarte „OBS“ wird dies ausgefüllt).\n• Die aktive Szene verfügt über mindestens ein Textelement; Legen Sie die Textquelle fest (z. B. Speech-to-Text).\n• Deaktivieren Sie in OBS „Quelle herunterfahren, wenn nicht sichtbar“, wenn Updates einfrieren, wenn die Quelle ausgeblendet ist.",
     "native_captions_explain": "Wenn WebSocket verbunden ist, senden native Stream-Untertitel Ihre ausgewählte Textquelle über SendStreamCaption (im Stream eingebettete Untertitel) an OBS. Für diesen Pfad ist keine Browserquelle erforderlich.",
     "browser_source_desc": "Erstellen Sie eine neue Browserquelle, fügen Sie den Link ein und stellen Sie die Fenstergröße auf {{width}}x{{height}} Pixel ein",
-    "browser_source_tips": "OBS verwendet einen eingebetteten Browser (CEF), nicht Ihr installiertes Chrome. Wenn die URL in Chrome/Edge, aber nicht in OBS funktioniert, aktualisieren Sie OBS, aktivieren Sie Einstellungen → Erweitert → „Hardwarebeschleunigung der Browserquelle aktivieren“ und klicken Sie dann mit der rechten Maustaste auf die Browserquelle → Aktualisieren.\nDer lokale Server folgt dem ursprünglichen Curses-Setup: Verwenden Sie <code>http://localhost:PORT/client</code> (dasselbe wie Curses‘ <code>localhost:3030/client</code> mit Ihrem Port).\nLassen Sie Sigil während des Streamings laufen.\nFügen Sie auf der Leinwand ein Textelement für die aktive Szene hinzu, wenn Sie sichtbare Untertitel erwarten.\nDeaktivieren Sie in OBS „Quelle herunterfahren, wenn nicht sichtbar“, wenn die Quelle einfriert, wenn sie ausgeblendet ist.",
+    "browser_source_tips": "OBS verwendet einen eingebetteten Browser (CEF), nicht Ihr installiertes Chrome. Wenn die URL in Chrome/Edge, aber nicht in OBS funktioniert, aktualisieren Sie OBS, aktivieren Sie Einstellungen → Erweitert → „Hardwarebeschleunigung der Browserquelle aktivieren“ und klicken Sie dann mit der rechten Maustaste auf die Browserquelle → Aktualisieren.\nDer lokale Server von Sigil stellt den Canvas-Spiegel unter http://localhost:PORT/client bereit, wobei PORT der in Sigil angezeigte Port ist. Mit „Kopieren“ in der Registerkarte „OBS“ erhalten Sie die genaue URL.\nLassen Sie Sigil während des Streamings laufen.\nFügen Sie auf der Leinwand ein Textelement für die aktive Szene hinzu, wenn Sie sichtbare Untertitel erwarten.\nDeaktivieren Sie in OBS „Quelle herunterfahren, wenn nicht sichtbar“, wenn die Quelle einfriert, wenn sie ausgeblendet ist.",
     "btn_copy_browser_source_link": "Kopieren Sie die Quell-URL des Browsers",
     "btn_setup_browser_source": "Browserquelle in OBS einrichten",
     "section_websocket": "Websocket-Verbindung",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "Ändern Sie die Sigil-Szene automatisch, um sie an die aktive OBS-Szene anzupassen",
     "field_fallback_scene": "Ersatzszene",
     "field_map_scenes": "Kartenszenen",
-    "btn_copy_lan_browser_source_link": "LAN-Link kopieren (OBS auf einem anderen PC)"
+    "btn_copy_lan_browser_source_link": "LAN-Link kopieren (OBS auf einem anderen PC)",
+    "stale_page_hint": "Zeigt OBS weiterhin eine alte Seite oder den englischen Text „connecting...“ an, entfernt Sigil die alte Seite beim nächsten Laden der Quelle von selbst, solange Sigil läuft (starten Sie OBS neu oder wechseln Sie die Szene, wenn die Quelle beim Aktivieren der Szene aktualisiert wird). Um sie sofort zu entfernen, klicken Sie mit der rechten Maustaste auf die Browserquelle, öffnen Sie „Eigenschaften“ und klicken Sie unten in der Liste auf „Refresh cache of current page“ (OBS zeigt den Namen in seiner eigenen Sprache an)."
   },
   "twitch": {
     "title": "Zucken",

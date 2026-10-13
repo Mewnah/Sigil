@@ -1532,7 +1532,7 @@
     "field_language": "Lingua",
     "field_ip_address": "Indirizzo IP",
     "credits_mmpneo": "Un enorme ringraziamento a mmpneo per la creazione e l'open source di Curses. Sigil non esisterebbe senza quella fondazione.",
-    "tooltip_curses_github_title": "Maledizioni su GitHub",
+    "tooltip_curses_github_title": "Curses su GitHub",
     "tooltip_curses_github_body": "L'app originale di mmpneo su cui si basa Sigil. Aggiungi a Star il repository se il loro lavoro ti ha aiutato.",
     "footer_vrchat": "Realizzato per la comunità VRChat",
     "hero_tagline": "La tua voce, a modo tuo ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "Dimensione carattere didascalia (px)",
     "field_browser_max_lines": "Righe massime di didascalia",
     "clarify_two_paths": "Due caratteristiche diverse: l'URL del browser rispecchia la tela del tuo sigillo in OBS (qualunque sia il testo/immagine che metti in scena). Questo è separato dai \"Sottotitoli del flusso nativo\" di seguito, che utilizza obs-websocket e non necessita dell'URL del browser.",
-    "checklist_browser_mirror": "Lista di controllo rapida:\n• Il desktop Sigil è in esecuzione su questo PC.\n• L'URL di origine del browser corrisponde a Maledizioni: <code>http://localhost:PORT/client</code> (usa la porta mostrata in Sigil; Copia nella scheda OBS lo compila).\n• La scena attiva ha almeno un elemento Testo; imposta la sua sorgente di testo (ad esempio Speech-to-Text).\n• In OBS, disattiva \"Spegni fonte quando non visibile\" se gli aggiornamenti si bloccano quando la fonte è nascosta.",
+    "checklist_browser_mirror": "Lista di controllo rapida:\n• Il desktop Sigil è in esecuzione su questo PC.\n• L'URL di origine del browser è http://localhost:PORT/client (usa la porta mostrata in Sigil; Copia nella scheda OBS lo compila).\n• La scena attiva ha almeno un elemento Testo; imposta la sua sorgente di testo (ad esempio Speech-to-Text).\n• In OBS, disattiva \"Spegni fonte quando non visibile\" se gli aggiornamenti si bloccano quando la fonte è nascosta.",
     "native_captions_explain": "Con WebSocket connesso, i sottotitoli del flusso nativo inviano la fonte di testo scelta a OBS tramite SendStreamCaption (sottotitoli incorporati nel flusso). Per quel percorso non è richiesta alcuna origine browser.",
     "browser_source_desc": "Crea una nuova sorgente del browser, incolla il collegamento e imposta la dimensione della finestra su {{width}}x{{height}} pixel",
-    "browser_source_tips": "OBS utilizza un browser incorporato (CEF), non Chrome installato. Se l'URL funziona in Chrome/Edge ma non in OBS, aggiorna OBS, abilita Impostazioni → Avanzate → “Abilita accelerazione hardware dell'origine del browser”, quindi fai clic con il pulsante destro del mouse sull'origine del browser → Aggiorna.\nIl server locale segue la configurazione originale di Curses: usa <code>http://localhost:PORT/client</code> (come <code>localhost:3030/client</code> di Curses con la tua porta).\nMantieni Sigil in esecuzione durante lo streaming.\nAggiungi un elemento Testo sull'area di disegno per la scena attiva se prevedi didascalie visibili.\nIn OBS, disattiva \"Spegni sorgente quando non visibile\" se la sorgente si blocca quando è nascosta.",
+    "browser_source_tips": "OBS utilizza un browser incorporato (CEF), non Chrome installato. Se l'URL funziona in Chrome/Edge ma non in OBS, aggiorna OBS, abilita Impostazioni → Avanzate → “Abilita accelerazione hardware dell'origine del browser”, quindi fai clic con il pulsante destro del mouse sull'origine del browser → Aggiorna.\nIl server locale di Sigil serve il mirror dell'area di disegno all'indirizzo http://localhost:PORT/client, dove PORT è la porta mostrata in Sigil. Copia nella scheda OBS ti fornisce l'URL esatto.\nMantieni Sigil in esecuzione durante lo streaming.\nAggiungi un elemento Testo sull'area di disegno per la scena attiva se prevedi didascalie visibili.\nIn OBS, disattiva \"Spegni sorgente quando non visibile\" se la sorgente si blocca quando è nascosta.",
     "btn_copy_browser_source_link": "Copia l'URL di origine del browser",
     "btn_setup_browser_source": "Imposta la sorgente del browser in OBS",
     "section_websocket": "Connessione WebSocket",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "Cambia automaticamente la scena del sigillo per adattarla alla scena OBS attiva",
     "field_fallback_scene": "Scena di riserva",
     "field_map_scenes": "Scene della mappa",
-    "btn_copy_lan_browser_source_link": "Copia il link LAN (OBS su un altro PC)"
+    "btn_copy_lan_browser_source_link": "Copia il link LAN (OBS su un altro PC)",
+    "stale_page_hint": "Se OBS continua a mostrare una pagina vecchia o il testo inglese “connecting...”, Sigil rimuove da solo la pagina vecchia alla prossima volta che l'origine viene caricata mentre Sigil è in esecuzione (riavvia OBS oppure cambia scena se l'origine si aggiorna quando la scena diventa attiva). Per eliminarla subito, fai clic con il pulsante destro del mouse sull'origine del browser, apri Proprietà e fai clic su “Refresh cache of current page” in fondo all'elenco (OBS mostra il nome nella propria lingua)."
   },
   "twitch": {
     "title": "Contrazione",

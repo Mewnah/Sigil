@@ -1531,8 +1531,8 @@
     "field_ui_scale": "Ukuran antarmuka",
     "field_language": "Bahasa",
     "field_ip_address": "alamat IP",
-    "credits_mmpneo": "Terima kasih banyak kepada mmpneo karena telah membuat dan membuka sumber Kutukan. Sigil tidak akan ada tanpa landasan itu.",
-    "tooltip_curses_github_title": "Kutukan di GitHub",
+    "credits_mmpneo": "Terima kasih banyak kepada mmpneo karena telah membuat dan membuka sumber Curses. Sigil tidak akan ada tanpa landasan itu.",
+    "tooltip_curses_github_title": "Curses di GitHub",
     "tooltip_curses_github_body": "Aplikasi asli dari mmpneo yang dibuat oleh Sigil. Beri bintang pada repo jika pekerjaan mereka membantu Anda.",
     "footer_vrchat": "Dibuat untuk komunitas VRChat",
     "hero_tagline": "Suaramu, caramu ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "Ukuran font takarir (px)",
     "field_browser_max_lines": "Baris maksimal takarir",
     "clarify_two_paths": "Dua fitur berbeda: URL browser mencerminkan kanvas Sigil Anda di OBS (teks/gambar apa pun yang Anda masukkan ke dalam adegan). Itu terpisah dari “Teks aliran asli” di bawah, yang menggunakan obs-websocket dan tidak memerlukan URL browser.",
-    "checklist_browser_mirror": "Daftar periksa cepat:\n• Desktop Sigil berjalan di PC ini.\n• URL sumber browser cocok dengan Kutukan: <code>http://localhost:PORT/client</code> (gunakan port yang ditunjukkan di Sigil; Salin di tab OBS untuk mengisinya).\n• Adegan aktif memiliki setidaknya satu elemen Teks; atur sumber teksnya (misalnya Speech-to-Text).\n• Di OBS, matikan “Matikan sumber saat tidak terlihat” jika pembaruan terhenti saat sumber disembunyikan.",
+    "checklist_browser_mirror": "Daftar periksa cepat:\n• Desktop Sigil berjalan di PC ini.\n• URL sumber browser adalah http://localhost:PORT/client (gunakan port yang ditunjukkan di Sigil; Salin di tab OBS untuk mengisinya).\n• Adegan aktif memiliki setidaknya satu elemen Teks; atur sumber teksnya (misalnya Speech-to-Text).\n• Di OBS, matikan “Matikan sumber saat tidak terlihat” jika pembaruan terhenti saat sumber disembunyikan.",
     "native_captions_explain": "Dengan WebSocket terhubung, teks aliran asli mengirimkan sumber teks pilihan Anda ke OBS melalui SendStreamCaption (teks yang tertanam dalam aliran). Tidak diperlukan sumber browser untuk jalur tersebut.",
     "browser_source_desc": "Buat sumber browser baru, tempel tautan dan atur ukuran jendela menjadi {{width}}x{{height}} piksel",
-    "browser_source_tips": "OBS menggunakan browser tertanam (CEF), bukan Chrome yang Anda instal. Jika URL berfungsi di Chrome/Edge tetapi tidak di OBS, perbarui OBS, aktifkan Pengaturan → Lanjutan → “Aktifkan akselerasi perangkat keras sumber browser”, lalu klik kanan sumber browser → Segarkan.\nServer lokal mengikuti pengaturan Curses asli: gunakan <code>http://localhost:PORT/client</code> (sama seperti <code>localhost:3030/client</code> Curses dengan port Anda).\nBiarkan Sigil tetap berjalan saat streaming.\nTambahkan elemen Teks di kanvas untuk adegan aktif jika Anda mengharapkan teks terlihat.\nDi OBS, matikan “Matikan sumber saat tidak terlihat” jika sumber membeku saat disembunyikan.",
+    "browser_source_tips": "OBS menggunakan browser tertanam (CEF), bukan Chrome yang Anda instal. Jika URL berfungsi di Chrome/Edge tetapi tidak di OBS, perbarui OBS, aktifkan Pengaturan → Lanjutan → “Aktifkan akselerasi perangkat keras sumber browser”, lalu klik kanan sumber browser → Segarkan.\nServer lokal Sigil menyajikan cermin kanvas di http://localhost:PORT/client, dengan PORT berupa port yang ditunjukkan di Sigil. Salin di tab OBS memberi Anda URL yang tepat.\nBiarkan Sigil tetap berjalan saat streaming.\nTambahkan elemen Teks di kanvas untuk adegan aktif jika Anda mengharapkan teks terlihat.\nDi OBS, matikan “Matikan sumber saat tidak terlihat” jika sumber membeku saat disembunyikan.",
     "btn_copy_browser_source_link": "Salin URL sumber browser",
     "btn_setup_browser_source": "Atur sumber browser di OBS",
     "section_websocket": "Koneksi soket web",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "Secara otomatis mengubah adegan Sigil agar sesuai dengan adegan OBS yang aktif",
     "field_fallback_scene": "Adegan cadangan",
     "field_map_scenes": "Adegan peta",
-    "btn_copy_lan_browser_source_link": "Salin tautan LAN (OBS di PC lain)"
+    "btn_copy_lan_browser_source_link": "Salin tautan LAN (OBS di PC lain)",
+    "stale_page_hint": "Jika OBS terus menampilkan halaman lama atau teks bahasa Inggris “connecting...”, Sigil menghapus halaman lama dengan sendirinya saat sumber dimuat berikutnya selama Sigil berjalan (mulai ulang OBS, atau pindah scene jika sumber disegarkan saat scene diaktifkan). Untuk membersihkannya sekarang, klik kanan sumber browser, buka Properti, lalu klik “Refresh cache of current page” di bagian bawah daftar (OBS menampilkan namanya dalam bahasanya sendiri)."
   },
   "twitch": {
     "title": "Berkedut",

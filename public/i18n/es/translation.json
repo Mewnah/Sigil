@@ -1532,7 +1532,7 @@
     "field_language": "Idioma",
     "field_ip_address": "dirección IP",
     "credits_mmpneo": "Muchas gracias a mmpneo por crear y abrir Curses. Sigil no existiría sin esa base.",
-    "tooltip_curses_github_title": "Maldiciones en GitHub",
+    "tooltip_curses_github_title": "Curses en GitHub",
     "tooltip_curses_github_body": "La aplicación original de mmpneo sobre la que se basa Sigil. Destaca el repositorio si su trabajo te ayudó.",
     "footer_vrchat": "Hecho para la comunidad VRChat",
     "hero_tagline": "Tu voz, a tu manera ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "Tamaño de fuente de los subtítulos (px)",
     "field_browser_max_lines": "Líneas máximas de subtítulos",
     "clarify_two_paths": "Dos características diferentes: la URL del navegador refleja tu lienzo de Sigil en OBS (cualquier texto/imágenes que pongas en escena). Esto es independiente de los \"Subtítulos de transmisión nativos\" que aparecen a continuación, que utilizan obs-websocket y no necesitan la URL del navegador.",
-    "checklist_browser_mirror": "Lista de verificación rápida:\n• Sigil Desktop se está ejecutando en esta PC.\n• La URL de origen del navegador coincide con Curses: <code>http://localhost:PORT/client</code> (use el puerto que se muestra en Sigil; Copiar en la pestaña OBS completa esto).\n• La escena activa tiene al menos un elemento de Texto; establecer su fuente de texto (por ejemplo, voz a texto).\n• En OBS, desactive \"Apagar fuente cuando no esté visible\" si las actualizaciones se congelan cuando la fuente está oculta.",
+    "checklist_browser_mirror": "Lista de verificación rápida:\n• Sigil Desktop se está ejecutando en esta PC.\n• La URL de origen del navegador es http://localhost:PORT/client (use el puerto que se muestra en Sigil; Copiar en la pestaña OBS lo completa).\n• La escena activa tiene al menos un elemento de Texto; establecer su fuente de texto (por ejemplo, voz a texto).\n• En OBS, desactive \"Apagar fuente cuando no esté visible\" si las actualizaciones se congelan cuando la fuente está oculta.",
     "native_captions_explain": "Con WebSocket conectado, los subtítulos de transmisión nativos envían la fuente de texto elegida a OBS a través de SendStreamCaption (subtítulos integrados en la transmisión). No se requiere ninguna fuente de navegador para esa ruta.",
     "browser_source_desc": "Cree una nueva fuente de navegador, pegue el enlace y establezca el tamaño de la ventana en {{width}}x{{height}} píxeles",
-    "browser_source_tips": "OBS utiliza un navegador integrado (CEF), no su Chrome instalado. Si la URL funciona en Chrome/Edge pero no en OBS, actualice OBS, habilite Configuración → Avanzado → “Habilitar aceleración de hardware de origen del navegador”, luego haga clic derecho en el origen del navegador → Actualizar.\nEl servidor local sigue la configuración original de Curses: use <code>http://localhost:PORT/client</code> (igual que el <code>localhost:3030/client</code> de Curses con su puerto).\nMantenga Sigil funcionando mientras transmite.\nAgregue un elemento de Texto en el lienzo para la escena activa si espera títulos visibles.\nEn OBS, desactive \"Apagar fuente cuando no esté visible\" si la fuente se congela cuando está oculta.",
+    "browser_source_tips": "OBS utiliza un navegador integrado (CEF), no su Chrome instalado. Si la URL funciona en Chrome/Edge pero no en OBS, actualice OBS, habilite Configuración → Avanzado → “Habilitar aceleración de hardware de origen del navegador”, luego haga clic derecho en el origen del navegador → Actualizar.\nEl servidor local de Sigil sirve el espejo del lienzo en http://localhost:PORT/client, donde PORT es el puerto que se muestra en Sigil. Copiar en la pestaña OBS le da la URL exacta.\nMantenga Sigil funcionando mientras transmite.\nAgregue un elemento de Texto en el lienzo para la escena activa si espera títulos visibles.\nEn OBS, desactive \"Apagar fuente cuando no esté visible\" si la fuente se congela cuando está oculta.",
     "btn_copy_browser_source_link": "Copiar la URL de origen del navegador",
     "btn_setup_browser_source": "Configurar la fuente del navegador en OBS",
     "section_websocket": "conexión websocket",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "Cambia automáticamente la escena de Sigil para que coincida con la escena OBS activa",
     "field_fallback_scene": "Escena_alternativa",
     "field_map_scenes": "Escenas del mapa",
-    "btn_copy_lan_browser_source_link": "Copiar enlace LAN (OBS en otra PC)"
+    "btn_copy_lan_browser_source_link": "Copiar enlace LAN (OBS en otra PC)",
+    "stale_page_hint": "Si OBS sigue mostrando una página antigua o el texto en inglés “connecting...”, Sigil elimina la página antigua por sí solo la próxima vez que se cargue el origen mientras Sigil esté en ejecución (reinicie OBS o cambie de escena si el origen se actualiza al activarse la escena). Para borrarla de inmediato, haga clic derecho en el origen del navegador, abra Propiedades y haga clic en “Refresh cache of current page”, al final de la lista (OBS muestra su nombre en su propio idioma)."
   },
   "twitch": {
     "title": "Contracción nerviosa",

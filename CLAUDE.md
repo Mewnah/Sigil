@@ -23,6 +23,7 @@ pnpm test:e2e            # Playwright: builds then smokes / and /client (both mo
 pnpm exec playwright test tests/smoke.spec.ts   # single test file
 PW_PREVIEW_ONLY=1 pnpm test:e2e                 # skip rebuild when dist/ already exists (bash)
 # PowerShell (primary platform): $env:PW_PREVIEW_ONLY=1; pnpm test:e2e
+pnpm check:sw-kill       # opt-in, headless Chromium on 127.0.0.1: public/sw.js (kill switch for the old Curses service worker) vs the real Curses page code
 
 # Rust (from src-tauri/; or pass --manifest-path src-tauri/Cargo.toml from the root)
 cargo clippy --all-targets   # CI gate on the Rust side (no new warnings in touched files)

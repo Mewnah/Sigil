@@ -1532,7 +1532,7 @@
     "field_language": "言語",
     "field_ip_address": "IPアドレス",
     "credits_mmpneo": "Curses を作成し、オープンソース化してくださった mmpneo に多大な感謝を申し上げます。その基盤がなければシギルは存在しません。",
-    "tooltip_curses_github_title": "GitHub の呪い",
+    "tooltip_curses_github_title": "GitHub の Curses",
     "tooltip_curses_github_body": "Sigil が構築されている mmpneo のオリジナル アプリ。彼らの仕事が役に立った場合は、リポジトリにスターを付けてください。",
     "footer_vrchat": "VRChatコミュニティのために作られました",
     "hero_tagline": "あなたの声、あなたのやり方✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "キャプションのフォントサイズ (px)",
     "field_browser_max_lines": "キャプションの最大行数",
     "clarify_two_paths": "2 つの異なる機能: ブラウザーの URL は、OBS の Sigil キャンバス (シーンに配置したテキスト/画像) をミラーリングします。これは、obs-websocket を使用し、ブラウザ URL を必要としない、以下の「ネイティブ ストリーム キャプション」とは別のものです。",
-    "checklist_browser_mirror": "簡単なチェックリスト:\n• Sigil デスクトップがこの PC 上で実行されています。\n• ブラウザのソース URL は Curses: <code>http://localhost:PORT/client</code> と一致します (Sigil に示されているポートを使用します。OBS タブでコピーしてこれを入力します)。\n• アクティブなシーンには少なくとも 1 つの Text 要素があります。テキスト ソース (Speech-to-Text など) を設定します。\n• OBS で、ソースが非表示になっているときに更新がフリーズする場合は、「非表示時にソースをシャットダウン」をオフにします。",
+    "checklist_browser_mirror": "簡単なチェックリスト:\n• Sigil デスクトップがこの PC 上で実行されています。\n• ブラウザのソース URL は http://localhost:PORT/client です (Sigil に示されているポートを使用します。OBS タブでコピーするとこれが入力されます)。\n• アクティブなシーンには少なくとも 1 つの Text 要素があります。テキスト ソース (Speech-to-Text など) を設定します。\n• OBS で、ソースが非表示になっているときに更新がフリーズする場合は、「非表示時にソースをシャットダウン」をオフにします。",
     "native_captions_explain": "WebSocket が接続されている場合、ネイティブ ストリーム キャプションは、選択したテキスト ソースを SendStreamCaption (ストリーム埋め込みキャプション) 経由で OBS に送信します。そのパスにはブラウザーのソースは必要ありません。",
     "browser_source_desc": "新しいブラウザ ソースを作成し、リンクを貼り付け、ウィンドウ サイズを {{width}}x{{height}} ピクセルに設定します",
-    "browser_source_tips": "OBS は、インストールされている Chrome ではなく、埋め込みブラウザ (CEF) を使用します。 URL が Chrome/Edge では機能するが OBS では機能しない場合は、OBS を更新し、設定 → 詳細 → 「ブラウザ ソース ハードウェア アクセラレーションを有効にする」を有効にしてから、ブラウザ ソースを右クリック → 更新します。\nローカルサーバーは元の Curses 設定に従います: <code>http://localhost:PORT/client</code> (ポートでの Curses の <code>localhost:3030/client</code> と同じ) を使用します。\nストリーミング中に Sigil を実行し続けます。\nキャプションを表示したい場合は、アクティブなシーンのキャンバスに Text 要素を追加します。\nOBS で、非表示時にソースがフリーズする場合は、「非表示時にソースをシャットダウン」をオフにします。",
+    "browser_source_tips": "OBS は、インストールされている Chrome ではなく、埋め込みブラウザ (CEF) を使用します。 URL が Chrome/Edge では機能するが OBS では機能しない場合は、OBS を更新し、設定 → 詳細 → 「ブラウザ ソース ハードウェア アクセラレーションを有効にする」を有効にしてから、ブラウザ ソースを右クリック → 更新します。\nSigil のローカルサーバーは、キャンバスのミラーを http://localhost:PORT/client で提供します。PORT は Sigil に表示されているポートです。OBS タブのコピーで正確な URL を取得できます。\nストリーミング中に Sigil を実行し続けます。\nキャプションを表示したい場合は、アクティブなシーンのキャンバスに Text 要素を追加します。\nOBS で、非表示時にソースがフリーズする場合は、「非表示時にソースをシャットダウン」をオフにします。",
     "btn_copy_browser_source_link": "ブラウザのソース URL をコピーする",
     "btn_setup_browser_source": "OBS でのブラウザー ソースのセットアップ",
     "section_websocket": "WebSocket接続",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "アクティブな OBS シーンに合わせて Sigil シーンを自動的に変更します",
     "field_fallback_scene": "フォールバック_シーン",
     "field_map_scenes": "マップシーン",
-    "btn_copy_lan_browser_source_link": "LAN リンクをコピー（別のPCの OBS 用）"
+    "btn_copy_lan_browser_source_link": "LAN リンクをコピー（別のPCの OBS 用）",
+    "stale_page_hint": "OBS に古いページ、または英語の「connecting...」が表示され続ける場合、Sigil が起動している間に次にソースが読み込まれると、Sigil が古いページを自動的に削除します (OBS を再起動するか、シーンがアクティブになるとソースが更新される設定ならシーンを切り替えてください)。すぐに消すには、ブラウザ ソースを右クリックして「プロパティ」を開き、一覧の下にある「Refresh cache of current page」をクリックします (OBS ではこの名前が OBS 自身の言語で表示されます)。"
   },
   "twitch": {
     "title": "けいれん",

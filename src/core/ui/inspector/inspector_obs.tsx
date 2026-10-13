@@ -166,6 +166,7 @@ const Inspector_OBS: FC = () => {
         <div className="px-3 pb-3 pt-0 space-y-2 border-t border-base-content/10 text-xs text-base-content/55 whitespace-pre-line">
           <p className="pt-2">{t("obs.browser_source_tips")}</p>
           <p>{t("obs.checklist_browser_mirror")}</p>
+          <p>{t("obs.stale_page_hint")}</p>
         </div>
       </details>
     </Inspector.Content>

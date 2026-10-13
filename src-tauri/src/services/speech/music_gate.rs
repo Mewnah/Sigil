@@ -690,8 +690,12 @@ mod tests {
 
     #[test]
     fn a_missing_model_is_an_error_naming_the_catalog_id() {
-        let e = MusicGate::load().unwrap_err();
-        assert!(e.contains(MODEL_ID), "{e}");
+        // `load()` reads this PC's real model store, so its "not installed" message can only be checked
+        // where the model is not installed (a PC that fetched it passes through to the hermetic half).
+        if model_store::installed_path(MODEL_ID).is_none() {
+            let e = MusicGate::load().unwrap_err();
+            assert!(e.contains(MODEL_ID), "{e}");
+        }
         let dir = std::env::temp_dir().join(format!("sigil-music-gate-missing-{}", std::process::id()));
         let e = MusicGate::load_from(&dir).unwrap_err();
         assert!(e.contains(MODEL_ID) && e.contains(MODEL_FILE), "{e}");

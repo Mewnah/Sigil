@@ -1532,7 +1532,7 @@
     "field_language": "Langue",
     "field_ip_address": "Adresse IP",
     "credits_mmpneo": "Un grand merci à mmpneo pour la création et l'open source de Curses. Sigil n'existerait pas sans cette fondation.",
-    "tooltip_curses_github_title": "Malédictions sur GitHub",
+    "tooltip_curses_github_title": "Curses sur GitHub",
     "tooltip_curses_github_body": "L'application originale de mmpneo sur laquelle Sigil s'appuie. Mettez en vedette le dépôt si leur travail vous a aidé.",
     "footer_vrchat": "Conçu pour la communauté VRChat",
     "hero_tagline": "Votre voix, à votre façon ✨",
@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "Taille de la police des légendes (px)",
     "field_browser_max_lines": "Nombre maximum de lignes de légende",
     "clarify_two_paths": "Deux fonctionnalités différentes : l'URL du navigateur reflète votre canevas Sigil dans OBS (quel que soit le texte/les images que vous mettez en scène). Ceci est distinct des « Légendes de flux natifs » ci-dessous, qui utilisent obs-websocket et n'ont pas besoin de l'URL du navigateur.",
-    "checklist_browser_mirror": "Liste de contrôle rapide :\n• Le bureau Sigil est en cours d'exécution sur ce PC.\n• L'URL source du navigateur correspond à Curses : <code>http://localhost:PORT/client</code> (utilisez le port affiché dans Sigil ; Copier dans l'onglet OBS le remplit).\n• La scène active possède au moins un élément Texte ; définir sa source de texte (par exemple Speech-to-Text).\n• Dans OBS, désactivez « Arrêter la source lorsqu'elle n'est pas visible » si les mises à jour se bloquent lorsque la source est masquée.",
+    "checklist_browser_mirror": "Liste de contrôle rapide :\n• Le bureau Sigil est en cours d'exécution sur ce PC.\n• L'URL source du navigateur est http://localhost:PORT/client (utilisez le port affiché dans Sigil ; Copier dans l'onglet OBS la remplit).\n• La scène active possède au moins un élément Texte ; définir sa source de texte (par exemple Speech-to-Text).\n• Dans OBS, désactivez « Arrêter la source lorsqu'elle n'est pas visible » si les mises à jour se bloquent lorsque la source est masquée.",
     "native_captions_explain": "Avec WebSocket connecté, les sous-titres de flux natifs envoient la source de texte de votre choix à OBS via SendStreamCaption (sous-titres intégrés au flux). Aucune source de navigateur n'est requise pour ce chemin.",
     "browser_source_desc": "Créez une nouvelle source de navigateur, collez le lien et définissez la taille de la fenêtre sur {{width}}x{{height}} pixels",
-    "browser_source_tips": "OBS utilise un navigateur intégré (CEF), et non votre Chrome installé. Si l'URL fonctionne dans Chrome/Edge mais pas dans OBS, mettez à jour OBS, activez Paramètres → Avancé → « Activer l'accélération matérielle de la source du navigateur », puis cliquez avec le bouton droit sur la source du navigateur → Actualiser.\nLe serveur local suit la configuration originale de Curses : utilisez <code>http://localhost:PORT/client</code> (identique au <code>localhost:3030/client</code> de Curses avec votre port).\nGardez Sigil en marche pendant la diffusion.\nAjoutez un élément Texte sur le canevas pour la scène active si vous attendez des légendes visibles.\nDans OBS, désactivez « Arrêter la source lorsqu'elle n'est pas visible » si la source se bloque lorsqu'elle est masquée.",
+    "browser_source_tips": "OBS utilise un navigateur intégré (CEF), et non votre Chrome installé. Si l'URL fonctionne dans Chrome/Edge mais pas dans OBS, mettez à jour OBS, activez Paramètres → Avancé → « Activer l'accélération matérielle de la source du navigateur », puis cliquez avec le bouton droit sur la source du navigateur → Actualiser.\nLe serveur local de Sigil sert le miroir du canevas à l'adresse http://localhost:PORT/client, où PORT est le port affiché dans Sigil. Copier dans l'onglet OBS vous donne l'URL exacte.\nGardez Sigil en marche pendant la diffusion.\nAjoutez un élément Texte sur le canevas pour la scène active si vous attendez des légendes visibles.\nDans OBS, désactivez « Arrêter la source lorsqu'elle n'est pas visible » si la source se bloque lorsqu'elle est masquée.",
     "btn_copy_browser_source_link": "Copier l'URL source du navigateur",
     "btn_setup_browser_source": "Configurer la source du navigateur dans OBS",
     "section_websocket": "Connexion Websocket",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "Changer automatiquement la scène Sigil pour correspondre à la scène OBS active",
     "field_fallback_scene": "Scène_de secours",
     "field_map_scenes": "Scènes de carte",
-    "btn_copy_lan_browser_source_link": "Copier le lien LAN (OBS sur un autre PC)"
+    "btn_copy_lan_browser_source_link": "Copier le lien LAN (OBS sur un autre PC)",
+    "stale_page_hint": "Si OBS continue d'afficher une ancienne page ou le texte anglais « connecting... », Sigil supprime lui-même l'ancienne page au prochain chargement de la source tant que Sigil est lancé (redémarrez OBS ou changez de scène si la source s'actualise à l'activation de la scène). Pour l'effacer tout de suite, cliquez avec le bouton droit sur la source du navigateur, ouvrez Propriétés et cliquez sur « Refresh cache of current page », en bas de la liste (OBS affiche son nom dans sa propre langue)."
   },
   "twitch": {
     "title": "Tic",

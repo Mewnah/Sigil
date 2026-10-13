@@ -1635,10 +1635,10 @@
     "field_browser_font_size": "字幕字級 (px)",
     "field_browser_max_lines": "字幕最大行數",
     "clarify_two_paths": "這是兩套不同功能：瀏覽器 URL 會在 OBS 中鏡像 Sigil 畫布上的內容（你在場景中放置的文字／圖片）。這與下方的「原生字幕流」無關——後者透過 obs-websocket 運作，不需要瀏覽器 URL。",
-    "checklist_browser_mirror": "快速檢查：\n• 本機 Sigil 桌面版正在運行。\n• 瀏覽器來源 URL 與 Curses 一致：<code>http://localhost:連接埠/client</code>（連接埠以 Sigil 為準，OBS 面板「複製」會帶上）。\n• 目前場景至少有一個文字元素，並設定其文字來源（例如語音轉文字）。\n• 若隱藏來源時畫面停更，請在 OBS 中關閉「在不可見時關閉來源」。",
+    "checklist_browser_mirror": "快速檢查：\n• 本機 Sigil 桌面版正在運行。\n• 瀏覽器來源 URL 是 http://localhost:PORT/client（連接埠以 Sigil 為準，OBS 面板「複製」會帶上）。\n• 目前場景至少有一個文字元素，並設定其文字來源（例如語音轉文字）。\n• 若隱藏來源時畫面停更，請在 OBS 中關閉「在不可見時關閉來源」。",
     "native_captions_explain": "WebSocket 連線成功後，「原生字幕流」會將所選文字來源透過 SendStreamCaption 傳送到 OBS（內嵌直播字幕）。此路徑不需要瀏覽器來源。",
     "browser_source_desc": "創建一個新的瀏覽器源, 粘貼 URL 並且設置窗口的大小為 {{width}}x{{height}} 像素",
-    "browser_source_tips": "OBS 使用內建瀏覽器（CEF），不是本機 Chrome。若 Chrome 正常而 OBS 空白，請更新 OBS，在 設定 → 進階 開啟「瀏覽器來源硬體加速」，並在瀏覽器來源上右鍵 → 重新整理。\n本機服務與原版 Curses 相同：<code>http://localhost:連接埠/client</code>（形式同 Curses 的 <code>localhost:3030/client</code>，連接埠換成本機實際值）。\n串流時請保持 Sigil 運行。\n若需要可見字幕，請在畫布上新增文字元素。\n在 OBS 中關閉「在不可見時關閉來源」，避免隱藏時停更。",
+    "browser_source_tips": "OBS 使用內建瀏覽器（CEF），不是本機 Chrome。若 Chrome 正常而 OBS 空白，請更新 OBS，在 設定 → 進階 開啟「瀏覽器來源硬體加速」，並在瀏覽器來源上右鍵 → 重新整理。\nSigil 的本機服務在 http://localhost:PORT/client 提供畫布鏡像，其中 PORT 是 Sigil 中顯示的連接埠。OBS 面板中的「複製」會直接給出完整的 URL。\n串流時請保持 Sigil 運行。\n若需要可見字幕，請在畫布上新增文字元素。\n在 OBS 中關閉「在不可見時關閉來源」，避免隱藏時停更。",
     "btn_copy_browser_source_link": "複製瀏覽器來源 URL",
     "btn_setup_browser_source": "在 OBS 中建立瀏覽器來源",
     "section_websocket": "Websocket 連接",
@@ -1649,7 +1649,8 @@
     "section_scenes_desc": "自動更改 Sigil 的場景以匹配 OBS 的場景",
     "field_fallback_scene": "默認場景",
     "field_map_scenes": "場景地圖",
-    "btn_copy_lan_browser_source_link": "複製區域網路連結（另一台電腦上的 OBS）"
+    "btn_copy_lan_browser_source_link": "複製區域網路連結（另一台電腦上的 OBS）",
+    "stale_page_hint": "如果 OBS 一直顯示舊頁面，或英文文字「connecting...」，只要 Sigil 正在執行，下次載入該來源時 Sigil 會自動清除舊頁面（重新啟動 OBS，或在來源設定為場景啟用時重新整理的情況下切換場景）。若要立即清除，請在瀏覽器來源上按右鍵，開啟「內容」，再按一下清單底部的「Refresh cache of current page」（OBS 會以它自己的語言顯示此名稱）。"
   },
   "twitch": {
     "title": "Twitch",
