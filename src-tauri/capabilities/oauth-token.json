@@ -1,0 +1,11 @@
+{
+  "identifier": "oauth-token",
+  "description": "IPC for the oauth-token plugin (Kick / Twitch OAuth token exchange and refresh with the client secret kept in Rust) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "oauth-token:default"
+  ]
+}

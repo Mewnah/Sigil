@@ -1985,7 +1985,10 @@
       "chat_session_expired": "킥: 세션이 만료되었거나 유효하지 않습니다. 다시 로그인해 보세요.",
       "chat_with_detail": "킥챗: {{detail}}",
       "chat_failed_status": "킥채팅 실패({{status}})",
-      "chat_request_failed": "킥챗 요청 실패"
+      "chat_request_failed": "킥챗 요청 실패",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

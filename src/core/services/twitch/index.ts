@@ -15,12 +15,17 @@ import {
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import {
   getTwitchClientId,
-  getTwitchClientSecret,
   getTwitchRedirectImplicitUri,
   getTwitchRedirectUri,
 } from "@/utils/integrationEnv";
 import { generateOAuthCodeChallenge, generateOAuthRandomString } from "@/utils/oauthPkce";
 import { isOAuthTauri, listenOAuthPayload } from "@/utils/oauthPopup";
+import {
+  exchangeOAuthCode,
+  oauthClientSecretConfigured,
+  oauthErrorMessage,
+  refreshOAuthToken,
+} from "@/utils/oauthTokens";
 import { pushSystemLog } from "@/core/services/systemLog";
 import TwitchChatApi from "./chat";
 import TwitchEmotesApi from "./emotes";
@@ -154,34 +159,20 @@ class Service_Twitch implements IServiceInterface {
     this.liveCheckInterval = setInterval(() => void this.#checkLive(), 4000);
   }
 
+  /**
+   * Redeem the refresh token. The request (with the client secret, when this is a Confidential app) is made by
+   * Rust; a Public app signs in with the implicit grant and has no refresh token.
+   */
   async #refreshAccessToken(): Promise<boolean> {
     const rt = this.#state.data.refreshToken;
     const clientId = getTwitchClientId();
-    const clientSecret = getTwitchClientSecret();
-    if (!rt || !clientId)
+    if (!rt || !clientId || !isOAuthTauri())
       return false;
     try {
-      const params = new URLSearchParams({
-        client_id: clientId,
-        grant_type: "refresh_token",
-        refresh_token: rt,
-      });
-      if (clientSecret)
-        params.set("client_secret", clientSecret);
-      const res = await fetchWithTimeout("https://id.twitch.tv/oauth2/token", {
-        method: "POST",
-        timeoutMs: 30_000,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-      });
-      if (!res.ok)
-        return false;
-      const data: { access_token?: string; refresh_token?: string } = await res.json();
-      if (typeof data.access_token !== "string")
-        return false;
-      this.#state.data.token = data.access_token;
-      if (typeof data.refresh_token === "string")
-        this.#state.data.refreshToken = data.refresh_token;
+      const tokens = await refreshOAuthToken("twitch", { clientId, refreshToken: rt });
+      this.#state.data.token = tokens.accessToken;
+      if (tokens.refreshToken)
+        this.#state.data.refreshToken = tokens.refreshToken;
       return true;
     } catch {
       return false;
@@ -190,45 +181,25 @@ class Service_Twitch implements IServiceInterface {
 
   async #exchangeCodeForToken(code: string) {
     const clientId = getTwitchClientId();
-    const clientSecret = getTwitchClientSecret();
     const redirect = this.lastOAuthRedirectUri || getTwitchRedirectUri();
     try {
-      const params = new URLSearchParams({
-        client_id: clientId,
+      const tokens = await exchangeOAuthCode("twitch", {
+        clientId,
         code,
-        grant_type: "authorization_code",
-        redirect_uri: redirect,
-        code_verifier: this.codeVerifier,
+        codeVerifier: this.codeVerifier,
+        redirectUri: redirect,
       });
-      if (clientSecret)
-        params.set("client_secret", clientSecret);
-      const res = await fetchWithTimeout("https://id.twitch.tv/oauth2/token", {
-        method: "POST",
-        timeoutMs: 30_000,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => res.statusText);
-        pushSystemLog("Twitch", `Token exchange failed: ${res.status} ${errText}`, "error");
-        const hint = /invalid client/i.test(errText)
-          ? i18n.t("integrations.twitch.token_exchange_hint_invalid_client")
-          : "";
-        toast.error(i18n.t("integrations.twitch.login_token_exchange_failed", { hint }));
-        return;
-      }
-      const data: { access_token?: string; refresh_token?: string } = await res.json();
-      if (typeof data.access_token !== "string") {
-        pushSystemLog("Twitch", "Token exchange returned no access_token", "error");
-        return;
-      }
-      this.#state.data.token = data.access_token;
-      if (typeof data.refresh_token === "string")
-        this.#state.data.refreshToken = data.refresh_token;
+      this.#state.data.token = tokens.accessToken;
+      if (tokens.refreshToken)
+        this.#state.data.refreshToken = tokens.refreshToken;
       await this.connect();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      pushSystemLog("Twitch", `Token exchange error: ${msg}`, "error");
+      const errText = oauthErrorMessage(e);
+      pushSystemLog("Twitch", `Token exchange failed: ${errText}`, "error");
+      const hint = /invalid client/i.test(errText)
+        ? i18n.t("integrations.twitch.token_exchange_hint_invalid_client")
+        : "";
+      toast.error(i18n.t("integrations.twitch.login_token_exchange_failed", { hint }));
     }
   }
 
@@ -246,8 +217,9 @@ class Service_Twitch implements IServiceInterface {
 
     void (async () => {
       try {
-        const clientSecret = getTwitchClientSecret();
-        const useImplicit = !clientSecret;
+        // A Confidential app (its client secret compiled into the Rust side) signs in with the code flow and gets
+        // a refresh token; otherwise it is a Public app with the implicit grant. The secret itself is never here.
+        const useImplicit = !(await oauthClientSecretConfigured("twitch"));
 
         this.oauthState = generateOAuthRandomString(32);
         this.codeVerifier = useImplicit ? "" : generateOAuthRandomString(64);

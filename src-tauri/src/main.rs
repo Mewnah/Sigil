@@ -188,6 +188,10 @@ fn main() {
         .plugin(services::gemini_tts::init())
         .plugin(services::tts_helpers::init())
         .plugin(services::gpt_sovits::init())
+        // Credentialed calls whose secret is compiled into the binary instead of the JS bundle: the Kick /
+        // Twitch OAuth token requests (client secret) and the Google Fonts list (API key).
+        .plugin(services::oauth_token::init())
+        .plugin(services::google_fonts::init())
         // Secondary windows (the caption window, P6-B) close with the main window, so Sigil never
         // keeps running with only them open (Tauri exits when the last window is gone).
         .on_window_event(|window, event| {

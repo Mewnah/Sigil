@@ -4,15 +4,15 @@ All notable changes to **Sigil** are documented here. Sigil continues from the *
 
 Entries before **2026** may name documentation files that were later merged or renamed; the current layout lives under [`docs/`](docs/).
 
-## [Unreleased]
-
----
-
 ## [0.5.0](https://github.com/Mewnah/Sigil/releases/tag/v0.5.0) - 2026-10-12
 
 **The speech-stack release.** Speech-to-text now defaults to **Built-in (on your PC)**: live captions that a more accurate final line replaces per sentence, with the models picked for your language and PC and a question before anything downloads; the speech pipeline, the models and their accuracy are measured on a public corpus. **Translation** gets a local default (Hy-MT2, NLLB-200 for about 200 languages, free cloud options) whose partial captions no longer flicker. **Text-to-speech** plays through one output with local, keyless and cloud voices. The **voice changer** runs on Sigil's own engine: import the RVC voices you already have, zero-shot and singing voices, GPU and CPU presets and a benchmark you can rerun. The interface has one **Speech** group in the left menu, Rewrite as a tab of Speech to Text and a five-step **setup wizard** on the first run. Other computers on your network now need a token, and a scene you open can no longer run code through its event text. The installers bundle the CUDA and DirectML providers; NVIDIA's CUDA runtime stays an opt-in download. The interface comes in 20 languages (machine-assisted; corrections are welcome).
 
 - **Documentation** — Consolidated detailed guides into [docs/OPERATOR_REFERENCE.md](docs/OPERATOR_REFERENCE.md), [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [docs/RELEASE_AND_ENGINEERING.md](docs/RELEASE_AND_ENGINEERING.md), and manual chapters under [docs/manual/README.md](docs/manual/README.md). Older bullets in this file may still reference previous filenames.
+
+### Security
+
+- **Client secrets and API keys moved out of the web bundle.** A build used to put every `VITE_*`, `SIGIL_*`, `CURSES_*` and `TAURI_*` variable of its environment into the JavaScript that Sigil's own web server serves (to the whole LAN in LAN mode), including the Kick client secret and the Google Fonts API key. Vite now gets only an allow-list of public names ([`scripts/release/env-classification.json`](scripts/release/env-classification.json): the Twitch and Kick client ids and redirect overrides). The secrets are compiled into `Sigil.exe` by `build.rs` (lightly obfuscated, which is not protection: Kick requires a client secret, so it has to ship), and a new Rust plugin makes the Kick and Twitch token exchange and refresh and the Google Fonts list request; the frontend never sees a secret. Kick sign-in now needs the desktop app, and the Kick `*_REDIRECT_LOCAL` override is gone (Rust accepts only the two localhost callbacks). Kick access tokens are now refreshed instead of expiring. `SIGIL_GOOGLE_FONTS_API_KEY` is the new name of the fonts key (`VITE_GOOGLE_FONTS_API_KEY` still works). New guards: `check-no-secrets.mjs` (run by `verify-bundle.ps1` and the release workflow), a vitest on `src/`, and tests of the classification. See [Secrets in the build](docs/RELEASE_AND_ENGINEERING.md#secrets-in-the-build); rotate the Kick secret and the fonts key if an earlier build was shared.
 
 ### Speech stack overhaul
 

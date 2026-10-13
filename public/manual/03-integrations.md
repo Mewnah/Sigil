@@ -38,19 +38,18 @@ In a **release (Tauri) build**, the main window uses a **secure custom-protocol 
    - `http://localhost:17890/oauth/twitch/callback` (Twitch confidential / code)  
    - `http://localhost:17890/oauth/kick/callback` (Kick)  
 
-2. **Flows that redirect into the app webview** — also register the **exact** HTTPS origin of the packaged app plus the path (`/oauth/twitch/implicit`, `/oauth/twitch/callback`, `/oauth/kick/callback`, etc.). To read that origin once: open the **installed** app, enable devtools if you use them, and run `window.location.origin` in the console; or set explicit overrides (below).
+2. **Flows that redirect into the app webview** — also register the **exact** HTTPS origin of the packaged app plus the path (`/oauth/twitch/implicit`, `/oauth/twitch/callback`, etc.). **Kick is the exception**: its token exchange runs in the app's Rust side, which accepts only `http://localhost:17890/oauth/kick/callback` and (for development) `http://localhost:1420/oauth/kick/callback`, so register those two and nothing else for Kick. To read that origin once: open the **installed** app, enable devtools if you use them, and run `window.location.origin` in the console; or set explicit overrides (below).
 
 3. **Local development** — keep `http://localhost:1420/oauth/...` entries if you test OAuth against Vite.
 
 ### Environment overrides (build-time)
 
-Optional variables pin redirect URIs when the defaults are wrong for your Twitch/Kick app registration. They are read at **frontend build time** (Vite). Prefer the `SIGIL_*` names; `CURSES_*` still works as a legacy alias.
+Optional variables pin redirect URIs when the defaults are wrong for your Twitch app registration. They are read at **frontend build time** (Vite). Prefer the `SIGIL_*` names; `CURSES_*` still works as a legacy alias.
 
 | Variable | Use |
 |----------|-----|
 | `SIGIL_TWITCH_IMPLICIT_REDIRECT_LOCAL` | Full URL for Twitch implicit return in the webview (public apps). |
 | `SIGIL_TWITCH_CLIENT_REDIRECT_LOCAL` | Full URL for Twitch OAuth code callback in the webview (confidential apps). |
-| `SIGIL_KICK_REDIRECT_LOCAL` | Full URL for Kick OAuth callback in the webview. |
 
 See `.env.example` in the repo root for copy-paste templates.
 
@@ -83,7 +82,7 @@ Sidebar → **Twitch**.
 ### Tips
 
 - Redirect URLs must match what you registered in the Twitch console and optional `SIGIL_TWITCH_*_REDIRECT_LOCAL` build-time overrides in `.env`.  
-- Never share **client secret** or committed `.env` with real credentials.  
+- Never share **client secret** or committed `.env` with real credentials. A Confidential app's secret is compiled into the Sigil binary (not the web bundle) and used by the app's Rust side only.  
 - If emotes fail to load, check network and third-party emote CDN status.
 
 ### Related
@@ -107,8 +106,8 @@ Sidebar → **Kick**.
 
 ### Setup (high level)
 
-1. Register an application with Kick and set `SIGIL_KICK_CLIENT_ID` / `SIGIL_KICK_CLIENT_SECRET` in `.env` as documented in [README.md](../../README.md).  
-2. Register redirect URLs: at minimum `http://localhost:17890/oauth/kick/callback`, plus dev/packaged webview URLs as described in [OAuth, redirects, and ports](#oauth-redirects-and-ports).  
+1. Register an application with Kick and set `SIGIL_KICK_CLIENT_ID` / `SIGIL_KICK_CLIENT_SECRET` in `.env` as documented in [README.md](../../README.md), then build Sigil. The secret is compiled into the app (Kick has no sign-in flow without one); the web page never sees it.  
+2. Register the redirect URL `http://localhost:17890/oauth/kick/callback` (desktop app). `http://localhost:1420/oauth/kick/callback` is the only other one Sigil accepts. Kick sign-in needs the desktop app, not a browser tab. See [OAuth, redirects, and ports](#oauth-redirects-and-ports).  
 3. Complete OAuth in the inspector.  
 4. Set channel and options per UI fields.
 

@@ -8,6 +8,7 @@ import { nanoid } from "nanoid";
 import { toast } from "react-toastify";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { fetchGoogleFontsList } from "@/utils/googleFonts";
 
 export interface GoogleFont {
   category: string
@@ -78,14 +79,24 @@ class Service_Files implements IServiceInterface {
   }
 
   private fontsLoaded = false;
+  private fontsError = "";
 
+  /**
+   * Load the Google Fonts list once (kept for the life of the page). The request is made by Rust with the API
+   * key compiled into the app, so only the host can do it; clients have no Tauri and do not install fonts.
+   */
   async loadFonts() {
+    if (!window.Config.isServer()) {
+      this.fontsError = "Fonts can only be installed from the Sigil app.";
+      return;
+    }
     try {
-      const resp = await fetch(`https://www.googleapis.com/webfonts/v1/webfonts?key=${import.meta.env.VITE_GOOGLE_FONTS_API_KEY}`);
-      const data = await resp.json() as { items: GoogleFont[] };
-      this.fontsList = data.items;
+      this.fontsList = await fetchGoogleFontsList<GoogleFont>();
       this.fontsLoaded = true;
-    } catch (error) { }
+      this.fontsError = "";
+    } catch (error) {
+      this.fontsError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   public async installFont(fontName: string) {
@@ -94,6 +105,7 @@ class Service_Files implements IServiceInterface {
       await this.loadFonts();
 
     if (!this.fontsLoaded) {
+      toast.error(`Could not load the Google Fonts list: ${this.fontsError || "unknown error"}`);
       return
     }
     const font = this.fontsList.find(f => f.family === fontName);

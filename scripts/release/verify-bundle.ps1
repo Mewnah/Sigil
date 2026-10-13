@@ -30,6 +30,11 @@
     4. Unless -SkipProbe: runs the installed-layout `Sigil.exe --headless ep-probe` and checks that
        the provider DLLs are found next to the exe; prints the EP test results. -RequireCuda makes a
        failed CUDA test an error (manual acceptance on an NVIDIA PC with the runtime pack installed).
+    5. Secrets: `check-no-secrets.mjs` compares the values of every SECRET / API_KEY / TOKEN / PASSWORD
+       variable of .env and the environment with dist/, Sigil.exe and both extracted installers. Client secrets and API keys are compiled into Sigil.exe
+       obfuscated (src-tauri/build.rs), so a plain-text hit anywhere is a leak. It prints variable names
+       only. -RequireSecretValues (CI) fails when there is no secret value to compare, instead of passing
+       without checking anything.
 
 .EXAMPLE
   pwsh scripts/release/verify-bundle.ps1
@@ -43,6 +48,7 @@ param(
   [switch]$SkipInstallers,
   [switch]$SkipProbe,
   [switch]$RequireCuda,
+  [switch]$RequireSecretValues,
   [switch]$Strict
 )
 
@@ -304,6 +310,8 @@ if (-not $dumpbin) {
 $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sigil-verify-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $tmpRoot | Out-Null
 $installedExe = $null
+$msiOut = $null
+$nsisOut = $null
 
 function Test-InstalledLayout([string]$label, [string]$root) {
   $exes = @(Get-ChildItem -LiteralPath $root -Recurse -Filter 'Sigil.exe' -File -ErrorAction SilentlyContinue)
@@ -398,6 +406,22 @@ try {
       Pass "probe: recommended EP '$($report.recommended_ep)'"
       foreach ($n in @($report.notes)) { Write-Host "       note: $n" }
     }
+  }
+
+  # --- 5. No secret value in the frontend bundle, the exe or the extracted installers ---------------------
+  # Names only are printed. A secret is allowed in exactly one form: XOR-obfuscated inside Sigil.exe (build.rs), which
+  # a plain-text search does not match; the frontend bundle (dist/) must not hold any.
+  $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+  if (-not $nodeCmd) { Warn 'node not found; scripts/release/check-no-secrets.mjs was not run' }
+  else {
+    $scanArgs = @((Join-Path $PSScriptRoot 'check-no-secrets.mjs'), '--root', $RepoRoot, $exe)
+    foreach ($dir in @($msiOut, $nsisOut)) { if ($dir -and (Test-Path -LiteralPath $dir)) { $scanArgs += $dir } }
+    if ($RequireSecretValues) { $scanArgs += '--require-values' }
+    $scanOut = @(& $nodeCmd.Source @scanArgs)
+    $scanExit = $LASTEXITCODE
+    foreach ($line in $scanOut) { Write-Host "       $line" }
+    if ($scanExit -eq 0) { Pass 'no secret value in dist, Sigil.exe or the extracted installers' }
+    else { Fail "check-no-secrets.mjs found a leaked secret or could not run (exit $scanExit)" }
   }
 } finally {
   Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue

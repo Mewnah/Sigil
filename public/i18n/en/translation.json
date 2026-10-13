@@ -2661,7 +2661,10 @@
       "chat_session_expired": "Kick: session expired or invalid. Try logging in again.",
       "chat_with_detail": "Kick chat: {{detail}}",
       "chat_failed_status": "Kick chat failed ({{status}})",
-      "chat_request_failed": "Kick chat request failed"
+      "chat_request_failed": "Kick chat request failed",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "diagnostics": {

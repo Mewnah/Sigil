@@ -1985,7 +1985,10 @@
       "chat_session_expired": "เตะ: เซสชั่นหมดอายุหรือไม่ถูกต้อง ลองเข้าสู่ระบบอีกครั้ง",
       "chat_with_detail": "เตะแชท: {{detail}}",
       "chat_failed_status": "เตะแชทล้มเหลว ({{status}})",
-      "chat_request_failed": "คำขอเตะแชทล้มเหลว"
+      "chat_request_failed": "คำขอเตะแชทล้มเหลว",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

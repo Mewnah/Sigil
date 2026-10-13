@@ -1985,7 +1985,10 @@
       "chat_session_expired": "ركلة: الجلسة منتهية الصلاحية أو غير صالحة. حاول تسجيل الدخول مرة أخرى.",
       "chat_with_detail": "ركلة الدردشة: {{detail}}",
       "chat_failed_status": "فشلت ركلة الدردشة ({{status}})",
-      "chat_request_failed": "فشل طلب الدردشة"
+      "chat_request_failed": "فشل طلب الدردشة",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

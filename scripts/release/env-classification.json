@@ -1,0 +1,22 @@
+{
+  "$comment": "Which build-time environment variables may reach the frontend bundle. `public` is the allow-list vite.config.ts hands to Vite as envPrefix (full variable names, so a prefix match is an exact match): OAuth client ids, redirect URL overrides and the Tauri debug flag. `secret` is what build.rs compiles into Sigil.exe (lightly XOR-obfuscated, see src-tauri/embed_codec.rs, which is NOT protection) and what src/ and vite.config.ts must never name. Nothing may be in both lists. Names only: never put a value in this file. Read by vite.config.ts, src-tauri/build.rs, scripts/release/check-no-secrets.mjs and the tests that guard them.",
+  "public": [
+    "SIGIL_TWITCH_CLIENT_ID",
+    "CURSES_TWITCH_CLIENT_ID",
+    "SIGIL_KICK_CLIENT_ID",
+    "CURSES_KICK_CLIENT_ID",
+    "SIGIL_TWITCH_CLIENT_REDIRECT_LOCAL",
+    "CURSES_TWITCH_CLIENT_REDIRECT_LOCAL",
+    "SIGIL_TWITCH_IMPLICIT_REDIRECT_LOCAL",
+    "CURSES_TWITCH_IMPLICIT_REDIRECT_LOCAL",
+    "TAURI_DEBUG"
+  ],
+  "secret": [
+    "SIGIL_KICK_CLIENT_SECRET",
+    "CURSES_KICK_CLIENT_SECRET",
+    "SIGIL_TWITCH_CLIENT_SECRET",
+    "CURSES_TWITCH_CLIENT_SECRET",
+    "SIGIL_GOOGLE_FONTS_API_KEY",
+    "VITE_GOOGLE_FONTS_API_KEY"
+  ]
+}

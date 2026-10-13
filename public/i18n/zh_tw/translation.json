@@ -1985,7 +1985,10 @@
       "chat_session_expired": "Kick：工作階段已過期或無效，請重新登入。",
       "chat_with_detail": "Kick 聊天：{{detail}}",
       "chat_failed_status": "Kick 聊天失敗（{{status}}）",
-      "chat_request_failed": "Kick 聊天請求失敗"
+      "chat_request_failed": "Kick 聊天請求失敗",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

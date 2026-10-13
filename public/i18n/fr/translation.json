@@ -1985,7 +1985,10 @@
       "chat_session_expired": "Kick : session expirée ou invalide. Essayez de vous connecter à nouveau.",
       "chat_with_detail": "Kick chat : {{detail}}",
       "chat_failed_status": "Échec du kick chat ({{status}})",
-      "chat_request_failed": "La demande d'exclusion du chat a échoué"
+      "chat_request_failed": "La demande d'exclusion du chat a échoué",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

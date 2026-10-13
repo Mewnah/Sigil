@@ -7,7 +7,7 @@ What turns the working tree into installers a friend can run, and the checks tha
 ```powershell
 node scripts/release/check-catalog-pins.mjs          # 1. every published hash pinned, the release set immutable (offline, seconds)
 pnpm tauri:release                                    # 2. NSIS (per-user) + MSI, provider DLLs and the Visual C++ runtime staged next to Sigil.exe
-pwsh scripts/release/verify-bundle.ps1                # 3. DLLs inside both installers, no new load-time imports, EP probe
+pwsh scripts/release/verify-bundle.ps1                # 3. DLLs inside both installers, no new load-time imports, EP probe, no secret value in dist / exe / installers
 pwsh scripts/release/packaged-smoke-all.ps1           # 4. the installer's app starts with no GPU and no packs
 pwsh scripts/release/packaged-smoke-all.ps1 -Mode Sandbox   # 5. the same in a clean Windows (Windows Sandbox, virtual GPU off)
 ```
@@ -22,8 +22,19 @@ Build tip on a PC someone is using: `$p = Get-Process -Id $PID; $p.PriorityClass
 | `stage-native-dlls.mjs` | Copies `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll` and `DirectML.dll` from the cargo target, and the Visual C++ runtime (`vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, `msvcp140_1.dll`) from the Visual Studio redistributable folder, into `src-tauri/target/native-bundle` (hash manifest next to it). See "The Visual C++ runtime". |
 | `verify-bundle.ps1`, `expected-imports.txt` | Step 3: staged DLLs match their manifest and sit next to `Sigil.exe` in the MSI and the NSIS setup (the three provider DLLs and the four Visual C++ runtime DLLs); `dumpbin /DEPENDENTS` shows no CUDA, cuDNN, ONNX Runtime, ggml, OpenVR or sherpa load-time import (they load lazily so Sigil starts on any PC) and no Visual C++ runtime import beyond the four shipped; the installed layout runs the headless EP probe. |
 | `check-catalog-pins.mjs`, `release-set.json` | Step 1, below. |
+| `check-no-secrets.mjs`, `env-classification.json`, `env-classification.mjs` | Part of step 3: no secret value in the frontend bundle, the exe or the extracted installers. See "Secrets". |
 | `packaged-smoke-all.ps1` | Steps 4 and 5, below. |
 | `exit-probe.ps1` | Diagnostic, not a gate: one minimized launch that reproduces the shutdown stall the exit guard exists for (WM_CLOSE to the event loop's invisible window), see "Closing the window must end the process". |
+
+## Secrets (part of step 3)
+
+Which build-time variables may reach the frontend bundle is written down once, in `env-classification.json` (names only): the `public` list (OAuth client ids, redirect overrides, `TAURI_DEBUG`) is the allow-list `vite.config.ts` gives Vite as `envPrefix`; the `secret` list (the Kick and Twitch client secrets, the Google Fonts API key) is what `src-tauri/build.rs` compiles into `Sigil.exe`, XOR-obfuscated with a per-build key. The obfuscation keeps the values out of a text search of the binary and out of the web bundle that the embedded server hands to the LAN. **It is not protection**: the key is in the same binary, and the secret is in memory and on the wire while the app runs. Kick requires a client secret for its token endpoint (there is no public-client flow), so it has to ship; the real defences are rotating it in the Kick developer portal and that Rust only accepts Sigil's two localhost redirect URIs.
+
+- `env-classification.mjs` loads the file and refuses a combination that could expose a secret (a credential-looking public name, a name in both lists, a public name that is a prefix of a secret name). `vite.config.ts` calls it, so an unsafe edit stops the build.
+- `check-no-secrets.mjs [path ...]` collects the values of every variable named like `SECRET`, `API_KEY`, `TOKEN` or `PASSWORD` (and every `secret` name) from `.env`, `.env.local` and the process environment, and fails when one appears as plain text, as UTF-8, UTF-16LE, JSON-escaped or URL-encoded, in `dist/` or in any path given (`Sigil.exe`, an extracted installer folder). It prints variable names and file paths, never a value. `--require-values` fails when there is nothing to compare (CI), `--no-process-env` reads only the files, `--no-dist` scans only the given paths. A compressed installer (NSIS, MSI) can only be searched as the bytes it is: `verify-bundle.ps1` extracts both and passes the folders.
+- `verify-bundle.ps1` runs it after the installers are extracted (`-RequireSecretValues` in CI). By hand after `pnpm build`: `node scripts/release/check-no-secrets.mjs`.
+- If it ever fails: the build is not safe to hand out; rotate the named secret (Kick developer portal, Google Cloud console), find the reference in `src/` (`src/utils/__tests__/noFrontendSecrets.test.ts` should have caught it) and rebuild.
+- After creating `.env` for the first time, Cargo does not know it exists yet (a build script cannot watch a file that is missing without recompiling every time): touch `src-tauri/build.rs` or run `cargo clean -p sigil` once.
 
 ## The Visual C++ runtime
 

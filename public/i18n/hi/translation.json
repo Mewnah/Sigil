@@ -1985,7 +1985,10 @@
       "chat_session_expired": "किक: सत्र समाप्त या अमान्य। पुनः लॉग इन करने का प्रयास करें.",
       "chat_with_detail": "किक चैट: {{detail}}",
       "chat_failed_status": "किक चैट विफल ({{status}})",
-      "chat_request_failed": "किक चैट अनुरोध विफल रहा"
+      "chat_request_failed": "किक चैट अनुरोध विफल रहा",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

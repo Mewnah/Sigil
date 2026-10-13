@@ -1,10 +1,15 @@
-# `pnpm tauri build` embeds Vite env at compile time. Configure repo secrets (Settings → Secrets and variables → Actions):
-#   SIGIL_TWITCH_CLIENT_ID (or CURSES_TWITCH_CLIENT_ID)
+# `pnpm tauri build` puts the PUBLIC ids into the frontend bundle (Vite) and compiles the SECRETS into Sigil.exe
+# (src-tauri/build.rs, XOR-obfuscated: not protection; scripts/release/env-classification.json lists which is which).
+# Configure repo secrets (Settings → Secrets and variables → Actions):
+#   SIGIL_TWITCH_CLIENT_ID (or CURSES_TWITCH_CLIENT_ID)                      public, in the bundle
 #   SIGIL_TWITCH_CLIENT_SECRET (or CURSES_TWITCH_CLIENT_SECRET) — only if you use a Confidential Twitch app (auth code flow)
-#   SIGIL_KICK_CLIENT_ID (or CURSES_KICK_CLIENT_ID), SIGIL_KICK_CLIENT_SECRET (or CURSES_KICK_CLIENT_SECRET)
-#   VITE_GOOGLE_FONTS_API_KEY (optional; Google Fonts list in app)
+#   SIGIL_KICK_CLIENT_ID (or CURSES_KICK_CLIENT_ID)                          public, in the bundle
+#   SIGIL_KICK_CLIENT_SECRET (or CURSES_KICK_CLIENT_SECRET)                  required for Kick sign-in; Rust only
+#   SIGIL_GOOGLE_FONTS_API_KEY (or the older VITE_GOOGLE_FONTS_API_KEY; optional; Google Fonts list in app; Rust only)
 # Optional redirect overrides if OAuth URLs differ from defaults: SIGIL_TWITCH_CLIENT_REDIRECT_LOCAL,
-#   SIGIL_TWITCH_IMPLICIT_REDIRECT_LOCAL, SIGIL_KICK_CLIENT_REDIRECT_LOCAL (see .env.example)
+#   SIGIL_TWITCH_IMPLICIT_REDIRECT_LOCAL (see .env.example). Kick has no override: Rust accepts only its two localhost callbacks.
+# The "Verify bundle" step runs scripts/release/check-no-secrets.mjs with the same secrets in its environment and fails
+# if any secret value is in dist/, Sigil.exe or the extracted installers (-RequireSecretValues: no secrets given is a failure).
 #
 # GPU execution providers: the release build uses scripts/release/tauri.release.conf.json, which
 # stages onnxruntime_providers_shared.dll, onnxruntime_providers_cuda.dll and DirectML.dll (copied by
@@ -105,11 +110,19 @@ jobs:
           SIGIL_TWITCH_CLIENT_SECRET: ${{ secrets.SIGIL_TWITCH_CLIENT_SECRET || secrets.CURSES_TWITCH_CLIENT_SECRET }}
           SIGIL_KICK_CLIENT_ID: ${{ secrets.SIGIL_KICK_CLIENT_ID || secrets.CURSES_KICK_CLIENT_ID }}
           SIGIL_KICK_CLIENT_SECRET: ${{ secrets.SIGIL_KICK_CLIENT_SECRET || secrets.CURSES_KICK_CLIENT_SECRET }}
+          SIGIL_GOOGLE_FONTS_API_KEY: ${{ secrets.SIGIL_GOOGLE_FONTS_API_KEY }}
           VITE_GOOGLE_FONTS_API_KEY: ${{ secrets.VITE_GOOGLE_FONTS_API_KEY }}
 
-      - name: Verify bundle (provider DLLs in both installers, no new load-time imports, EP probe)
+      # Also scans dist/, Sigil.exe and both extracted installers for the values of the secrets above (names only are
+      # printed), so the same secrets are in the environment of this step.
+      - name: Verify bundle (provider DLLs in both installers, no new load-time imports, EP probe, no secret values)
         shell: pwsh
-        run: ./scripts/release/verify-bundle.ps1
+        run: ./scripts/release/verify-bundle.ps1 -RequireSecretValues
+        env:
+          SIGIL_TWITCH_CLIENT_SECRET: ${{ secrets.SIGIL_TWITCH_CLIENT_SECRET || secrets.CURSES_TWITCH_CLIENT_SECRET }}
+          SIGIL_KICK_CLIENT_SECRET: ${{ secrets.SIGIL_KICK_CLIENT_SECRET || secrets.CURSES_KICK_CLIENT_SECRET }}
+          SIGIL_GOOGLE_FONTS_API_KEY: ${{ secrets.SIGIL_GOOGLE_FONTS_API_KEY }}
+          VITE_GOOGLE_FONTS_API_KEY: ${{ secrets.VITE_GOOGLE_FONTS_API_KEY }}
 
       # The hosted runner has no GPU and no Sigil data: install the NSIS setup silently, check the headless
       # entry points, start the app on a fresh profile (server, page, Models & Runtimes empty, log, clean

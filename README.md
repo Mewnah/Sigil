@@ -100,7 +100,7 @@ SIGIL_KICK_CLIENT_ID=your_client_id
 SIGIL_KICK_CLIENT_SECRET=your_client_secret
 ```
 
-- **`pnpm build` / `pnpm tauri build`** can embed `SIGIL_*`, legacy `CURSES_*`, and `VITE_*` from your environment into the frontend bundle. Do not upload a local `dist/` zip to public issues if it was built with real secrets.
+- **Public ids vs secrets.** Only the client ids and redirect overrides (`scripts/release/env-classification.json`, `public`) go into the frontend bundle. Client secrets and API keys (`SIGIL_KICK_CLIENT_SECRET`, `SIGIL_TWITCH_CLIENT_SECRET`, `SIGIL_GOOGLE_FONTS_API_KEY`, the older `VITE_GOOGLE_FONTS_API_KEY`; legacy `CURSES_*` names work) are read by `src-tauri/build.rs` and compiled into `Sigil.exe` only, lightly obfuscated, which is **not** protection. Kick has no public-client flow, so its secret has to ship inside the app; rotate it in the Kick developer portal if it is abused. Kick sign-in therefore needs the desktop app. After creating `.env` the first time, touch `src-tauri/build.rs` once so Cargo notices it. `node scripts/release/check-no-secrets.mjs` checks a build (`dist/`, `Sigil.exe`) for leaked values.
 - **GitHub Actions:** the `release` workflow passes `SIGIL_TWITCH_CLIENT_ID` from the repository secret of the same name (or legacy `CURSES_TWITCH_CLIENT_ID`).
 
 ### Documentation

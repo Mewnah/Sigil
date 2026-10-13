@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react-swc";
 import * as path from "path";
 import { visualizer } from "rollup-plugin-visualizer";
 import tailwindcss from "@tailwindcss/vite";
+import { loadEnvClassification, viteEnvPrefix } from "./scripts/release/env-classification.mjs";
 
 const analyzeBundle = process.env.ANALYZE === "true";
 
@@ -28,8 +29,16 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
   },
-  /* SIGIL_* is canonical; CURSES_* still exposed for legacy .env files from the Curses fork. */
-  envPrefix: ["VITE_", "TAURI_", "SIGIL_", "CURSES_"],
+  /*
+   * Only the `public` names of scripts/release/env-classification.json reach import.meta.env (OAuth client ids,
+   * redirect overrides, TAURI_DEBUG; SIGIL_* canonical, CURSES_* legacy). They are complete variable names, so
+   * Vite's prefix match is an exact match. This used to be the prefixes VITE_, TAURI_, SIGIL_ and CURSES_, which
+   * put every variable with such a name (the Kick client secret, the Google Fonts API key, any SIGIL_* path or
+   * flag in the shell, TAURI_SIGNING_PRIVATE_KEY) into the bundle that the embedded web server hands to the LAN.
+   * Secrets are compiled into Sigil.exe by src-tauri/build.rs instead. viteEnvPrefix() throws on a classification
+   * that could expose a secret; scripts/release/check-no-secrets.mjs checks the finished build.
+   */
+  envPrefix: viteEnvPrefix(loadEnvClassification(__dirname)),
   resolve: {
     alias: [{ find: "@", replacement: path.resolve(__dirname, "src") }],
   },

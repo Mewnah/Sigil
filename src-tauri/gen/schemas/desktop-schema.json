@@ -6651,6 +6651,24 @@
           "markdownDescription": "Denies the unregister_all command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-google-fonts-list`",
+          "type": "string",
+          "const": "google-fonts:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-google-fonts-list`"
+        },
+        {
+          "description": "Enables the google_fonts_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-fonts:allow-google-fonts-list",
+          "markdownDescription": "Enables the google_fonts_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the google_fonts_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-fonts:deny-google-fonts-list",
+          "markdownDescription": "Denies the google_fonts_list command without any pre-configured scope."
+        },
+        {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-gpt-sovits-speak`\n- `allow-gpt-sovits-cancel`\n- `allow-gpt-sovits-check`\n- `allow-gpt-sovits-set-weights`",
           "type": "string",
           "const": "gpt-sovits:default",
@@ -7555,6 +7573,48 @@
           "type": "string",
           "const": "neural-sidecar-tts:deny-set-neural-sidecar-tts-endpoint",
           "markdownDescription": "Denies the set_neural_sidecar_tts_endpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-oauth-token-exchange`\n- `allow-oauth-token-refresh`\n- `allow-oauth-client-secret-configured`",
+          "type": "string",
+          "const": "oauth-token:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-oauth-token-exchange`\n- `allow-oauth-token-refresh`\n- `allow-oauth-client-secret-configured`"
+        },
+        {
+          "description": "Enables the oauth_client_secret_configured command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:allow-oauth-client-secret-configured",
+          "markdownDescription": "Enables the oauth_client_secret_configured command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the oauth_token_exchange command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:allow-oauth-token-exchange",
+          "markdownDescription": "Enables the oauth_token_exchange command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the oauth_token_refresh command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:allow-oauth-token-refresh",
+          "markdownDescription": "Enables the oauth_token_refresh command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the oauth_client_secret_configured command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:deny-oauth-client-secret-configured",
+          "markdownDescription": "Denies the oauth_client_secret_configured command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the oauth_token_exchange command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:deny-oauth-token-exchange",
+          "markdownDescription": "Denies the oauth_token_exchange command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the oauth_token_refresh command without any pre-configured scope.",
+          "type": "string",
+          "const": "oauth-token:deny-oauth-token-refresh",
+          "markdownDescription": "Denies the oauth_token_refresh command without any pre-configured scope."
         },
         {
           "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-openai-speech-speak`\n- `allow-openai-speech-cancel`\n- `allow-openai-speech-check`\n- `allow-openai-speech-list-voices`",

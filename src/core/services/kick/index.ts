@@ -2,9 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-shell";
 import { pushSystemLog } from "@/core/services/systemLog";
 import { IServiceInterface, ServiceNetworkState, TextEventSource, TextEventType } from "@/types";
-import { getKickClientId, getKickClientSecret, getKickRedirectUri } from "@/utils/integrationEnv";
+import { getKickClientId } from "@/utils/integrationEnv";
 import { generateOAuthCodeChallenge, generateOAuthRandomString } from "@/utils/oauthPkce";
 import { isOAuthTauri, listenOAuthPayload } from "@/utils/oauthPopup";
+import {
+    exchangeOAuthCode,
+    oauthClientSecretConfigured,
+    oauthErrorMessage,
+    refreshOAuthToken,
+} from "@/utils/oauthTokens";
 import { fetchWithTimeout } from "@/utils/fetchWithTimeout";
 import { postableFinal } from "../postText";
 import i18n from "i18next";
@@ -33,6 +39,8 @@ class Service_Kick implements IServiceInterface {
     private codeVerifier: string = "";
     private oauthState: string = "";
     private lastOAuthRedirectUri = "";
+    /** The refresh call in flight, so a burst of 401s makes one request. */
+    private refreshing: Promise<boolean> | null = null;
 
     state = proxy<{
         user: { name: string, id: string, profilePictureUrl: string } | null;
@@ -81,6 +89,9 @@ class Service_Kick implements IServiceInterface {
                 this.state.liveStatus = isLive ? ServiceNetworkState.connected : ServiceNetworkState.disconnected;
             } else {
                 this.state.liveStatus = ServiceNetworkState.disconnected;
+                // 401: the access token expired. Get a new one; the next tick uses it.
+                if (response.status === 401 && this.#state.data.refreshToken)
+                    void this.#refreshAccessToken();
             }
         } catch (error) {
             this.state.liveStatus = ServiceNetworkState.disconnected;
@@ -172,6 +183,23 @@ class Service_Kick implements IServiceInterface {
                 return;
             }
 
+            // Kick's token endpoint needs the app's client secret, which lives in the Rust side of the desktop
+            // app (never in this bundle), so signing in needs the app and a build that has the secret.
+            if (!isOAuthTauri()) {
+                toast.warning(i18n.t("integrations.kick.needs_desktop_app"));
+                pushSystemLog("Kick", "Sign-in needs the Sigil desktop app: the token exchange runs there", "warning");
+                return;
+            }
+            if (!(await oauthClientSecretConfigured("kick"))) {
+                toast.warning(i18n.t("integrations.kick.missing_client_secret"));
+                pushSystemLog(
+                  "Kick",
+                  "This build has no Kick client secret compiled in: set it in .env (or the build environment) and rebuild",
+                  "warning"
+                );
+                return;
+            }
+
             this.codeVerifier = generateOAuthRandomString(64);
             this.oauthState = generateOAuthRandomString(32);
             const codeChallenge = await generateOAuthCodeChallenge(this.codeVerifier);
@@ -206,117 +234,98 @@ class Service_Kick implements IServiceInterface {
                 unlistenTauri = undefined;
             };
 
-            if (isOAuthTauri()) {
-                unlistenTauri = await listenOAuthPayload("kick", async (p) => {
-                    if (p.error) {
-                        finishWithError(`OAuth error: ${p.error}`, i18n.t("integrations.kick.login_cancelled"));
-                        cleanupTauri();
-                        return;
-                    }
-                    if (p.code && p.state) {
-                        await handleSuccess(p.code, p.state);
-                        cleanupTauri();
-                    }
-                });
-
-                let redirectUri: string;
-                try {
-                    redirectUri = await invoke<string>("oauth_loopback_start", { provider: "kick" });
-                } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    finishWithError(`OAuth listener failed: ${msg}`, i18n.t("integrations.oauth_listen_failed"));
+            unlistenTauri = await listenOAuthPayload("kick", async (p) => {
+                if (p.error) {
+                    finishWithError(`OAuth error: ${p.error}`, i18n.t("integrations.kick.login_cancelled"));
                     cleanupTauri();
                     return;
                 }
-                thisRef.lastOAuthRedirectUri = redirectUri;
-                link.searchParams.set("redirect_uri", redirectUri);
-                const authUrlTauri = link.toString();
-                try {
-                    await open(authUrlTauri);
-                } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    finishWithError(`Open browser failed: ${msg}`, i18n.t("integrations.oauth_open_browser_failed"));
+                if (p.code && p.state) {
+                    await handleSuccess(p.code, p.state);
                     cleanupTauri();
                 }
+            });
+
+            let redirectUri: string;
+            try {
+                redirectUri = await invoke<string>("oauth_loopback_start", { provider: "kick" });
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                finishWithError(`OAuth listener failed: ${msg}`, i18n.t("integrations.oauth_listen_failed"));
+                cleanupTauri();
                 return;
             }
-
-            this.lastOAuthRedirectUri = getKickRedirectUri();
-            link.searchParams.set("redirect_uri", this.lastOAuthRedirectUri);
-            const authUrl = link.toString();
-
-            const handleMessage = async (msg: MessageEvent<unknown>) => {
-                if (typeof msg.data !== "string")
-                    return;
-                if (msg.data.startsWith("smplstt_kick_auth:")) {
-                    const rest = msg.data.slice("smplstt_kick_auth:".length);
-                    const idx = rest.indexOf(":");
-                    const code = idx === -1 ? rest : rest.slice(0, idx);
-                    const state = idx === -1 ? "" : rest.slice(idx + 1);
-                    if (state !== thisRef.oauthState) {
-                        finishWithError("OAuth state mismatch");
-                        window.removeEventListener("message", handleMessage, true);
-                        return;
-                    }
-                    await thisRef.exchangeCodeForToken(code);
-                    window.removeEventListener("message", handleMessage, true);
-                } else if (msg.data.startsWith("smplstt_kick_auth_error:")) {
-                    const err = msg.data.slice("smplstt_kick_auth_error:".length).split(":")[0] ?? "error";
-                    finishWithError(`OAuth error: ${err}`, "Kick login was cancelled or denied.");
-                    window.removeEventListener("message", handleMessage, true);
-                }
-            };
-
-            const auth_window = window.open(authUrl, "sigil_oauth_kick", "width=600,height=700");
-            if (!auth_window) {
-                toast.error(i18n.t("integrations.oauth_popup_blocked"));
-                pushSystemLog("Kick", "Pop-up blocked; allow pop-ups for this host or use the Sigil desktop build", "warning");
-                return;
+            thisRef.lastOAuthRedirectUri = redirectUri;
+            link.searchParams.set("redirect_uri", redirectUri);
+            const authUrlTauri = link.toString();
+            try {
+                await open(authUrlTauri);
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                finishWithError(`Open browser failed: ${msg}`, i18n.t("integrations.oauth_open_browser_failed"));
+                cleanupTauri();
             }
-            window.addEventListener("message", handleMessage, true);
-            auth_window.onbeforeunload = () => {
-                window.removeEventListener("message", handleMessage, true);
-            };
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             pushSystemLog("Kick", `Login error: ${msg}`, "error");
         }
     }
 
+    /** Swap the authorization code for tokens. The request, with the client secret, is made by Rust. */
     private async exchangeCodeForToken(code: string) {
         try {
-            const clientId = getKickClientId();
-            const clientSecret = getKickClientSecret();
-            const redirect = this.lastOAuthRedirectUri || getKickRedirectUri();
+            const redirectUri = this.lastOAuthRedirectUri;
+            if (!redirectUri)
+                throw new Error("no redirect URI for this sign-in");
 
-            const response = await fetchWithTimeout("https://id.kick.com/oauth/token", {
-                method: "POST",
-                timeoutMs: 30_000,
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: new URLSearchParams({
-                    grant_type: "authorization_code",
-                    client_id: clientId,
-                    client_secret: clientSecret,
-                    code: code,
-                    redirect_uri: redirect,
-                    code_verifier: this.codeVerifier,
-                }).toString(),
+            const tokens = await exchangeOAuthCode("kick", {
+                clientId: getKickClientId(),
+                code,
+                codeVerifier: this.codeVerifier,
+                redirectUri,
             });
-
-            if (!response.ok) {
-                throw new Error(`Token exchange failed: ${response.status}`);
-            }
-
-            const data = await response.json();
-            this.#state.data.token = data.access_token;
-            this.#state.data.refreshToken = data.refresh_token;
+            this.#state.data.token = tokens.accessToken;
+            this.#state.data.refreshToken = tokens.refreshToken ?? "";
 
             await this.connect();
         } catch (error) {
-            console.error("[Kick] Token exchange error:", error);
+            pushSystemLog("Kick", `Token exchange failed: ${oauthErrorMessage(error)}`, "error");
+            toast.error(i18n.t("integrations.kick.login_token_exchange_failed"));
+        } finally {
+            // A PKCE verifier is single use.
+            this.codeVerifier = "";
         }
+    }
+
+    /**
+     * Redeem the refresh token (in Rust, with the client secret). True when a new access token is stored.
+     * Concurrent callers share one request; a result for a session that has since logged out is dropped.
+     */
+    #refreshAccessToken(): Promise<boolean> {
+        if (this.refreshing)
+            return this.refreshing;
+        const refreshToken = this.#state.data.refreshToken;
+        const clientId = getKickClientId();
+        if (!refreshToken || !clientId || !isOAuthTauri())
+            return Promise.resolve(false);
+        const run = (async () => {
+            try {
+                const tokens = await refreshOAuthToken("kick", { clientId, refreshToken });
+                if (this.#state.data.refreshToken !== refreshToken)
+                    return false;
+                this.#state.data.token = tokens.accessToken;
+                if (tokens.refreshToken)
+                    this.#state.data.refreshToken = tokens.refreshToken;
+                return true;
+            } catch (error) {
+                pushSystemLog("Kick", `Token refresh failed: ${oauthErrorMessage(error)}`, "warning");
+                return false;
+            }
+        })().finally(() => {
+            this.refreshing = null;
+        });
+        this.refreshing = run;
+        return run;
     }
 
     logout() {
@@ -340,15 +349,24 @@ class Service_Kick implements IServiceInterface {
 
     async connect() {
         try {
-            if (!this.#state.data.token) return this.logout();
+            if (!this.#state.data.token) {
+                // Signed in earlier, access token gone: try the refresh token before giving up.
+                if (!this.#state.data.refreshToken || !(await this.#refreshAccessToken()))
+                    return this.logout();
+            }
 
             // Fetch user info from Kick API
-            const response = await fetchWithTimeout("https://api.kick.com/public/v1/users", {
+            const fetchUser = () => fetchWithTimeout("https://api.kick.com/public/v1/users", {
                 timeoutMs: 30_000,
                 headers: {
                     "Authorization": `Bearer ${this.#state.data.token}`,
                 },
             });
+            let response = await fetchUser();
+
+            // 401: the access token expired. One refresh, one retry.
+            if (response.status === 401 && this.#state.data.refreshToken && await this.#refreshAccessToken())
+                response = await fetchUser();
 
             if (!response.ok) {
                 console.error("[Kick] Failed to get user info:", response.status);

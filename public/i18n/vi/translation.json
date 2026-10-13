@@ -1985,7 +1985,10 @@
       "chat_session_expired": "Kick: phiên hết hạn hoặc không hợp lệ. Hãy thử đăng nhập lại.",
       "chat_with_detail": "Trò chuyện trực tiếp: {{detail}}",
       "chat_failed_status": "Trò chuyện trực tiếp không thành công ({{status}})",
-      "chat_request_failed": "Yêu cầu trò chuyện trực tiếp không thành công"
+      "chat_request_failed": "Yêu cầu trò chuyện trực tiếp không thành công",
+      "needs_desktop_app": "Kick sign-in needs the Sigil desktop app. Open Sigil on this PC and sign in there.",
+      "missing_client_secret": "Kick sign-in is not set up in this build: no Kick client secret was compiled in. Add it to .env and rebuild (see System Logs).",
+      "login_token_exchange_failed": "Kick login failed (token exchange). See System Logs."
     }
   },
   "voice_changer": {

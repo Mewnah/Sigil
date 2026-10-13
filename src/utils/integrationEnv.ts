@@ -1,5 +1,10 @@
 /**
  * Integration env vars (`SIGIL_*` preferred). `CURSES_*` is still read as a fallback for older `.env` files.
+ *
+ * Only PUBLIC values live here: OAuth client ids, redirect overrides and the debug flag, the names under
+ * `public` in scripts/release/env-classification.json (vite.config.ts exposes exactly those). Client
+ * secrets and API keys are never in the bundle; they are compiled into the Rust binary and used by the
+ * `oauth-token` and `google-fonts` plugins (see src/utils/oauthTokens.ts). Do not add a secret getter here.
  */
 
 const env = import.meta.env as Record<string, string | undefined>;
@@ -24,11 +29,6 @@ function firstEnvRaw(...keys: string[]): string | undefined {
 
 export function getTwitchClientId(): string {
   return firstEnv("SIGIL_TWITCH_CLIENT_ID", "CURSES_TWITCH_CLIENT_ID");
-}
-
-/** Set for Confidential Twitch apps (auth code + refresh). Omit for Public apps (implicit grant). */
-export function getTwitchClientSecret(): string {
-  return firstEnv("SIGIL_TWITCH_CLIENT_SECRET", "CURSES_TWITCH_CLIENT_SECRET");
 }
 
 /** Browser host redirect for Twitch implicit (Public apps). */
@@ -63,22 +63,4 @@ export function getTwitchRedirectUri(): string {
 
 export function getKickClientId(): string {
   return firstEnv("SIGIL_KICK_CLIENT_ID", "CURSES_KICK_CLIENT_ID");
-}
-
-export function getKickClientSecret(): string {
-  return firstEnv("SIGIL_KICK_CLIENT_SECRET", "CURSES_KICK_CLIENT_SECRET");
-}
-
-export function getKickRedirectUri(): string {
-  if (import.meta.env.MODE === "development")
-    return "http://localhost:1420/oauth/kick/callback";
-  const fromEnv = firstEnvRaw(
-    "SIGIL_KICK_CLIENT_REDIRECT_LOCAL",
-    "CURSES_KICK_CLIENT_REDIRECT_LOCAL"
-  );
-  if (fromEnv)
-    return fromEnv;
-  if (typeof window !== "undefined" && window.location?.origin)
-    return `${window.location.origin}/oauth/kick/callback`;
-  return "http://localhost:1420/oauth/kick/callback";
 }

@@ -23,12 +23,24 @@
 //! Adding or editing a fragment is a data-only change (no Rust edit, no hotspot).
 //! A fragment may also carry a top-level `routing` object (P2-S0: the STT routing table in
 //! `stt-routing.json`, read by `speech::router`); it is checked to be an object and not embedded.
+//!
+//! Embedded secrets: the OAuth client secrets and the Google Fonts API key (the names listed under
+//! `secret` in `scripts/release/env-classification.json`) are read from the process environment and the
+//! untracked `../.env` / `../.env.local` and passed to the crate with `cargo:rustc-env`, XORed with a
+//! random per-build key (`embed_codec.rs`, shared with the crate). They never reach the JS bundle: Vite only
+//! gets the `public` names. The obfuscation keeps the values out of a text search of the binary and of
+//! every file; it is NOT protection (see `embed_codec.rs`). A missing secret still compiles, and the
+//! feature that needs it says so at run time. Values are never printed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 use serde_json::{Map, Value};
+
+#[path = "embed_codec.rs"]
+#[allow(dead_code)] // the decode side is used by the crate, not by this script
+mod embed_codec;
 
 const PLUGIN_COMMANDS_DIR: &str = "plugin-commands";
 const MODEL_CATALOG_DIR: &str = "model-catalog";
@@ -469,8 +481,105 @@ fn build_model_catalog() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Embedded secrets (obfuscated, compile time only)
+// ---------------------------------------------------------------------------------------------
+
+/// Names classified `public` / `secret` (one file for Vite, this script, the guard script and the tests).
+const ENV_CLASSIFICATION: &str = "../scripts/release/env-classification.json";
+/// Env files read like Vite does, later ones winning: `.env`, then `.env.local`. The process environment
+/// wins over both.
+const ENV_FILES: &[&str] = &["../.env", "../.env.local"];
+
+/// The `secret` names of `env-classification.json`.
+fn classified_secret_names() -> Vec<String> {
+    let text = fs::read_to_string(ENV_CLASSIFICATION)
+        .unwrap_or_else(|e| panic!("cannot read {ENV_CLASSIFICATION}: {e}"));
+    let doc: Value =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{ENV_CLASSIFICATION}: invalid JSON: {e}"));
+    let names = doc
+        .get("secret")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{ENV_CLASSIFICATION}: \"secret\" must be an array of variable names"));
+    names
+        .iter()
+        .map(|n| {
+            let name = n.as_str().unwrap_or_default();
+            let valid = !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !valid {
+                panic!("{ENV_CLASSIFICATION}: {name:?} is not an upper-case variable name");
+            }
+            name.to_string()
+        })
+        .collect()
+}
+
+/// 32 random bytes from the std hasher's per-process random keys (no extra crate). It only has to differ
+/// from build to build: the key sits in the same binary as the data, so this is obfuscation, not secrecy.
+fn random_key() -> [u8; embed_codec::KEY_LEN] {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut key = [0u8; embed_codec::KEY_LEN];
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    for (i, chunk) in key.chunks_mut(8).enumerate() {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u64(nanos ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        chunk.copy_from_slice(&hasher.finish().to_le_bytes()[..chunk.len()]);
+    }
+    key
+}
+
+/// Pass every classified secret that is set (process environment, then `.env.local`, then `.env`) to the
+/// crate as an XORed `cargo:rustc-env` value. Prints names only.
+fn embed_secrets() {
+    println!("cargo:rerun-if-changed={ENV_CLASSIFICATION}");
+    let names = classified_secret_names();
+
+    let mut file_pairs: Vec<(String, String)> = Vec::new();
+    for path in ENV_FILES {
+        // Only a file that exists is watched: Cargo treats a missing rerun-if-changed path as always
+        // stale, which would recompile the whole crate on every build of a checkout with no .env.
+        // Creating a .env for the first time therefore needs one rebuild trigger (touch build.rs).
+        if Path::new(path).is_file() {
+            println!("cargo:rerun-if-changed={path}");
+            if let Ok(text) = fs::read_to_string(path) {
+                file_pairs.extend(embed_codec::parse_dotenv(&text));
+            }
+        }
+    }
+
+    let key = random_key();
+    let mut any = false;
+    for name in &names {
+        println!("cargo:rerun-if-env-changed={name}");
+        let from_env = std::env::var(name).ok();
+        let from_file = embed_codec::lookup(&file_pairs, name);
+        // An empty process variable (an unset CI secret) falls through to the files.
+        let value = [from_env.as_deref(), from_file]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|v| embed_codec::is_embeddable(v));
+        if let Some(value) = value {
+            println!(
+                "cargo:rustc-env={}{name}={}",
+                embed_codec::VALUE_VAR_PREFIX,
+                embed_codec::encode(value, &key)
+            );
+            any = true;
+        }
+    }
+    if any {
+        println!("cargo:rustc-env={}={}", embed_codec::KEY_VAR, embed_codec::hex_encode(&key));
+    }
+}
+
 fn main() {
     build_model_catalog();
+    embed_secrets();
     tauri_build::try_build(
         tauri_build::Attributes::new()
             .app_manifest(tauri_build::AppManifest::new().commands(&[

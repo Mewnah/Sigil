@@ -1,0 +1,11 @@
+{
+  "identifier": "google-fonts",
+  "description": "IPC for the google-fonts plugin (Google Fonts family list fetched with the API key kept in Rust) in the main window.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "google-fonts:default"
+  ]
+}
