@@ -770,7 +770,7 @@
     "ggml_last_sentence": "Kalimat terakhir: suara pertama setelah {{first}} ms, {{seconds}} dtk ucapan.",
     "ggml_model": "Model",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 bahasa)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 bahasa, dikonversi di PC ini)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 bahasa)",
     "ggml_model_breeze_q8_0": "Q8_0 (disarankan, sekitar 4 GB memori video)",
     "ggml_model_breeze_q4_k": "Q4_K (lebih kecil, sekitar 3 GB memori video)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (disarankan)",

@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "$comment": [
-    "MeanVC2 graphs for vc::families::meanvc (P5-C): Sigil's export of ASLP-lab/MeanVC2@13acf84c (40 ms model; HF ASLP-lab/MeanVC2 @39cdd195 meanvc2_40ms_40ms.safetensors, fastu2pp_80ms.pt, vocos.pt) by scripts/vc-families/meanvc/export.py (fbank, asr, gtm, dit_step, vocos; sha256 as measured in scripts/vc-families/reports/meanvc_cpu.json). Unpublished (asset hosting is local only): install with the Models tab's Import or SIGIL_LOCAL_ASSETS=<the export folder>.",
+    "MeanVC2 graphs for vc::families::meanvc (P5-C): Sigil's export of ASLP-lab/MeanVC2@13acf84c (40 ms model; HF ASLP-lab/MeanVC2 @39cdd195 meanvc2_40ms_40ms.safetensors, fastu2pp_80ms.pt, vocos.pt) by scripts/vc-families/meanvc/export.py (fbank, asr, gtm, dit_step, vocos; sha256 as measured in scripts/vc-families/reports/meanvc_cpu.json). Starts unpublished (install with the Models tab's Import or SIGIL_LOCAL_ASSETS=<the export folder>) and becomes 'published' with scripts/models/publish-entries.mjs --write once the files are on the assets-v1 release.",
     "vc/meanvc2-speaker is the speaker encoder (WavLM-Large + the fine-tuned ECAPA-TDNN of upstream runtime/src/speaker.py) as one model.onnx: input the 16 kHz mono reference clip [1, N] in -1..1, first output the raw 256-value embedding. Its fine-tuned weights (wavlm_large_finetune.pth) are a manual Google Drive download, so the entry is import-only and unpinned until a maintainer exports it. A voice folder's speaker.npy (upstream preprocess/extract_spk_emb.py) works without it."
   ],
   "entries": [
@@ -22,7 +22,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-fbank.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-fbank.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -34,7 +34,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-asr.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-asr.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -46,7 +46,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-gtm.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-gtm.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -58,7 +58,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-dit_step.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-dit_step.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -70,7 +70,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-vocos.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-vocos.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -93,7 +93,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-meanvc2-speaker-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-meanvc2-speaker-model.onnx",
               "revision": "assets-v1"
             }
           ]

@@ -40,6 +40,10 @@ node scripts/merge-i18n-staging.mjs [--dry-run]   # merge scripts/i18n-staging/<
 # docs and release checks (CI runs both)
 pnpm docs:check          # node docs/check-docs.mjs [--no-todo]: doc links, anchors, tables, facts that must agree with the code
 pnpm release:pins        # node scripts/release/check-catalog-pins.mjs [--online]: every published catalog file is hash-pinned
+# Sigil-built assets (unpublished catalog entries -> download buttons); each step is a command you run, nothing uploads by itself (scripts/release/README.md, "The assets-v1 release")
+node scripts/models/pin-staged.mjs --staging <dir> [--write]          # size + sha256 of the staged files into the catalog
+pwsh scripts/release/publish-assets.ps1 -Staging <dir> [-Execute]    # upload plan for the assets-v1 release; -Execute uploads with gh
+node scripts/models/publish-entries.mjs --ids all-staged --staging <dir> [--write]   # hash the uploaded bytes, then status -> published
 node scripts/release/check-no-secrets.mjs [Sigil.exe|dir ...]   # after pnpm build: no secret value of .env / the environment in dist/ or the given paths (names only are printed)
 ```
 

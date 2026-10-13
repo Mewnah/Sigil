@@ -4,7 +4,7 @@
     "Experimental ggml TTS helpers (tts_helpers::{magpie,breeze,omnivoice,s2}, owned by P6-F): their runtime packs and models. The helpers run under process_host (127.0.0.1, random port, kill-on-close Job Object); see src-tauri/src/services/tts_helpers/ggml/mod.rs.",
     "Third-party packs are the upstream projects' own Windows release zips, pinned by their GitHub release digests: NVIDIA NeMo-Speech.cpp v0.1.0 (nemo-speech.exe; Magpie), HoppouAI Breeze-TTS-2.cpp v0.1.0 (breeze-server.exe), CrispASR v0.8.40 (crispasr.exe; OmniVoice; the cuda13 zip without NVIDIA's DLLs uses runtime/nvidia-cuda13). Each zip is extracted whole: the helper finds its program in the pack folder or a folder below it (bin/ first).",
     "runtime/s2-server-* are Sigil builds of s2.cpp (scripts/runtime-packs/s2/build.ps1, commit 2c33261 pinned in UPSTREAM.json): unpublished and unpinned, installed by Import or SIGIL_LOCAL_ASSETS (found by file name). Bump the version and zip names together with UPSTREAM.json.",
-    "Models are pinned to repo commits with the LFS sha256 (Magpie and NanoCodec as in NVIDIA's own NeMo-Speech.cpp model index). The Magpie v2602 tokenizer is the member set of NVIDIA's .nemo archive (unpublished: scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 downloads the 32 MiB archive prefix once and checks every member against these hashes). Magpie v2607 exists only as a .nemo and is converted locally (convert-magpie-v2607.ps1), so it stays unpublished and unpinned.",
+    "Models are pinned to repo commits with the LFS sha256 (Magpie and NanoCodec as in NVIDIA's own NeMo-Speech.cpp model index). The Magpie tokenizers are the member sets of NVIDIA's .nemo archives, hosted as assets of the assets-v1 release (the v2602 members as seven flat files, the v2607 members as one zip); scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 (with -Version v2607 for the zip) rebuilds them from ranged requests to NVIDIA's repository and checks every member against NeMo-Speech.cpp's hashes. The v2607 checkpoint is NVIDIA's own GGUF, pinned to the Hugging Face commit that added it (19806879); its assets-v1 URL is only a later mirror. NeMo-Speech.cpp v0.1.0, which the runtime/nemo-speech-* packs are, refuses it (\"unsupported frame_stacking_factor=2\", real_ggml_engine_speaks on 2026-10-13), so tts/magpie-tts-357m-v2607 stays unpublished until those three entries move to a release that reads it (v0.2.0 or newer, to be tested with both checkpoints). The other unpublished entries become published with scripts/models/publish-entries.mjs once their files are on the release.",
     "min_vram_mb values are provisional estimates (weights plus KV cache and compute buffers; s2.cpp's own q4_k_m breakdown is 7.2 GB): P7 replaces them with measurements."
   ],
   "entries": [
@@ -224,7 +224,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cuda13.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cuda13.zip",
               "revision": "assets-v1"
             }
           ],
@@ -261,7 +261,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-vulkan.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-s2-server-2c33261-s1-vulkan.zip",
               "revision": "assets-v1"
             }
           ],
@@ -295,7 +295,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cpu.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-s2-server-2c33261-s1-cpu.zip",
               "revision": "assets-v1"
             }
           ],
@@ -342,7 +342,7 @@
       "kind": "model",
       "version": "34d7e40",
       "title": "Magpie TTS v2602 text tokenizer",
-      "description": "Pronunciation dictionaries and settings of the Magpie v2602 voices, the members of NVIDIA's .nemo archive (fetch them with scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1, then Import the folder). About 10 MB.",
+      "description": "Pronunciation dictionaries and settings of the Magpie v2602 voices, the members of NVIDIA's .nemo archive. About 10 MB.",
       "license": "NVIDIA Open Model License",
       "status": "unpublished",
       "files": [
@@ -353,7 +353,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/1d848e67f9454a73af772cc26f21d0db_heteronyms-052722",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/1d848e67f9454a73af772cc26f21d0db_heteronyms-052722",
               "revision": "assets-v1"
             }
           ]
@@ -365,7 +365,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/938dc98b70524b23b19f72a19276ca22_de_nv230119.heteronym",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/938dc98b70524b23b19f72a19276ca22_de_nv230119.heteronym",
               "revision": "assets-v1"
             }
           ]
@@ -377,7 +377,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/9a6b090bd4a14621b340b39ba65e23b0_es_ES_nv230301.dict",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/9a6b090bd4a14621b340b39ba65e23b0_es_ES_nv230301.dict",
               "revision": "assets-v1"
             }
           ]
@@ -389,7 +389,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/bafa5b4ca36942ad883c5c228474ca7e_de_nv230119.dict",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/bafa5b4ca36942ad883c5c228474ca7e_de_nv230119.dict",
               "revision": "assets-v1"
             }
           ]
@@ -401,7 +401,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/c799361ecf2540709dbb931cf0e08ece_ipa_dict_nv23.05.txt",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/c799361ecf2540709dbb931cf0e08ece_ipa_dict_nv23.05.txt",
               "revision": "assets-v1"
             }
           ]
@@ -413,7 +413,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/cdd41953cfe7479cbb74ba0f9fd42d2b_ipa_cmudict-0.7b_nv23.01.txt",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/cdd41953cfe7479cbb74ba0f9fd42d2b_ipa_cmudict-0.7b_nv23.01.txt",
               "revision": "assets-v1"
             }
           ]
@@ -425,7 +425,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2602-tokenizer/model_config.yaml",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/model_config.yaml",
               "revision": "assets-v1"
             }
           ]
@@ -467,17 +467,18 @@
       "kind": "model",
       "version": "v2607-s1",
       "title": "Magpie TTS v2607 text tokenizer",
-      "description": "Pronunciation data of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese), extracted from NVIDIA's .nemo archive by scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1. Import the zip it writes.",
+      "description": "Pronunciation data of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese), the members of NVIDIA's v2607 .nemo archive. About 6 MB.",
       "license": "NVIDIA Open Model License",
       "status": "unpublished",
       "files": [
         {
           "path": "magpie-tts-357m-v2607-tokenizer.zip",
-          "size": 0,
+          "size": 5884566,
+          "sha256": "375ddefeb7736db3221dabae1a2b988d1f363ec39194d774c621bbf2293f9806",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie-tts-357m-v2607-tokenizer.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/magpie-tts-357m-v2607-tokenizer.zip",
               "revision": "assets-v1"
             }
           ],
@@ -491,9 +492,9 @@
       "id": "tts/magpie-tts-357m-v2607",
       "family": "tts",
       "kind": "model",
-      "version": "v2607-s1",
+      "version": "1980687",
       "title": "NVIDIA Magpie TTS Multilingual 357M (v2607)",
-      "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA publishes it only as a .nemo file: convert it with scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 and import the result.",
+      "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA's file; it needs NeMo-Speech.cpp v0.2.0 or newer, and the Magpie runtime packs in this catalog are v0.1.0, so it stays import-only for now. About 570 MB.",
       "license": "NVIDIA Open Model License",
       "status": "unpublished",
       "min_vram_mb": 1500,
@@ -504,11 +505,17 @@
       "files": [
         {
           "path": "magpie_tts_multilingual_357m.v2607.f16.gguf",
-          "size": 0,
+          "size": 568663328,
+          "sha256": "30d27551fc4a050e8095139f0185796024493373e83d49443c8ddba33c514e68",
           "sources": [
             {
+              "kind": "huggingface",
+              "url": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m/resolve/19806879b16d3f2ccf28fb112b1bcd16a3c7923e/magpie_tts_multilingual_357m.v2607.f16.gguf",
+              "revision": "19806879b16d3f2ccf28fb112b1bcd16a3c7923e"
+            },
+            {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/magpie_tts_multilingual_357m.v2607.f16.gguf",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/magpie_tts_multilingual_357m.v2607.f16.gguf",
               "revision": "assets-v1"
             }
           ]

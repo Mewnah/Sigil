@@ -63,9 +63,48 @@ def export(model: str, fp32_dir: str) -> None:
         raise SystemExit("the export has no decoder_model_merged.onnx (optimum too old? it needs post-processing on)")
 
 
+# The loop as it reads inside the dedented function (the function body is indented by 4).
+_OLD_CONCAT = """    quantized_weights = np.asarray(quantized_per_channel_data_list[0]).reshape(reshape_dims)
+    for i in range(1, len(quantized_per_channel_data_list)):
+        channel_weights = np.asarray(quantized_per_channel_data_list[i]).reshape(reshape_dims)
+        quantized_weights = np.concatenate((quantized_weights, channel_weights), channel_axis)
+"""
+_NEW_CONCAT = """    quantized_weights = np.concatenate(
+        [np.asarray(c).reshape(reshape_dims) for c in quantized_per_channel_data_list], channel_axis
+    )
+"""
+
+
+def speed_up_per_channel_quantization() -> None:
+    """onnxruntime 1.19 joins the per-channel results with `np.concatenate((so_far, one_channel))` in a loop, which
+    copies the growing array once per channel: quadratic in the channel count. The 1.3B decoder's output projection
+    (1024 x 256206) has 256206 channels, which is hours of copying (a 32768-channel weight already takes 100 s); the
+    single concatenate below gives the identical array. Applied by rewriting the library function's source; when the
+    installed onnxruntime differs, the function is left alone (correct, only slow)."""
+    import inspect
+    import textwrap
+
+    from onnxruntime.quantization import base_quantizer
+
+    cls = base_quantizer.BaseQuantizer
+    fn = cls.quantize_weight_per_channel_impl
+    if getattr(fn, "_sigil_fast_concat", False):
+        return
+    source = textwrap.dedent(inspect.getsource(fn))
+    if _OLD_CONCAT not in source:
+        print("note: onnxruntime's per-channel loop differs from 1.19; large weights will quantize slowly", flush=True)
+        return
+    namespace: dict = {}
+    exec(compile(source.replace(_OLD_CONCAT, _NEW_CONCAT), inspect.getsourcefile(fn) or "<patched>", "exec"), vars(base_quantizer), namespace)
+    patched = namespace["quantize_weight_per_channel_impl"]
+    patched._sigil_fast_concat = True
+    cls.quantize_weight_per_channel_impl = patched
+
+
 def quantize(src: str, dst: str, per_channel: bool) -> None:
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
+    speed_up_per_channel_quantization()
     print(f"quantizing {os.path.basename(src)} -> {os.path.basename(dst)}", flush=True)
     quantize_dynamic(
         model_input=src,
@@ -75,9 +114,30 @@ def quantize(src: str, dst: str, per_channel: bool) -> None:
         reduce_range=False,
         # The merged decoder keeps both branches in If subgraphs; without this only the outer graph is quantized.
         extra_options={"EnableSubgraph": True, "MatMulConstBOnly": True},
-        # Inputs above 2 GB (the fp32 1.3B decoder) are stored with external data.
-        use_external_data_format=os.path.getsize(src) > 1_900_000_000,
+        # The fp32 1.3B graphs are above protobuf's 2 GB limit and carry external data, so the save never
+        # fails on size here; the int8 result is made self-contained again below.
+        use_external_data_format=True,
     )
+    inline_external_data(dst)
+
+
+def inline_external_data(path: str) -> None:
+    """Fold the external data file quantize_dynamic wrote next to `path` back into the .onnx, so the quantized
+    graph is one self-contained file (the zip and Sigil's loader take exactly the five FILES). Fails when the
+    int8 graph itself is above protobuf's 2 GB limit."""
+    import onnx
+
+    data = path + ".data"
+    if not os.path.isfile(data):
+        return
+    total = os.path.getsize(path) + os.path.getsize(data)
+    if total > 1_900_000_000:
+        raise SystemExit(f"{os.path.basename(path)} is {total} bytes with its weights: too large for one self-contained .onnx")
+    print(f"inlining {os.path.basename(data)} ({os.path.getsize(data)} bytes) into {os.path.basename(path)}", flush=True)
+    model = onnx.load(path, load_external_data=True)
+    onnx.save(model, path)
+    del model
+    os.remove(data)
 
 
 def smoke(folder: str) -> None:

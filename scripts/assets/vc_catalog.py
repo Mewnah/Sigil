@@ -10,9 +10,11 @@ default voice), ``vc-embedders.json``, ``vc-denoise.json``, ``bench-models.json`
 - **Sigil-built files** (unpublished entries: the exported embedders, the FCPE adapter, the GPU load
   graph) take their size and sha256 from the staged exports (``--stage``, default
   ``%LOCALAPPDATA%/sigil-dev-cache/vc-assets``: the SIGIL_LOCAL_ASSETS layout the export scripts
-  write). Asset hosting is local only (user decision 2026-09-28): the store installs them from a
-  local import or SIGIL_LOCAL_ASSETS, and never from the placeholder release URL, which only names
-  the file a future ``assets-v1`` release would carry.
+  write). They start ``unpublished`` (local import or SIGIL_LOCAL_ASSETS only): the release URL names
+  the file in the ``assets-v1`` release. After the files are uploaded
+  (``scripts/release/publish-assets.ps1``), ``node scripts/models/publish-entries.mjs --write`` proves
+  the uploads and flips the status in the fragment; this script keeps whatever status the committed
+  fragment has, so regenerating never takes a published entry back.
 
 Usage (repo root):
     python scripts/assets/vc_catalog.py            # rewrite the four fragments
@@ -61,6 +63,20 @@ def upstream_file(path, size, sha256, *sources, archive=None):
     return f
 
 
+def built_status(entry_id):
+    """Status of a Sigil-built entry: what the committed fragments say (``unpublished`` until
+    ``scripts/models/publish-entries.mjs --write`` flips it after the files are on the assets-v1 release),
+    so regenerating a fragment never takes a published entry back."""
+    for name in sorted(os.listdir(CATALOG)):
+        if not name.endswith(".json") or name.startswith("_"):
+            continue
+        with open(os.path.join(CATALOG, name), encoding="utf-8") as f:
+            for e in json.load(f).get("entries", []):
+                if e.get("id") == entry_id:
+                    return e.get("status", "unpublished")
+    return "unpublished"
+
+
 def staged_file(entry_id, path, stage):
     """A Sigil-built file: size + sha256 from the staged export; the placeholder release name."""
     src = os.path.join(stage, *entry_id.split("/"), *path.split("/"))
@@ -102,7 +118,7 @@ def vc_bases(stage):
         "$comment": [
             "Voice-changer base assets (owned by P3-A; ids and the in-entry layout model.onnx are frozen in src-tauri/src/services/neural_audio/vc/assets.rs). Written by scripts/assets/vc_catalog.py; checks and contracts: scripts/vc-templates/export_pitch.py (reports/pitch.json).",
             "vc/pitch-rmvpe: RVC's rmvpe.onnx (log-mel [1,128,T] -> salience [1,T,360]; rmvpe.rs computes the mel).",
-            "vc/pitch-fcpe: Sigil's adapter of the community FCPE export gzivdo/fcpe-onnx@5800a2b1 (torchfcpe 0.0.4 weights): audio [1,N] f32 16 kHz -> f0 [1, N//160+1] Hz, 0 = unvoiced (NaN from quiet frames mapped to 0). The contract fcpe.rs implements. Unpublished (Sigil-built).",
+            "vc/pitch-fcpe: Sigil's adapter of the community FCPE export gzivdo/fcpe-onnx@5800a2b1 (torchfcpe 0.0.4 weights): audio [1,N] f32 16 kHz -> f0 [1, N//160+1] Hz, 0 = unvoiced (NaN from quiet frames mapped to 0). The contract fcpe.rs implements. Sigil-built; starts unpublished (becomes published with scripts/models/publish-entries.mjs once its file is on the assets-v1 release).",
             "vc/pitch-swiftf0: SwiftF0 model.onnx (audio [1,N], fmin, fmax scalars -> pitch f64 [1, N//256], confidence [1, N//256]; hop 256 = 16 ms, voiced when confidence >= 0.9). Also Applio's predictors/swift.onnx (identical bytes).",
             "vc/pitch-crepe-tiny: onnxcrepe v1.1.0 tiny.onnx (frames [n,1024] zero-mean / unit-std windows, hop 160 -> probabilities [n,360]; cents = 1997.3794 + 20 * bin).",
             "vc/pitch-pesto: import-only until a maintainer exports PESTO's streaming model with its own realtime/export_onnx.py (pesto@62bc0c97, mir-1k_g7.ckpt) as model.onnx; unpinned.",
@@ -113,7 +129,7 @@ def vc_bases(stage):
                   "MIT", "published", [upstream_file("model.onnx", 361688443, "5370e71ac80af8b4b7c793d27efd51fd8bf962de3a7ede0766dac0befa3660fd",
                                                      hf("lj1995/VoiceConversionWebUI", HF_RVC, "rmvpe.onnx"))]),
             entry("vc/pitch-fcpe", "model", "0.0.4-sigil1", "FCPE pitch", "Fast pitch tracking for the voice changer (FCPE). About 44 MB.",
-                  "MIT", "unpublished", [staged_file("vc/pitch-fcpe", "model.onnx", stage)]),
+                  "MIT", built_status("vc/pitch-fcpe"), [staged_file("vc/pitch-fcpe", "model.onnx", stage)]),
             entry("vc/pitch-swiftf0", "model", "1", "SwiftF0 pitch", "Very light pitch tracking for CPU voice changing (SwiftF0). About 135 KB.",
                   "MIT", "published", [upstream_file("model.onnx", 135090, "6385e8c2ebc3872e82c9ff5946228de44cd3be77a750ea53698b7dbfe94b0a22",
                                                      raw("lars76/swift-f0", GH_SWIFTF0, "swift_f0/model.onnx"),
@@ -142,11 +158,11 @@ def vc_embedders(stage):
         if int8:
             files.append(staged_file(eid, "model.int8.onnx", stage))
         files.append(staged_file(eid, "embedder.json", stage))
-        entries.append(entry(eid, "model", "1", title, desc, lic, "unpublished", files))
+        entries.append(entry(eid, "model", "1", title, desc, lic, built_status(eid), files))
     return {
         "$schema": "./_schema.json",
         "$comment": [
-            "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@" + HF_APPLIO + " Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; unpublished (installed by local import or SIGIL_LOCAL_ASSETS). Written by scripts/assets/vc_catalog.py.",
+            "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@" + HF_APPLIO + " Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; they start unpublished (local import or SIGIL_LOCAL_ASSETS) and become published with scripts/models/publish-entries.mjs once their files are on the assets-v1 release. Written by scripts/assets/vc_catalog.py.",
             "Contract: audio [1,N] f32 16 kHz (raw, not normalised) -> feats [1,T,C] f32, T = (N - 400) // 320 + 1 (400-sample receptive field, 320 hop, checked per checkpoint); C = 768 (256 for contentvec-256). The contract rvc.rs feeds BYO encoders.",
             "embedder.json in each entry: the contract, parity per variant and device class (CPU: ONNX Runtime CPU; GPU: DirectML) and the recommended variant per class. fp16 = transformer in fp16 (the conv front end stays fp32); it misses the export gate's fp16 parity on DirectML for contentvec and hubert-ja, and embedder.json 'recommended' is the export gate's pick, not the engine's order: the engine runs fp16 first on GPUs because the downstream scorer is neutral (docs/adr/0011-vc-content-encoder-precision.md). int8 (CPU, VNNI) ships only for contentvec / contentvec-256: dynamic int8 of the other encoders misses its gate (activation outliers).",
             "vc/embedder-spin is an addition to the frozen ids (Applio's first SPIN embedder, embedder_model \"spin\"); the engine's EmbedderKind needs a variant for it (P3-C1).",
@@ -187,8 +203,8 @@ def bench_models(stage):
             "Benchmark-only models of kind bench (owned by P3-A; ids in vc/assets.rs); never needed by normal users. Checks and contracts: scripts/vc-templates/export_bench.py (reports/bench.json). Written by scripts/assets/vc_catalog.py.",
             "bench/dnsmos-p835: DNSMOS P.835 (model.onnx: input_1 [N,144160] = 9.01 s at 16 kHz -> [N,3] raw SIG/BAK/OVRL, mapped by DNS-Challenge's non-personalised polynomials) and P.808 (p808.onnx: input_1 [N,900,120] log-mel).",
             "bench/campplus: CAM++ speaker embedding (3D-Speaker zh-cn common, sherpa-onnx export): x [N,T,80] Kaldi fbank minus its time mean -> embedding [N,192].",
-            "bench/gpu-load: Sigil's GPU hammer for the contention mode (8 x Conv 3x3 32->32 + ReLU, x [1,32,H,W] -> y), built by export_bench.py; unpublished.",
-            "bench/campplus-exact: the same CAM++ checkpoint re-exported by scripts/vc-templates/export_bench.py with exact segment pooling (>= 100 dB SNR against upstream; P3B-B, ADR 0009); same I/O contract as bench/campplus; unpublished (local-only until the user publishes it), staged at %LOCALAPPDATA%/sigil-dev-cache/vc-assets/bench/campplus-exact/model.onnx.",
+            "bench/gpu-load: Sigil's GPU hammer for the contention mode (8 x Conv 3x3 32->32 + ReLU, x [1,32,H,W] -> y), built by export_bench.py; starts unpublished.",
+            "bench/campplus-exact: the same CAM++ checkpoint re-exported by scripts/vc-templates/export_bench.py with exact segment pooling (>= 100 dB SNR against upstream; P3B-B, ADR 0009); same I/O contract as bench/campplus; starts unpublished (becomes published with scripts/models/publish-entries.mjs once its file is on the assets-v1 release), staged at %LOCALAPPDATA%/sigil-dev-cache/vc-assets/bench/campplus-exact/model.onnx.",
         ],
         "entries": [
             entry("bench/dnsmos-p835", "bench", "1", "DNSMOS P.835", "Speech-quality predictor for the voice-changer benchmark.",
@@ -202,9 +218,9 @@ def bench_models(stage):
                   "Apache-2.0", "published", [upstream_file("model.onnx", 28281138, "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
                                                             release("k2-fsa/sherpa-onnx", "speaker-recongition-models", "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"))]),
             entry("bench/campplus-exact", "bench", "1", "CAM++ speaker embedding (exact pooling)", "Speaker-similarity model of the voice-changer benchmark's scorer v2.",
-                  "Apache-2.0", "unpublished", [staged_file("bench/campplus-exact", "model.onnx", stage)]),
+                  "Apache-2.0", built_status("bench/campplus-exact"), [staged_file("bench/campplus-exact", "model.onnx", stage)]),
             entry("bench/gpu-load", "bench", "1", "GPU load generator", "A fixed convolution workload the benchmark runs next to the voice changer to simulate a game.",
-                  "AGPL-3.0-or-later", "unpublished", [staged_file("bench/gpu-load", "model.onnx", stage)]),
+                  "AGPL-3.0-or-later", built_status("bench/gpu-load"), [staged_file("bench/gpu-load", "model.onnx", stage)]),
         ],
     }
 

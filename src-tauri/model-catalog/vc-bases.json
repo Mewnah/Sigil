@@ -3,7 +3,7 @@
   "$comment": [
     "Voice-changer base assets (owned by P3-A; ids and the in-entry layout model.onnx are frozen in src-tauri/src/services/neural_audio/vc/assets.rs). Written by scripts/assets/vc_catalog.py; checks and contracts: scripts/vc-templates/export_pitch.py (reports/pitch.json).",
     "vc/pitch-rmvpe: RVC's rmvpe.onnx (log-mel [1,128,T] -> salience [1,T,360]; rmvpe.rs computes the mel).",
-    "vc/pitch-fcpe: Sigil's adapter of the community FCPE export gzivdo/fcpe-onnx@5800a2b1 (torchfcpe 0.0.4 weights): audio [1,N] f32 16 kHz -> f0 [1, N//160+1] Hz, 0 = unvoiced (NaN from quiet frames mapped to 0). The contract fcpe.rs implements. Unpublished (Sigil-built).",
+    "vc/pitch-fcpe: Sigil's adapter of the community FCPE export gzivdo/fcpe-onnx@5800a2b1 (torchfcpe 0.0.4 weights): audio [1,N] f32 16 kHz -> f0 [1, N//160+1] Hz, 0 = unvoiced (NaN from quiet frames mapped to 0). The contract fcpe.rs implements. Sigil-built; starts unpublished (becomes published with scripts/models/publish-entries.mjs once its file is on the assets-v1 release).",
     "vc/pitch-swiftf0: SwiftF0 model.onnx (audio [1,N], fmin, fmax scalars -> pitch f64 [1, N//256], confidence [1, N//256]; hop 256 = 16 ms, voiced when confidence >= 0.9). Also Applio's predictors/swift.onnx (identical bytes).",
     "vc/pitch-crepe-tiny: onnxcrepe v1.1.0 tiny.onnx (frames [n,1024] zero-mean / unit-std windows, hop 160 -> probabilities [n,360]; cents = 1997.3794 + 20 * bin).",
     "vc/pitch-pesto: import-only until a maintainer exports PESTO's streaming model with its own realtime/export_onnx.py (pesto@62bc0c97, mir-1k_g7.ckpt) as model.onnx; unpinned.",
@@ -51,7 +51,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-pitch-fcpe-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-pitch-fcpe-model.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -127,7 +127,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-pitch-pesto-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-pitch-pesto-model.onnx",
               "revision": "assets-v1"
             }
           ]

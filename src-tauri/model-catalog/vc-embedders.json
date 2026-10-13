@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "$comment": [
-    "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@70ed563897504c756ec94067c12c902c4fd42025 Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; unpublished (installed by local import or SIGIL_LOCAL_ASSETS). Written by scripts/assets/vc_catalog.py.",
+    "Voice-changer content encoders (owned by P3-A; ids and model.<fp32|fp16|int8>.onnx are frozen in vc/assets.rs). Sigil exports of the Hugging Face-format checkpoints Applio distributes (IAHispano/Applio@70ed563897504c756ec94067c12c902c4fd42025 Resources/embedders/<name>), built by scripts/vc-templates/export_embedders.py; they start unpublished (local import or SIGIL_LOCAL_ASSETS) and become published with scripts/models/publish-entries.mjs once their files are on the assets-v1 release. Written by scripts/assets/vc_catalog.py.",
     "Contract: audio [1,N] f32 16 kHz (raw, not normalised) -> feats [1,T,C] f32, T = (N - 400) // 320 + 1 (400-sample receptive field, 320 hop, checked per checkpoint); C = 768 (256 for contentvec-256). The contract rvc.rs feeds BYO encoders.",
     "embedder.json in each entry: the contract, parity per variant and device class (CPU: ONNX Runtime CPU; GPU: DirectML) and the recommended variant per class. fp16 = transformer in fp16 (the conv front end stays fp32); it misses the export gate's fp16 parity on DirectML for contentvec and hubert-ja, and embedder.json 'recommended' is the export gate's pick, not the engine's order: the engine runs fp16 first on GPUs because the downstream scorer is neutral (docs/adr/0011-vc-content-encoder-precision.md). int8 (CPU, VNNI) ships only for contentvec / contentvec-256: dynamic int8 of the other encoders misses its gate (activation outliers).",
     "vc/embedder-spin is an addition to the frozen ids (Applio's first SPIN embedder, embedder_model \"spin\"); the engine's EmbedderKind needs a variant for it (P3-C1)."
@@ -24,7 +24,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -36,7 +36,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -48,7 +48,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-model.int8.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-model.int8.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -60,7 +60,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -84,7 +84,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -96,7 +96,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-256-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -108,7 +108,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-model.int8.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-256-model.int8.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -120,7 +120,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-contentvec-256-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-contentvec-256-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -144,7 +144,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-v2-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -156,7 +156,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-v2-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -168,7 +168,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-v2-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-v2-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -192,7 +192,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -204,7 +204,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -216,7 +216,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-spin-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-spin-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -240,7 +240,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -252,7 +252,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ja-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -264,7 +264,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ja-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ja-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -288,7 +288,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -300,7 +300,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ko-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -312,7 +312,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-ko-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-ko-embedder.json",
               "revision": "assets-v1"
             }
           ]
@@ -336,7 +336,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp32.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp32.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -348,7 +348,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-zh-model.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -360,7 +360,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-embedder-hubert-zh-embedder.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-embedder-hubert-zh-embedder.json",
               "revision": "assets-v1"
             }
           ]

@@ -770,7 +770,7 @@
     "ggml_last_sentence": "直近の文：最初の音まで {{first}} ms、音声の長さ {{seconds}} 秒。",
     "ggml_model": "モデル",
     "ggml_model_magpie_v2602": "Magpie v2602（7 言語）",
-    "ggml_model_magpie_v2607": "Magpie v2607（10 言語、このPCで変換）",
+    "ggml_model_magpie_v2607": "Magpie v2607（10 言語）",
     "ggml_model_breeze_q8_0": "Q8_0（推奨、ビデオメモリ約 4 GB）",
     "ggml_model_breeze_q4_k": "Q4_K（小さめ、ビデオメモリ約 3 GB）",
     "ggml_model_omnivoice_q8_0": "Q8_0（推奨）",

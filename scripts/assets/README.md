@@ -1,13 +1,15 @@
 # Sigil-built assets: catalog and local staging
 
-Asset hosting is **local only** (user decision 2026-09-28, recorded in the implementation plan's P1
-outcomes): Sigil-built files (the voice changer's exported content encoders, the FCPE adapter, the
-benchmark's GPU load graph, the RVC templates) are built by local scripts and installed through the
-Models tab's Import, `SIGIL_LOCAL_ASSETS` or a custom mirror. Their catalog entries stay
-`unpublished` and pinned by sha256, so any copy is verified. There is deliberately no publish script:
-publishing waits for a new user decision (the `github-release` URLs in the unpublished entries only
-name the file an `assets-v1` release would carry; the store never downloads unpublished entries from
-them).
+Sigil-built files (the voice changer's exported content encoders, the FCPE adapter, the benchmark's GPU
+load graph, the RVC templates) are built by local scripts and installed through the Models tab's
+Import, `SIGIL_LOCAL_ASSETS` or a custom mirror. Their catalog entries start `unpublished` and pinned by
+sha256, so any copy is verified; the store never downloads an unpublished entry from its catalog URLs.
+The `github-release` URLs in those entries name the files of the `assets-v1` release. Asset hosting was
+local only until the user decided to publish (2026-10-13): the files go there with
+`scripts/release/publish-assets.ps1` and `node scripts/models/publish-entries.mjs --write` flips the
+entries to `published`, which is what gives them a download button (see `scripts/release/README.md`,
+"The assets-v1 release"). `vc_catalog.py` keeps the status already in the committed fragments, so
+regenerating them never takes it back.
 
 | File | Role |
 | --- | --- |

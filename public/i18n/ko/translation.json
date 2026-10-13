@@ -770,7 +770,7 @@
     "ggml_last_sentence": "마지막 문장: {{first}} ms 후 첫 소리, 음성 {{seconds}}초.",
     "ggml_model": "모델",
     "ggml_model_magpie_v2602": "Magpie v2602(7개 언어)",
-    "ggml_model_magpie_v2607": "Magpie v2607(10개 언어, 이 PC에서 변환)",
+    "ggml_model_magpie_v2607": "Magpie v2607(10개 언어)",
     "ggml_model_breeze_q8_0": "Q8_0(권장, 비디오 메모리 약 4 GB)",
     "ggml_model_breeze_q4_k": "Q4_K(더 작음, 비디오 메모리 약 3 GB)",
     "ggml_model_omnivoice_q8_0": "Q8_0(권장)",

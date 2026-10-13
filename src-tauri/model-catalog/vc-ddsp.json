@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "$comment": [
-    "DDSP-SVC 6.3 singing voices (vc::families::ddsp_svc, P5-A; ADR 0006). Both entries are Sigil exports and stay unpublished (asset hosting is local only): install them with the Models tab's Import or SIGIL_LOCAL_ASSETS (scripts/vc-families/ddsp_svc/export_templates.py --vocoder stages them in %LOCALAPPDATA%/sigil-dev-cache/vc-assets).",
+    "DDSP-SVC 6.3 singing voices (vc::families::ddsp_svc, P5-A; ADR 0006). Both entries are Sigil exports that start unpublished (install them with the Models tab's Import or SIGIL_LOCAL_ASSETS; scripts/vc-families/ddsp_svc/export_templates.py --vocoder stages them in %LOCALAPPDATA%/sigil-dev-cache/vc-assets) and become 'published' with scripts/models/publish-entries.mjs --write once their files are on the assets-v1 release (scripts/release/publish-assets.ps1).",
     "vc/ddsp-svc-6.3: the template graphs without weights (export_templates.py; yxlllc/DDSP-SVC 6.3 @d6dd52fc architecture, MIT). A voice's weights come from its own checkpoint at import; layout.json is also embedded in the engine (src-tauri/src/services/neural_audio/vc/families/ddsp_svc/layout.json): an installed template must carry the same weights_id and graphs (sha256 and size), or voices refuse to load with a reinstall message.",
     "vc/vocoder-pc-nsf-hifigan-44k: openvpi pc_nsf_hifigan_44.1k_hop512_128bin_2025.02 exported by scripts/vc-families/ddsp_svc/export.py (weights folded, Sigil's phase0 input) plus the release's config.json."
   ],
@@ -24,7 +24,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-ddsp.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-ddsp-svc-6.3-ddsp.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -36,7 +36,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-reflow_step.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-ddsp-svc-6.3-reflow_step.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -48,7 +48,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-ddsp-svc-6.3-layout.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-ddsp-svc-6.3-layout.json",
               "revision": "assets-v1"
             }
           ]
@@ -72,7 +72,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-model.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -84,7 +84,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-config.json",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-vocoder-pc-nsf-hifigan-44k-config.json",
               "revision": "assets-v1"
             }
           ]

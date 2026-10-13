@@ -770,7 +770,7 @@
     "ggml_last_sentence": "上一句：{{first}} ms 後出現第一個聲音，共 {{seconds}} 秒的語音。",
     "ggml_model": "模型",
     "ggml_model_magpie_v2602": "Magpie v2602（7 種語言）",
-    "ggml_model_magpie_v2607": "Magpie v2607（10 種語言，在這台電腦上轉換）",
+    "ggml_model_magpie_v2607": "Magpie v2607（10 種語言）",
     "ggml_model_breeze_q8_0": "Q8_0（建議，約 4 GB 顯示記憶體）",
     "ggml_model_breeze_q4_k": "Q4_K（較小，約 3 GB 顯示記憶體）",
     "ggml_model_omnivoice_q8_0": "Q8_0（建議）",

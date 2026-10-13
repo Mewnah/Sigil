@@ -770,7 +770,7 @@
     "ggml_last_sentence": "Câu gần nhất: có tiếng đầu tiên sau {{first}} ms, {{seconds}} giây giọng nói.",
     "ggml_model": "Mô hình",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 ngôn ngữ)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 ngôn ngữ, được chuyển đổi trên máy này)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 ngôn ngữ)",
     "ggml_model_breeze_q8_0": "Q8_0 (khuyên dùng, khoảng 4 GB bộ nhớ video)",
     "ggml_model_breeze_q4_k": "Q4_K (nhỏ hơn, khoảng 3 GB bộ nhớ video)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (khuyên dùng)",

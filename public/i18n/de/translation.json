@@ -770,7 +770,7 @@
     "ggml_last_sentence": "Letzter Satz: erster Ton nach {{first}} ms, {{seconds}} s Sprache.",
     "ggml_model": "Modell",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 Sprachen)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 Sprachen, auf diesem PC konvertiert)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 Sprachen)",
     "ggml_model_breeze_q8_0": "Q8_0 (empfohlen, etwa 4 GB Grafikspeicher)",
     "ggml_model_breeze_q4_k": "Q4_K (kleiner, etwa 3 GB Grafikspeicher)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (empfohlen)",

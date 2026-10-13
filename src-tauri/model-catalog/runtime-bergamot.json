@@ -24,7 +24,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-bergamot-69455ac-s1-cpu.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-bergamot-69455ac-s1-cpu.zip",
               "revision": "assets-v1"
             }
           ],

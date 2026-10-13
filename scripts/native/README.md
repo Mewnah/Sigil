@@ -6,10 +6,12 @@ store into `app_data/runtimes/…` and loaded lazily by `src-tauri/src/services/
 is load-time linked, so Sigil starts and every existing feature works with no pack installed. The
 decision record is [`docs/adr/0007-native-runtime-packs.md`](../../docs/adr/0007-native-runtime-packs.md).
 
-Asset hosting is **local only** for now: this folder builds and stages packs on your PC; nothing is
-downloaded (except by CMake projects you add yourself) and nothing is published. Catalog entries of
-Sigil-built packs stay `"status": "unpublished"` and are installed by local import or
-`SIGIL_LOCAL_ASSETS`.
+This folder builds and stages packs on your PC; nothing is downloaded (except by CMake projects you add
+yourself) and nothing is published by these scripts. Catalog entries of Sigil-built packs start
+`"status": "unpublished"` and are installed by local import or `SIGIL_LOCAL_ASSETS` until the zips are
+on the `assets-v1` release: `scripts/release/publish-assets.ps1` uploads them and
+`scripts/models/publish-entries.mjs` flips the entries (`scripts/release/README.md`, "The assets-v1
+release"). A rebuilt zip has other bytes: pin it again (`scripts/models/pin-staged.mjs --force`).
 
 ## Requirements
 

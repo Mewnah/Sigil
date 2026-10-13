@@ -770,7 +770,7 @@
     "ggml_last_sentence": "上一句：{{first}} 毫秒后出声，共 {{seconds}} 秒语音。",
     "ggml_model": "模型",
     "ggml_model_magpie_v2602": "Magpie v2602（7 种语言）",
-    "ggml_model_magpie_v2607": "Magpie v2607（10 种语言，在这台电脑上转换）",
+    "ggml_model_magpie_v2607": "Magpie v2607（10 种语言）",
     "ggml_model_breeze_q8_0": "Q8_0（推荐，约占用 4 GB 显存）",
     "ggml_model_breeze_q4_k": "Q4_K（更小，约占用 3 GB 显存）",
     "ggml_model_omnivoice_q8_0": "Q8_0（推荐）",

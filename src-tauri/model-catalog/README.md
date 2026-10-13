@@ -70,8 +70,8 @@ frozen in `src/services/neural_audio/vc/assets.rs`; the four P3-A fragments are 
 
 `scripts/assets/check-local-assets.mjs` verifies a `SIGIL_LOCAL_ASSETS` folder against these entries.
 
-Sigil-exported files stay `unpublished` (asset hosting is local only: local import or
-`SIGIL_LOCAL_ASSETS`).
+Sigil-exported files start `unpublished` (local import or `SIGIL_LOCAL_ASSETS`) and become `published`
+once they are on the `assets-v1` release (see "Publishing the Sigil-built assets" below).
 
 P4 fragments (translation):
 
@@ -84,8 +84,8 @@ P4 fragments (translation):
   `llm_server::catalog`; the footprints of the ids `resources::policy` recommends equal the policy's
   values (a test keeps them in step).
 - `mt-nllb.json` (P4-D): `mt/nllb-200-distilled-600m-int8` (published, Xenova's ONNX export at
-  commit `261c31d`, 912 MB, LFS-pinned) and `mt/nllb-200-distilled-1.3b-int8` (unpublished: built
-  by `scripts/mt-bench/export_nllb.py` and installed by local import or `SIGIL_LOCAL_ASSETS`).
+  commit `261c31d`, 912 MB, LFS-pinned) and `mt/nllb-200-distilled-1.3b-int8` (unpublished until its
+  zip is on the release: built by `scripts/mt-bench/export_nllb.py`, pinned, 1.56 GiB).
   Engine: `mt_local::nllb`. Dry-run the pin script with `--only mt/nllb-200-distilled-600m`.
 - `mt-bergamot.json` (P4-E): **generated** by `scripts/runtime-packs/bergamot/gen-catalog.mjs` from
   Mozilla's model registry (106 directions to and from English, pinned with the registry's size and
@@ -106,8 +106,9 @@ P6 fragments (streamer features; created empty by P6-S0, each owned by one works
   `scripts/runtime-packs/qwentts/build.ps1` and imported).
 - `tts-ggml-experimental.json` (P6-F): 24 entries: 7 third-party runtime packs (NeMo-Speech.cpp,
   Breeze-TTS-2.cpp, CrispASR official zips, pinned), 3 Sigil-built s2 packs (unpublished,
-  `scripts/runtime-packs/s2/build.ps1`) and 14 models (the Magpie v2602 tokenizer and the v2607
-  checkpoint are local-only imports; see `scripts/runtime-packs/nemo-speech/`).
+  `scripts/runtime-packs/s2/build.ps1`) and 14 models (the Magpie tokenizers are Sigil-hosted
+  `assets-v1` files rebuilt by `scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1`; the
+  v2607 checkpoint is NVIDIA's own GGUF on Hugging Face, pinned to its commit).
 - `runtime-sbv2.json` (P6-G): not a runtime pack: the Style-Bert-VITS2 Japanese BERT
   (`tts/sbv2-bert-ja`) and the NAIST-JDIC dictionary `text/jpreprocess-naist-jdic`, which is
   shared by text readings (P6-L), Style-Bert-VITS2 and Kokoro's Japanese reader. Never add a second
@@ -162,12 +163,13 @@ P6 fragments (streamer features; created empty by P6-S0, each owned by one works
   bodies or hash mismatch.
 - **Licenses are facts.** `license` is metadata for the Models tab; the UI and docs never show
   license warnings.
-- **Unpublished assets** (Sigil-built packs, exported embedders, templates) stay `"unpublished"`.
-  Asset hosting is local only for now: they are built by local scripts (for example
-  `scripts/native/build-runtime-packs.ps1`) and installed through the Models tab's Import or
-  `SIGIL_LOCAL_ASSETS`, and through a custom mirror only for files pinned by `sha256` or `git_oid`.
-  Unpinned unpublished packs are import-only in every build. The store never downloads an
-  unpublished entry from its catalog URLs.
+- **Unpublished assets** (Sigil-built packs, exported embedders, templates) start `"unpublished"`.
+  They are built by local scripts (for example `scripts/native/build-runtime-packs.ps1`) and installed
+  through the Models tab's Import or `SIGIL_LOCAL_ASSETS`, and through a custom mirror only for files
+  pinned by `sha256` or `git_oid`. Unpinned unpublished packs are import-only in every build. The
+  store never downloads an unpublished entry from its catalog URLs. Their sources name flat assets of
+  the `assets-v1` release; `scripts/models/publish-entries.mjs` flips an entry to `published` after
+  the uploaded bytes were proven (next section).
 - **Paths.** Catalog `path` values use only `[A-Za-z0-9._/+-]`. Content paths inside archives may use
   any name extraction accepts (spaces, `!`, non-ASCII and so on).
 - **One folder per entry.** No entry's folder (`models/<family>/<id rest>`, or `runtimes/<id rest>`
@@ -217,3 +219,34 @@ It reads the Hugging Face tree API (branch to commit, LFS sha256 or git blob id)
 asset digests. Requests are sequential, at least 2 s apart, back off on 429/5xx, and immutable
 responses are cached in `%LOCALAPPDATA%\sigil-dev-cache\pin-catalog`. `--hash-by-download` (opt-in,
 needs consent for large files) hashes hosts that publish no digests, such as alphacephei (Vosk).
+
+## Publishing the Sigil-built assets (`assets-v1`)
+
+The Models tab downloads only `published` entries. Sigil-built files list
+`https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/<asset name>` as their source (a release
+has no folders: the asset name is one flat file name, never `folder/file`), so turning an
+`unpublished` entry into a download button is: stage the files under their asset names, pin them,
+upload them, prove the upload, flip the status. Nothing uploads or flips by itself.
+
+```
+node scripts/models/assets-v1.mjs plan --staging <dir> [--hash]         # what the catalog expects vs what is staged
+node scripts/models/pin-staged.mjs --staging <dir> [--only <prefix>] [--force] [--write]
+                                                                         # size + sha256 from the local files, in pin-catalog's format
+pwsh scripts/release/publish-assets.ps1 -Staging <dir> [-Verify] [-Execute]   # upload plan; -Execute uploads with gh
+node scripts/models/publish-entries.mjs --ids <id,id|all-staged> [--staging <dir>] [--digest-only] [--write]
+                                                                         # download + hash every release URL, then status -> published
+```
+
+- `pin-staged.mjs` is the offline twin of `pin-catalog.mjs` (which reads a host's metadata and so cannot
+  pin a file that is not uploaded yet). The pin of an archive entry is the archive itself, as downloaded.
+  It edits only the lines it means to, so hand-formatted fragments keep their layout.
+- `publish-entries.mjs` checks one URL at a time (at least 2 s apart); a file that also has an upstream
+  source is checked against that host's metadata, and its `assets-v1` URL is then only a mirror. It
+  refuses an unpinned file and an entry whose `requires` would stay unpublished (the button would not
+  work). `--assets-base http://127.0.0.1:<port>/` points it at a local copy for a dry run.
+- The voice changer fragments (`vc-bases`, `vc-embedders`, `vc-denoise`, `bench-models`) are generated by
+  `scripts/assets/vc_catalog.py`, which keeps the status already in the committed fragment.
+- When you re-upload rebuilt bytes, bump the entry's `version`: the Models tab compares versions to offer
+  an update (the store itself also re-installs when an install record no longer matches a pin).
+- The full walk-through, with the upload prerequisites, is in `scripts/release/README.md`.
+

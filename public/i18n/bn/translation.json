@@ -770,7 +770,7 @@
     "ggml_last_sentence": "শেষ বাক্য: প্রথম শব্দ {{first}} ms পরে, {{seconds}} সেকেন্ডের স্পিচ।",
     "ggml_model": "মডেল",
     "ggml_model_magpie_v2602": "Magpie v2602 (7টি ভাষা)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10টি ভাষা, এই পিসিতে রূপান্তরিত)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10টি ভাষা)",
     "ggml_model_breeze_q8_0": "Q8_0 (প্রস্তাবিত, প্রায় 4 GB ভিডিও মেমরি)",
     "ggml_model_breeze_q4_k": "Q4_K (ছোট, প্রায় 3 GB ভিডিও মেমরি)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (প্রস্তাবিত)",

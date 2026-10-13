@@ -27,6 +27,10 @@ installer. The constraints are:
 - Asset hosting is **local only** for now (user decision, 2026-09-28). Sigil-built packs are built
   by local scripts and installed through local import or `SIGIL_LOCAL_ASSETS`, and their catalog
   entries stay `unpublished`. No publishing or runtime-pack release workflows are created.
+  *Update 2026-10-13:* the user asked for the download buttons. The assets are uploaded to the
+  `assets-v1` release by hand with `scripts/release/publish-assets.ps1` (it uploads only with
+  `-Execute`) and `scripts/models/publish-entries.mjs` flips the entries after hashing the uploaded
+  bytes; there is still no CI workflow for it.
 - P0 bundled the CUDA provider (144 MB on rc.11, 62 MB on rc.13) next to Sigil.exe and installed
   NVIDIA's CUDA / cuDNN DLLs with an interim downloader (ADR 0003). ADR 0001 verified that
   `register_ep_library` can load the provider from an app-data folder.
@@ -126,8 +130,9 @@ installer. The constraints are:
    Dropping it from the installer now would silently remove CUDA for every NVIDIA user. When the
    maintainer publishes the pack:
    1. upload `onnxruntime_providers_cuda.dll` (staged by
-      `build-runtime-packs.ps1 -Engine ort-cuda-provider`) to the `assets-v1` release;
-   2. flip the entry to `published`;
+      `build-runtime-packs.ps1 -Engine ort-cuda-provider`) to the `assets-v1` release (as
+      `onnxruntime_providers_cuda-1.28.0-cuda13.dll`, `publish-assets.ps1`);
+   2. flip the entry to `published` (`publish-entries.mjs --write`);
    3. add `runtime/ort-cuda13-provider` to `runtime/nvidia-cuda13`'s `requires`;
    4. remove the provider from `scripts/release/stage-native-dlls.mjs`, `verify-bundle.ps1` and the
       expected installer contents.

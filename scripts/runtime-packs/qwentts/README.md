@@ -37,9 +37,9 @@ ggml is linked statically (no backend DLLs), with `GGML_NATIVE=OFF` and the AVX2
 imports only Windows and MSVC runtime DLLs plus `cublas64_13.dll` (cuda13: Sigil puts
 `runtime/nvidia-cuda13` on the helper's PATH) or `vulkan-1.dll` (vulkan: from the GPU driver); the build
 refuses anything else. Measured on the dev PC (16 cores, 6 jobs): cuda13 for one architecture about
-6 minutes (32.7 MB exe), cpu under a minute (2 MB); the pinned five-architecture cuda13 build is much
-longer (about 1.5 to 2 hours: it had reached step 96 of 150 after 65 minutes), so start it when the PC
-is otherwise idle. A build that is stopped resumes where it stopped.
+6 minutes (32.7 MB exe), cpu under a minute (2 MB); the pinned five-architecture cuda13 build 12 minutes
+(54 build steps, 101.6 MB exe, a 91.6 MB zip; an earlier estimate of 1.5 to 2 hours was wrong), still best
+started when the PC is otherwise idle. A build that is stopped resumes where it stopped.
 
 The source tree is prepared from the pinned archives (no git), so `tools/version.cmake` is replaced
 with one that stamps the pinned commit: `--version` reports `library 6fae929 (2026-09-28)`, and the

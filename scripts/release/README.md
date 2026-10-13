@@ -1,6 +1,6 @@
 # Release tooling (Windows)
 
-What turns the working tree into installers a friend can run, and the checks that say it is safe to hand them out. Nothing here uploads, pushes or publishes: the user does that by hand (asset hosting is local only).
+What turns the working tree into installers a friend can run, and the checks that say it is safe to hand them out. Nothing here runs by itself, pushes, or publishes behind your back: the installers are handed out by hand, and the one script that uploads (`publish-assets.ps1`, for the `assets-v1` model and runtime release) sends nothing unless you pass `-Execute`.
 
 ## The release, in order
 
@@ -24,6 +24,7 @@ Build tip on a PC someone is using: `$p = Get-Process -Id $PID; $p.PriorityClass
 | `check-catalog-pins.mjs`, `release-set.json` | Step 1, below. |
 | `check-no-secrets.mjs`, `env-classification.json`, `env-classification.mjs` | Part of step 3: no secret value in the frontend bundle, the exe or the extracted installers. See "Secrets". |
 | `packaged-smoke-all.ps1` | Steps 4 and 5, below. |
+| `publish-assets.ps1` | Uploads the staged Sigil-built assets to the `assets-v1` GitHub release with the GitHub CLI. Prints the plan; uploads only with `-Execute`. See "The assets-v1 release". |
 | `exit-probe.ps1` | Diagnostic, not a gate: one minimized launch that reproduces the shutdown stall the exit guard exists for (WM_CLOSE to the event loop's invisible window), see "Closing the window must end the process". |
 
 ## Secrets (part of step 3)
@@ -148,3 +149,20 @@ Keeping it costs one ggml in `Sigil.exe` and the `GGML_NATIVE=OFF` / `GGML_AVX2=
 2. Checksums: `Get-FileHash src-tauri\target\release\bundle\nsis\*-setup.exe, src-tauri\target\release\bundle\msi\*.msi, src-tauri\target\release\Sigil_*_x64_portable.zip | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path -Leaf $_.Path)" } | Set-Content SHA256SUMS.txt -Encoding ascii`.
 3. Upload the NSIS setup (recommended, per user), the MSI, the portable zip and `SHA256SUMS.txt` to a GitHub release; the workflow's draft does this for the first three.
 4. Optional mirrors for the default models (see "Rolling releases") go to a release such as `assets-v1` of this repository.
+
+## The assets-v1 release (Sigil-built packs, exports and templates)
+
+The `unpublished` entries of `src-tauri/model-catalog/` (the transcribe, Qwen3-TTS and echo runtime packs, the NLLB 1.3B zip, the voice changer's encoders, templates and zero-shot graphs, the FCPE pitch model, the benchmark models, the Magpie tokenizers, ...) are files Sigil builds itself. Their catalog sources are assets of one pre-release, <https://github.com/Mewnah/Sigil-assets/releases/tag/assets-v1> (`https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/<asset name>`). The Models tab shows a download button only for `published` entries, so these entries get their button in five steps. Each step is a command you run; nothing leaves the PC before step 3 and nothing here ever asks for a credential.
+
+1. **Stage.** One folder (any location; hard links are fine) that holds each file under its exact release asset name. A release has no folders, so the name is the last part of the URL in the catalog. `node scripts/models/assets-v1.mjs plan --staging <dir>` lists what the catalog expects, what is there, what is missing and what no entry names (`--hash` also hashes every file against its pin).
+2. **Pin.** `node scripts/models/pin-staged.mjs --staging <dir> --write` hashes the staged files and writes `size` and `sha256` into the catalog fragments in the format `pin-catalog.mjs` writes, keeping each fragment's own layout. For an archive entry the pin is the zip as it is downloaded (the store hashes the download, then extracts). A file that already has a pin is only checked: other bytes are a MISMATCH (exit 1), and `--force` re-pins a rebuilt pack. It also writes `SHA256SUMS.txt` and `MANIFEST.json` into the folder. `pin-catalog.mjs` cannot do this job before the upload: it reads the host's own metadata and the release does not hold the files yet.
+3. **Upload.** `pwsh scripts/release/publish-assets.ps1 -Staging <dir>` prints the upload plan (files, sizes, which entries use them, what is blocked) and stops. With `-Execute` it needs the GitHub CLI that you installed and logged in (`gh auth login`; the script never reads or stores a token): it creates the `assets-v1` pre-release when it does not exist, then uploads the files one at a time with a pause between uploads, skipping a file that is already there with the same size. A file that is there with another size stops that file unless you pass `-Replace`. `-Verify` hashes every file against its pin before planning. Files blocked by the plan (no pin, wrong size or hash) are never uploaded.
+4. **Prove and flip.** `node scripts/models/publish-entries.mjs --ids all-staged --staging <dir>` (dry run) checks, sequentially with at least 2.5 s between requests, that every release URL answers and its bytes hash to the pin (each file is downloaded to a temp file that is deleted right after; `--digest-only` compares GitHub's own asset digests instead, one request for the whole release). A file that also has an upstream source (the Magpie v2607 checkpoint on Hugging Face) is checked against that host's metadata, and its release copy only when staged. Add `--write` to set `"status": "published"` on the entries that verified; it changes only the status line of each entry, and an entry whose `requires` did not verify stays unpublished. `--ids a/b,c/d` names entries instead of `all-staged`; `--except <id>` drops one.
+5. **Check.** `node scripts/release/check-catalog-pins.mjs` (offline) and `pnpm docs:check`, then rebuild: `build.rs` refuses a `published` file without a pin, and the Models tab now shows a download button for the flipped entries ("Import only" is gone). The voice changer's fragments are written by `scripts/assets/vc_catalog.py`; it keeps the status of the committed fragment, so regenerating never takes a published entry back.
+
+A dry run of step 4 needs no release: serve the staging folder on this PC (any static file server, 127.0.0.1 only, files laid out flat) and add `--assets-base http://127.0.0.1:<port>/ --catalog-dir <copy of src-tauri/model-catalog>`.
+
+Entries whose files are not built yet (the Vulkan packs need the Vulkan SDK, Bergamot and the s2 packs a first source fetch) take the same road later: build the zip, put it in the staging folder, run steps 2 to 4 for it (`--only <id prefix>` on `pin-staged.mjs`, `--ids <id>` on `publish-entries.mjs`). Rebuilding a pack changes its bytes: pin again with `--force` before uploading, and upload with `-Replace` if the old file is already on the release, and bump the entry `version` so the Models tab offers the update.
+
+Release assets are limited to 2 GiB each (`mt/nllb-200-distilled-1.3b-int8` is 1.56 GiB).
+

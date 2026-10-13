@@ -770,7 +770,7 @@
     "ggml_last_sentence": "ประโยคล่าสุด: เสียงแรกหลัง {{first}} ms เสียงพูด {{seconds}} วินาที",
     "ggml_model": "โมเดล",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 ภาษา)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 ภาษา แปลงบนพีซีเครื่องนี้)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 ภาษา)",
     "ggml_model_breeze_q8_0": "Q8_0 (แนะนำ หน่วยความจำวิดีโอประมาณ 4 GB)",
     "ggml_model_breeze_q4_k": "Q4_K (เล็กกว่า หน่วยความจำวิดีโอประมาณ 3 GB)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (แนะนำ)",

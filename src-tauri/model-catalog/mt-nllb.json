@@ -4,7 +4,7 @@
     "NLLB-200 distilled machine translation (~200 languages, any direction) on Sigil's own ONNX Runtime, CPU background profile (owned by P4-D; engine src-tauri/src/services/mt_local/nllb.rs, ids mt_local::NLLB_DEFAULT_MODEL / NLLB_LARGE_MODEL, TS NLLB_MODELS).",
     "Each entry is one folder: encoder_model_quantized.onnx (input_ids, attention_mask -> last_hidden_state), decoder_model_merged_quantized.onnx (Optimum's merged decoder with KV cache and use_cache_branch), tokenizer.json (Hugging Face tokenizers, SentencePiece BPE plus the FLORES-200 language tokens), config.json and generation_config.json. The engine also accepts the other Optimum names (encoder_model.onnx, decoder_model_merged.onnx, *_int8 / *_uint8, an onnx/ subfolder) for local folders.",
     "600M: Xenova's transformers.js export (8-bit dynamic quantization of every MatMul and the embeddings), pinned to a repo commit with the LFS sha256 by scripts/models/pin-catalog.mjs --fragment src-tauri/model-catalog/mt-nllb.json --only mt/nllb-200-distilled-600m --write (the 1.3B entry has no release to look up while unpublished).",
-    "1.3B: no maintained ONNX export exists on Hugging Face, so it is Sigil-built by scripts/mt-bench/export_nllb.py (Optimum export plus the same 8-bit quantization, zipped) and stays 'unpublished' (asset hosting is local only): install it by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS. Pin size and sha256 from the script's .sha256 file when publishing."
+    "1.3B: no maintained ONNX export exists on Hugging Face, so it is Sigil-built by scripts/mt-bench/export_nllb.py (Optimum export plus the same 8-bit quantization, zipped) and starts 'unpublished' (install it by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS until it is on the assets-v1 release) or SIGIL_LOCAL_ASSETS. Size and sha256 are pinned from the script's .sha256 file (scripts/models/pin-staged.mjs); publish-entries.mjs flips the status after the upload."
   ],
   "entries": [
     {
@@ -85,17 +85,18 @@
       "kind": "model",
       "version": "1",
       "title": "NLLB-200 1.3B (offline translation, 200 languages, higher quality)",
-      "description": "The larger NLLB-200 translator: better translations than the 600M model for the same 200 languages, still offline on the processor, about twice as slow. About 1.9 GB download.",
+      "description": "The larger NLLB-200 translator: better translations than the 600M model for the same 200 languages, still offline on the processor, about twice as slow. About 1.7 GB download.",
       "license": "CC-BY-NC-4.0",
       "status": "unpublished",
       "files": [
         {
           "path": "nllb-200-distilled-1.3b-int8.zip",
-          "size": 0,
+          "size": 1672075109,
+          "sha256": "711350b4df5fbe595a73a1cc5e5abca92f8be901f8458fa8270e30c6048232db",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/nllb-200-distilled-1.3b-int8.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/nllb-200-distilled-1.3b-int8.zip",
               "revision": "assets-v1"
             }
           ],

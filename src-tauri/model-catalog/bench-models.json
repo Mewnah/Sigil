@@ -4,8 +4,8 @@
     "Benchmark-only models of kind bench (owned by P3-A; ids in vc/assets.rs); never needed by normal users. Checks and contracts: scripts/vc-templates/export_bench.py (reports/bench.json). Written by scripts/assets/vc_catalog.py.",
     "bench/dnsmos-p835: DNSMOS P.835 (model.onnx: input_1 [N,144160] = 9.01 s at 16 kHz -> [N,3] raw SIG/BAK/OVRL, mapped by DNS-Challenge's non-personalised polynomials) and P.808 (p808.onnx: input_1 [N,900,120] log-mel).",
     "bench/campplus: CAM++ speaker embedding (3D-Speaker zh-cn common, sherpa-onnx export): x [N,T,80] Kaldi fbank minus its time mean -> embedding [N,192].",
-    "bench/gpu-load: Sigil's GPU hammer for the contention mode (8 x Conv 3x3 32->32 + ReLU, x [1,32,H,W] -> y), built by export_bench.py; unpublished.",
-    "bench/campplus-exact: the same CAM++ checkpoint re-exported by scripts/vc-templates/export_bench.py with exact segment pooling (>= 100 dB SNR against upstream; P3B-B, ADR 0009); same I/O contract as bench/campplus; unpublished (local-only until the user publishes it), staged at %LOCALAPPDATA%/sigil-dev-cache/vc-assets/bench/campplus-exact/model.onnx."
+    "bench/gpu-load: Sigil's GPU hammer for the contention mode (8 x Conv 3x3 32->32 + ReLU, x [1,32,H,W] -> y), built by export_bench.py; starts unpublished.",
+    "bench/campplus-exact: the same CAM++ checkpoint re-exported by scripts/vc-templates/export_bench.py with exact segment pooling (>= 100 dB SNR against upstream; P3B-B, ADR 0009); same I/O contract as bench/campplus; starts unpublished (becomes published with scripts/models/publish-entries.mjs once its file is on the assets-v1 release), staged at %LOCALAPPDATA%/sigil-dev-cache/vc-assets/bench/campplus-exact/model.onnx."
   ],
   "entries": [
     {
@@ -85,7 +85,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/bench-campplus-exact-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/bench-campplus-exact-model.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -109,7 +109,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/bench-gpu-load-model.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/bench-gpu-load-model.onnx",
               "revision": "assets-v1"
             }
           ]

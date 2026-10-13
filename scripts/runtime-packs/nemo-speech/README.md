@@ -14,25 +14,43 @@ Job Object. Engine code: `src-tauri/src/services/tts_helpers/magpie.rs` and the 
 | `runtime/nemo-speech-cuda` / `-vulkan` / `-cpu` | the server, NVIDIA's own v0.1.0 Windows release zips (4.7 / 22 / 106 MB) | GitHub release, pinned by digest, **published** |
 | `tts/magpie-tts-357m-v2602` | Magpie TTS Multilingual 357M, v2602 f16 GGUF (449 MB) | `nvidia/magpie_tts_multilingual_357m@452ef56`, pinned, **published** |
 | `tts/nemo-nano-codec-22khz` | NanoCodec 22 kHz decoder GGUF (79 MB) | `nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps@fc00890`, pinned, **published** |
-| `tts/magpie-tts-357m-v2602-tokenizer` | the 7 tokenizer files inside NVIDIA's `.nemo` | `fetch-magpie-tokenizer.ps1`, each file pinned, **unpublished** (Import) |
-| `tts/magpie-tts-357m-v2607` + `-tokenizer` | v2607: adds Korean, Arabic, Brazilian Portuguese | `convert-magpie-v2607.ps1` (local conversion), **unpublished** (Import) |
+| `tts/magpie-tts-357m-v2602-tokenizer` | the 7 tokenizer files inside NVIDIA's `.nemo` | `fetch-magpie-tokenizer.ps1` rebuilds them; each file pinned; flat `assets-v1` release assets, **unpublished** until uploaded |
+| `tts/magpie-tts-357m-v2607-tokenizer` | the v2607 members (one zip) | `fetch-magpie-tokenizer.ps1 -Version v2607`; pinned; `assets-v1` asset, **unpublished** until uploaded |
+| `tts/magpie-tts-357m-v2607` | v2607 f16 GGUF (569 MB): adds Korean, Arabic, Brazilian Portuguese | NVIDIA's own file, `nvidia/magpie_tts_multilingual_357m@1980687`, pinned; **unpublished**: the v0.1.0 server refuses it (see below) |
 
-## Why some parts are local
+## Why the tokenizers are Sigil-hosted
 
 - NVIDIA ships Magpie's pronunciation dictionaries only inside the `.nemo` archive. NeMo-Speech.cpp's
   own model index downloads just the first 32 MiB of it (the tokenizer members sit before the
   weights); Sigil's model store cannot do ranged partial-archive installs, so
-  `fetch-magpie-tokenizer.ps1` does that once and Sigil imports the checked files. (A model-store
-  feature request for `tar` archives with a byte range would make this a normal download.)
-- v2607 uses factor-2 frame stacking and NVIDIA publishes it only as a `.nemo`; NeMo-Speech.cpp's
-  docs say to convert it locally.
+  `fetch-magpie-tokenizer.ps1` does that once, checks every member and writes the files that are
+  uploaded to the `assets-v1` release (`scripts/release/README.md`). Until they are uploaded and the
+  entries are flipped, Import the checked files. (A model-store feature request for `tar` archives
+  with a byte range would make this a normal download.)
+- v2607 uses factor-2 frame stacking. NVIDIA first published it only as a `.nemo` (hence
+  `convert-magpie-v2607.ps1`, which still works) and now hosts the GGUF itself, so the catalog points
+  at NVIDIA's file instead of a Sigil copy. NeMo-Speech.cpp's v0.2.0 release (2026-10-02) is the one
+  whose index names that GGUF; Sigil's packs are v0.1.0, and the v0.1.0 server refuses it
+  (checked 2026-10-13 with `real_ggml_engine_speaks`, `SIGIL_GGML_MODEL=v2607`, the CPU pack:
+  `unsupported frame_stacking_factor=2; this example currently supports 1`). The entry therefore stays
+  unpublished. To enable it, move the three `runtime/nemo-speech-*` entries to the v0.2.0 zips (they
+  carry GitHub digests), re-run that smoke for both checkpoints (v2602 must keep working), then flip
+  `tts/magpie-tts-357m-v2607` with `publish-entries.mjs --ids tts/magpie-tts-357m-v2607 --write`.
 
 ```powershell
 # The v2602 tokenizer: one 32 MiB request, every member checked against the catalog hashes.
 pwsh scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1
 # -> Models & Runtimes -> "Magpie TTS v2602 text tokenizer" -> Import -> the printed folder.
 
-# v2607 (needs Python 3.10-3.12; installs torch CPU into its own venv; downloads the .nemo once).
+# The v2607 tokenizer zip (the release asset of tts/magpie-tts-357m-v2607-tokenizer): two ranged
+# requests (about 31 MB, not the whole .nemo), NVIDIA's index checked, every member hashed. The
+# .nemo is the v2602 tar with the members v2607 changed appended after the weights, so the later
+# copy of model_config.yaml and two dictionaries wins, as in tar extraction.
+pwsh scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607
+# -> the zip and its .sha256 in %LOCALAPPDATA%\sigil-dev-cache\nemo-speech\magpie-tts-357m-v2607-tokenizer\
+
+# v2607 by local conversion (needs Python 3.10-3.12; installs torch CPU into its own venv;
+# downloads the whole .nemo once). Only needed to make the GGUF yourself.
 pwsh scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1
 # -> Import the GGUF and the tokenizer zip it prints.
 ```

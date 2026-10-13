@@ -770,7 +770,7 @@
     "ggml_last_sentence": "आख़िरी वाक्य: पहली आवाज़ {{first}} ms बाद, {{seconds}} सेकंड की स्पीच।",
     "ggml_model": "मॉडल",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 भाषाएँ)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 भाषाएँ, इस PC पर कन्वर्ट किया गया)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 भाषाएँ)",
     "ggml_model_breeze_q8_0": "Q8_0 (अनुशंसित, लगभग 4 GB वीडियो मेमोरी)",
     "ggml_model_breeze_q4_k": "Q4_K (छोटा, लगभग 3 GB वीडियो मेमोरी)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (अनुशंसित)",

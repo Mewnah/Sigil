@@ -770,7 +770,7 @@
     "ggml_last_sentence": "Последнее предложение: первый звук через {{first}} мс, {{seconds}} с речи.",
     "ggml_model": "Модель",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 языков)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 языков, преобразуется на этом ПК)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 языков)",
     "ggml_model_breeze_q8_0": "Q8_0 (рекомендуется, около 4 ГБ видеопамяти)",
     "ggml_model_breeze_q4_k": "Q4_K (меньше, около 3 ГБ видеопамяти)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (рекомендуется)",

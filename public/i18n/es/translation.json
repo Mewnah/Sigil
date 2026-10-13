@@ -770,7 +770,7 @@
     "ggml_last_sentence": "Última frase: primer sonido tras {{first}} ms, {{seconds}} s de voz.",
     "ggml_model": "Modelo",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 idiomas)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 idiomas, convertido en esta PC)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 idiomas)",
     "ggml_model_breeze_q8_0": "Q8_0 (recomendado, unos 4 GB de memoria de video)",
     "ggml_model_breeze_q4_k": "Q4_K (más pequeño, unos 3 GB de memoria de video)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (recomendado)",

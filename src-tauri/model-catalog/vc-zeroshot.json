@@ -3,7 +3,7 @@
   "$comment": [
     "Sigil-ZS zero-shot graphs for vc::families::sigil_zs (P5-B): Sigil's export of Seed-VC seed-uvit-tat-xlsr-tiny (Plachtaa/seed-vc@51383efd; XLS-R-300M layer 12 from facebook/wav2vec2-xls-r-300m@1a640f32, the DiT from Plachta/Seed-VC@257283f9, CosyVoice-300M HiFT@24c40509, CAM++ campplus_cn_common) by scripts/vc-families/seed_vc/export.py, opset 17, weights inside each graph. The sha256 values are the graphs ADR 0006's reports measured (scripts/vc-families/reports/seed_vc_*.json, 'graphs').",
     "vc/zs-seed-vc holds every fp32 graph plus the fp16 HiFT decoder (hift_nsf.fp16 / hift.fp16, a switch); vc/zs-seed-vc-fp16 holds the optional fp16 XLS-R and DiT graphs (switches that fail waveform parity; ADR 0006). The bare estimator (dit.onnx) is not shipped: the step graphs run the update on the device.",
-    "Entries stay unpublished (asset hosting is local only): installed with the Models tab's Import or SIGIL_LOCAL_ASSETS (the export folder %LOCALAPPDATA%/sigil-dev-cache/vc-families/seed_vc is a valid local-assets folder: its file names are the in-entry paths; verified with `Sigil.exe --headless fetch vc/zs-seed-vc`). min_vram_mb is P5-B's measurement of one loaded voice (process VRAM delta, CUDA context included: CUDA 1358 MB, DirectML 1117 MB). Owned by P5-B."
+    "Entries start unpublished and become 'published' with scripts/models/publish-entries.mjs --write once their files are on the assets-v1 release (scripts/release/publish-assets.ps1); until then they are installed with the Models tab's Import or SIGIL_LOCAL_ASSETS (the export folder %LOCALAPPDATA%/sigil-dev-cache/vc-families/seed_vc is a valid local-assets folder: its file names are the in-entry paths; verified with `Sigil.exe --headless fetch vc/zs-seed-vc`). min_vram_mb is P5-B's measurement of one loaded voice (process VRAM delta, CUDA context included: CUDA 1358 MB, DirectML 1117 MB). Owned by P5-B."
   ],
   "entries": [
     {
@@ -24,7 +24,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-xlsr.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-xlsr.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -36,7 +36,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-lr.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-lr.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -48,7 +48,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-dit_step.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-dit_step.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -60,7 +60,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-dit_step1.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-dit_step1.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -72,7 +72,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_f0.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-hift_f0.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -84,7 +84,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -96,7 +96,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-hift.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -108,7 +108,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-hift_nsf.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -120,7 +120,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-hift.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-hift.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -132,7 +132,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-campplus.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-campplus.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -144,7 +144,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-mel.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-mel.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -171,7 +171,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-xlsr.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-fp16-xlsr.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -183,7 +183,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step.fp16.onnx",
               "revision": "assets-v1"
             }
           ]
@@ -195,7 +195,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step1.fp16.onnx",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/vc-zs-seed-vc-fp16-dit_step1.fp16.onnx",
               "revision": "assets-v1"
             }
           ]

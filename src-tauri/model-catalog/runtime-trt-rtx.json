@@ -5,7 +5,7 @@
     "Contents (one zip, extracted as is): onnxruntime_providers_nv_tensorrt_rtx.dll, an ONNX Runtime plugin-EP build of the TensorRT-RTX execution provider (it must export CreateEpFactories and match ONNX Runtime 1.28's EP ABI), plus every DLL its import table names that is not in System32, next to Sigil.exe or in runtime/nvidia-cuda13: the TensorRT-RTX runtime (NVIDIA's SDK zip ships tensorrt_rtx_1_x.dll and tensorrt_onnxparser_rtx_1_x.dll in lib/). trt.rs reads the provider's PE imports and refuses a pack that does not resolve, naming the missing DLLs, so the pack never has to be guessed right.",
     "Note: the NV provider ort-sys 2.0.0-rc.13 ships (pyke dist efb686cb...78293, copied into target/<profile> as onnxruntime_providers_nv_tensorrt_rtx.dll) imports nvinfer_10.dll and nvonnxparser_10.dll (TensorRT 10 names), not the TensorRT-RTX SDK's names; pair it with a matching runtime or use a provider built against TensorRT-RTX (NVIDIA/TensorRT-RTX-EP-ABI).",
     "Classic TensorRT (option): onnxruntime_providers_tensorrt.dll only works next to Sigil.exe (provider-bridge library); its TensorRT 10 runtime DLLs can come from this pack.",
-    "Unpublished and unpinned: NVIDIA's TensorRT-RTX download needs its license acceptance, and asset hosting is local only, so the pack is assembled locally and installed with the Models tab's Import or SIGIL_LOCAL_ASSETS (developers can point SIGIL_TRT_DIR at an unpacked folder). Pin size and sha256 when it is published."
+    "Unpublished and unpinned: NVIDIA's TensorRT-RTX download needs its license acceptance, so no pack is hosted yet; it is assembled locally and installed with the Models tab's Import or SIGIL_LOCAL_ASSETS (developers can point SIGIL_TRT_DIR at an unpacked folder). Pin size and sha256 when it is published."
   ],
   "entries": [
     {
@@ -26,7 +26,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/tensorrt-rtx-1.28.0-cuda13.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/tensorrt-rtx-1.28.0-cuda13.zip",
               "revision": "assets-v1"
             }
           ],

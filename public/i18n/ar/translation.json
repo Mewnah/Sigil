@@ -770,7 +770,7 @@
     "ggml_last_sentence": "آخر جملة: أول صوت بعد {{first}} ms، و{{seconds}} ث من الكلام.",
     "ggml_model": "النموذج",
     "ggml_model_magpie_v2602": "Magpie v2602 (7 لغات)",
-    "ggml_model_magpie_v2607": "Magpie v2607 (10 لغات، يُحوَّل على هذا الكمبيوتر)",
+    "ggml_model_magpie_v2607": "Magpie v2607 (10 لغات)",
     "ggml_model_breeze_q8_0": "Q8_0 (موصى به، نحو 4 GB من ذاكرة الفيديو)",
     "ggml_model_breeze_q4_k": "Q4_K (أصغر، نحو 3 GB من ذاكرة الفيديو)",
     "ggml_model_omnivoice_q8_0": "Q8_0 (موصى به)",

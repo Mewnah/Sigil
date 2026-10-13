@@ -2,7 +2,7 @@
   "$schema": "./_schema.json",
   "$comment": [
     "transcribe.cpp (handy-computer, MIT) as sigil_transcribe.dll: Sigil's sigil_engine ABI v1 shim over transcribe.h with transcribe.cpp and ggml linked statically. Owned by P1-G2; decision record docs/adr/0003b-transcribe-cpp.md. Upstream pin: native/engines/transcribe/UPSTREAM.json (v0.2.4, 4807edaf).",
-    "Packs are built locally by native/engines/transcribe/build.ps1 (-Variant cpu,cpu-avx2,cpu-avx512,cuda13[,vulkan with the Vulkan SDK]) and stay 'unpublished' (asset hosting is local-only for now): install them by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS (the zips are found by file name). They are unpinned while unpublished; pin size and sha256 from the build's .zip.sha256 when publishing.",
+    "Packs are built locally by native/engines/transcribe/build.ps1 (-Variant cpu,cpu-avx2,cpu-avx512,cuda13[,vulkan with the Vulkan SDK]) and start 'unpublished' (install them by local import in Models & Runtimes or SIGIL_LOCAL_ASSETS until they are on the assets-v1 release; the zips are found by file name). A built zip is pinned (size and sha256, scripts/models/pin-staged.mjs) from the exact file that is uploaded; the vulkan variant stays unbuilt and unpinned until the Vulkan SDK is installed.",
     "Engine packs follow native_runtime's convention runtime/sigil-<engine>-<variant>: each zip holds sigil_transcribe.dll plus sigil-pack.json (sizes and sha256 of every file, checked before each load). cuda13 imports cudart64_13 / cublas64_13 / cublasLt64_13 from runtime/nvidia-cuda13; GPU variants also need AVX2.",
     "bench/* entries are the spike's measurement models (Hugging Face LFS sha256, pinned to a repo commit). P2 adds the user-facing STT model entries.",
     "Upgrade: bump UPSTREAM.json, then every id's version and zip name here together."
@@ -24,11 +24,12 @@
       "files": [
         {
           "path": "sigil-transcribe-0.2.4-s2-cuda13.zip",
-          "size": 0,
+          "size": 92163435,
+          "sha256": "a6d276efbfa5b6486441f10c0e289fe395749012fefce6ce0e990320f2e6449a",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cuda13.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cuda13.zip",
               "revision": "assets-v1"
             }
           ],
@@ -62,7 +63,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-vulkan.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-vulkan.zip",
               "revision": "assets-v1"
             }
           ],
@@ -92,11 +93,12 @@
       "files": [
         {
           "path": "sigil-transcribe-0.2.4-s2-cpu-avx512.zip",
-          "size": 0,
+          "size": 1477537,
+          "sha256": "39f01c9af71692770ade3555256496ee4a43fecb3b17468656cf5d15d3111f80",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx512.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx512.zip",
               "revision": "assets-v1"
             }
           ],
@@ -126,11 +128,12 @@
       "files": [
         {
           "path": "sigil-transcribe-0.2.4-s2-cpu-avx2.zip",
-          "size": 0,
+          "size": 1447217,
+          "sha256": "eaf3b98012788e40f5a021ce8339d4a694cacc9cb144092c4dd5930d73e3ab5b",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx2.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu-avx2.zip",
               "revision": "assets-v1"
             }
           ],
@@ -160,11 +163,12 @@
       "files": [
         {
           "path": "sigil-transcribe-0.2.4-s2-cpu.zip",
-          "size": 0,
+          "size": 1390721,
+          "sha256": "a837a8d8def88c8296f2e5028ce6616a1123c81f4dcfd19ab1898699bbc90595",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-transcribe-0.2.4-s2-cpu.zip",
               "revision": "assets-v1"
             }
           ],

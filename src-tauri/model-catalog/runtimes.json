@@ -2,8 +2,8 @@
   "$schema": "./_schema.json",
   "$comment": [
     "Native runtime packs loaded by native_runtime: the ONNX Runtime CUDA provider and Sigil-built sigil_engine DLL packs. Owned by P1-D1; decision record docs/adr/0007-native-runtime-packs.md. The NVIDIA CUDA 13 runtime is in runtime-nvidia.json.",
-    "Sigil-built packs stay status 'unpublished' until the maintainer publishes them (asset hosting is local-only for now): they are installed by local import or SIGIL_LOCAL_ASSETS, staged by scripts/native/build-runtime-packs.ps1 (see scripts/native/README.md).",
-    "Engine packs follow the id convention runtime/sigil-<engine>-<variant> with a matching 'variant'; each zip holds sigil_<engine>.dll and sigil-pack.json (sizes and sha256 of its files, checked before every load). They are unpinned while unpublished because local MSVC builds are not byte-reproducible; pin them when publishing.",
+    "Sigil-built packs start 'unpublished' (local import or SIGIL_LOCAL_ASSETS) and become 'published' with scripts/models/publish-entries.mjs --write once their files are on the assets-v1 release (scripts/release/publish-assets.ps1); they are staged by scripts/native/build-runtime-packs.ps1 (see scripts/native/README.md).",
+    "Engine packs follow the id convention runtime/sigil-<engine>-<variant> with a matching 'variant'; each zip holds sigil_<engine>.dll and sigil-pack.json (sizes and sha256 of its files, checked before every load). Local MSVC builds are not byte-reproducible, so a pack is pinned (size and sha256 of the zip, scripts/models/pin-staged.mjs) from the exact file that is uploaded; rebuilding means pinning again with --force.",
     "runtime/ort-cuda13-provider: onnxruntime_providers_cuda.dll of ONNX Runtime 1.28.0 exactly as ort-sys 2.0.0-rc.13 ships it (pyke dist efb686cb...78293), pinned. Used through register_ep_library only when the provider is not installed next to Sigil.exe. Bump with the ORT build (ADR 0001)."
   ],
   "entries": [
@@ -26,7 +26,7 @@
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/onnxruntime_providers_cuda-1.28.0-cuda13.dll",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/onnxruntime_providers_cuda-1.28.0-cuda13.dll",
               "revision": "assets-v1"
             }
           ]
@@ -46,11 +46,12 @@
       "files": [
         {
           "path": "sigil-echo-0.1.0-cpu.zip",
-          "size": 0,
+          "size": 95854,
+          "sha256": "12e69dd07fd85a62f5ba3769f3005a2a675f2173d409d15287b1cfb65a488c46",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-echo-0.1.0-cpu.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-echo-0.1.0-cpu.zip",
               "revision": "assets-v1"
             }
           ],
@@ -71,11 +72,12 @@
       "files": [
         {
           "path": "sigil-echo-0.1.0-cpu-avx2.zip",
-          "size": 0,
+          "size": 95927,
+          "sha256": "a1e0363f901e6bd45134cf604b436be1a122f2955ddbd2a77baede1f9d415535",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/Mewnah/Sigil/releases/download/assets-v1/sigil-echo-0.1.0-cpu-avx2.zip",
+              "url": "https://github.com/Mewnah/Sigil-assets/releases/download/assets-v1/sigil-echo-0.1.0-cpu-avx2.zip",
               "revision": "assets-v1"
             }
           ],
