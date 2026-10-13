@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "İşlemcide çoğu bilgisayar konuşmayı çalındığından çok daha yavaş üretir, bu yüzden cümleler duraklar. Ekran kartı olmadan daha iyi ses Kokoro'dur.",
     "ggml_requirement": "{{engine}} için gerekenler:",
     "ggml_magpie_tokenizer_hint": "Magpie belirteçleyicisi tek başına indirilemez: scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 dosyasını bir kez çalıştırın (NVIDIA'nın model arşivinin 32 MB'lık başlangıcını alır ve her dosyayı denetler), sonra İçe aktar'ı seçip yazdırdığı klasörü seçin.",
-    "ggml_magpie_v2607_hint": "NVIDIA, Magpie v2607'yi yalnızca eğitim biçiminde yayımlar: scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 ile bir kez dönüştürün (Python gerekir), sonra yazdığı model dosyasını ve belirteçleyici zip dosyasını İçe aktarın.",
+    "ggml_magpie_v2607_hint": "Magpie v2607, NVIDIA'nın kendi model dosyasıdır ancak Sigil onu henüz indirmez: magpie_tts_multilingual_357m.v2607.f16.gguf dosyasını huggingface.co/nvidia/magpie_tts_multilingual_357m adresinden alın, belirteçleyici zip dosyası için scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 komutunu bir kez çalıştırın (NVIDIA'nın model arşivinden 31 MB alır ve her dosyayı denetler), sonra İçe aktar'ı seçip her dosyayı seçin.",
     "ggml_s2_pack_hint": "Fish S2 Pro sunucusu indirilemez: scripts/runtime-packs/s2/build.ps1 ile derleyin (veya size verilen bir zip dosyasını kullanın), sonra İçe aktar'ı seçin.",
     "ggml_breeze_description": "Sesi tarif edin",
     "ggml_breeze_direction": "Nasıl konuşmalı? (isteğe bağlı)",

@@ -1,12 +1,15 @@
 //! `magpie` helper TTS engine (P6-F, experimental): NVIDIA Magpie TTS Multilingual 357M through
-//! NeMo-Speech.cpp's `nemo-speech serve` (official NVIDIA v0.1.0 Windows release, Apache-2.0).
+//! NeMo-Speech.cpp's `nemo-speech serve` (official NVIDIA v0.2.0 Windows release, Apache-2.0).
 //!
 //! - **Packs** `runtime/nemo-speech-{cuda,vulkan,cpu}`: NVIDIA's release zips, hash-pinned
-//!   (`model-catalog/tts-ggml-experimental.json`). The CUDA zip carries its own CUDA runtime; the
-//!   NVIDIA runtime pack's folders go on its PATH as a fallback.
+//!   (`model-catalog/tts-ggml-experimental.json`). The CUDA zip carries its own CUDA runtime (a
+//!   cuBLAS shim, CUDA 13 build); the NVIDIA runtime pack's folders go on its PATH as a fallback.
 //! - **Models**: the Magpie GGUF (`v2602`: en, es, de, fr, it, vi, hi; `v2607` adds ko, ar and
-//!   pt-BR and is converted locally from NVIDIA's `.nemo`), its tokenizer folder (members of the
-//!   `.nemo` archive, extracted by `scripts/runtime-packs/nemo-speech/`), and the NanoCodec decoder.
+//!   pt-BR; both are NVIDIA's own GGUF files, used as they are), its tokenizer folder (members of
+//!   the checkpoint's `.nemo` archive, extracted by `scripts/runtime-packs/nemo-speech/`; the
+//!   server identifies the checkpoint from the GGUF and from the folder's `model_config.yaml` and
+//!   refuses a mismatched pair, so each model has its own tokenizer), and the NanoCodec decoder.
+//!   The v0.1.0 server could not read v2607 (frame stacking factor 2), hence [`MagpieModel::min_pack`].
 //!   Mandarin and Japanese need a source build with `NEMO_SPEECH_TTS_WITH_ZH` / `_JA`; the official
 //!   server profile has no frontend for them, so neither checkpoint lists them here (the TS
 //!   backend refuses such text with a reason, as it does for any language Magpie cannot speak).
@@ -20,6 +23,8 @@
 //!   22.05 kHz PCM; `speed` must be 1.
 //!
 //! The four functions below are the frozen engine interface of [`super`].
+
+use std::path::Path;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Runtime};
@@ -60,6 +65,9 @@ const PACKS: [PackChoice; 3] = [
     },
 ];
 
+/// A version of the NeMo-Speech.cpp server pack: (major, minor, patch).
+pub type PackVersion = (u32, u32, u32);
+
 /// One Magpie checkpoint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MagpieModel {
@@ -70,23 +78,62 @@ pub struct MagpieModel {
     /// Server language codes this checkpoint speaks with the official packs (TS mirror
     /// `magpieLanguages`; Mandarin and Japanese need a source build, so they are not listed).
     pub languages: &'static [&'static str],
+    /// The oldest NeMo-Speech.cpp server that loads this checkpoint. Packs installed before the
+    /// catalog moved to v0.2.0 still count as installed (the model store keeps an older install
+    /// until it is updated), and v0.1.0 exits on v2607 with an unreadable message, so [`plan`]
+    /// refuses that pairing with a message that names the update.
+    pub min_pack: PackVersion,
 }
 
-/// The checkpoints (the first is the default).
+/// The checkpoints (the first is the default: a saved profile that names none keeps v2602).
 pub const MODELS: [MagpieModel; 2] = [
     MagpieModel {
         key: "v2602",
         model: "tts/magpie-tts-357m-v2602",
         tokenizer: "tts/magpie-tts-357m-v2602-tokenizer",
         languages: &["en-US", "es-ES", "de-DE", "fr-FR", "it-IT", "vi-VN", "hi-IN"],
+        min_pack: (0, 1, 0),
     },
     MagpieModel {
         key: "v2607",
         model: "tts/magpie-tts-357m-v2607",
         tokenizer: "tts/magpie-tts-357m-v2607-tokenizer",
         languages: &["en-US", "es-ES", "de-DE", "fr-FR", "it-IT", "vi-VN", "hi-IN", "ko-KR", "ar-MSA", "pt-BR"],
+        min_pack: (0, 2, 0),
     },
 ];
+
+/// The version of an installed NeMo-Speech.cpp pack, read from its folder in the model store's
+/// layout (`runtimes/nemo-speech-<variant>/<version>/<variant>`, so the folder named like the
+/// runtime's id has the version folder below it). `None` for a folder outside that layout (a
+/// development pack under `SIGIL_GGML_PACK_DIR`, a test folder) or a version that is not numeric:
+/// only a positively identified old pack is refused.
+pub fn pack_version(runtime: &str, dir: &Path) -> Option<PackVersion> {
+    let id_rest = runtime.strip_prefix("runtime/").unwrap_or(runtime);
+    dir.ancestors().find_map(|a| {
+        let parent = a.parent()?.file_name()?.to_str()?;
+        if !parent.eq_ignore_ascii_case(id_rest) {
+            return None;
+        }
+        parse_version(a.file_name()?.to_str()?)
+    })
+}
+
+/// `0.2.0` or `0.2.0-rc1` (digits up to the first non-digit of each part; at most three parts,
+/// missing parts are 0), `None` when the first part is not a number.
+fn parse_version(text: &str) -> Option<PackVersion> {
+    let mut parts = text.trim().trim_start_matches(['v', 'V']).splitn(3, '.');
+    let mut next = |first: bool| -> Option<u32> {
+        let part = parts.next();
+        let Some(part) = part else { return (!first).then_some(0) };
+        let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            return (!first).then_some(0);
+        }
+        digits.parse().ok()
+    };
+    Some((next(true)?, next(false)?, next(false)?))
+}
 
 /// The checkpoint of a config value (`""` = the default).
 pub fn model_for(key: &str) -> Result<MagpieModel, String> {
@@ -140,6 +187,23 @@ pub fn speaker_for(voice: &str) -> Result<&'static str, String> {
         .ok_or_else(|| format!("unknown Magpie voice {voice:?} ({})", SPEAKERS.join(", ")))
 }
 
+fn show_version(v: PackVersion) -> String {
+    format!("{}.{}.{}", v.0, v.1, v.2)
+}
+
+/// Refuse a checkpoint that the installed pack is too old to load (see [`MagpieModel::min_pack`]).
+fn check_pack_version(model: &MagpieModel, runtime: &str, dir: &Path) -> Result<(), String> {
+    match pack_version(runtime, dir) {
+        Some(found) if found < model.min_pack => Err(format!(
+            "{TITLE} {} needs the NeMo-Speech.cpp server {} or newer, but {runtime} {} is installed: update it in Models & Runtimes",
+            model.key,
+            show_version(model.min_pack),
+            show_version(found)
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Plan the launch for `config` (blocking only through `env`).
 pub fn plan(config: &GgmlConfig, env: &PlanEnv<'_>) -> Result<Launch, String> {
     let model = model_for(&config.model)?;
@@ -148,6 +212,7 @@ pub fn plan(config: &GgmlConfig, env: &PlanEnv<'_>) -> Result<Launch, String> {
     let mut ids = vec![model.model, model.tokenizer, CODEC_ID];
     ids.extend(launch::pack_ids(pack));
     env.require(TITLE, &ids)?;
+    check_pack_version(&model, pack.runtime, &env.dir_of(pack.runtime)?)?;
     let gguf = env.file_of(model.model, None)?;
     let codec = env.file_of(CODEC_ID, None)?;
     let tokenizer_dir = env.dir_of(model.tokenizer)?;
@@ -211,7 +276,18 @@ pub fn plan(config: &GgmlConfig, env: &PlanEnv<'_>) -> Result<Launch, String> {
 }
 
 fn warmup_body(speaker: &str, language: &str) -> Value {
-    json!({ "input": "Hello there.", "voice": speaker, "language": language, "response_format": "pcm" })
+    json!({ "input": warmup_text(language), "voice": speaker, "language": language, "response_format": "pcm" })
+}
+
+/// The warm-up sentence: English, except in the two scripts of v2607 an English sentence is not
+/// written in (Korean and Arabic), where the warm-up would otherwise tokenize Latin letters with
+/// a tokenizer that has none.
+fn warmup_text(language: &str) -> &'static str {
+    match language {
+        "ko-KR" => "안녕하세요.",
+        "ar-MSA" | "ar-AE" | "ar-SA" => "مرحبا.",
+        _ => "Hello there.",
+    }
 }
 
 pub(crate) static SLOT: Slot = Slot::new(ENGINE, TITLE);

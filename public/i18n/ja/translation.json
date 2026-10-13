@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "プロセッサでは、ほとんどのPCで再生速度よりはるかに生成が遅くなるため、文の間で途切れます。グラフィックスカードがない場合は、Kokoro のほうが適しています。",
     "ggml_requirement": "{{engine}} に必要なもの：",
     "ggml_magpie_tokenizer_hint": "Magpie のトークナイザーは単独ではダウンロードできません。scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 を一度実行し（NVIDIA のモデルアーカイブの先頭 32 MB を取得して、すべてのファイルを検証します）、インポートを選んで表示されたフォルダーを指定してください。",
-    "ggml_magpie_v2607_hint": "NVIDIA は Magpie v2607 を学習用の形式でのみ公開しています。scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 で一度変換し（Python が必要です）、出力されたモデルファイルとトークナイザーの zip をインポートしてください。",
+    "ggml_magpie_v2607_hint": "Magpie v2607 は NVIDIA 自身のモデルファイルですが、Sigil はまだダウンロードしません。huggingface.co/nvidia/magpie_tts_multilingual_357m から magpie_tts_multilingual_357m.v2607.f16.gguf を入手し、scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 を一度実行してトークナイザーの zip を作り（NVIDIA のモデルアーカイブの 31 MB を取得して、すべてのファイルを検証します）、インポートを選んで各ファイルを指定してください。",
     "ggml_s2_pack_hint": "Fish S2 Pro サーバーはダウンロードできません。scripts/runtime-packs/s2/build.ps1 でビルドして（または入手した zip を使って）、インポートを選んでください。",
     "ggml_breeze_description": "ボイスの説明",
     "ggml_breeze_direction": "どのように話しますか？（任意）",

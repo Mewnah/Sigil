@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "프로세서에서는 대부분의 PC가 재생 속도보다 훨씬 느리게 음성을 만들어서 문장 사이에 멈추게 됩니다. 그래픽 카드가 없다면 Kokoro가 더 좋은 음성입니다.",
     "ggml_requirement": "{{engine}}에 필요한 것:",
     "ggml_magpie_tokenizer_hint": "Magpie 토크나이저는 단독으로 다운로드할 수 없습니다. scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1을 한 번 실행한 뒤(NVIDIA 모델 아카이브의 처음 32 MB를 받아 모든 파일을 검사합니다) 가져오기를 선택하고 출력된 폴더를 지정하세요.",
-    "ggml_magpie_v2607_hint": "NVIDIA는 Magpie v2607을 학습 형식으로만 공개합니다. scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1으로 한 번 변환한 뒤(Python 필요) 모델 파일과 함께 생성된 토크나이저 zip을 가져오세요.",
+    "ggml_magpie_v2607_hint": "Magpie v2607은 NVIDIA가 직접 공개한 모델 파일이지만 Sigil이 아직 다운로드하지는 않습니다. huggingface.co/nvidia/magpie_tts_multilingual_357m에서 magpie_tts_multilingual_357m.v2607.f16.gguf를 받고, scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607를 한 번 실행해 토크나이저 zip을 만든 뒤(NVIDIA 모델 아카이브의 31 MB를 받아 모든 파일을 검사합니다) 가져오기를 선택하고 각 파일을 지정하세요.",
     "ggml_s2_pack_hint": "Fish S2 Pro 서버는 다운로드할 수 없습니다. scripts/runtime-packs/s2/build.ps1으로 빌드하거나(또는 받은 zip을 사용하고) 가져오기를 선택하세요.",
     "ggml_breeze_description": "음성 설명",
     "ggml_breeze_direction": "어떻게 말해야 하나요?(선택)",

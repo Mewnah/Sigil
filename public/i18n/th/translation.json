@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "บนโปรเซสเซอร์ พีซีส่วนใหญ่สร้างเสียงพูดได้ช้ากว่าที่เล่นมาก ประโยคจึงจะสะดุด Kokoro เป็นเสียงที่ดีกว่าเมื่อไม่มีการ์ดจอ",
     "ggml_requirement": "{{engine}} ต้องใช้:",
     "ggml_magpie_tokenizer_hint": "ดาวน์โหลดโทเค็นไนเซอร์ของ Magpie แยกต่างหากไม่ได้: รัน scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 หนึ่งครั้ง (จะดึงส่วนต้น 32 MB ของไฟล์โมเดลของ NVIDIA และตรวจสอบทุกไฟล์) แล้วเลือกนำเข้าและเลือกโฟลเดอร์ที่มันแสดง",
-    "ggml_magpie_v2607_hint": "NVIDIA เผยแพร่ Magpie v2607 ในรูปแบบสำหรับเทรนเท่านั้น: แปลงหนึ่งครั้งด้วย scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 (ต้องมี Python) แล้วนำเข้าไฟล์โมเดลและไฟล์ zip โทเค็นไนเซอร์ที่มันเขียนออกมา",
+    "ggml_magpie_v2607_hint": "Magpie v2607 เป็นไฟล์โมเดลของ NVIDIA เอง แต่ Sigil ยังไม่ดาวน์โหลดให้: นำ magpie_tts_multilingual_357m.v2607.f16.gguf จาก huggingface.co/nvidia/magpie_tts_multilingual_357m รัน scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 หนึ่งครั้งเพื่อสร้างไฟล์ zip ของโทเค็นไนเซอร์ (จะดึง 31 MB จากไฟล์โมเดลของ NVIDIA และตรวจสอบทุกไฟล์) แล้วเลือกนำเข้าและเลือกแต่ละไฟล์",
     "ggml_s2_pack_hint": "ดาวน์โหลดเซิร์ฟเวอร์ Fish S2 Pro ไม่ได้: สร้างด้วย scripts/runtime-packs/s2/build.ps1 (หรือใช้ไฟล์ zip ที่คุณได้รับ) แล้วเลือกนำเข้า",
     "ggml_breeze_description": "บรรยายเสียง",
     "ggml_breeze_direction": "ควรพูดอย่างไร (ไม่บังคับ)",

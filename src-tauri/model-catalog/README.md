@@ -104,11 +104,12 @@ P6 fragments (streamer features; created empty by P6-S0, each owned by one works
   (`tts/qwen3-tts-{0.6b,1.7b}` with `-base` / `-voicedesign`) and tokenizer, and the Sigil-built
   `runtime/qwentts-server-{vulkan,cuda13,cpu}` packs (unpublished; built by
   `scripts/runtime-packs/qwentts/build.ps1` and imported).
-- `tts-ggml-experimental.json` (P6-F): 24 entries: 7 third-party runtime packs (NeMo-Speech.cpp,
-  Breeze-TTS-2.cpp, CrispASR official zips, pinned), 3 Sigil-built s2 packs (unpublished,
+- `tts-ggml-experimental.json` (P6-F): 24 entries: 7 third-party runtime packs (NeMo-Speech.cpp
+  v0.2.0, Breeze-TTS-2.cpp, CrispASR official zips, pinned), 3 Sigil-built s2 packs (unpublished,
   `scripts/runtime-packs/s2/build.ps1`) and 14 models (the Magpie tokenizers are Sigil-hosted
   `assets-v1` files rebuilt by `scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1`; the
-  v2607 checkpoint is NVIDIA's own GGUF on Hugging Face, pinned to its commit).
+  v2607 checkpoint is NVIDIA's own GGUF on Hugging Face, pinned to its commit, and stays unpublished
+  until the v0.2.0 packs have spoken it; see `scripts/runtime-packs/nemo-speech/README.md`).
 - `runtime-sbv2.json` (P6-G): not a runtime pack: the Style-Bert-VITS2 Japanese BERT
   (`tts/sbv2-bert-ja`) and the NAIST-JDIC dictionary `text/jpreprocess-naist-jdic`, which is
   shared by text readings (P6-L), Style-Bert-VITS2 and Kokoro's Japanese reader. Never add a second

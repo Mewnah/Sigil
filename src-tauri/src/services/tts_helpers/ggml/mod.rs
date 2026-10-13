@@ -5,7 +5,7 @@
 //! # The four engines (time-boxed spikes; every one is an experimental preset)
 //! | Engine | Runtime (helper) | Packs | Speech route | Key |
 //! |---|---|---|---|---|
-//! | `magpie` | NVIDIA NeMo-Speech.cpp `nemo-speech serve` | official v0.1.0 Windows zips (cpu, vulkan, cuda), pinned | OpenAI `/v1/audio/speech`, whole clip, 22.05 kHz PCM | `NEMO_SPEECH_HTTP_API_KEY` |
+//! | `magpie` | NVIDIA NeMo-Speech.cpp `nemo-speech serve` | official v0.2.0 Windows zips (cpu, vulkan, cuda), pinned | OpenAI `/v1/audio/speech`, whole clip, 22.05 kHz PCM | `NEMO_SPEECH_HTTP_API_KEY` |
 //! | `breeze` | Breeze-TTS-2.cpp `breeze-server` | official v0.1.0 Windows Vulkan zip (CPU with `--cpu`), pinned | native form `/v1/audio/speech` through Sigil's [`adapter`], streamed 24 kHz PCM | the adapter's (upstream has none) |
 //! | `omnivoice` | CrispASR `crispasr --server --backend omnivoice` | official v0.8.40 Windows zips (cpu, vulkan, cuda13 without the CUDA runtime), pinned | OpenAI `/v1/audio/speech`, `stream: true`, 24 kHz PCM | `CRISPASR_API_KEYS` |
 //! | `s2` | s2.cpp `s2 --server` (Fish Audio S2 Pro) | Sigil-built (`scripts/runtime-packs/s2/build.ps1`), unpublished | multipart `/generate` through the [`adapter`], 44.1 kHz PCM | the adapter's (upstream has none) |
@@ -20,8 +20,8 @@
 //! - Magpie does not share a runtime with Nemotron STT: Sigil's Nemotron runs on sherpa-onnx (P2),
 //!   so NeMo-Speech.cpp only serves TTS here. The official server profile has no Japanese or
 //!   Mandarin frontend (`NEMO_SPEECH_TTS_WITH_JA` / `_ZH` are source-build options); Korean, Arabic
-//!   and Brazilian Portuguese need the v2607 checkpoint, which NVIDIA publishes only as a `.nemo`
-//!   (converted locally: `scripts/runtime-packs/nemo-speech/`).
+//!   and Brazilian Portuguese need the v2607 checkpoint, NVIDIA's own GGUF, which the server reads
+//!   from v0.2.0 on (v0.1.0 refuses it; `magpie::MagpieModel::min_pack`).
 //! - `tools/tts-shim/` is not used: a separate shim process would leave the upstream port as open as
 //!   before, so the request translation for servers without Sigil's request shape lives in the
 //!   in-process [`adapter`] (key-protected, loopback only, one request at a time).

@@ -18,7 +18,7 @@ use super::adapter::{self, Upstream};
 use super::launch::{self, build_spec, find_program, pick_pack, safe_pack_arg, verify_sigil_pack, PackChoice, PlanEnv, Readiness};
 use super::runner::{rate_of_content_type, Slot};
 use super::*;
-use crate::services::model_store::Catalog;
+use crate::services::model_store::{ArchiveFormat, Catalog};
 use crate::services::process_host::{self, HelperPriority, PortRequest};
 use crate::services::tts_helpers::{breeze, magpie, omnivoice, s2, TtsHelperEngine, TtsHelperState};
 
@@ -55,7 +55,10 @@ fn install(root: &Path, catalog: &Catalog, ids: &[&str]) -> HashMap<String, Path
             let program_bytes = format!("MZ fake {id}");
             match *id {
                 i if i.starts_with("runtime/nemo-speech-") => {
-                    let bin = dir.join("nemo-speech-0.1.0-windows-x86_64").join("bin");
+                    // The v0.2.0 zips keep a top-level folder named after the archive
+                    // (scripts\windows\package-release.ps1 includes the base directory).
+                    let variant = entry.variant.clone().unwrap_or_default();
+                    let bin = dir.join(format!("nemo-speech-0.2.0-windows-x86_64-{variant}")).join("bin");
                     std::fs::create_dir_all(&bin).unwrap();
                     std::fs::write(bin.join("nemo-speech.exe"), &program_bytes).unwrap();
                     std::fs::write(bin.join("ggml.dll"), b"MZ").unwrap();
@@ -445,6 +448,77 @@ fn catalog_has_every_pack_and_model_the_engines_name() {
     assert!(tok.files.iter().any(|f| f.path == "model_config.yaml" && f.sha256.is_some()));
 }
 
+/// The Magpie packs and models are the facts of NVIDIA's NeMo-Speech.cpp v0.2.0 release: the three
+/// Windows zips (GitHub's asset digests) and the v2607 GGUF and NanoCodec (its models/index.json,
+/// whose revisions and hashes are the Hugging Face commits' LFS values).
+#[test]
+fn magpie_catalog_matches_nemo_speech_v020() {
+    use crate::services::model_store::PublishStatus;
+    let catalog = catalog();
+    for (id, variant, size, sha256) in [
+        (magpie::RUNTIME_CUDA, "cuda", 102_183_465u64, "9ffe5e842c39a7d3211f3b2c3b3aa1bca8c0b2455d96d961ed5f22ec5108f98d"),
+        (magpie::RUNTIME_VULKAN, "vulkan", 19_302_464, "edf15a04ba98740aa0ab75ae4681ac7ad0a488b22b35ce2cbebd10590bb1c1e1"),
+        (magpie::RUNTIME_CPU, "cpu", 5_528_418, "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8"),
+    ] {
+        let e = catalog.get(id).unwrap();
+        assert_eq!((e.version.as_str(), e.variant.as_deref()), ("0.2.0", Some(variant)), "{id}");
+        assert_eq!(e.status, PublishStatus::Published, "{id}");
+        let name = format!("nemo-speech-0.2.0-windows-x86_64-{variant}.zip");
+        assert_eq!(e.files.len(), 1, "{id}");
+        let f = &e.files[0];
+        assert_eq!((f.path.as_str(), f.size, f.sha256.as_deref()), (name.as_str(), size, Some(sha256)), "{id}");
+        assert_eq!(f.sources.len(), 1, "{id}");
+        assert_eq!(f.sources[0].url, format!("https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/{name}"), "{id}");
+        assert_eq!(f.sources[0].revision.as_deref(), Some("v0.2.0"), "{id}");
+        assert_eq!(f.archive.as_ref().map(|a| (a.format, a.strip)), Some((ArchiveFormat::Zip, 0)), "{id}");
+    }
+    // No model asks for a newer server than the packs the catalog ships.
+    let needed = magpie::MODELS.iter().map(|m| m.min_pack).max().unwrap();
+    for runtime in [magpie::RUNTIME_CUDA, magpie::RUNTIME_VULKAN, magpie::RUNTIME_CPU] {
+        let version = &catalog.get(runtime).unwrap().version;
+        let parts: Vec<u32> = version.split('.').map(|p| p.parse().unwrap()).collect();
+        assert!((parts[0], parts[1], parts[2]) >= needed, "{runtime} {version} is older than a model needs: {needed:?}");
+    }
+    assert_eq!(magpie::MODELS[1].min_pack, (0, 2, 0));
+
+    // v2607 and NanoCodec: file name, size, sha256 and Hugging Face commit as in v0.2.0's index.
+    let hf = |repo: &str, rev: &str, file: &str| format!("https://huggingface.co/{repo}/resolve/{rev}/{file}");
+    for (id, file, size, sha256, repo, rev) in [
+        (
+            "tts/magpie-tts-357m-v2607",
+            "magpie_tts_multilingual_357m.v2607.f16.gguf",
+            568_663_328u64,
+            "30d27551fc4a050e8095139f0185796024493373e83d49443c8ddba33c514e68",
+            "nvidia/magpie_tts_multilingual_357m",
+            "19806879b16d3f2ccf28fb112b1bcd16a3c7923e",
+        ),
+        (
+            magpie::CODEC_ID,
+            "nemo_nano_codec_22khz_1.89kbps_21.5fps.decoder.f16.gguf",
+            78_823_104,
+            "cc86d36d821a27cdc1d4ef600a3e2b0dabe76e88fcc2a8652d9543134c07ef2d",
+            "nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps",
+            "fc00890b604aa2de298d2641ffc6c5f6caf8c4d7",
+        ),
+    ] {
+        let f = &catalog.get(id).unwrap().files[0];
+        assert_eq!((f.path.as_str(), f.size, f.sha256.as_deref()), (file, size, Some(sha256)), "{id}");
+        assert_eq!(f.sources[0].url, hf(repo, rev, file), "{id}");
+        assert_eq!(f.sources[0].revision.as_deref(), Some(rev), "{id}");
+    }
+    // The v2607 tokenizer is one zip (members at its root), and each checkpoint requires its own
+    // tokenizer: the server refuses a GGUF and a tokenizer of different checkpoints.
+    let tok = catalog.get(magpie::MODELS[1].tokenizer).unwrap();
+    assert_eq!(tok.files.len(), 1);
+    assert_eq!(tok.files[0].archive.as_ref().map(|a| (a.format, a.strip)), Some((ArchiveFormat::Zip, 0)));
+    for m in magpie::MODELS {
+        let e = catalog.get(m.model).unwrap();
+        assert!(e.requires.iter().any(|r| r == m.tokenizer) && e.requires.iter().any(|r| r == magpie::CODEC_ID), "{}", m.model);
+        let other = magpie::MODELS.iter().find(|o| o.key != m.key).unwrap();
+        assert!(!e.requires.iter().any(|r| r == other.tokenizer), "{} requires the other checkpoint's tokenizer", m.model);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Engine plans
 // ---------------------------------------------------------------------------------------------
@@ -520,6 +594,113 @@ fn magpie_plan_builds_the_server_command() {
     std::fs::remove_file(installed[m.tokenizer].join("model_config.yaml")).unwrap();
     let err = with_env(&catalog, &installed, AMD_GPU, vec![], None, |env| magpie::plan(&GgmlConfig::default(), env).unwrap_err());
     assert!(err.contains("model_config.yaml"), "{err}");
+}
+
+#[test]
+fn magpie_v2607_plan_takes_its_own_model_and_tokenizer() {
+    let catalog = catalog();
+    let root = temp_dir("magpie-v2607");
+    let (old, new) = (magpie::MODELS[0], magpie::MODELS[1]);
+    assert_eq!((old.key, new.key), ("v2602", "v2607"));
+    let installed = install(
+        &root,
+        &catalog,
+        &[old.model, old.tokenizer, new.model, new.tokenizer, magpie::CODEC_ID, magpie::RUNTIME_VULKAN],
+    );
+    // The model store extracts the v2607 tokenizer zip into its entry folder; the plan looks for the
+    // checkpoint's model_config.yaml there (each checkpoint has its own).
+    std::fs::write(installed[new.tokenizer].join("model_config.yaml"), "nemo_version: 2.8.0rc0\n").unwrap();
+    let plan = |cfg: Value| with_env(&catalog, &installed, AMD_GPU, vec![], None, |env| magpie::plan(&config(cfg), env));
+
+    let l = plan(json!({ "model": "v2607", "language": "ko", "voice": "leo" })).unwrap();
+    assert_eq!(l.model, new.model);
+    assert!(l.args.iter().any(|a| a.ends_with("magpie_tts_multilingual_357m.v2607.f16.gguf")), "{:?}", l.args);
+    let tokenizer_arg = l.args.iter().skip_while(|a| *a != "--tokenizer-dir").nth(1).unwrap();
+    assert_eq!(Path::new(tokenizer_arg), installed[new.tokenizer]);
+    let warmup = l.warmup.as_ref().unwrap();
+    assert_eq!((&warmup["language"], &warmup["voice"]), (&json!("ko-KR"), &json!("Leo")));
+    // The warm-up sentence is written in the scripts an English one is not (Korean, Arabic).
+    assert_eq!(warmup["input"], "안녕하세요.");
+    let ar = plan(json!({ "model": "v2607", "language": "ar" })).unwrap();
+    assert_eq!((&ar.warmup.as_ref().unwrap()["language"], &ar.warmup.as_ref().unwrap()["input"]), (&json!("ar-MSA"), &json!("مرحبا.")));
+    let pt = plan(json!({ "model": "v2607", "language": "pt-BR" })).unwrap();
+    assert_eq!(pt.warmup.as_ref().unwrap()["input"], "Hello there.");
+    // The model's name in the profile may be the catalog id as well.
+    assert_eq!(plan(json!({ "model": new.model })).unwrap().model, new.model);
+
+    // v2602 keeps the default (a saved profile that names no model), its own files, and Korean falls back
+    // to the English warm-up there.
+    let d = plan(json!({ "language": "ko" })).unwrap();
+    assert_eq!(d.model, old.model);
+    assert!(d.args.iter().any(|a| a.ends_with("magpie_tts_multilingual_357m.v2602.f16.gguf")));
+    assert_eq!(d.warmup.as_ref().unwrap()["language"], "en-US");
+    // A model change restarts the server (TS reloads on it).
+    assert!(!d.same_server(&l));
+
+    // Without the v2607 files the plan names them (the requirement card lists the same ids).
+    let missing = install(&root, &catalog, &[old.model, old.tokenizer, magpie::CODEC_ID, magpie::RUNTIME_VULKAN]);
+    let err = with_env(&catalog, &missing, AMD_GPU, vec![], None, |env| magpie::plan(&config(json!({ "model": "v2607" })), env).unwrap_err());
+    assert!(err.contains(new.model) && err.contains(new.tokenizer), "{err}");
+}
+
+#[test]
+fn magpie_pack_version_follows_the_model_store_layout() {
+    let at = |parts: &[&str]| parts.iter().fold(PathBuf::from("appdata"), |p, c| p.join(c));
+    let v = |runtime: &str, parts: &[&str]| magpie::pack_version(runtime, &at(parts));
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "nemo-speech-cpu", "0.1.0", "cpu"]), Some((0, 1, 0)));
+    assert_eq!(v(magpie::RUNTIME_VULKAN, &["runtimes", "nemo-speech-vulkan", "0.2.0", "vulkan"]), Some((0, 2, 0)));
+    // The version folder itself, and a folder inside the pack.
+    assert_eq!(v(magpie::RUNTIME_CUDA, &["runtimes", "nemo-speech-cuda", "0.10.3"]), Some((0, 10, 3)));
+    assert_eq!(v(magpie::RUNTIME_CUDA, &["runtimes", "nemo-speech-cuda", "0.2.0", "cuda", "bin"]), Some((0, 2, 0)));
+    // Other spellings of a version.
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "NeMo-Speech-CPU", "v1.2", "cpu"]), Some((1, 2, 0)));
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "nemo-speech-cpu", "0.3.1-rc1", "cpu"]), Some((0, 3, 1)));
+    // Not a model-store folder, another pack's folder, or a folder name that is no version: unknown.
+    assert_eq!(v(magpie::RUNTIME_CPU, &["packs", "nemo"]), None);
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "nemo-speech-vulkan", "0.1.0", "vulkan"]), None);
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "nemo-speech-cpu", "latest", "cpu"]), None);
+    assert_eq!(v(magpie::RUNTIME_CPU, &["runtimes", "nemo-speech-cpu"]), None);
+}
+
+#[test]
+fn magpie_v2607_refuses_an_old_pack_and_v2602_runs_on_any() {
+    let catalog = catalog();
+    let root = temp_dir("magpie-old-pack");
+    let (old, new) = (magpie::MODELS[0], magpie::MODELS[1]);
+    let mut installed = install(
+        &root,
+        &catalog,
+        &[old.model, old.tokenizer, new.model, new.tokenizer, magpie::CODEC_ID, magpie::RUNTIME_CPU],
+    );
+    std::fs::write(installed[new.tokenizer].join("model_config.yaml"), "nemo_version: 2.8.0rc0\n").unwrap();
+    // A pack as the model store lays it out: <app data>/runtimes/nemo-speech-cpu/<version>/cpu.
+    let pack = |version: &str| {
+        let dir = root.join("runtimes").join("nemo-speech-cpu").join(version).join("cpu");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin").join("nemo-speech.exe"), "MZ fake").unwrap();
+        dir
+    };
+    let plan = |installed: &HashMap<String, PathBuf>, model: &str| {
+        with_env(&catalog, installed, NO_GPU, vec![], None, |env| magpie::plan(&config(json!({ "model": model })), env))
+    };
+
+    // The 0.1.0 pack a user installed before the catalog moved on: still installed, still fine for v2602.
+    installed.insert(magpie::RUNTIME_CPU.into(), pack("0.1.0"));
+    assert_eq!(plan(&installed, "v2602").unwrap().model, old.model);
+    // v2607 on it would exit with "unsupported frame_stacking_factor=2": the plan says what to update.
+    let err = plan(&installed, "v2607").unwrap_err();
+    assert!(err.contains("v2607") && err.contains("0.2.0") && err.contains("0.1.0"), "{err}");
+    assert!(err.contains(magpie::RUNTIME_CPU) && err.contains("Models & Runtimes"), "{err}");
+
+    // The updated pack, and a pack folder outside the model store's layout (development), run both.
+    installed.insert(magpie::RUNTIME_CPU.into(), pack("0.2.0"));
+    assert_eq!(plan(&installed, "v2607").unwrap().model, new.model);
+    assert_eq!(plan(&installed, "v2602").unwrap().model, old.model);
+    let dev = root.join("dev-pack");
+    std::fs::create_dir_all(dev.join("bin")).unwrap();
+    std::fs::write(dev.join("bin").join("nemo-speech.exe"), "MZ fake").unwrap();
+    installed.insert(magpie::RUNTIME_CPU.into(), dev);
+    assert_eq!(plan(&installed, "v2607").unwrap().model, new.model);
 }
 
 #[test]
@@ -1212,6 +1393,37 @@ fn index_files(dir: &Path, out: &mut HashMap<String, PathBuf>, depth: usize) {
     }
 }
 
+/// Unpack, next to itself, the zip of every `tts/` archive entry found in the models folder (the
+/// model store extracts such an entry into its folder with the members at the root, as the Magpie
+/// v2607 tokenizer zip is built); members that already exist are kept. Returns the files written.
+fn unpack_staged_zips(catalog: &Catalog, files: &HashMap<String, PathBuf>) -> usize {
+    let mut written = 0;
+    for e in catalog.entries.iter().filter(|e| e.id.starts_with("tts/")) {
+        for f in e.files.iter().filter(|f| f.archive.as_ref().is_some_and(|a| a.format == ArchiveFormat::Zip)) {
+            let name = f.path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
+            let Some(zip_path) = files.get(&name) else { continue };
+            let dir = zip_path.parent().unwrap();
+            let file = std::fs::File::open(zip_path).unwrap();
+            let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).unwrap_or_else(|e| panic!("{} is not a zip: {e}", zip_path.display()));
+            for i in 0..zip.len() {
+                let mut member = zip.by_index(i).unwrap();
+                if member.is_dir() {
+                    continue;
+                }
+                let Some(leaf) = member.enclosed_name().and_then(|p| p.file_name().map(|n| n.to_owned())) else { continue };
+                let target = dir.join(leaf);
+                if target.exists() {
+                    continue;
+                }
+                let mut out = std::fs::File::create(&target).unwrap();
+                std::io::copy(&mut member, &mut out).unwrap();
+                written += 1;
+            }
+        }
+    }
+    written
+}
+
 /// Speak through the endpoint and keep the audio: (first audio ms, total ms, PCM bytes, rate).
 async fn speak_to_bytes(endpoint: &crate::services::tts_helpers::TtsHelperEndpoint, body: &Value) -> Result<(f64, f64, Vec<u8>, u32), String> {
     let started = Instant::now();
@@ -1251,9 +1463,16 @@ async fn speak_to_bytes(endpoint: &crate::services::tts_helpers::TtsHelperEndpoi
 /// $env:SIGIL_TEST_MODELS_DIR = "<a folder with the engine's model files>"
 /// # optional: SIGIL_GGML_VARIANT (cuda13|cuda|vulkan|cpu), SIGIL_GGML_MODEL (q4_k, v2607, ...),
 /// #           SIGIL_GGML_VOICE (a voice-library id to clone), SIGIL_GGML_TEXT (one sentence per line),
+/// #           SIGIL_GGML_LANGUAGE (Magpie: en, ko, ar, pt-BR, ...; put sentences of that language in SIGIL_GGML_TEXT),
 /// #           SIGIL_GPU_LOCK (hold the shared GPU timing lock), SIGIL_GGML_OUT (WAV folder)
 /// cargo test --manifest-path src-tauri/Cargo.toml real_ggml_engine_speaks -- --ignored --nocapture
 /// ```
+///
+/// Magpie, one folder per checkpoint (the two tokenizers share the name `model_config.yaml`):
+/// v2602 = `magpie_tts_multilingual_357m.v2602.f16.gguf`, the codec GGUF and the 7 tokenizer files;
+/// v2607 = `magpie_tts_multilingual_357m.v2607.f16.gguf`, the codec GGUF and
+/// `magpie-tts-357m-v2607-tokenizer.zip` (this test unpacks a zip of an archive entry next to
+/// itself, as the model store does when it installs one). Set `SIGIL_GGML_MODEL` to `v2602` or `v2607`.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real runtime pack and models (SIGIL_GGML_ENGINE, SIGIL_GGML_PACK_DIR, SIGIL_TEST_MODELS_DIR)"]
 async fn real_ggml_engine_speaks() {
@@ -1264,6 +1483,10 @@ async fn real_ggml_engine_speaks() {
     let catalog = catalog();
     let mut files = HashMap::new();
     index_files(&models_dir, &mut files, 4);
+    if unpack_staged_zips(&catalog, &files) > 0 {
+        files.clear();
+        index_files(&models_dir, &mut files, 4);
+    }
     let (runtimes, slot): (Vec<&str>, &'static Slot) = match engine.as_str() {
         "magpie" => (vec![magpie::RUNTIME_CUDA, magpie::RUNTIME_VULKAN, magpie::RUNTIME_CPU], &magpie::SLOT),
         "breeze" => (vec![breeze::RUNTIME_VULKAN], &breeze::SLOT),
@@ -1291,10 +1514,13 @@ async fn real_ggml_engine_speaks() {
         installed.insert(launch::NVIDIA_RUNTIME_ID.into(), p);
     }
     let gpu = GpuFacts::of(&crate::services::sysinfo::cached());
+    // Magpie speaks the language of SIGIL_GGML_LANGUAGE (a BCP-47 tag: ko, ar, pt-BR for v2607); the others
+    // keep English.
+    let language = std::env::var("SIGIL_GGML_LANGUAGE").ok().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| "en".into());
     let cfg = config(json!({
         "model": std::env::var("SIGIL_GGML_MODEL").unwrap_or_default(),
         "variant": std::env::var("SIGIL_GGML_VARIANT").unwrap_or_default(),
-        "language": "en",
+        "language": language,
         "referenceVoiceId": if engine == "omnivoice" { voice.clone() } else { String::new() },
     }));
     let app_data = crate::services::diagnostics::app_data_dir().unwrap_or_else(|| temp_dir("real-appdata"));
@@ -1334,7 +1560,7 @@ async fn real_ggml_engine_speaks() {
             match engine.as_str() {
                 "magpie" => {
                     body["voice"] = json!("Sofia");
-                    body["language"] = json!("en-US");
+                    body["language"] = json!(magpie::language_code(&language).unwrap_or("en-US"));
                 }
                 "breeze" => {
                     body["instructions"] = json!("A warm young woman, friendly and upbeat, speaking at a relaxed pace.");

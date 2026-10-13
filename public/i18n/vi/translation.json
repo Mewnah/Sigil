@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "Trên bộ xử lý, hầu hết máy tạo giọng chậm hơn nhiều so với tốc độ phát, nên các câu sẽ bị ngắt quãng. Kokoro là giọng tốt hơn khi không có card đồ họa.",
     "ggml_requirement": "{{engine}} cần:",
     "ggml_magpie_tokenizer_hint": "Bộ tách từ Magpie không thể tải riêng: hãy chạy scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 một lần (nó lấy 32 MB đầu của kho lưu trữ mô hình NVIDIA và kiểm tra từng tệp), rồi chọn Nhập và chọn thư mục mà nó in ra.",
-    "ggml_magpie_v2607_hint": "NVIDIA chỉ phát hành Magpie v2607 ở định dạng huấn luyện: hãy chuyển đổi nó một lần bằng scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 (cần Python), rồi Nhập tệp mô hình và tệp zip bộ tách từ mà nó tạo ra.",
+    "ggml_magpie_v2607_hint": "Magpie v2607 là tệp mô hình do chính NVIDIA phát hành, nhưng Sigil chưa tải nó: hãy lấy magpie_tts_multilingual_357m.v2607.f16.gguf từ huggingface.co/nvidia/magpie_tts_multilingual_357m, chạy scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 một lần để có zip bộ tách từ (nó lấy 31 MB của kho lưu trữ mô hình NVIDIA và kiểm tra từng tệp), rồi chọn Nhập và chọn từng tệp.",
     "ggml_s2_pack_hint": "Máy chủ Fish S2 Pro không thể tải xuống: hãy dựng nó bằng scripts/runtime-packs/s2/build.ps1 (hoặc dùng tệp zip bạn được cung cấp), rồi chọn Nhập.",
     "ggml_breeze_description": "Mô tả giọng",
     "ggml_breeze_direction": "Nên nói thế nào? (tùy chọn)",

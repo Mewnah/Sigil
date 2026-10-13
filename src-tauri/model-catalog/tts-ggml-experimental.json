@@ -2,9 +2,9 @@
   "$schema": "./_schema.json",
   "$comment": [
     "Experimental ggml TTS helpers (tts_helpers::{magpie,breeze,omnivoice,s2}, owned by P6-F): their runtime packs and models. The helpers run under process_host (127.0.0.1, random port, kill-on-close Job Object); see src-tauri/src/services/tts_helpers/ggml/mod.rs.",
-    "Third-party packs are the upstream projects' own Windows release zips, pinned by their GitHub release digests: NVIDIA NeMo-Speech.cpp v0.1.0 (nemo-speech.exe; Magpie), HoppouAI Breeze-TTS-2.cpp v0.1.0 (breeze-server.exe), CrispASR v0.8.40 (crispasr.exe; OmniVoice; the cuda13 zip without NVIDIA's DLLs uses runtime/nvidia-cuda13). Each zip is extracted whole: the helper finds its program in the pack folder or a folder below it (bin/ first).",
+    "Third-party packs are the upstream projects' own Windows release zips, pinned by their GitHub release digests: NVIDIA NeMo-Speech.cpp v0.2.0 (nemo-speech.exe; Magpie), HoppouAI Breeze-TTS-2.cpp v0.1.0 (breeze-server.exe), CrispASR v0.8.40 (crispasr.exe; OmniVoice; the cuda13 zip without NVIDIA's DLLs uses runtime/nvidia-cuda13). Each zip is extracted whole: the helper finds its program in the pack folder or a folder below it (bin/ first).",
     "runtime/s2-server-* are Sigil builds of s2.cpp (scripts/runtime-packs/s2/build.ps1, commit 2c33261 pinned in UPSTREAM.json): unpublished and unpinned, installed by Import or SIGIL_LOCAL_ASSETS (found by file name). Bump the version and zip names together with UPSTREAM.json.",
-    "Models are pinned to repo commits with the LFS sha256 (Magpie and NanoCodec as in NVIDIA's own NeMo-Speech.cpp model index). The Magpie tokenizers are the member sets of NVIDIA's .nemo archives, hosted as assets of the assets-v1 release (the v2602 members as seven flat files, the v2607 members as one zip); scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 (with -Version v2607 for the zip) rebuilds them from ranged requests to NVIDIA's repository and checks every member against NeMo-Speech.cpp's hashes. The v2607 checkpoint is NVIDIA's own GGUF, pinned to the Hugging Face commit that added it (19806879); its assets-v1 URL is only a later mirror. NeMo-Speech.cpp v0.1.0, which the runtime/nemo-speech-* packs are, refuses it (\"unsupported frame_stacking_factor=2\", real_ggml_engine_speaks on 2026-10-13), so tts/magpie-tts-357m-v2607 stays unpublished until those three entries move to a release that reads it (v0.2.0 or newer, to be tested with both checkpoints). The other unpublished entries become published with scripts/models/publish-entries.mjs once their files are on the release.",
+    "Models are pinned to repo commits with the LFS sha256 (Magpie v2602 as in NeMo-Speech.cpp v0.1.0's model index, Magpie v2607 and NanoCodec as in v0.2.0's). The Magpie tokenizers are the member sets of NVIDIA's .nemo archives, hosted as assets of the assets-v1 release (the v2602 members as seven flat files, the v2607 members as one zip); scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 (with -Version v2607 for the zip) rebuilds them from ranged requests to NVIDIA's repository and checks every member against NeMo-Speech.cpp's hashes (the v2607 zip holds exactly the member set of v0.2.0's own model index). The v2607 checkpoint is NVIDIA's own GGUF, used as it is and pinned to the Hugging Face commit that added it (19806879); its assets-v1 URL is only a later mirror. NeMo-Speech.cpp v0.2.0, which the runtime/nemo-speech-* packs are, names both checkpoints in its tokenizer loader and its docs: it identifies the checkpoint from the GGUF and from the tokenizer folder's model_config.yaml and refuses a pair of different checkpoints, so every Magpie model here requires the tokenizer of its own checkpoint. (v0.1.0 refused v2607: \"unsupported frame_stacking_factor=2\", real_ggml_engine_speaks on 2026-10-13.) tts/magpie-tts-357m-v2607 and its tokenizer stay unpublished until real_ggml_engine_speaks has spoken with both checkpoints on the v0.2.0 packs and the tokenizer zip is on the release; scripts/models/publish-entries.mjs then flips them. The other unpublished entries become published with scripts/models/publish-entries.mjs once their files are on the release.",
     "min_vram_mb values are provisional estimates (weights plus KV cache and compute buffers; s2.cpp's own q4_k_m breakdown is 7.2 GB): P7 replaces them with measurements."
   ],
   "entries": [
@@ -12,7 +12,7 @@
       "id": "runtime/nemo-speech-cuda",
       "family": "runtime",
       "kind": "runtime",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "title": "NeMo-Speech.cpp server (NVIDIA CUDA)",
       "description": "Runs Magpie voices on NVIDIA graphics cards through CUDA (the CUDA libraries are inside). Started by Sigil as a helper process that only listens on this PC.",
       "license": "Apache-2.0",
@@ -20,14 +20,14 @@
       "variant": "cuda",
       "files": [
         {
-          "path": "nemo-speech-0.1.0-windows-x86_64-cuda.zip",
-          "size": 106044768,
-          "sha256": "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
+          "path": "nemo-speech-0.2.0-windows-x86_64-cuda.zip",
+          "size": 102183465,
+          "sha256": "9ffe5e842c39a7d3211f3b2c3b3aa1bca8c0b2455d96d961ed5f22ec5108f98d",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
-              "revision": "v0.1.0"
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cuda.zip",
+              "revision": "v0.2.0"
             }
           ],
           "archive": {
@@ -40,7 +40,7 @@
       "id": "runtime/nemo-speech-vulkan",
       "family": "runtime",
       "kind": "runtime",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "title": "NeMo-Speech.cpp server (Vulkan)",
       "description": "Runs Magpie voices on the graphics card through Vulkan: NVIDIA, AMD and Intel. Started by Sigil as a helper process that only listens on this PC.",
       "license": "Apache-2.0",
@@ -48,14 +48,14 @@
       "variant": "vulkan",
       "files": [
         {
-          "path": "nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
-          "size": 21967184,
-          "sha256": "b5e7b04a637da4eb25a60253e2db65774998e8dfb48c08b4db763009b82ac7ac",
+          "path": "nemo-speech-0.2.0-windows-x86_64-vulkan.zip",
+          "size": 19302464,
+          "sha256": "edf15a04ba98740aa0ab75ae4681ac7ad0a488b22b35ce2cbebd10590bb1c1e1",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
-              "revision": "v0.1.0"
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-vulkan.zip",
+              "revision": "v0.2.0"
             }
           ],
           "archive": {
@@ -68,7 +68,7 @@
       "id": "runtime/nemo-speech-cpu",
       "family": "runtime",
       "kind": "runtime",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "title": "NeMo-Speech.cpp server (processor)",
       "description": "Runs Magpie voices on the processor, for PCs without a suitable graphics card. Slower than real time on most processors.",
       "license": "Apache-2.0",
@@ -76,14 +76,14 @@
       "variant": "cpu",
       "files": [
         {
-          "path": "nemo-speech-0.1.0-windows-x86_64-cpu.zip",
-          "size": 4730421,
-          "sha256": "5e4ea81046012edcd77fd8848de8eefb5a4ba38cc26f52eb544ab184695a75d6",
+          "path": "nemo-speech-0.2.0-windows-x86_64-cpu.zip",
+          "size": 5528418,
+          "sha256": "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8",
           "sources": [
             {
               "kind": "github-release",
-              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cpu.zip",
-              "revision": "v0.1.0"
+              "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cpu.zip",
+              "revision": "v0.2.0"
             }
           ],
           "archive": {
@@ -467,7 +467,7 @@
       "kind": "model",
       "version": "v2607-s1",
       "title": "Magpie TTS v2607 text tokenizer",
-      "description": "Pronunciation data of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese), the members of NVIDIA's v2607 .nemo archive. About 6 MB.",
+      "description": "Pronunciation data and settings of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese): the tokenizer members of NVIDIA's v2607 .nemo archive, as NeMo-Speech.cpp 0.2.0's own model index lists them. About 6 MB.",
       "license": "NVIDIA Open Model License",
       "status": "unpublished",
       "files": [
@@ -494,7 +494,7 @@
       "kind": "model",
       "version": "1980687",
       "title": "NVIDIA Magpie TTS Multilingual 357M (v2607)",
-      "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA's file; it needs NeMo-Speech.cpp v0.2.0 or newer, and the Magpie runtime packs in this catalog are v0.1.0, so it stays import-only for now. About 570 MB.",
+      "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA's own file, used as it is. Runs on the NeMo-Speech.cpp 0.2.0 server above. About 570 MB download; uses about 1.5 GB of video memory.",
       "license": "NVIDIA Open Model License",
       "status": "unpublished",
       "min_vram_mb": 1500,

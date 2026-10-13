@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "Sul processore la maggior parte dei PC genera la voce molto più lentamente di come viene riprodotta, quindi le frasi avranno delle pause. Senza scheda grafica, Kokoro è la voce migliore.",
     "ggml_requirement": "{{engine}} richiede:",
     "ggml_magpie_tokenizer_hint": "Il tokenizer di Magpie non è scaricabile da solo: esegui una volta scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 (scarica i primi 32 MB dell'archivio del modello NVIDIA e controlla ogni file), poi scegli Importa e seleziona la cartella che mostra.",
-    "ggml_magpie_v2607_hint": "NVIDIA pubblica Magpie v2607 solo nel suo formato di addestramento: convertilo una volta con scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 (richiede Python), poi importa il file del modello e lo zip del tokenizer che genera.",
+    "ggml_magpie_v2607_hint": "Magpie v2607 è il file di modello di NVIDIA stessa, ma Sigil non lo scarica ancora: scarica magpie_tts_multilingual_357m.v2607.f16.gguf da huggingface.co/nvidia/magpie_tts_multilingual_357m, esegui una volta scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 per lo zip del tokenizer (scarica 31 MB dell'archivio del modello NVIDIA e controlla ogni file), poi scegli Importa e seleziona ogni file.",
     "ggml_s2_pack_hint": "Il server Fish S2 Pro non è scaricabile: crealo con scripts/runtime-packs/s2/build.ps1 (o usa uno zip che ti è stato dato), poi scegli Importa.",
     "ggml_breeze_description": "Descrivi la voce",
     "ggml_breeze_direction": "Come deve parlare? (facoltativo)",

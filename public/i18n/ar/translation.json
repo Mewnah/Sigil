@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "على المعالج، تنتج معظم الأجهزة الكلام أبطأ بكثير من تشغيله، لذا ستتوقف الجمل مؤقتًا. Kokoro هو الصوت الأفضل بدون بطاقة رسوميات.",
     "ggml_requirement": "يحتاج {{engine}} إلى:",
     "ggml_magpie_tokenizer_hint": "لا يمكن تنزيل مُجزِّئ Magpie بمفرده: شغّل scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 مرة واحدة (يجلب أول 32 MB من أرشيف نموذج NVIDIA ويتحقق من كل ملف)، ثم اختر «استيراد» وحدد المجلد الذي يطبعه.",
-    "ggml_magpie_v2607_hint": "تنشر NVIDIA نموذج Magpie v2607 بصيغة التدريب فقط: حوّله مرة واحدة باستخدام scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 (يحتاج إلى Python)، ثم استورد ملف النموذج وملف zip الخاص بالمُجزِّئ اللذين يكتبهما.",
+    "ggml_magpie_v2607_hint": "Magpie v2607 هو ملف النموذج الأصلي من NVIDIA، لكن Sigil لا ينزّله بعد: نزّل magpie_tts_multilingual_357m.v2607.f16.gguf من huggingface.co/nvidia/magpie_tts_multilingual_357m، وشغّل scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 مرة واحدة للحصول على ملف zip الخاص بالمُجزِّئ (يجلب 31 MB من أرشيف نموذج NVIDIA ويتحقق من كل ملف)، ثم اختر «استيراد» وحدد كل ملف.",
     "ggml_s2_pack_hint": "خادم Fish S2 Pro غير قابل للتنزيل: ابنِه باستخدام scripts/runtime-packs/s2/build.ps1 (أو استخدم ملف zip حصلت عليه)، ثم اختر «استيراد».",
     "ggml_breeze_description": "صف الصوت",
     "ggml_breeze_direction": "كيف ينبغي أن يتحدث؟ (اختياري)",

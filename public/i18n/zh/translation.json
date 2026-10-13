@@ -790,7 +790,7 @@
     "ggml_cpu_slow": "在处理器上，大多数电脑生成语音的速度比播放慢得多，句子会出现停顿。没有显卡时，Kokoro 是更好的选择。",
     "ggml_requirement": "{{engine}} 需要：",
     "ggml_magpie_tokenizer_hint": "Magpie 分词器无法单独下载：请运行一次 scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1（它会获取 NVIDIA 模型压缩包开头的 32 MB 并校验每个文件），然后选择“导入”并指定它输出的文件夹。",
-    "ggml_magpie_v2607_hint": "NVIDIA 只以训练格式发布 Magpie v2607：请用 scripts/runtime-packs/nemo-speech/convert-magpie-v2607.ps1 转换一次（需要 Python），然后导入它生成的模型文件和分词器 zip。",
+    "ggml_magpie_v2607_hint": "Magpie v2607 是 NVIDIA 自己发布的模型文件，但 Sigil 暂时还不能下载它：请从 huggingface.co/nvidia/magpie_tts_multilingual_357m 获取 magpie_tts_multilingual_357m.v2607.f16.gguf，再运行一次 scripts/runtime-packs/nemo-speech/fetch-magpie-tokenizer.ps1 -Version v2607 生成分词器 zip（它会获取 NVIDIA 模型压缩包中的 31 MB 并校验每个文件），然后选择“导入”并指定每个文件。",
     "ggml_s2_pack_hint": "Fish S2 Pro 服务器无法下载：请用 scripts/runtime-packs/s2/build.ps1 构建它（或使用你拿到的 zip），然后选择“导入”。",
     "ggml_breeze_description": "描述这个声音",
     "ggml_breeze_direction": "它该怎么说话？（可选）",
