@@ -18,6 +18,7 @@
 //! | [`router`], [`two_pass`], [`smart_turn`], [`lang`] | P2-C | language router + `preview_route`, two-pass queue, Smart Turn, language codes |
 //! | `engines::transcribe`, [`worker_proc`] | P2-D | transcribe.cpp GPU tier, optional worker-process isolation (`--headless stt-worker`) |
 //! | [`session`] | P6-A | other players' (`loopback`) session helpers: per-process source with device fallback |
+//! | [`signal_watch`] | W3 | silent-microphone detection on the `mic` pipeline's capture thread (`no_signal` / `signal_restored` status codes) |
 //! | [`music_gate`] | P6-L | FireRedVAD music / singing gate on closed segments (A/B, `PipelineConfig::music_gate`, default off; hook in `pipeline::FrontEnd::closed`, scaffolded by P6-S0) |
 //!
 //! # Frozen contract (P2-S0; change only through an INTEGRATE step)
@@ -55,6 +56,7 @@ pub mod mute;
 pub mod pipeline;
 pub mod router;
 pub mod session;
+pub mod signal_watch;
 pub mod smart_turn;
 pub mod two_pass;
 pub mod utterance;

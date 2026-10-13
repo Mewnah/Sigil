@@ -40,32 +40,6 @@ import { useVoiceFamily } from "./hooks";
 
 const R = VC_NUMBER_RANGES;
 
-/** SVE blocks offered (ms); 0 = from the chunk size. */
-const BLOCK_MS_CHOICES = [0, 20, 30, 40, 50, 60, 80, 100, 120, 160, 200] as const;
-
-/** `template`: the voice runs on the engine (not a bring-your-own ONNX voice); `family`: a P5 family voice (its preset may round the block). */
-export const BlockMsSelect: FC<{ template: boolean; family?: boolean }> = ({ template, family }) => {
-    const { t } = useTranslation();
-    const vc = useSnapshot(window.ApiServer.voiceChanger.state).voiceChanger;
-    const vcApi = window.ApiServer.voiceChanger;
-    const values: number[] = [...BLOCK_MS_CHOICES];
-    if (!values.includes(vc.blockMs)) values.push(vc.blockMs);
-    values.sort((a, b) => a - b);
-    return (
-        <VcChoiceSelect
-            labelKey="voice_changer.block_ms"
-            infoKey="voice_changer.block_ms_info"
-            value={String(vc.blockMs)}
-            options={values.map((ms) => ({
-                value: String(ms),
-                label: ms === 0 ? t("voice_changer.block_ms_auto") : t("voice_changer.block_ms_value", { ms }),
-            }))}
-            onChange={(v) => void vcApi.update({ blockMs: Number(v) })}
-            note={family ? t("voice_changer.family_block_note") : template ? undefined : t("voice_changer.template_only_note")}
-        />
-    );
-};
-
 /** Lookahead choices (ms); 0 = off. The engine rounds up to its 10 ms frames and allows up to 80. */
 const LOOKAHEAD_MS_CHOICES = [0, 10, 20, 40, 60, 80] as const;
 

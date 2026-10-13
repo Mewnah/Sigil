@@ -51,6 +51,9 @@ windows = { version = "0.61", features = [
   # loopback capture (P6-A, audio/loopback_process.rs).
   "Win32_System_Diagnostics_ToolHelp",
 ] }
+# W3: ICoreWebView2 ProcessFailed on the host page (webview_recovery.rs). The version wry and tauri already
+# link (0.38.x, on windows 0.61), so the lock gets no second copy.
+webview2-com = "0.38"
 clap = { version = "4.4", features = ["derive"] }
 local-ip-address = "0.4.9"
 rodio = "^0.18"

@@ -742,19 +742,24 @@ export class VoiceChangerService {
             applied.extraContextMs === cur.extraContextMs &&
             applied.chunkFrames === cur.chunkFrames
         ) {
-            // Compared as the harness sees them: crossfade beyond one chunk is clamped in Rust, so e.g. 20 -> 30 ms
-            // at 512 frames is not a change and must not restart the engine. The chunk length comes from the
-            // running engine's capture rate (`chunk_ms`), falling back to 48 kHz when metrics are unavailable.
-            const chunkMs = (await this.getMetrics())?.chunk_ms;
+            // Compared as the harness sees them: a crossfade beyond one block is clamped in Rust, so e.g. 20 -> 30 ms
+            // at 512 frames (a bring-your-own voice: one device chunk) is not a change and must not restart the
+            // engine. A template voice converts a fixed engine block (120-200 ms on Auto for the Streamer), and
+            // that is what its overlap is clamped to: 20 -> 60 ms there is a real change. Both lengths come from the
+            // running engine (`chunk_ms` at its capture rate, `engine_block_ms`), falling back to 48 kHz and the
+            // device chunk when metrics are unavailable.
+            const m = await this.getMetrics();
             if (
-                effectiveCrossfadeMs(applied.crossfadeMs, cur.chunkFrames, chunkMs) ===
-                effectiveCrossfadeMs(cur.crossfadeMs, cur.chunkFrames, chunkMs)
+                effectiveCrossfadeMs(applied.crossfadeMs, cur.chunkFrames, m?.chunk_ms, m?.engine_block_ms) ===
+                effectiveCrossfadeMs(cur.crossfadeMs, cur.chunkFrames, m?.chunk_ms, m?.engine_block_ms)
             ) {
                 // The running engine is equivalent to the new value: later changes must not count it
-                // as a pending restart (`update`).
+                // as a pending restart (`update`). Rust still holds the old value (the slider only edits the state),
+                // so it gets the new one without a restart: the saved setting and the next start use it.
                 if (this.startedParams) {
                     this.startedParams = { ...this.startedParams, crossfade_ms: toRustParams(this.state.voiceChanger).crossfade_ms };
                 }
+                if (applied.crossfadeMs !== cur.crossfadeMs) await this.syncParams();
                 return;
             }
         }

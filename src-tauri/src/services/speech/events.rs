@@ -161,6 +161,14 @@ pub mod codes {
     pub const SHERPA_LANGUAGE_AUTO: &str = "sherpa_language_auto";
     /// Hotwords could not be enabled for a sherpa model; recognition continues without them.
     pub const SHERPA_HOTWORDS_UNAVAILABLE: &str = "sherpa_hotwords_unavailable";
+    /// The microphone has delivered only a dead feed (exact zeros, or a converter stuck at one 16-bit
+    /// step) for 5 s, or for a minute once it had delivered real signal (a noise gate pauses between
+    /// phrases): Windows microphone privacy off, a hardware mute, a silent default device. Warning
+    /// only, sent once per outage while the session is listening (`mic` pipeline, input sources);
+    /// `detail` is the device name ("" when unknown). The capture goes on.
+    pub const NO_SIGNAL: &str = "no_signal";
+    /// The `no_signal` warning ended: real signal returned, or the capture was muted. `detail` is "".
+    pub const SIGNAL_RESTORED: &str = "signal_restored";
 }
 
 /// VAD lifecycle of a segment (wire: `kind`-tagged, snake_case kinds, camelCase fields).

@@ -27,7 +27,7 @@ import {
     STREAMER_FULL_CORES,
     STREAMER_SIX_CORES,
     streamerAutoBlockMs,
-    streamerFewCoresNote,
+    streamerShortChunkNote,
 } from "../options";
 import streamerBlockFixture from "./streamerBlock.fixture.json";
 
@@ -181,45 +181,62 @@ describe("the Streamer on few physical cores (vc-cpu-rerun)", () => {
     });
 
     it("says nothing on Auto: the engine picks this PC's block itself", () => {
-        for (const cores of [1, 2, 3, 4, 5, 6, 7, 8, 16]) expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs: 0 })).toBeNull();
-        for (const blockMs of [-1, Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY]) expect(streamerFewCoresNote({ ...base, blockMs })).toBeNull();
+        for (const cores of [null, undefined, 0, 1, 2, 3, 4, 5, 6, 7, 8, 16]) expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs: 0 })).toBeNull();
+        for (const blockMs of [-1, Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY]) expect(streamerShortChunkNote({ ...base, blockMs })).toBeNull();
     });
 
-    it("warns on 1 to 6 physical cores when a Block size set by hand is under THIS PC's block (160 ms on 6 cores, 200 ms on 5 or fewer), and names both", () => {
+    it("warns on 1 to 6 physical cores when a Chunk size set by hand is under THIS PC's block (160 ms on 6 cores, 200 ms on 5 or fewer), and names both", () => {
         for (const cores of [1, 2, 3, 4, 5]) {
             for (const blockMs of [10, 20, 60, 119, 120, 160, 199]) {
-                expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs })).toEqual({ cores, blockMs: 200, currentMs: blockMs });
+                expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs })).toEqual({ cores, blockMs: 200, currentMs: blockMs, fewCores: true });
             }
         }
         for (const blockMs of [10, 20, 60, 119, 120, 159]) {
-            expect(streamerFewCoresNote({ ...base, physicalCores: 6, blockMs })).toEqual({ cores: 6, blockMs: 160, currentMs: blockMs });
+            expect(streamerShortChunkNote({ ...base, physicalCores: 6, blockMs })).toEqual({ cores: 6, blockMs: 160, currentMs: blockMs, fewCores: true });
         }
     });
 
-    it("hides once the Block size is this PC's block or longer (160 ms on 6 cores, 200 ms on 5 or fewer)", () => {
+    it("hides once the Chunk size is this PC's block or longer (160 ms on 6 cores, 200 ms on 5 or fewer)", () => {
         for (const cores of [1, 2, 3, 4, 5]) {
-            for (const blockMs of [200, 240, 400]) expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs })).toBeNull();
+            for (const blockMs of [200, 240, 400]) expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs })).toBeNull();
         }
-        for (const blockMs of [160, 161, 199, 200, 240, 400]) expect(streamerFewCoresNote({ ...base, physicalCores: 6, blockMs })).toBeNull();
-        // The same 160 ms Block size is enough on 6 cores and too short on 5.
-        expect(streamerFewCoresNote({ ...base, physicalCores: 6, blockMs: 160 })).toBeNull();
-        expect(streamerFewCoresNote({ ...base, physicalCores: 5, blockMs: 160 })).toEqual({ cores: 5, blockMs: 200, currentMs: 160 });
+        for (const blockMs of [160, 161, 199, 200, 240, 400]) expect(streamerShortChunkNote({ ...base, physicalCores: 6, blockMs })).toBeNull();
+        // The same 160 ms Chunk size is enough on 6 cores and too short on 5.
+        expect(streamerShortChunkNote({ ...base, physicalCores: 6, blockMs: 160 })).toBeNull();
+        expect(streamerShortChunkNote({ ...base, physicalCores: 5, blockMs: 160 })).toEqual({ cores: 5, blockMs: 200, currentMs: 160, fewCores: true });
     });
 
-    it("says nothing from 7 cores (the 8-core PC kept up at 120 ms; a shorter block there was not measured) or while the core count is unknown", () => {
-        for (const cores of [7, 8, 12, 16]) expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs: 20 })).toBeNull();
+    it("warns from 7 cores too when the Chunk size is under 120 ms: the Streamer runs 6 threads on any PC and a short call falls behind (20 ms: RTF 3.8)", () => {
+        for (const cores of [7, 8, 12, 16, 64]) {
+            for (const blockMs of [20, 40, 60, 80, 100, 119]) {
+                expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs }), `${cores} cores, ${blockMs} ms`).toEqual({
+                    cores,
+                    blockMs: 120,
+                    currentMs: blockMs,
+                    fewCores: false,
+                });
+            }
+            // 120 ms and up is what a big PC keeps up with (an 8-core PC dropped none under the game stand-in).
+            for (const blockMs of [120, 140, 200]) expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs })).toBeNull();
+        }
+    });
+
+    it("warns conservatively while the core count is unknown: under 120 ms, the least any PC needs, without naming a PC", () => {
         for (const cores of [null, undefined, 0, -1, Number.NaN]) {
-            expect(streamerFewCoresNote({ ...base, physicalCores: cores, blockMs: 20 })).toBeNull();
+            expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs: 20 })).toEqual({ cores: null, blockMs: 120, currentMs: 20, fewCores: false });
+            expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs: 100 })).toEqual({ cores: null, blockMs: 120, currentMs: 100, fewCores: false });
+            // A size a big PC keeps up with is not called wrong for a PC nobody counted.
+            for (const blockMs of [120, 160, 200]) expect(streamerShortChunkNote({ ...base, physicalCores: cores, blockMs })).toBeNull();
         }
     });
 
     it("follows the rung the preset runs on: an unset EP is the preset's CPU, a GPU rung is not the Streamer's problem", () => {
-        expect(streamerFewCoresNote({ ...base, ep: "cpu" })).toEqual({ cores: 6, blockMs: 160, currentMs: 120 });
-        for (const ep of ["cuda", "dml", "tensorrt_rtx"] as const) expect(streamerFewCoresNote({ ...base, ep })).toBeNull();
+        expect(streamerShortChunkNote({ ...base, ep: "cpu" })).toEqual({ cores: 6, blockMs: 160, currentMs: 120, fewCores: true });
+        for (const ep of ["cuda", "dml", "tensorrt_rtx"] as const) expect(streamerShortChunkNote({ ...base, ep })).toBeNull();
         for (const profile of ["low_latency", "quality", "studio_trt"] as const) {
             // Their unset EP is a GPU rung; on an explicit CPU they are not the Streamer's shape (no note).
-            expect(streamerFewCoresNote({ ...base, profile })).toBeNull();
-            expect(streamerFewCoresNote({ ...base, profile, ep: "cpu" })).toBeNull();
+            expect(streamerShortChunkNote({ ...base, profile })).toBeNull();
+            expect(streamerShortChunkNote({ ...base, profile, ep: "cpu" })).toBeNull();
         }
     });
 });

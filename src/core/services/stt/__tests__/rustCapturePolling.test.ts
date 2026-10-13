@@ -25,6 +25,7 @@ import {
   HTTP_MAX_BACKLOG,
   noteSttPipelineStart,
   RustUtteranceService,
+  speechStatusLine,
   START_SETTLE_WAIT_MS,
   STT_PIPELINE_ID,
   type PipelineEngineSetup,
@@ -65,6 +66,7 @@ function receiver() {
     onInterim: vi.fn(),
     onFinal: vi.fn(),
     onStatus: vi.fn(),
+    onInputSilence: vi.fn(),
     isMuted: vi.fn(() => false),
   } satisfies ISTTReceiver;
 }
@@ -297,6 +299,28 @@ describe("RustUtteranceService (speech pipeline driver)", () => {
     expect(r.onInterim).not.toHaveBeenCalled();
     expect(r.onFinal).not.toHaveBeenCalled();
     await engine.stop();
+  });
+
+  it("a silent microphone goes to the receiver's own channel, never a status line, and ends with the session", async () => {
+    const r = receiver();
+    const engine = await startedEngine(r);
+    const e = epoch;
+    r.onStatus.mockClear();
+    r.onInputSilence.mockClear();
+    emit("speech:status", status(e, "listening", "no_signal", "Headset Mic", "warning"));
+    expect(r.onInputSilence).toHaveBeenLastCalledWith(true, "Headset Mic");
+    emit("speech:status", status(e - 1, "listening", "no_signal", "Old Mic", "warning")); // another session
+    expect(r.onInputSilence).toHaveBeenCalledTimes(1);
+    emit("speech:status", status(e, "listening", "signal_restored", "", "info"));
+    expect(r.onInputSilence).toHaveBeenLastCalledWith(false, "");
+    expect(r.onStatus).not.toHaveBeenCalled();
+    expect(speechStatusLine(status(e, "listening", "no_signal", "Headset Mic", "warning"), "TestSTT")).toBeUndefined();
+    expect(speechStatusLine(status(e, "listening", "signal_restored"), "TestSTT")).toBeUndefined();
+
+    emit("speech:status", status(e, "listening", "no_signal", "", "warning"));
+    expect(r.onInputSilence).toHaveBeenLastCalledWith(true, "");
+    await engine.stop();
+    expect(r.onInputSilence).toHaveBeenLastCalledWith(false);
   });
 
   it("an utterance given up to the request limit stays reported as skipped, not as a wait", async () => {

@@ -46,6 +46,30 @@ pub(crate) fn clamp_latency_budget_ms(ms: f64) -> f64 {
     }
 }
 
+/// Device chunks of margin the latency budget keeps beyond an engine block (see [`effective_latency_budget_ms`]): the chunk
+/// that was waiting when the model call began and the jitter in when the capture delivers the next one.
+const BUDGET_BLOCK_MARGIN_CHUNKS: f64 = 2.0;
+
+/// The latency budget in force (ms): the stored one, raised to what the playing voice's model call needs.
+///
+/// A voice that converts a block of `engine_block_ms` in one call keeps nothing out of the backlog while the call runs, so
+/// a call that takes as long as its block (real time) leaves a block of captured audio waiting, plus the chunk that
+/// arrived meanwhile. A budget under that drops input after every call, however fast the PC is: a 100 ms budget with
+/// 120 ms blocks threw away most of the speech. The stored budget is kept for what it is for (a PC that falls
+/// further behind than a block still drops), and only a value under `engine_block_ms` plus
+/// [`BUDGET_BLOCK_MARGIN_CHUNKS`] device chunks (`chunk_ms`) is raised to it. `None` (no fixed block) leaves the budget
+/// alone. The default 300 ms covers every block up to 200 ms.
+pub(crate) fn effective_latency_budget_ms(budget_ms: f64, engine_block_ms: Option<f64>, chunk_ms: f64) -> f64 {
+    let stored = clamp_latency_budget_ms(budget_ms);
+    match engine_block_ms {
+        Some(block) if block.is_finite() && block > 0.0 => {
+            let chunk = if chunk_ms.is_finite() { chunk_ms.max(0.0) } else { 0.0 };
+            stored.max(block + BUDGET_BLOCK_MARGIN_CHUNKS * chunk)
+        }
+        _ => stored,
+    }
+}
+
 /// Frames in `ms` at `rate` Hz, rounded to the nearest frame.
 pub(crate) fn ms_to_frames(ms: f64, rate: u32) -> usize {
     (ms.max(0.0) * f64::from(rate) / 1000.0).round() as usize
@@ -570,6 +594,46 @@ mod tests {
         assert_accounting(&b);
         assert_eq!(b.captured_frames(), 1_700);
         assert_eq!(b.dropped_frames(), 300);
+    }
+
+    /// A voice that converts a long block per model call needs a budget that holds a call's worth of capture: a stored
+    /// budget under it is raised (and nothing else is touched), so a call that finishes inside its block drops nothing.
+    #[test]
+    fn the_budget_is_raised_to_what_a_model_call_needs() {
+        let chunk = 512.0 * 1000.0 / 48_000.0;
+        // No fixed block, or nonsense: the stored (clamped) budget.
+        assert_eq!(effective_latency_budget_ms(300.0, None, chunk), 300.0);
+        assert_eq!(effective_latency_budget_ms(50.0, None, chunk), MIN_LATENCY_BUDGET_MS);
+        assert_eq!(effective_latency_budget_ms(300.0, Some(0.0), chunk), 300.0);
+        assert_eq!(effective_latency_budget_ms(300.0, Some(f64::NAN), chunk), 300.0);
+        assert_eq!(effective_latency_budget_ms(f64::NAN, Some(120.0), chunk), DEFAULT_LATENCY_BUDGET_MS);
+        // The default covers every block the engine plans (200 ms at most).
+        for block in [20.0, 40.0, 120.0, 160.0, 200.0] {
+            assert_eq!(effective_latency_budget_ms(DEFAULT_LATENCY_BUDGET_MS, Some(block), chunk), DEFAULT_LATENCY_BUDGET_MS, "{block} ms");
+        }
+        // A budget under the block plus two device chunks is raised to it; a larger one is kept.
+        assert!((effective_latency_budget_ms(100.0, Some(120.0), chunk) - (120.0 + 2.0 * chunk)).abs() < 1e-9);
+        assert!((effective_latency_budget_ms(150.0, Some(200.0), chunk) - (200.0 + 2.0 * chunk)).abs() < 1e-9);
+        assert_eq!(effective_latency_budget_ms(250.0, Some(120.0), chunk), 250.0);
+        assert_eq!(effective_latency_budget_ms(150.0, Some(120.0), chunk), 150.0);
+
+        // The effect: a 100 ms budget against 120 ms blocks. The call takes the whole block (real time), so a block's
+        // worth of capture piles up and the chunk that arrived with it. The stored budget drops most of it; the
+        // budget in force drops none.
+        let rate = 48_000;
+        let waiting = ms_to_frames(120.0 + chunk, rate);
+        let block_frames = ms_to_frames(chunk, rate);
+        let mut stored = InputBacklog::new(1, rate, 100.0, 0);
+        stored.push(&vec![0.1; waiting]);
+        let dropped = stored.enforce(block_frames).expect("a 100 ms budget drops after a 120 ms call").frames;
+        assert!(dropped > waiting / 3, "{dropped} of {waiting} frames");
+        let mut raised = InputBacklog::new(1, rate, effective_latency_budget_ms(100.0, Some(120.0), chunk), 0);
+        raised.push(&vec![0.1; waiting]);
+        assert_eq!(raised.enforce(block_frames), None, "nothing is dropped inside the raised budget");
+        // A call twice as long as its block (RTF 2) still drops, as it should.
+        let mut behind = InputBacklog::new(1, rate, effective_latency_budget_ms(100.0, Some(120.0), chunk), 0);
+        behind.push(&vec![0.1; ms_to_frames(240.0 + chunk, rate)]);
+        assert!(behind.enforce(block_frames).is_some());
     }
 
     /// A block longer than the budget must still be convertible (the budget never starves it).

@@ -43,6 +43,22 @@ describe("which voices the engine block clamps the crossfade of (P3B-H)", () => 
         expect(crossfadeEngineBlockMs("template", false, 100)).toBe(0);
     });
 
+    it("on Auto the engine's own block caps the crossfade, not the 10 ms device chunk", () => {
+        // Auto runs a fixed block (20 ms on a graphics card, 120-200 ms for the Streamer on the processor): the harness
+        // clamps the overlap at that block, so the slider offers up to it.
+        expect(crossfadeEngineBlockMs("template", true, 0, 20)).toBe(20);
+        expect(crossfadeEngineBlockMs("none", true, 0, 160)).toBe(160);
+        expect(crossfadeMaxMsForEngine(512, null, crossfadeEngineBlockMs("template", true, 0, 20))).toBe(20);
+        expect(crossfadeMaxMsForEngine(512, null, crossfadeEngineBlockMs("template", true, 0, 120))).toBe(120);
+        // A size set wins over Auto's; unknown or nonsense Auto blocks leave the device-chunk cap.
+        expect(crossfadeEngineBlockMs("template", true, 40, 120)).toBe(40);
+        for (const auto of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) expect(crossfadeEngineBlockMs("template", true, 0, auto)).toBe(0);
+        // The other voices never follow it.
+        expect(crossfadeEngineBlockMs("legacy", true, 0, 120)).toBe(0);
+        expect(crossfadeEngineBlockMs("family", true, 0, 120)).toBe(0);
+        expect(crossfadeEngineBlockMs("template", false, 0, 120)).toBe(0);
+    });
+
     it("a family voice keeps the chunk cap on its crossfade slider", () => {
         // 512 frames at 48 kHz (10.67 ms) with blockMs 100: the family's overlap is clamped to its own block,
         // so the slider stops at the chunk, not at the 100 ms the template engine would run.

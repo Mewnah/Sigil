@@ -52,12 +52,35 @@ export function chunkDurationMs(frames: number, runningChunkMs?: number | null):
 }
 
 /**
- * Crossfade (ms) the RVC harness actually uses for `crossfadeMs`: it clamps the SOLA overlap to one
- * processing chunk (`stream.rs`: `overlap.min(block_expected)`), so anything longer behaves like one chunk.
- * `runningChunkMs` is the running engine's `chunk_ms` metric (see `chunkDurationMs`).
+ * The length (ms) the RVC harness clamps its SOLA overlap to (`stream.rs`: `overlap.min(block_expected)`): the fixed block
+ * a voice with one converts per model call (every template voice: the running engine's `engine_block_ms` metric, which on
+ * Auto is the block Auto resolved to), else one processing chunk (a bring-your-own voice, whose engine reports no block;
+ * see `chunkDurationMs`). The fixed block alone decides when there is one: a device buffer longer than the block does not
+ * widen it.
  */
-export function effectiveCrossfadeMs(crossfadeMs: number, frames: number, runningChunkMs?: number | null): number {
-  return Math.min(crossfadeMs, chunkDurationMs(frames, runningChunkMs));
+export function harnessCrossfadeClampMs(
+  frames: number,
+  runningChunkMs?: number | null,
+  runningEngineBlockMs?: number | null,
+): number {
+  if (runningEngineBlockMs != null && Number.isFinite(runningEngineBlockMs) && runningEngineBlockMs > 0) {
+    return runningEngineBlockMs;
+  }
+  return chunkDurationMs(frames, runningChunkMs);
+}
+
+/**
+ * Crossfade (ms) the RVC harness actually uses for `crossfadeMs`: it clamps the SOLA overlap to one emitted block
+ * ({@link harnessCrossfadeClampMs}), so anything longer behaves like one block. `runningChunkMs` and
+ * `runningEngineBlockMs` are the running engine's `chunk_ms` and `engine_block_ms` metrics.
+ */
+export function effectiveCrossfadeMs(
+  crossfadeMs: number,
+  frames: number,
+  runningChunkMs?: number | null,
+  runningEngineBlockMs?: number | null,
+): number {
+  return Math.min(crossfadeMs, harnessCrossfadeClampMs(frames, runningChunkMs, runningEngineBlockMs));
 }
 
 /** Largest whole-ms crossfade worth offering for this chunk size (one chunk, at least 1 ms). */
@@ -79,11 +102,17 @@ export function engineBlockMs(blockMs: number): number {
 /**
  * The engine block (ms) that clamps the crossfade of the selected voice: `engineBlockMs(blockMs)` for a
  * template voice (an unlisted voice counts as one, the default setup) in RVC mode, 0 for everything else.
+ * On Auto (`blockMs` 0) the engine still runs a fixed block (the Chunk size's Auto: `chunkSize.ts`
+ * `templateAutoBlockMs`, or the running engine's own `engine_block_ms`): pass it as `autoBlockMs`, so the
+ * crossfade is not capped at the 10 ms device chunk while the engine really clamps it at its block.
  * A bring-your-own (legacy) voice follows the device chunk, and a voice family's SOLA overlap is clamped to
  * the family's own fixed block (its preset may round the block), not to the `block_ms`-derived one.
  */
-export function crossfadeEngineBlockMs(kind: VoiceKind, isRvc: boolean, blockMs: number): number {
-  return isRvc && runsOnTemplateEngine(kind) ? engineBlockMs(blockMs) : 0;
+export function crossfadeEngineBlockMs(kind: VoiceKind, isRvc: boolean, blockMs: number, autoBlockMs = 0): number {
+  if (!(isRvc && runsOnTemplateEngine(kind))) return 0;
+  const set = engineBlockMs(blockMs);
+  if (set > 0) return set;
+  return Number.isFinite(autoBlockMs) && autoBlockMs > 0 ? Math.min(CROSSFADE_MS_MAX, autoBlockMs) : 0;
 }
 
 /**

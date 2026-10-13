@@ -663,25 +663,26 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
         .filter(|d| d.is_dir())
         .or_else(import::templates_dir)
         .ok_or("the bundled vc-templates folder was not found; reinstall Sigil")?;
-    let derived_preset = presets::engine_preset(
-        request.preset,
-        request.block_ms,
-        request.chunk_frames,
-        request.device_rate,
-        request.extra_context_ms,
-        request.precision,
-    );
-    // The Streamer on the processor with the block on automatic takes the block it can keep up with, by
-    // the PC's physical cores (120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer; the 20 ms the
-    // device block derives is several times slower than real time there).
-    let preset = presets::cpu_streamer_block(derived_preset, &request.ep, request.block_ms);
-    let auto_cpu_block = preset.block_ms != derived_preset.block_ms;
+    // The Chunk size setting (`block_ms`) decides the engine block: a size you set is the block (planned
+    // to whole 20 ms); on Auto the Streamer on the processor takes the block its PC can keep up with,
+    // by physical cores, and every other preset the block derived from the device block.
     let physical_cores = crate::services::neural_audio::ort_session::vc_physical_cores();
+    let TemplateBlock {
+        preset,
+        derived_block_ms,
+        auto_cpu_block,
+        block_16k: preset_block_16k,
+    } = template_block(request, presets::cpu_streamer_block_enabled(), physical_cores);
     if auto_cpu_block {
         tracing::info!(
-            "voice changer: engine block {:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores; the {:.0} ms the device block gives cannot keep up there; set a Block size to choose another, SIGIL_VC_STREAMER_BLOCK=0 restores the old rule)",
+            "voice changer: engine block {:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores; the {derived_block_ms:.0} ms the device block gives cannot keep up there; set a Chunk size to choose another, SIGIL_VC_STREAMER_BLOCK=0 restores the old rule)",
             preset.block_ms,
-            derived_preset.block_ms,
+        );
+    } else if request.block_ms > 0.0 {
+        tracing::info!(
+            "voice changer: engine block {:.0} ms (the Chunk size you set: {:.0} ms, planned to whole 20 ms)",
+            preset_block_16k.map_or(request.block_ms, |b| b as f64 / 16.0),
+            request.block_ms,
         );
     }
     let noise_seed = noise_seed_for(&request.slot_dir, manifest.source_sha256.as_deref());
@@ -689,7 +690,6 @@ fn create_sigil(request: &EngineRequest, hint: Option<&StreamHint>) -> Result<Cr
     // context) and builds the pitch bank beside its other branches. With the kill switch
     // (`SIGIL_VC_FINAL_SHAPES=0`) the load plans P3's defaults and the lookahead is applied below.
     let final_shapes = SigilRvcEngine::final_shapes_enabled();
-    let preset_block_16k = plan_block_16k(&preset);
     let stream = hint
         .filter(|_| final_shapes)
         .and_then(|h| preset_block_16k.map(|block| h.geometry(block, manifest.sample_rate)));
@@ -809,6 +809,45 @@ fn plan_block_16k(preset: &presets::EnginePreset) -> Option<usize> {
     engine::plan::block_frames(preset.block_ms).ok().map(|f| f * 160)
 }
 
+/// The engine block a template voice runs for a request, resolved from the **Chunk size** setting
+/// (`block_ms`; [`create_sigil`] and the tests share it):
+/// - a size above 0 is the user's: it is the block (the plan rounds it up to whole 20 ms, at most 200),
+///   on every rung and preset, the Streamer on the processor included;
+/// - 0 (Auto) derives the block from the device block (`chunk_frames` at `device_rate`, capped at 200 ms),
+///   and for the Streamer on the processor raises a derived block under 60 ms to the one its PC's
+///   physical cores keep up with ([`presets::cpu_streamer_block_with`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TemplateBlock {
+    /// The preset with the block it runs.
+    preset: presets::EnginePreset,
+    /// The block the device block derives (Auto without the Streamer rule).
+    derived_block_ms: f64,
+    /// Auto, and the Streamer's processor block replaced the derived one.
+    auto_cpu_block: bool,
+    /// The planned block in 16 kHz samples (`None` for a block the plan refuses).
+    block_16k: Option<usize>,
+}
+
+/// [`TemplateBlock`] of `request`; the Streamer rule's kill switch and the PC's physical cores are
+/// passed in (tests never touch the environment or the machine).
+fn template_block(request: &EngineRequest, streamer_rule_enabled: bool, physical_cores: u32) -> TemplateBlock {
+    let derived = presets::engine_preset(
+        request.preset,
+        request.block_ms,
+        request.chunk_frames,
+        request.device_rate,
+        request.extra_context_ms,
+        request.precision,
+    );
+    let preset = presets::cpu_streamer_block_with(derived, &request.ep, request.block_ms, streamer_rule_enabled, physical_cores);
+    TemplateBlock {
+        preset,
+        derived_block_ms: derived.block_ms,
+        auto_cpu_block: preset.block_ms != derived.block_ms,
+        block_16k: plan_block_16k(&preset),
+    }
+}
+
 /// Whether the generator of a template voice runs on the processor: its `vc.flowdec` session's
 /// outcome (the rung it really landed on; a GPU request that fell back is on the CPU), else the
 /// requested EP. Strict on the outcome: only `cpu` is the processor (`tensorrt` and the other
@@ -839,7 +878,7 @@ fn block_floor(
 /// ([`presets::cpu_streamer_block`]).
 fn cpu_streamer_block_note(block_ms: f64, physical_cores: u32) -> String {
     format!(
-        "block: {block_ms:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores: the shorter block the device block gives cannot keep up there, and fewer cores take a longer block; set a Block size to choose another)"
+        "block: {block_ms:.0} ms (automatic for the Streamer on the processor of a PC with {physical_cores} physical cores: the shorter block the device block gives cannot keep up there, and fewer cores take a longer block; set a Chunk size to choose another)"
     )
 }
 
@@ -868,6 +907,18 @@ pub(crate) fn resolve_reference(request: &EngineRequest) -> Result<Option<Refere
         .as_deref()
         .ok_or("the voice library is not available (no app data folder)")?;
     crate::services::voice_library::reference_clip(app_data, id).map(Some)
+}
+
+/// The Chunk size (`block_ms`) a family voice is asked for. A sidecar voice gets none: the helper answers the hello with its own
+/// frame, so the inspector shows the control disabled ("set by this voice") for it, and a size left from the template voice
+/// that played before (the setting is global) would otherwise reach a helper with no recipe as its proposed frame with
+/// nothing on screen to explain it or clear it. The proposal then follows the Audio device buffer.
+fn family_block_ms(kind: FamilyKind, block_ms: f64) -> f64 {
+    if matches!(kind, FamilyKind::SidecarV2) {
+        0.0
+    } else {
+        block_ms
+    }
 }
 
 /// A P5 family voice (`vc::families`): its pitch extractor (when the family uses one, with the
@@ -915,7 +966,7 @@ fn create_family(request: &EngineRequest, kind: FamilyKind) -> Result<CreatedEng
         levers: request.levers.clone(),
         precision: request.precision,
         preset: request.preset,
-        block_ms: request.block_ms,
+        block_ms: family_block_ms(kind, request.block_ms),
         chunk_frames: request.chunk_frames,
         device_rate: request.device_rate,
         extra_context_ms: request.extra_context_ms,
@@ -2139,6 +2190,150 @@ mod tests {
             assert_eq!(block_16k, Some(ms as usize * 16), "{cores} cores");
             assert_eq!(block_floor(&sessions(&[("vc.flowdec", "cpu", "cpu")]), "cpu", block_16k, 512, 48_000, true), Some(floor), "{cores} cores");
         }
+    }
+
+    /// The Chunk size reaches the families that read it (so-vits-svc, DDSP-SVC) and no sidecar voice: the control is
+    /// disabled for those, so a size set under another voice must not become the frame proposed to a helper.
+    #[test]
+    fn a_sidecar_voice_is_not_asked_for_the_stored_chunk_size() {
+        for kind in FamilyKind::ALL {
+            let got = family_block_ms(kind, 160.0);
+            if matches!(kind, FamilyKind::SidecarV2) {
+                assert_eq!(got, 0.0, "{}", kind.as_str());
+            } else {
+                assert_eq!(got, 160.0, "{}", kind.as_str());
+            }
+            assert_eq!(family_block_ms(kind, 0.0), 0.0, "Auto stays Auto for {}", kind.as_str());
+        }
+    }
+
+    /// A Chunk size you set (`block_ms` above 0) is the engine block a template voice runs, planned to whole
+    /// 20 ms, on every rung and preset, and on the Streamer on the processor, where Auto takes the block of the
+    /// PC's cores instead: 120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer. The PC's cores and the
+    /// kill switch change only Auto.
+    #[test]
+    fn a_chunk_size_you_set_is_the_engine_block_a_template_voice_runs() {
+        let request = |preset: RvcPresetProfile, ep: &str, block_ms: f64| EngineRequest {
+            preset,
+            ep: ep.into(),
+            block_ms,
+            chunk_frames: 512,
+            device_rate: 48_000,
+            ..test_request(Path::new("slot"))
+        };
+        let ms_of = |t: &TemplateBlock| t.block_16k.map(|b| b as f64 / 16.0);
+        // Auto on the Streamer on the processor: the block of the PC's cores.
+        for (cores, want) in [(16u32, 120.0), (8, 120.0), (7, 120.0), (6, 160.0), (5, 200.0), (4, 200.0), (0, 200.0)] {
+            let t = template_block(&request(RvcPresetProfile::Streamer, "cpu", 0.0), true, cores);
+            assert_eq!((ms_of(&t), t.preset.block_ms, t.auto_cpu_block), (Some(want), want, true), "{cores} cores");
+        }
+        // The same sizes, set by hand, are the block whatever the PC: the Streamer rule never moves them.
+        for cores in [4u32, 6, 8] {
+            for ms in (20..=200).step_by(20).map(f64::from) {
+                let t = template_block(&request(RvcPresetProfile::Streamer, "cpu", ms), true, cores);
+                assert_eq!((ms_of(&t), t.preset.block_ms, t.auto_cpu_block), (Some(ms), ms, false), "{ms} ms on {cores} cores");
+            }
+        }
+        // Every other preset and rung: a size set is the block; Auto derives it from the device block (512 frames at
+        // 48 kHz are 10.7 ms, planned to 20 ms).
+        for preset in [RvcPresetProfile::LowLatency, RvcPresetProfile::Quality, RvcPresetProfile::StudioTrt, RvcPresetProfile::Streamer] {
+            for ep in ["cpu", "cuda", "dml"] {
+                let auto = template_block(&request(preset, ep, 0.0), true, 4);
+                let on_the_processor = preset == RvcPresetProfile::Streamer && ep == "cpu";
+                if !on_the_processor {
+                    assert_eq!((ms_of(&auto), auto.auto_cpu_block), (Some(20.0), false), "{preset:?} {ep} Auto");
+                }
+                for ms in [40.0, 100.0, 160.0] {
+                    let t = template_block(&request(preset, ep, ms), true, 4);
+                    assert_eq!((ms_of(&t), t.auto_cpu_block), (Some(ms), false), "{preset:?} {ep} {ms} ms");
+                }
+            }
+        }
+        // The plan the engine loads from that preset (`engine::load::load_plan`: the preset's block planned to whole
+        // 20 ms) is the block that was set, on the Streamer on the processor too, and Auto's the PC's.
+        {
+            use crate::services::neural_audio::vc::import::layout::Streaming;
+            let streaming = Streaming { flow_margin: 24, dec_margin: 11, noise_scale: 0.66666, knn_k: 8, knn_coarse_k: 64, min_index_rows: 64 };
+            let planned = |t: &TemplateBlock| engine::plan::ShapePlan::new(&streaming, &t.preset, 40_000, true).map(|p| p.block_16k as f64 / 16.0);
+            for cores in [4u32, 6, 8] {
+                for ms in (20..=200).step_by(20).map(f64::from) {
+                    let t = template_block(&request(RvcPresetProfile::Streamer, "cpu", ms), true, cores);
+                    assert_eq!(planned(&t), Ok(ms), "{ms} ms set on {cores} cores");
+                }
+                let auto = template_block(&request(RvcPresetProfile::Streamer, "cpu", 0.0), true, cores);
+                assert_eq!(planned(&auto), Ok(presets::cpu_streamer_block_for_cores(cores)), "Auto on {cores} cores");
+            }
+            let t = template_block(&request(RvcPresetProfile::Quality, "cuda", 100.0), true, 4);
+            assert_eq!(planned(&t), Ok(100.0));
+        }
+        // A size off the 20 ms grid (an older setting) runs as the next whole 20 ms.
+        for (set, runs) in [(30.0, 40.0), (50.0, 60.0), (70.0, 80.0), (110.0, 120.0), (190.0, 200.0), (1.0, 20.0)] {
+            assert_eq!(ms_of(&template_block(&request(RvcPresetProfile::LowLatency, "cuda", set), true, 8)), Some(runs), "{set} ms");
+        }
+        // A size the plan refuses has no block (the load reports it); the setting is clamped to 200 before that.
+        assert_eq!(template_block(&request(RvcPresetProfile::LowLatency, "cuda", 250.0), true, 8).block_16k, None);
+        // The kill switch restores the device block for Auto only.
+        let off = template_block(&request(RvcPresetProfile::Streamer, "cpu", 0.0), false, 4);
+        assert_eq!((ms_of(&off), off.auto_cpu_block), (Some(20.0), false));
+        assert_eq!(ms_of(&template_block(&request(RvcPresetProfile::Streamer, "cpu", 160.0), false, 4)), Some(160.0));
+        // A deliberate big device chunk keeps its block on Auto (120 ms here); a size set still wins.
+        let big = |ms: f64| EngineRequest { chunk_frames: 5_760, ..request(RvcPresetProfile::Streamer, "cpu", ms) };
+        assert_eq!(ms_of(&template_block(&big(0.0), true, 4)), Some(120.0));
+        assert_eq!(ms_of(&template_block(&big(40.0), true, 4)), Some(40.0));
+        // The rest of the preset is the request's.
+        let t = template_block(&request(RvcPresetProfile::Streamer, "cpu", 80.0), true, 4);
+        assert_eq!((t.preset.profile, t.preset.extra_context_ms, t.preset.precision), (RvcPresetProfile::Streamer, 64.0, PrecisionMode::Auto));
+    }
+
+    /// The output-buffer floor of a template voice follows the Chunk size you set: it is sized for the block that
+    /// runs (not for Auto's), a block of 40 ms or less needs none, and a voice on a graphics card never has one.
+    #[test]
+    fn the_output_floor_follows_the_chunk_size_you_set() {
+        let request = |ep: &str, block_ms: f64| EngineRequest {
+            preset: RvcPresetProfile::Streamer,
+            ep: ep.into(),
+            block_ms,
+            chunk_frames: 512,
+            device_rate: 48_000,
+            ..test_request(Path::new("slot"))
+        };
+        let cpu = sessions(&[("vc.flowdec", "cpu", "cpu")]);
+        let gpu = sessions(&[("vc.flowdec", "cuda", "cuda")]);
+        let floor = |r: &EngineRequest, cores: u32, rows: &[(String, EpOutcome)]| {
+            block_floor(rows, &r.ep, template_block(r, true, cores).block_16k, r.chunk_frames, r.device_rate, true)
+        };
+        let chunk_ms = 512.0 * 1000.0 / 48_000.0;
+        // The documented rows: 120 ms 110 / 136, 160 ms 145 / 171, 200 ms 180 / 206.
+        assert_eq!(floor(&request("cpu", 120.0), 4, &cpu), Some((110.0, 136.0)));
+        assert_eq!(floor(&request("cpu", 160.0), 4, &cpu), Some((145.0, 171.0)));
+        assert_eq!(floor(&request("cpu", 200.0), 8, &cpu), Some((180.0, 206.0)));
+        // 160 ms set on a 4-core PC is sized as 160 ms, not as the 200 ms Auto takes there; and the other way round.
+        assert_eq!(floor(&request("cpu", 0.0), 4, &cpu), Some((180.0, 206.0)), "Auto on 4 cores");
+        assert_eq!(floor(&request("cpu", 0.0), 8, &cpu), Some((110.0, 136.0)), "Auto on 8 cores");
+        assert_eq!(floor(&request("cpu", 120.0), 4, &cpu), floor(&request("cpu", 0.0), 8, &cpu), "120 ms set on 4 cores is Auto's block on 8");
+        // Every size set is sized by the rule for the block that runs.
+        let mut previous = 0.0f64;
+        for ms in (20..=200).step_by(20).map(f64::from) {
+            let want = block_buffer::min_output_buffer_ms(ms, chunk_ms, true, true);
+            assert_eq!(floor(&request("cpu", ms), 6, &cpu), want, "{ms} ms");
+            let prefill = want.map_or(0.0, |w| w.0);
+            assert!(prefill >= previous, "{ms} ms: the prefill fell from {previous} to {prefill}");
+            previous = prefill;
+        }
+        // Short blocks need none (the device chunk is 10.7 ms: a 40 ms block spans three pushes).
+        for ms in [20.0, 40.0] {
+            assert_eq!(floor(&request("cpu", ms), 4, &cpu), None, "{ms} ms");
+        }
+        // Planned to whole 20 ms, so a 50 ms setting is sized as 60 ms.
+        assert_eq!(floor(&request("cpu", 50.0), 8, &cpu), floor(&request("cpu", 60.0), 8, &cpu));
+        assert!(floor(&request("cpu", 60.0), 8, &cpu).is_some());
+        // A generator on a graphics card never has a floor, whatever the size.
+        for ms in [0.0, 60.0, 120.0, 200.0] {
+            assert_eq!(floor(&request("cuda", ms), 4, &gpu), None, "{ms} ms on a GPU");
+        }
+        // The kill switch.
+        let r = request("cpu", 160.0);
+        assert_eq!(block_floor(&cpu, &r.ep, template_block(&r, true, 4).block_16k, 512, 48_000, false), None);
     }
 
     pub(crate) fn test_request(slot: &Path) -> EngineRequest {

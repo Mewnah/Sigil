@@ -5447,6 +5447,7 @@ dependencies = [
  "wana_kana",
  "warp",
  "wasapi",
+ "webview2-com",
  "whisper-rs",
  "windows 0.61.3",
  "zip",

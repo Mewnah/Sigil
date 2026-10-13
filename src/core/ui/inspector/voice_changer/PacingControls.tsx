@@ -1,6 +1,6 @@
 // Voice-changer inspector (P3B-H): the pacing controls of RVC mode, under Advanced. The output
 // cushion (fixed prefill or the adaptive controller, with the cushion the queue holds right now),
-// the device block (as set, or a divisor of the engine block for imported voices), the SOLA search
+// the device buffer mode (as set, or a divisor of the engine chunk for imported voices), the SOLA search
 // window and the content encoder's left context (each automatic or a number of ms). They are read
 // when the engine starts, so a change restarts a running engine (`restart.ts`).
 import type { VoiceChangerMetrics } from "@/core/services/voice_changer";
@@ -95,9 +95,9 @@ export const PacingControls: FC<{ metrics: VoiceChangerMetrics | null }> = ({ me
     const modelDivisor = vc.deviceBlock === "model_divisor";
     const blockState = deviceBlockNote(modelDivisor, template, running && metrics ? metrics.chunk_ms : null);
     let blockNote: string | undefined;
-    if (blockState === "template_only") blockNote = t("voice_changer.device_block_template_only");
-    else if (blockState === "live" && metrics) blockNote = t("voice_changer.device_block_live", { ms: formatMs(metrics.chunk_ms) });
-    else if (blockState === "not_applied" && metrics) blockNote = t("voice_changer.device_block_not_applied", { ms: formatMs(metrics.chunk_ms) });
+    if (blockState === "template_only") blockNote = t("voice_changer.device_buffer_mode_template_only");
+    else if (blockState === "live" && metrics) blockNote = t("voice_changer.device_buffer_mode_live", { ms: formatMs(metrics.chunk_ms) });
+    else if (blockState === "not_applied" && metrics) blockNote = t("voice_changer.device_buffer_mode_not_applied", { ms: formatMs(metrics.chunk_ms) });
     return (
         <>
             <VcChoiceSelect
@@ -109,10 +109,10 @@ export const PacingControls: FC<{ metrics: VoiceChangerMetrics | null }> = ({ me
                 note={cushionNote}
             />
             <VcChoiceSelect
-                labelKey="voice_changer.device_block"
-                infoKey="voice_changer.device_block_info"
+                labelKey="voice_changer.device_buffer_mode"
+                infoKey="voice_changer.device_buffer_mode_info"
                 value={vc.deviceBlock}
-                options={DEVICE_BLOCKS.map((b) => ({ value: b, label: t(`voice_changer.device_block_${b}`) }))}
+                options={DEVICE_BLOCKS.map((b) => ({ value: b, label: t(`voice_changer.device_buffer_mode_${b}`) }))}
                 onChange={(v) => void vcApi.update({ deviceBlock: v as DeviceBlock })}
                 note={blockNote}
                 noteTone={blockState === "template_only" || blockState === "not_applied" ? "warn" : "muted"}

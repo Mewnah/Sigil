@@ -7,8 +7,10 @@ import { VC_LEVERS } from "@/core/services/voice_changer/contract";
 import {
     assessMetrics,
     componentShortName,
+    effectiveLatencyBudgetMs,
     epDisplayName,
     epStatus,
+    formatChunkMs,
     formatMs,
     GOVERNOR_LOWEST_LEVEL,
     leversInUse,
@@ -78,6 +80,9 @@ export const VcMetricsPanel: FC<{
     const { t } = useTranslation();
     const ms = t("voice_changer.unit_ms");
     const a = assessMetrics(m, budgetMs, prev);
+    // The budget the engine applies: a voice that converts a long chunk per call needs more than a small stored one.
+    const budgetInForce = effectiveLatencyBudgetMs(budgetMs, m);
+    const callTone = a.realtime === "slow" ? "error" : a.realtime === "spikes" ? "warn" : undefined;
     if (a.starting) {
         return <div className="text-xs text-base-content/60">{t("voice_changer.metrics_starting")}</div>;
     }
@@ -101,19 +106,30 @@ export const VcMetricsPanel: FC<{
                 <VcStat
                     label={m.process_p99_ms != null ? t("voice_changer.metrics_process_label") : t("voice_changer.metrics_process_avg_label")}
                     value={processValue}
-                    tone={a.realtime === "slow" ? "error" : a.realtime === "spikes" ? "warn" : undefined}
+                    // A voice judged by its model calls shows that verdict on the calls row, not on the per-tick numbers.
+                    tone={a.byCalls ? undefined : callTone}
                 />
+                {m.call_p50_ms != null && m.call_p99_ms != null ? (
+                    <VcStat
+                        label={t("voice_changer.metrics_call_label")}
+                        value={`${formatMs(m.call_p50_ms)} / ${formatMs(m.call_p99_ms)} ${ms}`}
+                        tone={a.byCalls ? callTone : undefined}
+                    />
+                ) : null}
                 {m.process_p50_ms != null && m.process_p95_ms != null ? (
                     <VcStat
                         label={t("voice_changer.metrics_process_pct_label")}
                         value={`${formatMs(m.process_p50_ms)} / ${formatMs(m.process_p95_ms)} ${ms}`}
                     />
                 ) : null}
-                <VcStat label={t("voice_changer.metrics_block_label")} value={`${formatMs(m.chunk_ms)} ${ms}`} />
+                {m.engine_block_ms != null && m.engine_block_ms > 0 ? (
+                    <VcStat label={t("voice_changer.metrics_chunk_label")} value={`${formatChunkMs(m.engine_block_ms)} ${ms}`} />
+                ) : null}
+                <VcStat label={t("voice_changer.metrics_device_buffer_label")} value={`${formatMs(m.chunk_ms)} ${ms}`} />
                 {m.backlog_ms != null ? (
                     <VcStat
                         label={t("voice_changer.metrics_backlog_label")}
-                        value={`${formatMs(m.backlog_ms)} / ${formatMs(budgetMs)} ${ms}`}
+                        value={`${formatMs(m.backlog_ms)} / ${formatMs(budgetInForce)} ${ms}`}
                         tone={a.backlogHigh ? "warn" : undefined}
                     />
                 ) : null}

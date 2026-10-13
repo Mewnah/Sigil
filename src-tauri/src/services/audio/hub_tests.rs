@@ -790,6 +790,26 @@ fn default_sources_follow_the_default_device_and_explicit_ones_stay() {
     assert_eq!(fake.opens(), 2, "Mic A was still open for the pinned consumer: no reopen");
 }
 
+/// The silent-microphone status names the device ("Sigil hears nothing from <mic>"): for the Windows
+/// default that is the device behind it now, which moves with the default.
+#[test]
+fn a_consumer_names_the_device_it_reads_also_after_the_default_moved() {
+    let (hub, fake, _events) = hub_with(fast_config());
+    let follows = hub.attach(SourceSpec::DefaultInput, ConsumerOptions::speech("follows")).unwrap();
+    let pinned = hub
+        .attach(SourceSpec::Input("Mic B".into()), ConsumerOptions::speech("pinned"))
+        .unwrap();
+    assert_eq!(follows.device_name().as_deref(), Some("Mic A"));
+    assert_eq!(pinned.device_name().as_deref(), Some("Mic B"));
+
+    fake.set_default_input(Some("Mic B"));
+    hub.devices_changed();
+    wait_until("the default source names Mic B", || follows.device_name().as_deref() == Some("Mic B"));
+    assert_eq!(pinned.device_name().as_deref(), Some("Mic B"));
+    hub.shutdown();
+    assert_eq!(follows.device_name(), None, "a stopped hub answers nothing");
+}
+
 #[test]
 fn the_mute_gate_withholds_audio_from_gated_consumers_only() {
     let (hub, fake, _) = hub_with(fast_config());

@@ -66,6 +66,8 @@ export interface ScopedReceiverSinks {
   final(text: string, meta?: SttTextMeta): void;
   /** UI status only (never published). */
   status(status: SttStatus): void;
+  /** The microphone delivers only digital silence, or signal came back (`device` "" when unnamed). UI only. */
+  inputSilence?(silent: boolean, device: string): void;
   /** The engine reported something (status or speech): re-arms the connecting watchdog. */
   alive(): void;
   muted(): boolean;
@@ -98,6 +100,11 @@ export function createScopedReceiver(sinks: ScopedReceiverSinks): ISTTReceiver {
       if (!sinks.isCurrent()) return;
       sinks.alive();
       sinks.status(normalizeSttStatus(text, options));
+    },
+    // Not a sign of life for the connecting watchdog (it can only follow a running capture), and never text.
+    onInputSilence: (silent, device) => {
+      if (!sinks.isCurrent()) return;
+      sinks.inputSilence?.(silent === true, typeof device === "string" ? device.trim() : "");
     },
     // Muting applies to whatever session is live; a stale engine asking gets "muted" so it skips work.
     isMuted: () => !sinks.isCurrent() || sinks.muted(),

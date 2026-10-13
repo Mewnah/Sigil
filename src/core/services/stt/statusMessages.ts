@@ -23,6 +23,20 @@ export function i18nReady(timeoutMs = 5_000): Promise<void> {
   });
 }
 
+/**
+ * "Sigil hears nothing from <mic>. Check Windows microphone privacy ... or a mute switch": the one plain line the STT
+ * panel, the footer card and the system log show while the microphone delivers digital silence
+ * (`serviceState.silentInput`). `device` "" = the capture could not name the microphone. `translate` is the caller's `t`
+ * (a component passes its own so the line follows the language), else the global i18next.
+ */
+export function noSignalMessage(
+  device: string,
+  translate: (key: string, options?: Record<string, unknown>) => string = (key, options) => i18n.t(key, options),
+): string {
+  const name = device.trim();
+  return name ? translate("stt.status_no_signal", { device: name }) : translate("stt.status_no_signal_unnamed");
+}
+
 export function downloadStatus(payload: Partial<SttDownloadProgressPayload> | null | undefined): StatusLine {
   const { file, percent } = parseDownloadProgress(payload);
   if (percent === null) return [i18n.t("stt.status_downloading", { file }), { progress: null }];

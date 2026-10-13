@@ -17,8 +17,8 @@ import { FC, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import { InputContainer, InputSelect } from "../components/input";
-import { formatMs, raisedOutputBuffer } from "@/core/services/voice_changer/metrics";
-import { InspectorInfoButton, VcDetails, VcDraftNumberInput, VcNote, VcSliderField, VcSubHeader } from "./common";
+import { formatChunkMs, formatMs, latencyBudgetRaisedBy, raisedOutputBuffer } from "@/core/services/voice_changer/metrics";
+import { InspectorInfoButton, VcChoiceSelect, VcDetails, VcDraftNumberInput, VcNote, VcSliderField, VcSubHeader } from "./common";
 import { PacingControls } from "./PacingControls";
 
 const LATENCY_BUDGET = VC_NUMBER_RANGES.latency_budget_ms;
@@ -50,11 +50,13 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
     };
     // The buffer the engine plays with when the playing voice needs more than the stored settings.
     const raised = vcSnap.isRunning ? raisedOutputBuffer(metrics, voiceChanger.outputPrefillMs, voiceChanger.outputMaxQueueMs) : null;
+    // A long chunk converted in one call needs a latency budget that holds it: the engine raises a small stored one.
+    const budgetRaised = vcSnap.isRunning ? latencyBudgetRaisedBy(voiceChanger.latencyBudgetMs, metrics) : null;
     return (
         <>
             <VcSubHeader
                 titleKey="voice_changer.section_timing_buffer"
-                infoKey="voice_changer.section_timing_buffer_info"
+                infoKey="voice_changer.section_timing_buffer_info_v2"
             />
             <InputSelect
                 label="voice_changer.latency_preset"
@@ -123,6 +125,14 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
                 lowLabelKey="voice_changer.label_lower_latency"
                 highLabelKey="voice_changer.label_fewer_skips"
             />
+            {budgetRaised ? (
+                <VcNote>
+                    {t("voice_changer.latency_budget_raised", {
+                        chunk: formatChunkMs(budgetRaised.blockMs),
+                        budget: Math.round(budgetRaised.budgetMs),
+                    })}
+                </VcNote>
+            ) : null}
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
                 <InputSelect
                     label="voice_changer.worker_priority"
@@ -135,12 +145,14 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
                 </div>
             </div>
 
-            <VcDetails titleKey="voice_changer.section_advanced" infoKey="voice_changer.section_advanced_info">
-                <InputSelect
-                    label="voice_changer.chunk_frames"
+            <VcDetails titleKey="voice_changer.section_advanced" infoKey="voice_changer.section_advanced_info_v2">
+                {/* The sound card's buffer. The Chunk size (RVC section) is how much the voice engine converts per call. */}
+                <VcChoiceSelect
+                    labelKey="voice_changer.device_buffer"
+                    infoKey="voice_changer.device_buffer_info"
                     value={String(voiceChanger.chunkFrames)}
-                    onValueChange={(v) => void onChunkFramesChange(v)}
                     options={chunkOptions}
+                    onChange={(v) => void onChunkFramesChange(v)}
                 />
                 <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                     <InputContainer label="voice_changer.output_prefill_ms">

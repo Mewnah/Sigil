@@ -20,8 +20,11 @@ use std::time::Duration;
 use super::hub::{
     ConsumerFormat, ConsumerOptions, HubInner, RingReader, StreamFormat, WakerCell, FLAG_BOUNDARY, RELEASE_TIMEOUT,
 };
-use super::watchdog::AttachReply;
+use super::watchdog::{AttachReply, Request};
 use crate::services::speech_core::resample::StreamResampler;
+
+/// How long [`CaptureConsumer::device_name`] waits for the supervisor (which may be busy opening a device).
+const DEVICE_NAME_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// State shared between a consumer and the supervisor.
 pub(crate) struct ConsumerShared {
@@ -156,6 +159,25 @@ impl CaptureConsumer {
     /// Source epoch (stable across restarts and default-device moves).
     pub fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    /// Name of the physical device this consumer is served from now: for a source that follows the
+    /// Windows default it is the device behind `"default"` at this moment, which can change. Asks the
+    /// supervisor (never call it from an audio callback or in a loop); waits at most
+    /// [`DEVICE_NAME_TIMEOUT`] and gives `None` on a timeout, a stopped hub or an unknown source.
+    pub fn device_name(&self) -> Option<String> {
+        let (reply, answer) = mpsc::channel();
+        self.hub.tx.send(Request::Status { reply }).ok()?;
+        let status = answer.recv_timeout(DEVICE_NAME_TIMEOUT).ok()?;
+        let source = status
+            .sources
+            .iter()
+            .find(|s| s.source == self.source && s.epoch == self.epoch)?;
+        status
+            .streams
+            .iter()
+            .find(|s| s.key == source.stream)
+            .map(|s| s.device.clone())
     }
 
     /// Output loopback, including per-process capture (`process:<exe>`, P6-A): such sources get the

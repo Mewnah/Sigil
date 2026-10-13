@@ -27,19 +27,20 @@ import {
   type SttStopOptions,
   type SttTextMeta,
 } from "./types";
-import { isAbortError, untilAborted } from "./abort";
+import { isAbortError, raceWithTimeoutAndAbort, untilAborted } from "./abort";
 import { createScopedReceiver, EMPTY_STT_STATUS, normalizeSttStatus, SttStatus } from "./statusChannel";
 import { isSlowRestart, MAX_RESTARTS, networkLooksUp, restartDelayMs, SLOW_RESTART_MS, STABLE_RUN_MS } from "./restartPolicy";
 import { StreamStop } from "./streamStop";
 import { localOfferKindOf, planDesktopDefaultMigration, planRetiredBackendMigration, type LocalOfferKind, type WhisperMigration } from "./migrate";
 import { localOfferDialog, type LocalOfferDialogKind } from "./localOffer";
 import { findWhisperModel, formatModelSize } from "./whisperModels";
-import { i18nReady } from "./statusMessages";
+import { i18nReady, noSignalMessage } from "./statusMessages";
 import { useAppUIStore } from "@/core/ui/store";
 import { STT_REWRITE_SECTION } from "@/core/ui/inspectorRoutes";
 import { Services } from "@/services-registry";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { normalizeLanguage, planHasEngine } from "./router";
+import { STT_PIPELINE_ID } from "./rustCapturePolling";
 import { LanguageOffer } from "./languageOffer";
 import { languageDisplayName, type LockOutcome } from "./languageSuggestion";
 
@@ -63,6 +64,14 @@ const backends: SttBackendMap = {
   /** P6-K (P6-S0 stub). */
   [STT_Backends.geminiLive]: STT_GeminiLiveService,
 };
+
+/**
+ * The most the stop of the previous page's Rust sessions (`#stopLeftoverSessions`) holds the first start back. Healthy
+ * stops answer in milliseconds; a shutdown waits at most a few seconds for a device to be released.
+ */
+const LEFTOVER_STOP_TIMEOUT_MS = 8_000;
+/** The most the question "which speech sessions run" waits before the stop goes ahead without the answer. */
+const LEFTOVER_STATUS_TIMEOUT_MS = 2_000;
 
 /** How long Chrome / Edge may take to open the microphone page (`EXTERNAL_MIC_WAITING_LINE_MS` in externalMic.ts is the same). */
 const EXTERNAL_MIC_CONNECT_TIMEOUT_MS = 6000;
@@ -217,6 +226,8 @@ class Service_STT implements IServiceInterface {
   #connectedAt = 0;
   /** The start in progress may be reconnected when it fails with a failure that may pass. */
   #mayReconnect = false;
+  /** The system log already got its line about a silent microphone in this run (Start to Stop, reconnects included). */
+  #silentInputLogged = false;
   /** "Stop with Twitch stream" (see `streamStop.ts`). */
   #streamStop?: StreamStop;
 
@@ -256,6 +267,13 @@ class Service_STT implements IServiceInterface {
      * "connecting" for hours, so Start / Stop controls offer Stop while this is set (`controls.ts`).
      */
     retrying: false as boolean,
+    /**
+     * The microphone has delivered only digital silence for several seconds (Windows microphone privacy off, a hardware
+     * mute, a silent default device): `device` names it ("" when unknown). A state of its own beside `statusText`, so no
+     * other status line replaces it; UI only (the STT panel and the footer card), never published. Cleared when signal
+     * returns, the session ends or a new one starts.
+     */
+    silentInput: null as { device: string } | null,
   });
 
   isMuted() {
@@ -342,6 +360,7 @@ class Service_STT implements IServiceInterface {
         void this.#sendFinal(v, meta);
       },
       status: (status) => this.#applyEngineStatus(status),
+      inputSilence: (silent, device) => this.#setSilentInput(silent, device),
       // Progress while connecting (download %, load status, first words) proves the engine is alive: restart the
       // window so long first-time downloads are not cut off while they are still moving.
       alive: () => {
@@ -428,6 +447,33 @@ class Service_STT implements IServiceInterface {
 
   #clearEngineStatus(): void {
     this.#applyEngineStatus(EMPTY_STT_STATUS);
+  }
+
+  /**
+   * The engine heard only digital silence from the microphone, or signal came back. The panel and the footer card show
+   * every outage; no toast, no dialog. The system log gets one line per run (Start to Stop, reconnects included), the
+   * first outage only: a microphone behind a noise gate or a headset that mutes now and then must not add a line per
+   * pause, and the engine already waits a minute after it heard signal before it reports silence at all.
+   */
+  #setSilentInput(silent: boolean, device: string): void {
+    const current = this.serviceState.silentInput;
+    if (!silent) {
+      if (current !== null)
+        this.serviceState.silentInput = null;
+      return;
+    }
+    if (current?.device === device)
+      return;
+    this.serviceState.silentInput = { device };
+    if (!this.#silentInputLogged) {
+      this.#silentInputLogged = true;
+      pushSystemLog("STT", noSignalMessage(device), "warning");
+    }
+  }
+
+  #clearSilentInput(): void {
+    if (this.serviceState.silentInput !== null)
+      this.serviceState.silentInput = null;
   }
 
   #onStartScoped(epoch: number): void {
@@ -593,6 +639,7 @@ class Service_STT implements IServiceInterface {
     // This engine session is over: whatever it still reports is stale, and it gives the microphone back now.
     this.#sessionEpoch++;
     this.#releaseInstance();
+    this.#clearSilentInput();
     this.serviceState.error = "";
     this.#setStatus(ServiceNetworkState.connecting);
     // `retrying`: the status reads "connecting" for as long as the outage lasts, and the controls offer Stop.
@@ -753,13 +800,14 @@ class Service_STT implements IServiceInterface {
     });
     this.eventDisposers.push(this.#streamStop.attach());
 
-    // Starts queue behind the one-time legacy Settings input device migration (native cpal field) and behind
-    // i18n (host services init before the translations load; engine status and errors are translated strings).
+    // Starts queue behind the one-time legacy Settings input device migration (native cpal field), behind
+    // i18n (host services init before the translations load; engine status and errors are translated strings) and
+    // behind the stop of whatever the previous page left running in Rust.
     this.#startChain = Promise.all([
       migrateLegacyNativeInputDevice().catch((e: unknown) => {
         console.error("[STT] input device migration failed:", e);
       }),
-      i18nReady(),
+      i18nReady().then(() => this.#stopLeftoverSessions()),
     ]).then(() => {});
 
     // A retired backend moves to the built-in engine first, so the desktop default migration below sees the new one.
@@ -778,6 +826,72 @@ class Service_STT implements IServiceInterface {
     const wizardOpen = window.Config.isApp() && !window.ApiServer.state.onboardingComplete;
     if (this.data.autoStart && !nativeBackend && !migrated && !wizardOpen)
       this.start({ automatic: true });
+  }
+
+  /**
+   * A page that loads again (F5, the automatic reload after a WebView2 renderer failure, a crash reload) leaves the
+   * Rust sessions of the previous page running: the `mic` speech pipeline keeps capturing with its events going to
+   * nobody (this page starts disconnected, and a driver only accepts the session it starts itself), so the panel reads
+   * "off" while the microphone is open and captions do not come back; the older Whisper recording and raw
+   * `audio:chunk` capture of the other backends do the same. They are stopped before this page starts anything, so
+   * nothing runs twice or is left deaf; "Start automatically" then starts captions again as on any launch. Desktop
+   * only; a failure of one stop never blocks the others or the start, and the whole cleanup waits at most
+   * `LEFTOVER_STOP_TIMEOUT_MS`: a Rust call that never answers (a device release stuck in a driver) must not leave
+   * every Start, by hand and automatic, queued behind it forever.
+   */
+  async #stopLeftoverSessions(): Promise<void> {
+    if (!window.Config.isApp())
+      return;
+    try {
+      await raceWithTimeoutAndAbort(this.#stopLeftoverNow(), LEFTOVER_STOP_TIMEOUT_MS, "stopping the sessions of the previous page", null);
+    }
+    catch (e) {
+      console.error("[STT] the sessions of the previous page did not stop in time, starting anyway:", e);
+    }
+  }
+
+  /** The stops of `#stopLeftoverSessions`, independent of each other. Never rejects. */
+  async #stopLeftoverNow(): Promise<void> {
+    // The mic pipeline is asked first; the other backends' leftovers do not wait behind it. Both are no-ops (an error or
+    // nothing) when nothing runs.
+    const mic = this.#stopLeftoverMic();
+    const others = ["plugin:whisper|stop_recording", "plugin:audio|stop_audio_capture"].map(async (command) => {
+      try {
+        await invoke(command);
+      }
+      catch {
+        /* not running */
+      }
+    });
+    await Promise.all([mic, ...others]);
+  }
+
+  async #stopLeftoverMic(): Promise<void> {
+    // Only for the log line: `get_pipeline_status` lists the sessions that finished starting, so a start still loading
+    // models or downloading (its `start_pipeline` runs on in Rust after the page that issued it is gone) is invisible
+    // to it. The stop does not depend on the answer.
+    let listed = false;
+    try {
+      const running = await raceWithTimeoutAndAbort(
+        invoke<{ pipelineId?: string }[]>("plugin:speech|get_pipeline_status"),
+        LEFTOVER_STATUS_TIMEOUT_MS,
+        "get_pipeline_status",
+        null,
+      );
+      listed = Array.isArray(running) && running.some(p => p?.pipelineId === STT_PIPELINE_ID);
+    }
+    catch (e) {
+      console.error("[STT] could not ask which speech sessions the previous page left:", e);
+    }
+    try {
+      // Always: it also cancels a start still in flight and does nothing (and answers Ok) when nothing runs.
+      await invoke("plugin:speech|stop_pipeline", { pipelineId: STT_PIPELINE_ID });
+      if (listed)
+        pushSystemLog("STT", i18n.t("stt.log_leftover_stopped"), "info");
+    }
+    catch (e) {
+      console.error("[STT] could not stop the speech session of the previous page:", e);
+    }
   }
 
   /**
@@ -1100,6 +1214,9 @@ class Service_STT implements IServiceInterface {
     if (value === ServiceNetworkState.disconnected) {
       this.#engineRetrying = false;
       this.#syncRetrying();
+      // A microphone that is not being listened to is not "silent"; the next run may log its first outage again.
+      this.#clearSilentInput();
+      this.#silentInputLogged = false;
     }
     this.#syncProgressToast();
   }
@@ -1143,6 +1260,8 @@ class Service_STT implements IServiceInterface {
     // this service keeps `retrying` through `#reconnecting`.
     this.#engineRetrying = false;
     this.#syncRetrying();
+    // The new session listens afresh: a silence the previous one reported is judged again.
+    this.#clearSilentInput();
     this.#setStatus(ServiceNetworkState.connecting);
     // (Re)armed before awaiting the previous engine's teardown: if its stop() never settles, the fallback still
     // fires (toast + stop()) instead of leaving the status on "connecting" indefinitely.

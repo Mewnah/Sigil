@@ -144,7 +144,7 @@ pub(crate) const CALL_WINDOW: usize = 33;
 pub(crate) const MIN_CALLS: usize = 16;
 /// A tick is a model call when it cost at least this many chunks of audio time (the ticks between
 /// two calls cost a few hundred microseconds).
-const CALL_TICK_CHUNKS: f64 = 3.0;
+pub(crate) const CALL_TICK_CHUNKS: f64 = 3.0;
 
 /// Whether a stored output prefill cannot play a voice's blocks: the typical (median) model call is
 /// longer than the queue the prefill keeps standing while the call runs and nothing is pushed, so the

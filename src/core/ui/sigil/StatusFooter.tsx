@@ -22,6 +22,7 @@ import { KickIcon } from "../icons/KickIcon";
 import { Services } from "@/services-registry";
 import { DEFAULT_ACTION_BAR_SERVICE_ORDER } from "@/core/schema";
 import { TTS_Backends } from "@/core/services/tts/schema";
+import { noSignalMessage } from "@/core/services/stt/statusMessages";
 
 const ALL_ACTION_BAR_IDS = new Set<string>(DEFAULT_ACTION_BAR_SERVICE_ORDER);
 
@@ -166,7 +167,27 @@ type ActionBarCardDef = {
     onToggle?: () => void;
     /** Extra buttons before the toggle (e.g. TTS skip / stop speaking). */
     actions?: React.ReactNode;
+    /** A warning that replaces "ONLINE" while the service runs (Speech to Text: the microphone delivers silence). */
+    notice?: StatusNotice;
 };
+
+/** A short warning word under a card's name, with the full sentence as its tooltip. */
+export interface StatusNotice {
+    label: string;
+    title: string;
+}
+
+/**
+ * The Speech to Text card's notice while the microphone delivers only digital silence ("Sigil hears nothing from <mic>"):
+ * none unless STT runs and the engine reported it, so a stopped service never claims anything about its microphone.
+ */
+export function sttCardNotice(
+    stt: { status: ServiceNetworkState; silentInput: { device: string } | null },
+    t: (key: string, options?: Record<string, unknown>) => string,
+): StatusNotice | undefined {
+    if (stt.status !== ServiceNetworkState.connected || !stt.silentInput) return undefined;
+    return { label: t("stt.footer_no_signal"), title: noSignalMessage(stt.silentInput.device, t) };
+}
 
 interface StatusCardProps {
     label: string;
@@ -180,9 +201,10 @@ interface StatusCardProps {
     onGripPointerDown?: (serviceId: string, e: React.PointerEvent) => void;
     isReorderSource?: boolean;
     actions?: React.ReactNode;
+    notice?: StatusNotice;
 }
 
-const StatusCard: FC<StatusCardProps> = ({
+export const StatusCard: FC<StatusCardProps> = ({
     label,
     icon,
     status,
@@ -194,6 +216,7 @@ const StatusCard: FC<StatusCardProps> = ({
     onGripPointerDown,
     isReorderSource,
     actions,
+    notice,
 }) => {
     const { t } = useTranslation();
     const isConn = status === ServiceNetworkState.connected;
@@ -239,16 +262,17 @@ const StatusCard: FC<StatusCardProps> = ({
             <button
                 onClick={handleOpenSettings}
                 className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity"
+                title={notice?.title}
             >
                 <div
-                    className={`p-1.5 rounded-md transition-colors flex-shrink-0 ${isConn ? "bg-success/10 text-success" : "bg-base-content/5 text-base-content/40"}`}
+                    className={`p-1.5 rounded-md transition-colors flex-shrink-0 ${notice ? "bg-warning/10 text-warning" : isConn ? "bg-success/10 text-success" : "bg-base-content/5 text-base-content/40"}`}
                 >
                     {icon}
                 </div>
                 <div className="flex-1 min-w-0 overflow-hidden">
                     <div className="font-medium text-xs text-base-content/90 truncate">{label}</div>
-                    <div className="text-xs text-base-content/40 font-mono uppercase tracking-wide">
-                        {isConnecting ? "CONNECTING..." : isConn ? "ONLINE" : "OFFLINE"}
+                    <div className={`text-xs font-mono uppercase tracking-wide ${notice ? "text-warning" : "text-base-content/40"}`}>
+                        {notice ? notice.label : isConnecting ? "CONNECTING..." : isConn ? "ONLINE" : "OFFLINE"}
                     </div>
                 </div>
             </button>
@@ -376,6 +400,7 @@ export const StatusFooter: FC = memo(() => {
             status: sttState.status,
             onToggle: () => toggleService("stt"),
             canToggle: true,
+            notice: sttCardNotice(sttState, t),
         },
         {
             id: Services.tts,
@@ -560,6 +585,7 @@ export const StatusFooter: FC = memo(() => {
                         onGripPointerDown={onGripPointerDown}
                         isReorderSource={reorderDraggingId === card.id}
                         actions={card.actions}
+                        notice={card.notice}
                     />
                 ))}
                 {reorderDraggingId && activeSorted.length > 0 && (

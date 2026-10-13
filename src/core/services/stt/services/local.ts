@@ -235,6 +235,10 @@ export function speechStatusLine(ev: RustSpeechStatus, title: (id: string) => st
     case "listening":
     case "stopped":
       return null;
+    case "no_signal":
+    case "signal_restored":
+      // A state of its own (`receiver.onInputSilence`), never a line: it would be replaced by the next status.
+      return null;
     case "starting":
       return [i18n.t("stt.local_status_starting")];
     case "loading_model":
@@ -1281,6 +1285,8 @@ export class STT_LocalService implements ISTTService {
   }
 
   #onStarted(started: RustSpeechPipelineStarted): void {
+    // A new session listens afresh: a silence the previous one reported is judged again.
+    this.receiver.onInputSilence?.(false);
     noteEpoch(LOCAL_PIPELINE_ID, started.epoch);
     this.#epoch = started.epoch;
     this.#twoPass = isTwoPassPlan(started.plan);
@@ -1328,6 +1334,7 @@ export class STT_LocalService implements ISTTService {
   }
 
   #detach(): void {
+    this.receiver.onInputSilence?.(false);
     this.#detachListeners();
     this.#publisher?.dispose();
     this.#publisher = null;
@@ -1385,6 +1392,12 @@ export class STT_LocalService implements ISTTService {
       }
       return;
     }
+    // The microphone delivers digital silence (Windows microphone privacy off, a hardware mute, a silent default device),
+    // or signal is back: shown by Service_STT beside the status line, so no other status line replaces it.
+    if (ev.code === "no_signal" || ev.code === "signal_restored") {
+      this.receiver.onInputSilence?.(ev.code === "no_signal", String(ev.detail ?? ""));
+      return;
+    }
     // Load progress that arrives after the start resolved is stale: only warnings and the "listening" clear count.
     const setup = ev.code === "starting" || ev.code === "loading_model" || ev.code === "loading_runtime" || ev.code === "downloading";
     if (this.#running && setup && ev.level === "info") return;
@@ -1401,6 +1414,7 @@ export class STT_LocalService implements ISTTService {
     if (this.#deps.clock.now() - this.#listeningSince >= STABLE_RUN_MS) this.#restartAttempts = 0;
     this.#running = false;
     localSpeechState.plan = null;
+    this.receiver.onInputSilence?.(false);
     // The epoch is over: publish what its segments have (no replacement can come any more).
     this.#publisher?.flush();
     this.#publisher = null;

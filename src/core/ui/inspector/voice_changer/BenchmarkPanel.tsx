@@ -178,7 +178,7 @@ export const BenchmarkPanel: FC = () => {
             {caps.autotune ? (
                 <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold uppercase tracking-wide text-base-content/55">{t("voice_changer.autotune_title")}</span>
-                    <VcNote>{t("voice_changer.autotune_body")}</VcNote>
+                    <VcNote>{t("voice_changer.autotune_body_v2")}</VcNote>
                     {b.autotune.running ? (
                         <>
                             <Progress

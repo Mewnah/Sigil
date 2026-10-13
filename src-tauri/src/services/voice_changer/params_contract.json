@@ -123,7 +123,7 @@
       "p0_new": true,
       "$comment": "Backlog above this is dropped oldest-first (whole blocks, exact length accounting); applies to every mode and the sidecar read timeout."
     },
-    "block_ms": { "min": 0, "max": 200, "default": 0, "p3_new": true, "$comment": "SVE block (ms); 0 = derived from chunk_frames (legacy harness); the engine rounds up to its 10 ms F0 hop." },
+    "block_ms": { "min": 0, "max": 200, "default": 0, "p3_new": true, "$comment": "Chunk size, the engine block (ms); 0 = Auto (derived from chunk_frames; the Streamer on the processor takes the block its PC keeps up with); a size above 0 is the block, which the engine plans up to whole 20 ms (at most 200)." },
     "lookahead_ms": { "min": 0, "max": 80, "default": 0, "p3_new": true, "$comment": "SVE lookahead (ms, P3-I0): template voices decode this much future context into every returned sample, at exactly this much latency; 0 = off; rounded up to 10 ms frames. Engine-shape change (restart)." },
     "rms_mix": { "min": 0, "max": 1, "default": 1, "p3_new": true, "$comment": "RVC rms_mix_rate: 1 = the model's own envelope (off)." },
     "formant_semitones": { "min": -12, "max": 12, "default": 0, "p3_new": true, "$comment": "Cepstral formant shift of the RVC path (formant_shift stays the tilt of the other modes)." },
@@ -202,6 +202,8 @@
     "e2e_ms": "number | null, estimated mic-to-speaker latency from the per-tick timeline",
     "vram_mb": "number | null, process VRAM held by the voice engine",
     "governor_level": "number | null, 0 = full quality",
+    "call_p50_ms": "number | null, p50 of the model calls (not the ticks between them) of a voice that converts a block of 6 device buffers or more per call; null until 8 calls",
+    "call_p99_ms": "number | null, p99 of the same model calls",
     "levers": "object | null, EffectiveLevers of the running engine: { <lever>: boolean, accelerator: 'none' | 'tensorrt_rtx' | 'dml_hp', precision, notes: string[] }"
   },
   "capabilities": {

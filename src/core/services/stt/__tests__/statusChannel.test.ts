@@ -60,6 +60,28 @@ describe("STT status channel", () => {
     expect(s.final).toHaveBeenCalledWith("Hello.", { segmentId: "mic:1:2", revision: 1, lang: "en" });
   });
 
+  it("forwards a silent microphone to the UI only, with the device trimmed, and drops it from a stale session", () => {
+    let current = true;
+    const s = sinks({ isCurrent: vi.fn(() => current), inputSilence: vi.fn() });
+    const r = createScopedReceiver(s);
+    r.onInputSilence?.(true, "  Headset Mic ");
+    r.onInputSilence?.(true);
+    r.onInputSilence?.(false);
+    expect(s.inputSilence).toHaveBeenNthCalledWith(1, true, "Headset Mic");
+    expect(s.inputSilence).toHaveBeenNthCalledWith(2, true, "");
+    expect(s.inputSilence).toHaveBeenNthCalledWith(3, false, "");
+    // Not text, not status, and not a sign of life for the connecting watchdog.
+    for (const fn of [s.interim, s.final, s.status, s.alive]) expect(fn).not.toHaveBeenCalled();
+    current = false;
+    r.onInputSilence?.(true, "late");
+    expect(s.inputSilence).toHaveBeenCalledTimes(3);
+  });
+
+  it("a service without the silent-microphone sink ignores the report", () => {
+    const r = createScopedReceiver(sinks());
+    expect(() => r.onInputSilence?.(true, "Headset Mic")).not.toThrow();
+  });
+
   it("drops every report from a stale session", () => {
     let current = true;
     const s = sinks({ isCurrent: vi.fn(() => current) });

@@ -1,4 +1,5 @@
 import { OpenAiAudioPreset, STT_Backends, type STT_State } from "@/core/services/stt/schema";
+import { noSignalMessage } from "@/core/services/stt/statusMessages";
 import { ServiceNetworkState } from "@/types";
 import NiceModal from "@ebay/nice-modal-react";
 import { isTauri } from "@tauri-apps/api/core";
@@ -33,13 +34,18 @@ const Rewrite = lazy(() => import("./Rewrite"));
 // Deepgram and ExternalMic are P2-F's; common, VoiceDetection and Native are shared. Two tabs: Speech and Rewrite.
 // The built-in engine (`local`) leads the grouped engine list (`engineList.ts`): it picks and runs the speech models itself.
 
-/** Engine status (download / load progress, connecting, rate-limit waits): UI only, never a caption. */
+/**
+ * Engine status (download / load progress, connecting, rate-limit waits) and the silent-microphone notice ("Sigil hears
+ * nothing from <mic>"): UI only, never a caption. The notice is a state of its own, so no other status line replaces it.
+ */
 const SttStatusLine: FC = () => {
+  const { t } = useTranslation();
   const s = useSnapshot(window.ApiServer.stt.serviceState);
-  if (!s.statusText) return null;
+  if (!s.statusText && !s.silentInput) return null;
   return <div role="status" aria-live="polite" className="flex flex-col gap-1 text-xs">
-    <span className={s.statusLevel === "warning" ? "text-warning" : "text-base-content/70"}>{s.statusText}</span>
-    {s.progress !== null && <progress className="progress progress-primary w-full" value={s.progress} max={100} />}
+    {s.statusText && <span className={s.statusLevel === "warning" ? "text-warning" : "text-base-content/70"}>{s.statusText}</span>}
+    {s.statusText && s.progress !== null && <progress className="progress progress-primary w-full" value={s.progress} max={100} />}
+    {s.silentInput && <span className="text-warning">{noSignalMessage(s.silentInput.device, t)}</span>}
   </div>;
 };
 

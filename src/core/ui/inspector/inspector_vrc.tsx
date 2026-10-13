@@ -10,6 +10,7 @@ import { VRC_Backends, VRC_State } from "../../services/vrc/schema";
 import Inspector from "./components";
 import { InputCheckbox, InputSelect, InputText, InputTextSource } from "./components/input";
 import { OverlaySection } from "./vrc/OverlaySection";
+import { FixedPortPromptNote, MdnsPromptNote, RemoteHostPromptNote } from "./vrc/windowsPromptNotes";
 
 const targetOptions = [
   { label: "Chatbox", value: VRC_Backends.textbox },
@@ -125,9 +126,11 @@ const MuteSyncSection: FC = () => {
       {localHost && <>
         <InputCheckbox label="vrc.osc_query" value={state.oscQuery} onChange={e => patchVrc(d => d.oscQuery = e)} />
         <Inspector.Description>{t("vrc.osc_query_desc")}</Inspector.Description>
+        <MdnsPromptNote state={state} />
       </>}
       {(!state.oscQuery || !localHost) && <>
         <InputText type="number" label="vrc.osc_listen_port" min={1} max={65535} placeholder={String(DEFAULT_LISTEN_PORT)} value={state.oscListenPort} onChange={e => patchVrc(d => d.oscListenPort = e.target.value)} />
+        <FixedPortPromptNote state={state} />
         {!localHost && <Inspector.Description>{t("vrc.osc_listen_port_remote_desc")}</Inspector.Description>}
       </>}
       <ReceiverStatus />
@@ -176,6 +179,7 @@ const Inspector_VRC: FC = () => {
       <InputCheckbox label="common.field_enable" value={state.enable} onChange={e => up("enable", e)} />
       <Inspector.SubHeader>{t("vrc.osc_connection")}</Inspector.SubHeader>
       <InputText label="vrc.field_osc_host" value={state.oscHost} onChange={e => up("oscHost", e.target.value)} />
+      <RemoteHostPromptNote state={state} />
       <InputText type="number" label="vrc.field_osc_port" min={1} max={65535} value={state.oscPort} onChange={e => up("oscPort", e.target.value)} />
       <InputTextSource label="common.field_text_source" value={state.source} onChange={e => up("source", e)} />
       <InputCheckbox label="common.field_use_keyboard_input" value={state.inputField} onChange={e => up("inputField", e)} />

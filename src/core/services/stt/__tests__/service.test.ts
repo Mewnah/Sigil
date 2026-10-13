@@ -32,6 +32,7 @@ vi.mock("../services/externalMic", () => ({ STT_ExternalMicService: class {} }))
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "react-toastify";
+import { pushSystemLog } from "@/core/services/systemLog";
 import { useAppUIStore } from "@/core/ui/store";
 import { Services } from "@/services-registry";
 import { sttControlAction } from "../controls";
@@ -1056,5 +1057,285 @@ describe("Service_STT stop with Twitch stream", () => {
     topics["stream.on_ended"]();
     await vi.advanceTimersByTimeAsync(2 * STREAM_OFFLINE_CONFIRM_MS);
     expect(off.service.serviceState.status).toBe(ServiceNetworkState.connected);
+  });
+});
+
+describe("Service_STT silent microphone", () => {
+  /** A connected session whose engine can report what the microphone delivers. */
+  async function connected(overrides: Partial<STT_State> = {}) {
+    const made = makeService({ backend: STT_Backends.local, ...overrides });
+    made.service.start();
+    await flush();
+    last().receiver.onStart();
+    await flush();
+    return made;
+  }
+
+  it("shows the device beside the status line, logs the outage once, and never publishes or toasts it", async () => {
+    const { service } = await connected();
+    const engine = last();
+    engine.receiver.onInputSilence?.(true, "Headset Mic");
+    expect(service.serviceState.silentInput).toEqual({ device: "Headset Mic" });
+    expect(pushSystemLog).toHaveBeenCalledTimes(1);
+    expect(pushSystemLog).toHaveBeenCalledWith("STT", expect.stringContaining("no_signal"), "warning");
+
+    // Windows moves the default to another silent device: the panel follows, the log keeps its one line.
+    engine.receiver.onInputSilence?.(true, "CABLE Output");
+    expect(service.serviceState.silentInput).toEqual({ device: "CABLE Output" });
+    engine.receiver.onInputSilence?.(true, "CABLE Output");
+    expect(pushSystemLog).toHaveBeenCalledTimes(1);
+
+    expect(publishText).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("is a state of its own: status lines come and go without touching it", async () => {
+    const { service } = await connected();
+    const engine = last();
+    engine.receiver.onInputSilence?.(true, "Headset Mic");
+    engine.receiver.onStatus("Some speech was skipped", { level: "warning", expireMs: 15_000 });
+    expect(service.serviceState.statusText).toBe("Some speech was skipped");
+    expect(service.serviceState.silentInput).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(service.serviceState.statusText).toBe("");
+    engine.receiver.onStatus("");
+    expect(service.serviceState.silentInput).toEqual({ device: "Headset Mic" });
+  });
+
+  it("clears as soon as signal returns", async () => {
+    const { service } = await connected();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    last().receiver.onInputSilence?.(false);
+    expect(service.serviceState.silentInput).toBeNull();
+    // A second silence is shown again; the log keeps the one line of this run.
+    last().receiver.onInputSilence?.(true, "");
+    expect(service.serviceState.silentInput).toEqual({ device: "" });
+    expect(pushSystemLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes one log line per run however often a noise gate or a muting headset comes and goes", async () => {
+    const { service } = await connected();
+    const engine = last();
+    // NVIDIA Broadcast / Krisp style: a pause, a phrase, a pause ...
+    for (let i = 0; i < 6; i++) {
+      engine.receiver.onInputSilence?.(true, "Broadcast Mic");
+      expect(service.serviceState.silentInput).toEqual({ device: "Broadcast Mic" });
+      engine.receiver.onInputSilence?.(false);
+      expect(service.serviceState.silentInput).toBeNull();
+    }
+    expect(pushSystemLog).toHaveBeenCalledTimes(1);
+    expect(pushSystemLog).toHaveBeenCalledWith("STT", expect.stringContaining("no_signal"), "warning");
+  });
+
+  it("logs the first outage of the next run again, but not after a reconnect of the same run", async () => {
+    const silentLines = () => vi.mocked(pushSystemLog).mock.calls.filter(([, line]) => String(line).includes("no_signal")).length;
+    const first = await connected({ backend: STT_Backends.deepgram });
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    expect(silentLines()).toBe(1);
+    // The service reconnects after a lost connection: still the same run.
+    last().receiver.onStop("The connection to Deepgram was lost (1006).", { retry: true });
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    expect(FakeEngine.instances).toHaveLength(2);
+    last().receiver.onStart();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    expect(silentLines()).toBe(1);
+    // Stop and Start by hand: a new run.
+    first.service.stop();
+    first.service.start();
+    await flush();
+    last().receiver.onStart();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    expect(silentLines()).toBe(2);
+  });
+
+  it("ends with the session: a Stop, an engine that stops itself, and a new Start", async () => {
+    const stopped = await connected();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    stopped.service.stop();
+    expect(stopped.service.serviceState.silentInput).toBeNull();
+
+    const ended = await connected();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    last().receiver.onStop("The microphone is gone.");
+    expect(ended.service.serviceState.silentInput).toBeNull();
+
+    const restarted = await connected();
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    restarted.service.start();
+    await flush();
+    expect(restarted.service.serviceState.silentInput).toBeNull();
+  });
+
+  it("ends while the service reconnects (the engine session is over)", async () => {
+    const { service } = await connected({ backend: STT_Backends.deepgram });
+    last().receiver.onInputSilence?.(true, "Headset Mic");
+    last().receiver.onStop("The connection was lost.", { retry: true });
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+    expect(service.serviceState.silentInput).toBeNull();
+  });
+
+  it("ignores a report of a session that is over", async () => {
+    const { service } = await connected();
+    const old = last();
+    service.stop();
+    old.receiver.onInputSilence?.(true, "Headset Mic");
+    expect(service.serviceState.silentInput).toBeNull();
+    expect(pushSystemLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("Service_STT a page that loads again", () => {
+  const saved = { autoStart: true, backend: STT_Backends.local, desktopDefaultMigrated: true };
+  const calls = () => vi.mocked(invoke).mock.calls.map(([command, args]) => [command, args] as const);
+  const stops = () => calls().filter(([command]) => command === "plugin:speech|stop_pipeline");
+
+  /** The Rust side as the previous page left it: `running` pipelines, everything else idle. */
+  function rustHas(running: { pipelineId: string }[], fail: Record<string, boolean> = {}) {
+    vi.mocked(invoke).mockImplementation((async (command: string) => {
+      if (fail[command]) throw new Error(`${command} failed`);
+      return command === "plugin:speech|get_pipeline_status" ? running : "";
+    }) as never);
+  }
+
+  it("stops the mic pipeline the previous page left running, before anything starts, and then starts captions again", async () => {
+    isApp = true;
+    rustHas([{ pipelineId: "mic" }, { pipelineId: "loopback" }]);
+    let stoppedBeforeStart: boolean | null = null;
+    FakeEngine.startImpl = () => {
+      stoppedBeforeStart = stops().length === 1;
+    };
+    const { service } = makeService(saved);
+    await service.init();
+    await flush();
+
+    expect(stops()).toEqual([["plugin:speech|stop_pipeline", { pipelineId: "mic" }]]);
+    expect(stoppedBeforeStart).toBe(true);
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(last().started).toBe(1);
+    expect(pushSystemLog).toHaveBeenCalledWith("STT", "stt.log_leftover_stopped", "info");
+  });
+
+  it("also stops the Whisper recording and the raw capture of the other backends, which cost nothing when idle", async () => {
+    isApp = true;
+    rustHas([]);
+    const { service } = makeService({ ...saved, autoStart: false });
+    await service.init();
+    await flush();
+    const commands = calls().map(([command]) => command);
+    expect(commands).toEqual([
+      "plugin:speech|get_pipeline_status",
+      "plugin:whisper|stop_recording",
+      "plugin:audio|stop_audio_capture",
+      "plugin:speech|stop_pipeline",
+    ]);
+    // Nothing was listed, so there is no log line: the stop itself is a no-op in Rust.
+    expect(pushSystemLog).not.toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(0);
+  });
+
+  it("stops the mic pipeline also when the status list does not show it yet (a start still loading models), without a log line", async () => {
+    isApp = true;
+    // The old page's start_pipeline is still building the session in Rust: get_pipeline_status lists finished starts only.
+    rustHas([]);
+    let stoppedBeforeStart: boolean | null = null;
+    FakeEngine.startImpl = () => {
+      stoppedBeforeStart = stops().length === 1;
+    };
+    const { service } = makeService(saved);
+    await service.init();
+    await flush();
+    expect(stops()).toEqual([["plugin:speech|stop_pipeline", { pipelineId: "mic" }]]);
+    expect(stoppedBeforeStart).toBe(true);
+    expect(pushSystemLog).not.toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("stops the mic pipeline when the status question never answers, and still starts", async () => {
+    isApp = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(invoke).mockImplementation((async (command: string) => {
+      if (command === "plugin:speech|get_pipeline_status") return new Promise(() => {});
+      return "";
+    }) as never);
+    const { service } = makeService(saved);
+    await service.init();
+    await flush();
+    expect(stops()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(stops()).toEqual([["plugin:speech|stop_pipeline", { pipelineId: "mic" }]]);
+    expect(error).toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(pushSystemLog).not.toHaveBeenCalled();
+  });
+
+  it("holds a Start by hand until the old session is gone", async () => {
+    isApp = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(invoke).mockImplementation((async (command: string) => {
+      if (command === "plugin:speech|get_pipeline_status") {
+        await held;
+        return [{ pipelineId: "mic" }];
+      }
+      return "";
+    }) as never);
+    const { service } = makeService({ ...saved, autoStart: false });
+    void service.init();
+    service.start();
+    await flush();
+    expect(FakeEngine.instances).toHaveLength(0);
+    release();
+    await flush();
+    expect(stops()).toHaveLength(1);
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("starts anyway when Rust does not answer", async () => {
+    isApp = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    rustHas([], { "plugin:speech|get_pipeline_status": true, "plugin:whisper|stop_recording": true, "plugin:audio|stop_audio_capture": true });
+    const { service } = makeService(saved);
+    await service.init();
+    await flush();
+    expect(error).toHaveBeenCalled();
+    expect(FakeEngine.instances).toHaveLength(1);
+  });
+
+  it("starts anyway when a Rust call never answers, after a bounded wait", async () => {
+    isApp = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A device release stuck in a driver: nothing ever comes back from Rust.
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never);
+    const { service } = makeService(saved);
+    await service.init();
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(FakeEngine.instances, "still within the bound").toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("did not stop in time"), expect.anything());
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(last().started).toBe(1);
+    expect(service.serviceState.status).toBe(ServiceNetworkState.connecting);
+  });
+
+  it("a Start by hand is not held back for good by a hung stop either", async () => {
+    isApp = true;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never);
+    const { service } = makeService({ ...saved, autoStart: false });
+    await service.init();
+    service.start();
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(FakeEngine.instances).toHaveLength(1);
+    expect(last().started).toBe(1);
+  });
+
+  it("does nothing in the web build", async () => {
+    isApp = false;
+    const { service } = makeService({ ...saved, autoStart: false });
+    await service.init();
+    await flush();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

@@ -211,6 +211,9 @@ export function speechStatusLine(ev: Pick<RustSpeechStatus, "code" | "detail" | 
     case "loading_model":
     case "loading_runtime":
     case "downloading":
+    // A state of its own (`receiver.onInputSilence`, handled by the driver), never a line.
+    case "no_signal":
+    case "signal_restored":
       return undefined;
     case "rate_limited": {
       const seconds = rateLimitWaitSeconds(detail);
@@ -530,6 +533,12 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
       void this.#endedByRust();
       return;
     }
+    // The microphone delivers digital silence (Windows microphone privacy off, a hardware mute, a silent default device),
+    // or signal is back: shown by Service_STT beside the status line, so no other status line replaces it.
+    if (ev.code === "no_signal" || ev.code === "signal_restored") {
+      this.receiver.onInputSilence?.(ev.code === "no_signal", String(ev.detail ?? ""));
+      return;
+    }
     // Start progress is shown by the driver itself while `start_pipeline` runs; afterwards it is stale.
     if (ev.state === "starting" || ev.state === "loading") return;
     const line = speechStatusLine(ev, this.engineLabel());
@@ -594,6 +603,7 @@ export abstract class RustUtteranceService implements ISpeechRecognitionService 
   }
 
   async #teardown(): Promise<void> {
+    this.receiver.onInputSilence?.(false);
     for (const unlisten of this.#unlisteners.splice(0)) unlisten();
     const start = this.#start;
     const ended = this.#ended;

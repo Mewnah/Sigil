@@ -19,6 +19,7 @@ import Tooltip from "../../dropdown/Tooltip";
 import Inspector from "../components";
 import { InputSelect } from "../components/input";
 import { InspectorInfoButton, patchVcStructural } from "./common";
+import { useChunkSize } from "./ChunkSize";
 import { ConsentDialog } from "./ConsentDialog";
 import { DevicesSection } from "./Devices";
 import { useSelectedVoice, useVoiceFamily } from "./hooks";
@@ -68,7 +69,10 @@ export const Inspector_VoiceChanger: FC = () => {
     // voice's is clamped to the family's own block, so it keeps the chunk cap.
     const selectedVoice = useSelectedVoice();
     const { kind: voiceKind } = useVoiceFamily(selectedVoice);
-    const engineBlock = crossfadeEngineBlockMs(voiceKind, isRvc, voiceChanger.blockMs);
+    // On Auto the engine still converts a fixed chunk (the running engine's own, else what Auto runs on this PC): the
+    // crossfade is clamped at it, so the control offers up to it rather than up to the 10 ms device buffer.
+    const chunk = useChunkSize(selectedVoice, metrics);
+    const engineBlock = crossfadeEngineBlockMs(voiceKind, isRvc, voiceChanger.blockMs, chunk.runningMs ?? chunk.view.autoMs ?? 0);
     const crossfadeMaxMs = crossfadeMaxMsForEngine(voiceChanger.chunkFrames, isRunning ? metrics?.chunk_ms : null, engineBlock);
     const crossfadeShownMs = Math.min(voiceChanger.crossfadeMs, crossfadeMaxMs);
     const installedVcModels = useInstalledVcModelsKey();

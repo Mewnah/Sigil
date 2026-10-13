@@ -231,6 +231,13 @@ export function generalLeverNotes(running: VcEffectiveLevers | null, levers: rea
  */
 export const STREAMER_FEW_CORES_MAX = 6;
 
+/**
+ * Rust `CPU_STREAMER_KEEP_FROM_MS`: on Auto, a block derived from the Audio device buffer that is this long (ms) or longer
+ * is a deliberate big buffer and is kept; only a shorter one (the default 512 frames derive 10.7 ms) is raised to the
+ * Streamer's block for this PC's cores.
+ */
+export const STREAMER_KEEP_DERIVED_FROM_MS = 60;
+
 /** Physical cores from which the Streamer's automatic block on the processor is {@link STREAMER_AUTO_BLOCK_MS}. */
 export const STREAMER_FULL_CORES = 7;
 
@@ -271,30 +278,45 @@ export function streamerAutoBlockMs(cores: number): number {
     return STREAMER_AUTO_BLOCK_MS_FEW;
 }
 
+/** The warning for a Chunk size set by hand that the Streamer on the processor does not keep up with ({@link streamerShortChunkNote}). */
+export interface StreamerShortChunkNote {
+    /** Physical cores the system probe counted; `null` while it has not answered (or could not tell). */
+    cores: number | null;
+    /** The chunk (ms) this PC keeps up with: the block Auto takes on it, or 120 ms (the shortest any PC needs) while its cores are unknown. */
+    blockMs: number;
+    /** The Chunk size set (ms). */
+    currentMs: number;
+    /** The probe counted 1 to {@link STREAMER_FEW_CORES_MAX} cores: a PC that needs more than 120 ms and measured so. */
+    fewCores: boolean;
+}
+
 /**
- * Whether a Block size that was set by hand (or applied by Autotune, which stores it the same way) is shorter than the
- * Streamer preset on the processor takes by itself on **this PC**, so the PC may not keep up with it while a game is running:
- * the Streamer preset on the CPU rung (an unset EP follows the preset), a known core count of 1 to
- * [`STREAMER_FEW_CORES_MAX`], and an explicit Block size (above 0) under [`streamerAutoBlockMs`] for that core count (160 ms
- * on 6 cores, 200 ms on 5 or fewer: a 160 ms Block size on 6 cores gets no note, the same Block size on 5 cores does).
- * **Auto (0) gets no note**: the engine picks this PC's block itself. Returns the core count, the Block size set and the
- * block Auto would take on this PC, for the note (which names both sizes), or `null` for no note.
+ * Whether a Chunk size that was set by hand (or applied by Autotune, which stores it the same way) is shorter than the
+ * Streamer preset on the processor keeps up with on **this PC**, so the voice may fall behind and skip speech: the Streamer
+ * preset on the CPU rung (an unset EP follows the preset) and an explicit Chunk size (above 0) under the block Auto takes
+ * ([`streamerAutoBlockMs`]: 160 ms on 6 cores, 200 ms on 5 or fewer, 120 ms from 7). It applies at any core count, because a
+ * model call on the processor has a large fixed part whatever the block (the Streamer's thread policy caps at 6 threads, so
+ * an 8-core PC runs the same shape as a 6-core one): a 20 ms chunk measured RTF 3.8 on 6 threads and skipped 26 s of 40 s of
+ * input (`presets.rs`, `CPU_STREAMER_AUTO_BLOCK_MS`). While the core count is unknown (the probe has not answered, or could
+ * not tell) Rust treats the PC as the smallest one; the note then asks for 120 ms only, the least any PC needs, rather than
+ * name a block for a PC nobody counted. **Auto (0) gets no note**: the engine picks this PC's block itself. Returns the
+ * cores, the block and the Chunk size set (for the note, which names both sizes), or `null` for no note.
  */
-export function streamerFewCoresNote(input: {
+export function streamerShortChunkNote(input: {
     profile: RvcProfileId;
     ep: RvcExecutionProviderId | "";
     /** `null` / `undefined` / 0 while the system probe has not answered. */
     physicalCores: number | null | undefined;
     blockMs: number;
-}): { cores: number; blockMs: number; currentMs: number } | null {
+}): StreamerShortChunkNote | null {
     if (input.profile !== "streamer") return null;
     if (rvcBaseEp(effectiveRvcEp(input.ep, input.profile)) !== "cpu") return null;
-    const cores = input.physicalCores;
-    if (typeof cores !== "number" || !Number.isFinite(cores) || cores < 1 || cores > STREAMER_FEW_CORES_MAX) return null;
     const currentMs = input.blockMs;
     if (!Number.isFinite(currentMs) || currentMs <= 0) return null;
-    const whole = Math.trunc(cores);
-    const blockMs = streamerAutoBlockMs(whole);
+    const probed = input.physicalCores;
+    const known = typeof probed === "number" && Number.isFinite(probed) && probed >= 1;
+    const cores = known ? Math.trunc(probed) : null;
+    const blockMs = cores !== null ? streamerAutoBlockMs(cores) : STREAMER_AUTO_BLOCK_MS;
     if (currentMs >= blockMs) return null;
-    return { cores: whole, blockMs, currentMs };
+    return { cores, blockMs, currentMs, fewCores: cores !== null && cores <= STREAMER_FEW_CORES_MAX };
 }

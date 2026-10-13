@@ -214,7 +214,7 @@ Sidebar → **VRChat**.
 ### Chatbox, mute sync and tags
 
 - **Chatbox pacing:** messages are queued at least **Time between chatbox messages** apart (default 1.5 s) because VRChat drops faster ones. **Split long text into pages** sends text over 144 characters as numbered pages instead of cutting it.
-- **Mute captions when I mute in VRChat:** captions stop the moment you mute in VRChat and resume when you unmute; the sentence you were still saying is dropped, not shown afterwards. It is off until you turn it on, so a profile that stays muted in the game (talking only to the stream, or using speech as the chatbox voice) keeps its captions. Sigil uses OSCQuery by default, so there is no port to set up. The first start may show a Windows Firewall prompt.
+- **Mute captions when I mute in VRChat:** captions stop the moment you mute in VRChat and resume when you unmute; the sentence you were still saying is dropped, not shown afterwards. It is off until you turn it on, so a profile that stays muted in the game (talking only to the stream, or using speech as the chatbox voice) keeps its captions. Sigil uses OSCQuery by default, so there is no port to set up. Windows may ask once to allow Sigil on the network (OSCQuery listens on UDP port 5353 to find VRChat): choose **Allow access**, never **Cancel**, which would make Windows block Sigil. If VRChat is not found, turn **Find VRChat automatically (OSCQuery)** off and use a fixed **Listen port**. A VRChat on another PC makes Windows ask too, because Sigil then reaches it over your network (and, with mute sync, listens for the mute from it): allow it for the network both PCs share. The VRChat tab shows a note next to each of these settings.
 - **Emotion and sound tags** (with the SenseVoice model) can drive two avatar parameters and optional emoji in the chatbox.
 - **Wait until I finish speaking** (needs Smart Turn in speech-to-text) holds a sentence you leave unfinished and sends it together with the rest.
 
@@ -233,7 +233,7 @@ Details: [Caption window and SteamVR overlay](../OPERATOR_REFERENCE.md#caption-w
 
 ### Tips
 
-- Firewall rules must allow **UDP** loopback or LAN as your setup requires.  
+- Firewall rules must allow **UDP** loopback or LAN as your setup requires. When Windows asks, choose **Allow access**; **Cancel** writes a Block rule for Sigil that also breaks LAN access later (delete it in Windows Defender Firewall with Advanced Security if it happened).  
 - Latency stacks: STT → (optional Rewrite) → OSC → VRChat; keep STT local if possible.
 - **Chatbox** mode: you can disable the per-line **notification sound** in the inspector (VRChat OSC third argument on `/chatbox/input`; see VRChat’s OSC docs).
 

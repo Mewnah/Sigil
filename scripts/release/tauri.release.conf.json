@@ -8,6 +8,9 @@
       "target/native-bundle": "."
     },
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser"
       }

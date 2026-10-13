@@ -86,6 +86,7 @@ use super::events::{
     self, codes, FinalPass, SpeechFinal, SpeechPartial, SpeechState, SpeechStatus, SpeechTurnEnd, SpeechUtterance,
 };
 use super::mute::{self, gap_action, GapAction};
+use super::signal_watch::{SignalChange, SignalWatch};
 use super::two_pass::{TwoPass, TwoPassConfig, TwoPassOutcome};
 use super::utterance::{
     ms_to_samples, reasons, samples_to_ms, tail, AudioHistory, SegmentBook, SessionClock, TURN_WINDOW_MS,
@@ -242,6 +243,11 @@ pub(crate) trait AudioSource: Send {
     fn is_loopback(&self) -> bool;
     /// Source key for status (`default`, a device name, `loopback:<output>`).
     fn key(&self) -> String;
+    /// Name of the device the capture reads now (the real name behind `default`, which can move);
+    /// `None` when unknown. Asks the capture hub, so call it rarely (once per silent outage).
+    fn device_name(&self) -> Option<String> {
+        None
+    }
     /// Frames dropped because the capture thread fell behind.
     fn dropped_frames(&self) -> u64;
     /// Release the device (blocking, bounded).
@@ -277,6 +283,9 @@ impl AudioSource for HubSource {
     }
     fn key(&self) -> String {
         self.consumer.source().to_string()
+    }
+    fn device_name(&self) -> Option<String> {
+        self.consumer.device_name()
     }
     fn dropped_frames(&self) -> u64 {
         self.consumer.dropped_frames() + self.consumer.producer_dropped_frames()
@@ -2260,6 +2269,9 @@ fn loopback_idle_fill(vad: &VadConfig) -> Duration {
 /// The capture loop; returns the source for release.
 fn run_capture(mut front: FrontEnd, mut source: Box<dyn AudioSource>, stop: &AtomicBool) -> Box<dyn AudioSource> {
     let loopback = source.is_loopback();
+    // Only the user's microphone is watched for digital silence (W3): a loopback capture is silent
+    // whenever nothing plays, and other pipelines report through their own drivers.
+    let mut signal = (!loopback && front.ctx.pipeline_id == super::engine_api::PIPELINE_MIC).then(SignalWatch::new);
     let idle_fill_max = loopback_idle_fill(&front.ctx.settings.vad);
     let mut buf: Vec<f32> = Vec::with_capacity(16_384);
     let mut last_audio = Instant::now();
@@ -2283,6 +2295,11 @@ fn run_capture(mut front: FrontEnd, mut source: Box<dyn AudioSource>, stop: &Ato
                     .fatal(codes::CAPTURE_ERROR, format!("speech detection failed: {e}"), None);
                 return source;
             }
+            if let Some(watch) = signal.as_mut() {
+                if let Some(change) = watch.observe(&buf) {
+                    report_signal(&front.ctx, &*source, change, watch);
+                }
+            }
         }
         if info.gap_after {
             let action = gap_action(source.muted());
@@ -2291,6 +2308,22 @@ fn run_capture(mut front: FrontEnd, mut source: Box<dyn AudioSource>, stop: &Ato
                     .ctx
                     .fatal(codes::CAPTURE_ERROR, format!("speech detection failed: {e}"), None);
                 return source;
+            }
+            if let Some(watch) = signal.as_mut() {
+                let change = if matches!(action, GapAction::DropOpen) {
+                    watch.muted()
+                } else {
+                    // A new stream or device has to prove itself; an overrun on the same one does not forget.
+                    if info.restarted {
+                        watch.restarted();
+                    } else {
+                        watch.gap();
+                    }
+                    None
+                };
+                if let Some(change) = change {
+                    report_signal(&front.ctx, &*source, change, watch);
+                }
             }
         }
         let dropped = source.dropped_frames();
@@ -2331,6 +2364,40 @@ fn run_capture(mut front: FrontEnd, mut source: Box<dyn AudioSource>, stop: &Ato
             }
         }
         source.wait(IDLE_WAIT);
+    }
+}
+
+/// Tell the UI that the microphone went silent or came back (`no_signal` / `signal_restored`; a
+/// status line only, the capture goes on). Once per change, on the capture thread. The log keeps
+/// the first outage of a session at info level and writes later ones (a noise gate, a headset
+/// that is muted now and then) at debug, so `sigil.log` does not grow by a line per pause; the
+/// status events always go out.
+fn report_signal(ctx: &SessionCtx, source: &dyn AudioSource, change: SignalChange, watch: &SignalWatch) {
+    let first = watch.reports() <= 1;
+    match change {
+        SignalChange::Silent => {
+            let device = source.device_name().unwrap_or_default();
+            let name = if device.is_empty() { source.key() } else { device.clone() };
+            let secs = watch.threshold_secs();
+            if first {
+                tracing::info!(
+                    target: LOG,
+                    "[{}] no signal from '{name}' for {secs} s (digital silence): check Windows microphone privacy or a mute switch",
+                    ctx.pipeline_id,
+                );
+            } else {
+                tracing::debug!(target: LOG, "[{}] no signal from '{name}' for {secs} s again", ctx.pipeline_id);
+            }
+            ctx.status(None, codes::NO_SIGNAL, device, StatusLevel::Warning, StatusExtra::default());
+        }
+        SignalChange::Restored => {
+            if first {
+                tracing::info!(target: LOG, "[{}] the microphone signal is back", ctx.pipeline_id);
+            } else {
+                tracing::debug!(target: LOG, "[{}] the microphone signal is back", ctx.pipeline_id);
+            }
+            ctx.status(None, codes::SIGNAL_RESTORED, "", StatusLevel::Info, StatusExtra::default());
+        }
     }
 }
 
@@ -2575,6 +2642,8 @@ mod tests {
         /// `close` blocks on this latch (a slow device release).
         close_gate: Mutex<Option<Latch>>,
         close_called: AtomicBool,
+        /// The device name the source reports (`None`: unknown).
+        device: Mutex<Option<String>>,
     }
 
     impl Script {
@@ -2628,6 +2697,9 @@ mod tests {
         }
         fn key(&self) -> String {
             "test-source".into()
+        }
+        fn device_name(&self) -> Option<String> {
+            self.0.device.lock().unwrap().clone()
         }
         fn dropped_frames(&self) -> u64 {
             0
@@ -3148,6 +3220,196 @@ mod tests {
         assert!(fs[0].segment_id > s1);
         assert_eq!(b.calls.lock().unwrap().len(), 1, "muted speech is never decoded");
         assert_eq!(h.registry.statuses()[0].dropped, 1);
+        h.stop("mic").await;
+    }
+
+    // --- a microphone that delivers digital silence (W3) -----------------------------------------
+
+    /// The statuses of `events` with `code`.
+    fn with_code(events: &[Ev], code: &str) -> Vec<SpeechStatus> {
+        statuses(events).into_iter().filter(|s| s.code == code).collect()
+    }
+
+    /// Position of the first status with `code`.
+    fn position_of(events: &[Ev], code: &str) -> usize {
+        events
+            .iter()
+            .position(|e| matches!(e, Ev::Status(s) if s.code == code))
+            .unwrap_or_else(|| panic!("no '{code}' status in {events:#?}"))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_microphone_that_delivers_only_zeros_is_reported_once_and_cleared_when_signal_returns() {
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Headset Mic".into());
+        let started = h
+            .start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        // Fifteen seconds of exact zeros, then someone speaks: the final proves the zeros were all read.
+        h.script.feed(&[(0.0, 15_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final after the silence", |e| !finals(e).is_empty());
+
+        let silent = with_code(&events, codes::NO_SIGNAL);
+        assert_eq!(silent.len(), 1, "reported once, not once per chunk: {silent:#?}");
+        assert_eq!(
+            (silent[0].detail.as_str(), silent[0].level, silent[0].state, silent[0].epoch),
+            ("Headset Mic", StatusLevel::Warning, SpeechState::Listening, started.epoch)
+        );
+        let restored = with_code(&events, codes::SIGNAL_RESTORED);
+        assert_eq!(restored.len(), 1, "{restored:#?}");
+        assert_eq!((restored[0].detail.as_str(), restored[0].level), ("", StatusLevel::Info));
+        assert!(
+            position_of(&events, codes::NO_SIGNAL) < position_of(&events, codes::SIGNAL_RESTORED),
+            "the warning comes first, then it clears"
+        );
+        // The warning never touches the capture: the speech after the silence was decoded.
+        assert_eq!(finals(&events).len(), 1);
+        h.stop("mic").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_quiet_room_is_not_reported_as_no_signal() {
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Headset Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        // Twenty seconds at 0.0004 (about -68 dBFS: a quiet room, far below any speech threshold).
+        h.script.feed(&[(0.0004, 20_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final after the quiet room", |e| !finals(e).is_empty());
+        assert!(with_code(&events, codes::NO_SIGNAL).is_empty(), "{events:#?}");
+        assert!(with_code(&events, codes::SIGNAL_RESTORED).is_empty());
+        h.stop("mic").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn only_the_microphone_pipeline_reports_silence() {
+        // A loopback capture is silent whenever nothing plays.
+        let h = Harness::new();
+        h.script.loopback.store(true, Ordering::SeqCst);
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&[(0.0, 15_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final after the loopback silence", |e| !finals(e).is_empty());
+        assert!(with_code(&events, codes::NO_SIGNAL).is_empty(), "{events:#?}");
+        h.stop("mic").await;
+
+        // Another pipeline key reports through its own driver.
+        let h = Harness::new();
+        let config = PipelineConfig {
+            pipeline_id: "loopback".into(),
+            ..finals_config("fake-final")
+        };
+        h.start(config, h.deps(engines(vec![("fake-final", Behavior::default())]))).await;
+        h.script.feed(&[(0.0, 15_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final of the other key", |e| !finals(e).is_empty());
+        assert!(with_code(&events, codes::NO_SIGNAL).is_empty(), "{events:#?}");
+        h.stop("loopback").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn muting_ends_the_warning_and_the_count_starts_afresh_after_the_unmute() {
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Headset Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&[(0.0, 6_000)]);
+        h.rec.wait_for("the warning", |e| with_code(e, codes::NO_SIGNAL).len() == 1);
+
+        // STT is muted: nothing is delivered, and a muted microphone is silent by design.
+        h.script.gap(false, true);
+        h.rec.wait_for("the warning ends", |e| with_code(e, codes::SIGNAL_RESTORED).len() == 1);
+
+        // Unmuted: four seconds of zeros are not five; speech follows.
+        h.script.gap(false, false);
+        h.script.feed(&[(0.0, 4_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final after the unmute", |e| !finals(e).is_empty());
+        assert_eq!(with_code(&events, codes::NO_SIGNAL).len(), 1, "the count restarted at the unmute");
+
+        // The microphone was heard now, so zeros need a minute to be a new report (a noise gate pauses).
+        h.script.feed(&[(0.0, 6_000)]);
+        h.script.feed(&[(0.0, 61_000)]);
+        h.rec.wait_for("the second warning", |e| with_code(e, codes::NO_SIGNAL).len() == 2);
+        h.stop("mic").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_noise_gate_that_pauses_between_phrases_is_not_reported_but_a_microphone_that_never_spoke_is() {
+        // NVIDIA Broadcast / Krisp style: exact zeros between phrases, 20 s of them after the first one.
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Broadcast Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&utterance(640));
+        h.script.feed(&[(0.0, 20_000)]);
+        h.script.feed(&utterance(640));
+        h.script.feed(&[(0.0, 20_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("three finals", |e| finals(e).len() == 3);
+        assert!(with_code(&events, codes::NO_SIGNAL).is_empty(), "pauses are not a dead microphone: {events:#?}");
+        assert!(with_code(&events, codes::SIGNAL_RESTORED).is_empty());
+        h.stop("mic").await;
+
+        // The same twenty seconds before anything was heard (privacy off, a dead device) are reported.
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Dead Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&[(0.0, 20_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("a final", |e| !finals(e).is_empty());
+        assert_eq!(with_code(&events, codes::NO_SIGNAL).len(), 1, "{events:#?}");
+        h.stop("mic").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_new_device_after_a_gate_has_to_prove_itself_but_an_overrun_gap_keeps_the_grace() {
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Broadcast Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&utterance(640));
+        // An overrun (no new device): 20 s of zeros after it are still a pause.
+        h.script.gap(false, false);
+        h.script.feed(&[(0.0, 20_000)]);
+        h.script.feed(&utterance(640));
+        let events = h.rec.wait_for("two finals", |e| finals(e).len() == 2);
+        assert!(with_code(&events, codes::NO_SIGNAL).is_empty(), "{events:#?}");
+
+        // Windows moves the default to another device that delivers nothing: reported after 5 s.
+        *h.script.device.lock().unwrap() = Some("CABLE Output".into());
+        h.script.gap(true, false);
+        h.script.feed(&[(0.0, 6_000)]);
+        let events = h.rec.wait_for("the warning of the new device", |e| with_code(e, codes::NO_SIGNAL).len() == 1);
+        assert_eq!(with_code(&events, codes::NO_SIGNAL)[0].detail, "CABLE Output");
+        h.stop("mic").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_silence_that_follows_the_default_to_another_device_is_reported_again_with_its_name() {
+        let h = Harness::new();
+        *h.script.device.lock().unwrap() = Some("Headset Mic".into());
+        h.start(finals_config("fake-final"), h.deps(engines(vec![("fake-final", Behavior::default())])))
+            .await;
+        h.script.feed(&[(0.0, 6_000)]);
+        h.rec.wait_for("the first warning", |e| with_code(e, codes::NO_SIGNAL).len() == 1);
+
+        // Windows moves the default to a virtual device that is silent too.
+        *h.script.device.lock().unwrap() = Some("CABLE Output".into());
+        h.script.gap(true, false);
+        h.script.feed(&[(0.0, 6_000)]);
+        let events = h.rec.wait_for("the second warning", |e| with_code(e, codes::NO_SIGNAL).len() == 2);
+        let names: Vec<String> = with_code(&events, codes::NO_SIGNAL).into_iter().map(|s| s.detail).collect();
+        assert_eq!(names, ["Headset Mic", "CABLE Output"]);
+        assert!(with_code(&events, codes::SIGNAL_RESTORED).is_empty(), "the silence never ended in between");
+
+        // Signal on the new device ends it.
+        h.script.feed(&utterance(640));
+        h.rec.wait_for("the warning ends", |e| with_code(e, codes::SIGNAL_RESTORED).len() == 1);
         h.stop("mic").await;
     }
 

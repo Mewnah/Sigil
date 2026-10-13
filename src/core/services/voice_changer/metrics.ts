@@ -33,6 +33,11 @@ export interface VoiceChangerMetricsRust {
     // The output prefill / max queue in force (the stored settings raised to the playing voice's floor)
     buffer_prefill_ms?: number | null;
     buffer_max_queue_ms?: number | null;
+    // The engine block the playing voice converts per model call (what the Chunk size resolved to)
+    engine_block_ms?: number | null;
+    // p50 / p99 of the model calls themselves, for a voice that converts a long block per call (Rust `CallTimes`)
+    call_p50_ms?: number | null;
+    call_p99_ms?: number | null;
 }
 
 /** Normalized metrics: every number finite; P0 fields `null` when the backend does not report them. */
@@ -76,6 +81,19 @@ export interface VoiceChangerMetrics {
      */
     buffer_prefill_ms: number | null;
     buffer_max_queue_ms: number | null;
+    /**
+     * The engine block (ms) the playing voice converts per model call: what the Chunk size setting resolved to (a size
+     * set planned to whole 20 ms, or Auto's block for this PC), or a family voice's own. `null` from a backend that
+     * predates it, while stopped, and for a voice with no fixed block.
+     */
+    engine_block_ms: number | null;
+    /**
+     * p50 / p99 of the model calls over the recent window, for a voice that converts blocks of 6 device buffers or more per
+     * call: the per-tick percentiles above cannot see its slow calls (only a few ticks in a hundred run the model). `null`
+     * from a backend that predates it, for any other voice, and until the window holds enough calls.
+     */
+    call_p50_ms: number | null;
+    call_p99_ms: number | null;
 }
 
 function num(n: unknown): number {
@@ -118,6 +136,9 @@ export function normalizeMetrics(raw: unknown): VoiceChangerMetrics | null {
         cushion_ms: optNum(m.cushion_ms),
         buffer_prefill_ms: optNum(m.buffer_prefill_ms),
         buffer_max_queue_ms: optNum(m.buffer_max_queue_ms),
+        engine_block_ms: optNum(m.engine_block_ms),
+        call_p50_ms: optNum(m.call_p50_ms),
+        call_p99_ms: optNum(m.call_p99_ms),
     };
 }
 
@@ -194,6 +215,8 @@ export interface MetricsAssessment {
     starting: boolean;
     /** `slow`: the average block takes longer than real time; `spikes`: only the slowest 1 % do. */
     realtime: RealtimeHealth;
+    /** `realtime` was judged by the model calls themselves (the backend times them), not by the device ticks. */
+    byCalls: boolean;
     /** Backlog at or above 80 % of what the latency budget lets wait (older audio is about to be dropped). */
     backlogHigh: boolean;
     /** The budget dropped audio since the previous poll. */
@@ -210,9 +233,42 @@ function noBlockProcessedYet(m: VoiceChangerMetrics): boolean {
     return m.process_ms === 0 && (m.process_p99_ms ?? 0) === 0 && m.buffer_ms === 0;
 }
 
+/** Device buffers of margin the latency budget keeps beyond the engine block (Rust `budget.rs` `BUDGET_BLOCK_MARGIN_CHUNKS`). */
+export const BUDGET_BLOCK_MARGIN_CHUNKS = 2;
+
 /**
- * Judge one metrics sample. `budgetMs` is the latency budget in effect (Rust lets
- * `max(budget, one block)` wait); `prev` is the previous sample of the same run, if any.
+ * The latency budget (ms) the running engine applies, as Rust's `effective_latency_budget_ms`: the stored one, raised to the
+ * engine block plus two device buffers when the playing voice converts a block in one call (a budget under that dropped
+ * input after every call), and never under one device buffer. `metrics`: the running engine's sample.
+ */
+export function effectiveLatencyBudgetMs(
+    storedMs: number,
+    metrics: Pick<VoiceChangerMetrics, "chunk_ms" | "engine_block_ms"> | null,
+): number {
+    const chunk = metrics && metrics.chunk_ms > 0 ? metrics.chunk_ms : 0;
+    const block = metrics?.engine_block_ms ?? 0;
+    const needed = block > 0 ? block + BUDGET_BLOCK_MARGIN_CHUNKS * chunk : 0;
+    return Math.max(storedMs, chunk, needed);
+}
+
+/**
+ * The latency budget the playing voice's chunk raises above the stored one, for the note under the budget: the budget in
+ * force and the chunk (ms) it makes room for, or `null` when the stored budget already holds a chunk (or no voice with a
+ * fixed chunk plays).
+ */
+export function latencyBudgetRaisedBy(
+    storedMs: number,
+    metrics: Pick<VoiceChangerMetrics, "chunk_ms" | "engine_block_ms"> | null,
+): { budgetMs: number; blockMs: number } | null {
+    const block = metrics?.engine_block_ms ?? 0;
+    if (!(block > 0)) return null;
+    const needed = block + BUDGET_BLOCK_MARGIN_CHUNKS * Math.max(0, metrics?.chunk_ms ?? 0);
+    return needed > storedMs + 0.5 ? { budgetMs: needed, blockMs: block } : null;
+}
+
+/**
+ * Judge one metrics sample. `budgetMs` is the stored latency budget (the one in effect is
+ * {@link effectiveLatencyBudgetMs}); `prev` is the previous sample of the same run, if any.
  */
 export function assessMetrics(
     m: VoiceChangerMetrics,
@@ -221,21 +277,51 @@ export function assessMetrics(
 ): MetricsAssessment {
     const starting = !(m.chunk_ms > 0) || noBlockProcessedYet(m);
     let realtime: RealtimeHealth = "ok";
+    let byCalls = false;
     if (!starting) {
-        if (m.process_ms >= m.chunk_ms) realtime = "slow";
+        // The timings are per device tick. A voice that converts blocks longer than the device buffer (an imported voice
+        // on a long Chunk size: 120-200 ms against 10.7 ms ticks) runs its model on one tick in several and the ticks in
+        // between cost almost nothing: the tick that calls the model takes up to the whole block, and real time means
+        // finishing inside the block, not inside one device tick.
+        const block = m.engine_block_ms ?? 0;
+        if (block > m.chunk_ms) {
+            byCalls = m.call_p50_ms != null && m.call_p99_ms != null;
+            if (m.call_p50_ms != null && m.call_p99_ms != null) {
+                // The backend times the calls themselves (for blocks of 6 device buffers or more). The tick percentiles
+                // cannot judge them there: at 200 ms blocks on 10.7 ms ticks only one tick in nineteen runs the model, so
+                // the tick p95 sits among the quickest calls and the tick p99 at about the 80th percentile of the calls,
+                // and 10 % of the calls overrunning the block read as healthy.
+                if (m.call_p50_ms >= block) realtime = "slow";
+                else if (m.call_p99_ms >= block) realtime = "spikes";
+            } else {
+                // Shorter long blocks (a good share of the ticks run the model) and backends without the call timings:
+                // the slow tail of the ticks is the call itself.
+                const typicalCall = m.process_p95_ms ?? m.process_p99_ms ?? m.process_ms;
+                if (typicalCall >= block) realtime = "slow";
+                else if (m.process_p99_ms != null && m.process_p99_ms >= block) realtime = "spikes";
+            }
+        } else if (m.process_ms >= m.chunk_ms) realtime = "slow";
         else if (m.process_p99_ms != null && m.process_p99_ms >= m.chunk_ms) realtime = "spikes";
     }
-    const allowed = Math.max(budgetMs, m.chunk_ms);
+    const allowed = effectiveLatencyBudgetMs(budgetMs, m);
     const backlogHigh = !starting && m.backlog_ms != null && allowed > 0 && m.backlog_ms >= 0.8 * allowed;
     const droppingNow = m.dropped_ms != null && prev?.dropped_ms != null && m.dropped_ms > prev.dropped_ms;
     const underrunNow = m.underruns != null && prev?.underruns != null && m.underruns > prev.underruns;
-    return { starting, realtime, backlogHigh, droppingNow, underrunNow };
+    return { starting, realtime, byCalls, backlogHigh, droppingNow, underrunNow };
 }
 
 /** `ms` for display: one decimal below 100 ms, whole ms above. */
 export function formatMs(ms: number): string {
     if (!Number.isFinite(ms)) return "–";
     return ms >= 100 ? ms.toFixed(0) : ms.toFixed(1);
+}
+
+/**
+ * A chunk length for display: whole ms when it is one (every size the engine plans: 20, 80, 160), else as {@link formatMs}.
+ * `formatMs` alone reads "20.0 ms" next to a "20 ms" choice.
+ */
+export function formatChunkMs(ms: number): string {
+    return Number.isFinite(ms) && Math.abs(ms - Math.round(ms)) < 0.05 ? String(Math.round(ms)) : formatMs(ms);
 }
 
 /** The governor's cheapest quality level (Rust `QualityLevel::LOWEST`). */

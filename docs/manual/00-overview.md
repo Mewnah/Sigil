@@ -20,6 +20,14 @@ This chapter covers **install and first run**, the **host UI layout**, and the *
 
 See the repository [README.md](../../README.md) for exact install commands.
 
+### Installing a release build (Windows)
+
+A release comes as an **NSIS installer** (per-user, recommended), an **MSI** and a **portable zip**. Sigil's window is a Microsoft Edge **WebView2** page, so the PC needs the WebView2 Runtime: Windows 11 includes it and an up-to-date Windows 10 usually has it.
+
+- **The installers** carry Microsoft's small WebView2 bootstrapper (about 1.8 MB), so they do not download it while installing. If the PC has no WebView2 Runtime, the bootstrapper downloads the runtime itself, which needs an internet connection during the install. On a PC with neither the runtime nor internet, install Microsoft's WebView2 Runtime first.
+- **The portable zip** has no installer, so the WebView2 Runtime has to be on the PC already (a fresh or offline Windows 10 may lack it).
+- The Visual C++ runtime Sigil needs is included in all three; nothing else has to be installed first.
+
 ### Run Sigil (desktop)
 
 ```bash

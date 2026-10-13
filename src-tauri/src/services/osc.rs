@@ -7,6 +7,28 @@
 //! resolves it to `::1` first, which an IPv4 VRChat never hears); other host names are resolved
 //! once per [`DNS_CACHE_TTL`], preferring IPv4.
 //!
+//! **Windows Firewall.** Windows may ask once, with a dialog that takes the focus, when a program that has no rule binds a
+//! socket on a non-loopback address. Everything here is loopback except these, and the VRChat settings say so next to the
+//! setting that causes each one (`inspector/vrc/windowsPromptNotes.tsx`; they say "may", see below):
+//! - the OSCQuery mDNS daemon: UDP 5353 on every adapter (see [`osc_query`]);
+//! - a fixed listen port with VRChat on this PC: the check on `0.0.0.0:<port>` that comes before the `127.0.0.1:<port>` bind
+//!   ([`bind_receiver`]; the probe is dropped at once and receives nothing);
+//! - VRChat on another PC: the receiver on `0.0.0.0:<port>` (mute sync) and the `0.0.0.0:0` send socket, which is bound on
+//!   the first message, so a question about it would come with the first caption unless the receiver bound first.
+//!
+//! Which of these binds really raises the question has not been measured on a profile without a rule for `Sigil.exe` (the
+//! dialog steals the focus, so an agent run must not provoke it): a socket that only sends from a port Windows picks may not,
+//! the ones that bind a chosen port and listen probably do. Hand check, on a copy of `Sigil.exe` in a new folder (rules belong to a path):
+//! send only to a LAN address; mute sync with that address; mute sync with a fixed port; mute sync with OSCQuery. Where a step
+//! shows no dialog, drop its note and its line above. The notes never tell anyone to choose Cancel: Cancel makes Windows write
+//! a Block rule for the program, block rules win over allow rules, and the dialog never comes back, so a later LAN access or
+//! mute sync would fail silently.
+//!
+//! Unit tests bind no wildcard address: [`bind_receiver`] skips its check under `cfg(test)` ([`wildcard_probe_enabled`]), and
+//! the one test that needs it (a port held on every address) is `#[ignore]`d and runs with `SIGIL_TEST_EXPOSURE=1`, like the
+//! other tests that open a socket beyond loopback. Every other test of this module and of [`osc_query`] is safe to run on a
+//! PC that is in use.
+//!
 //! **Receive** (P6-C; `listen_start` / `listen_stop` / `listen_status`): a UDP receiver for what
 //! VRChat sends, today `/avatar/parameters/MuteSelf` (VRChat's microphone mute):
 //! - With OSCQuery (VRChat on this PC): a free loopback port advertised over mDNS
@@ -667,6 +689,32 @@ fn port_taken_message(port: u16, e: &std::io::Error) -> String {
     format!("UDP port {port} is in use by another app (often another OSC tool). Turn on OSCQuery, close that app, or pick another port. ({e})")
 }
 
+/// The wildcard address [`bind_receiver`] checks before it binds `addr`: the same port on every address, for a fixed port on
+/// a specific address. `None` for port 0 (the OS picks a free one) and for an address that already is the wildcard.
+fn wildcard_to_probe(addr: SocketAddr) -> Option<SocketAddr> {
+    if addr.port() == 0 || addr.ip().is_unspecified() {
+        return None;
+    }
+    Some(match addr {
+        SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, addr.port())),
+        SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, addr.port())),
+    })
+}
+
+/// Whether [`bind_receiver`] makes that check. Always, except in unit tests: a bind on every address raises the Windows
+/// Firewall question for the test binary on the developer's PC (see the module doc), so a test run makes it only with
+/// `SIGIL_TEST_EXPOSURE=1`, the switch of the other tests that open a socket beyond loopback.
+fn wildcard_probe_enabled() -> bool {
+    #[cfg(test)]
+    {
+        std::env::var("SIGIL_TEST_EXPOSURE").as_deref() == Ok("1")
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+
 /// Binds the receive socket, with a friendly message for a port another app holds.
 ///
 /// A fixed port on a specific address (`127.0.0.1:9001`) is first probed on the wildcard address:
@@ -677,11 +725,7 @@ fn port_taken_message(port: u16, e: &std::io::Error) -> String {
 /// wildcard cannot be stopped this way (it then gets only non-loopback traffic), while one binding
 /// Sigil's own address is refused by Windows (a plain socket is protected from `SO_REUSEADDR`).
 fn bind_receiver(addr: SocketAddr) -> Result<UdpSocket, String> {
-    if addr.port() != 0 && !addr.ip().is_unspecified() {
-        let wildcard = match addr {
-            SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, addr.port())),
-            SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, addr.port())),
-        };
+    if let Some(wildcard) = wildcard_to_probe(addr).filter(|_| wildcard_probe_enabled()) {
         match UdpSocket::bind(wildcard) {
             Ok(probe) => drop(probe),
             Err(e) if port_taken(&e) => return Err(port_taken_message(addr.port(), &e)),
@@ -1320,8 +1364,16 @@ mod tests {
 
     /// Another OSC tool listening on every interface (`0.0.0.0:<port>`, the common case): on Windows
     /// a plain bind of `127.0.0.1:<port>` would succeed and silently take its loopback traffic.
+    ///
+    /// Manual: it binds `0.0.0.0` (the blocker, and the receiver's own check), which makes Windows Firewall ask about the test
+    /// binary. Run: `SIGIL_TEST_EXPOSURE=1 cargo test --manifest-path src-tauri/Cargo.toml every_interface -- --ignored`
     #[test]
+    #[ignore = "binds 0.0.0.0 (Windows Firewall prompt); run manually with SIGIL_TEST_EXPOSURE=1"]
     fn a_port_held_on_every_interface_is_reported_not_shared() {
+        if std::env::var("SIGIL_TEST_EXPOSURE").as_deref() != Ok("1") {
+            eprintln!("SIGIL_TEST_EXPOSURE=1 not set; skipping (would trigger a Windows Firewall prompt)");
+            return;
+        }
         let blocker = UdpSocket::bind("0.0.0.0:0").unwrap();
         let port = blocker.local_addr().unwrap().port();
         let err = bind_receiver(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).unwrap_err();
@@ -1344,6 +1396,45 @@ mod tests {
         assert!(blocker.recv_from(&mut buf).is_ok());
         assert!(lock(&h.rec.mutes).is_empty());
         h.receiver.stop();
+    }
+
+    #[test]
+    fn the_port_check_covers_a_fixed_port_on_a_specific_address_only() {
+        let lo4 = |port| SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        assert_eq!(wildcard_to_probe(lo4(9001)), Some(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 9001))));
+        assert_eq!(
+            wildcard_to_probe(SocketAddr::from((Ipv6Addr::LOCALHOST, 9001))),
+            Some(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 9001)))
+        );
+        // A port the OS picks is free by construction; an address that already is the wildcard is the bind itself.
+        assert_eq!(wildcard_to_probe(lo4(0)), None);
+        assert_eq!(wildcard_to_probe(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 9001))), None);
+    }
+
+    /// Without this a plain `cargo test` of the module probes `0.0.0.0:<port>` once per fixed-port test and shows the Windows
+    /// Firewall question for the test binary on the developer's PC.
+    #[test]
+    fn unit_tests_leave_every_address_alone_unless_exposure_is_asked_for() {
+        let asked = std::env::var("SIGIL_TEST_EXPOSURE").as_deref() == Ok("1");
+        assert_eq!(wildcard_probe_enabled(), asked);
+    }
+
+    /// The same table drives the inspector's notes (`src/core/ui/inspector/vrc/rustHost.ts`), which must agree with this
+    /// function about which addresses are this PC: it decides whether Sigil binds the loopback or every adapter.
+    #[test]
+    fn this_pc_follows_the_table_shared_with_the_settings() {
+        let table: serde_json::Value = serde_json::from_str(include_str!("osc_host_cases.json")).unwrap();
+        let hosts = |key: &str| -> Vec<String> {
+            table[key].as_array().unwrap_or_else(|| panic!("{key} missing")).iter().map(|h| h.as_str().unwrap().to_string()).collect()
+        };
+        let (this_pc, elsewhere) = (hosts("thisPc"), hosts("elsewhere"));
+        assert!(this_pc.len() > 10 && elsewhere.len() > 10);
+        for host in this_pc {
+            assert!(is_loopback_host(&host), "{host:?} is this PC");
+        }
+        for host in elsewhere {
+            assert!(!is_loopback_host(&host), "{host:?} is not this PC");
+        }
     }
 
     #[test]

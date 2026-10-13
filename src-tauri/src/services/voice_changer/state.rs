@@ -160,6 +160,12 @@ pub struct VoiceChangerState {
     pub(super) metrics_limit_queue_us: Arc<AtomicU32>,
     /// The device block the run uses (frames; 0 = the hot param's; P3B-H `device_block`).
     pub(super) metrics_chunk_frames: Arc<AtomicU32>,
+    /// The engine block the active voice converts per model call (us; `METRIC_UNSET` = none: not running,
+    /// or a voice with no fixed block). What the Chunk size setting resolved to for this run.
+    pub(super) metrics_engine_block_us: Arc<AtomicU32>,
+    /// p50 / p99 of the active voice's model calls (us; `METRIC_UNSET` = none: see `metrics::CallTimes`).
+    pub(super) metrics_call_p50_us: Arc<AtomicU32>,
+    pub(super) metrics_call_p99_us: Arc<AtomicU32>,
     /// Levers, accelerator and precision the running engine uses.
     pub(super) run_levers: Arc<Mutex<Option<EffectiveLevers>>>,
     /// EP outcome of the running model (`None` for classic / sidecar or when stopped).
@@ -293,6 +299,9 @@ impl VoiceChangerState {
             metrics_limit_prefill_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_limit_queue_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
             metrics_chunk_frames: Arc::new(AtomicU32::new(0)),
+            metrics_engine_block_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_call_p50_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
+            metrics_call_p99_us: Arc::new(AtomicU32::new(METRIC_UNSET)),
             run_levers: Arc::new(Mutex::new(None)),
             run_ep: Arc::new(Mutex::new(None)),
             held_slots: Arc::new(Mutex::new(None)),
@@ -322,6 +331,9 @@ impl VoiceChangerState {
         self.metrics_limit_prefill_us.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_limit_queue_us.store(METRIC_UNSET, Ordering::Relaxed);
         self.metrics_chunk_frames.store(0, Ordering::Relaxed);
+        self.metrics_engine_block_us.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_call_p50_us.store(METRIC_UNSET, Ordering::Relaxed);
+        self.metrics_call_p99_us.store(METRIC_UNSET, Ordering::Relaxed);
         *lock(&self.run_levers) = None;
         self.mmcss.reset();
         *lock(&self.run_ep) = None;
@@ -1280,6 +1292,74 @@ mod tests {
         let (eff, adjusted) = restarted.update_params(back);
         assert!(adjusted);
         assert_eq!(eff.rms_mix, Some(0.25));
+    }
+
+    /// A Chunk size you set (`block_ms`) is one global setting: it is written to `settings.json`, survives a
+    /// restart, and is not changed by a later sync that switches the preset, the execution provider or the voice,
+    /// by a sync from an older sender that omits it, or by entering a voice whose `slot.json` holds other values.
+    /// Auto (0) stays Auto, and a size beyond the range is clamped to it.
+    #[test]
+    fn a_chunk_size_you_set_survives_restarts_voice_switches_and_preset_changes() {
+        let dir = temp_dir("chunk-size");
+        let (a, b) = (dir.0.join("voice-a"), dir.0.join("voice-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let app = dir.0.join("app");
+        let st = VoiceChangerState::new();
+        st.attach_persistence(&app);
+        let size = |st: &VoiceChangerState| st.snapshot_params().block_ms;
+        assert_eq!(size(&st), Some(0.0), "a fresh install is on Auto");
+
+        let mut p = rvc_params(&a, 2.0, 0.33);
+        p.block_ms = Some(160.0);
+        p.rvc_preset = "streamer".into();
+        st.update_params(p.clone());
+        assert_eq!(size(&st), Some(160.0));
+
+        // The preset and rung change in later syncs (the UI sends every field): the size stays.
+        let mut quality = p.clone();
+        quality.rvc_preset = "quality".into();
+        quality.rvc_execution_provider = "cuda".into();
+        st.update_params(quality.clone());
+        assert_eq!(size(&st), Some(160.0), "a preset change keeps the size");
+        let mut back = quality.clone();
+        back.rvc_preset = "streamer".into();
+        back.rvc_execution_provider = "cpu".into();
+        st.update_params(back.clone());
+        assert_eq!(size(&st), Some(160.0));
+
+        // Another voice (the size is not per voice), and a sender that predates the field.
+        let mut to_b = back.clone();
+        to_b.rvc_slot_dir = b.to_string_lossy().into_owned();
+        st.update_params(to_b.clone());
+        assert_eq!(size(&st), Some(160.0), "a voice switch keeps the size");
+        let mut old = to_b.clone();
+        old.block_ms = None;
+        st.update_params(old);
+        assert_eq!(size(&st), Some(160.0), "an absent field keeps the stored size");
+
+        // It is on disk, and a restart reads it back.
+        st.flush_settings();
+        let text = std::fs::read_to_string(crate::services::voice_changer::persist::settings_path(&app)).unwrap();
+        let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(file["params"]["block_ms"].as_f64(), Some(160.0), "settings.json holds the size");
+        let restarted = VoiceChangerState::new();
+        restarted.attach_persistence(&app);
+        assert_eq!(size(&restarted), Some(160.0), "the size survives a restart");
+
+        // Out of range is clamped; Auto is a size too (0) and stays.
+        let mut long = to_b.clone();
+        long.block_ms = Some(500.0);
+        restarted.update_params(long);
+        assert_eq!(size(&restarted), Some(200.0));
+        let mut auto = to_b.clone();
+        auto.block_ms = Some(0.0);
+        restarted.update_params(auto);
+        assert_eq!(size(&restarted), Some(0.0));
+        restarted.flush_settings();
+        let again = VoiceChangerState::new();
+        again.attach_persistence(&app);
+        assert_eq!(size(&again), Some(0.0), "Auto survives a restart");
     }
 
     /// A main settings file that cannot be read is not overwritten by the (older) backup at

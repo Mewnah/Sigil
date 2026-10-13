@@ -21,6 +21,18 @@
 //!   it with [`query_value`] so mute sync starts in the right state, not only on the next change.
 //!
 //! Everything here is off unless the VRChat settings turn on mute sync with OSCQuery.
+//!
+//! **Windows Firewall.** `mdns-sd` binds `0.0.0.0:5353` and `[::]:5353` when its daemon starts (`Zeroconf::new` in mdns-sd
+//! 0.21.4, before the thread reads any interface choice), so even a daemon limited to loopback with `disable_interface` /
+//! `enable_interface(IfKind::LoopbackV4)` listens on UDP 5353 on every adapter; the choice only decides which interfaces join
+//! the multicast group and answer. Windows may therefore ask once to allow Sigil, and a loopback-only daemon would not avoid
+//! the question. Limiting the interfaces was considered and left out: it gains nothing for the question, and nothing here or in
+//! `mdns-sd` shows that VRChat's announcements reach a daemon that joined the loopback interface only (`pick_local_address`
+//! also accepts a VRChat record that carries one of this PC's own addresses). The VRChat settings tell the user what Windows may
+//! ask next to the OSCQuery switch (`inspector/vrc/windowsPromptNotes.tsx`). Test code must not start an [`Advertiser`] (it
+//! would show that question on the developer's PC), and the receiver's other wildcard binds are kept out of the unit tests
+//! the same way: see the Windows Firewall section of [`super::osc`] for the port check and the one `#[ignore]`d test. No test
+//! of this module binds beyond loopback. Look at the interface choice again when `mdns-sd` is updated.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Read, Write};

@@ -43,7 +43,7 @@
 
 use super::aux_feed::AuxMixer;
 use super::block_buffer::{self, StoredBufferProof};
-use super::budget::{capture_ring_capacity, push_capture, InputBacklog};
+use super::budget::{capture_ring_capacity, effective_latency_budget_ms, push_capture, InputBacklog};
 use super::capabilities::resolve_levers;
 use super::commands::PARAMS_EVENT;
 use super::devices::{
@@ -52,7 +52,7 @@ use super::devices::{
 };
 use super::factory::{crossfade_into, EngineKey, EngineRequest, HarnessSpec, LoadedVoice, SwitchPlan, VoiceSet};
 use super::fallback::MuteConceal;
-use super::metrics::{frames_to_ms, ProcessTimeWindow};
+use super::metrics::{engine_block_ms_of, frames_to_ms, CallTimes, ProcessTimeWindow, METRIC_UNSET};
 use super::params::{
     clamp_output_buffer_ms, effective_pitch_extractor, effective_rvc_ep, normalize_execution_provider, pitch_fallback_reason,
     requested_rvc_ep, resolve_rvc_paths, DeviceBlockMode, OutputCushion, RvcParamsState, VoiceChangerHotParams, VoiceChangerMode,
@@ -1105,6 +1105,10 @@ fn publish_voice<R: Runtime>(app: &AppHandle<R>, generation: &RunGeneration, st:
     if let Some(o) = voice_ep_outcome(&voice.outcomes) {
         *lock(&st.run_ep) = Some(o);
     }
+    // The block this voice converts per model call (what the Chunk size setting resolved to), shown by the
+    // inspector next to the setting.
+    st.metrics_engine_block_us
+        .store(super::metrics::engine_block_us(voice.harness.fixed_shape().map(|(block, _)| block)), Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1616,6 +1620,10 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
     let mut aux_mixer = AuxMixer::new(r_in, ch_in);
     let mut times = ProcessTimeWindow::new();
     let mut e2e = ProcessTimeWindow::new();
+    // The model calls of a voice that converts long blocks, timed apart from the ticks between them.
+    let mut call_times = CallTimes::new();
+    // The latency budget in force last time it was above the stored one (to log a change once).
+    let mut budget_raised_to = 0.0f64;
     // The evidence for raising a typed output buffer (`block_buffer::StoredBufferProof`), the floor it
     // belongs to and whether the raise was logged.
     let mut buffer_proof = StoredBufferProof::default();
@@ -1744,7 +1752,26 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         if let Some(m) = monitor.as_mut() {
             m.set_limits(limits);
         }
-        capbuf.set_budget_ms(h.latency_budget_ms);
+        // A voice that converts a long block in one call needs a budget that holds a call's worth of capture.
+        let budget_ms = effective_latency_budget_ms(
+            h.latency_budget_ms,
+            engine_block_ms_of(st.metrics_engine_block_us.load(Ordering::Relaxed)),
+            block_ms,
+        );
+        if (budget_ms - h.latency_budget_ms).abs() > 0.5 {
+            if (budget_ms - budget_raised_to).abs() > 0.5 {
+                budget_raised_to = budget_ms;
+                tracing::info!(
+                    "voice changer: the latency budget of {:.0} ms is raised to {:.0} ms while this voice converts {:.0} ms chunks",
+                    h.latency_budget_ms,
+                    budget_ms,
+                    engine_block_ms_of(st.metrics_engine_block_us.load(Ordering::Relaxed)).unwrap_or(0.0),
+                );
+            }
+        } else {
+            budget_raised_to = 0.0;
+        }
+        capbuf.set_budget_ms(budget_ms);
         if let Engine::Sidecar(b) = &mut engine {
             if h.latency_budget_ms != sidecar_timeout_ms {
                 sidecar_timeout_ms = h.latency_budget_ms;
@@ -2034,6 +2061,17 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         st.metrics_process_p99_us.store(times.push(elapsed_us), Ordering::Relaxed);
         st.metrics_process_p50_us.store(times.p50().max(1), Ordering::Relaxed);
         st.metrics_process_p95_us.store(times.p95().max(1), Ordering::Relaxed);
+        if let Engine::Rvc(run) = &engine {
+            call_times.note_tick(
+                run.probe_generation,
+                elapsed_us,
+                st.metrics_engine_block_us.load(Ordering::Relaxed),
+                block_ms,
+            );
+            let (p50, p99) = call_times.stats_us().unwrap_or((METRIC_UNSET, METRIC_UNSET));
+            st.metrics_call_p50_us.store(p50, Ordering::Relaxed);
+            st.metrics_call_p99_us.store(p99, Ordering::Relaxed);
+        }
         let t_end = now_qpc_ns();
 
         // ---- Output. ----
@@ -2051,7 +2089,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
         let mut governor_level = 0u8;
         if let (Some(g), Engine::Rvc(run)) = (governor.as_mut(), &mut engine) {
             // The budget is a hot param: the backlog-pressure rule follows it.
-            g.set_budget_ms(h.latency_budget_ms);
+            g.set_budget_ms(budget_ms);
             let tick = TickLoad {
                 compute_ms: f64::from(elapsed_us) / 1000.0,
                 block_ms,

@@ -240,7 +240,7 @@ pub fn cpu_streamer_block_enabled() -> bool {
 /// shorter than [`CPU_STREAMER_KEEP_FROM_MS`] becomes the block of this PC's physical cores
 /// ([`cpu_streamer_block_for_cores`] of `ort_session::vc_physical_cores`, the count the Streamer's thread policy
 /// reads: 120 ms from 7 cores, 160 ms with 6, 200 ms with 5 or fewer). Every other preset, rung, explicit block
-/// (the Block size setting or Autotune's pick) and longer derived block is returned as it is. The voice changer's
+/// (the Chunk size setting or Autotune's pick) and longer derived block is returned as it is. The voice changer's
 /// factory and the benchmark's builds both call it, so a spec that leaves the block on automatic measures what
 /// the app runs.
 pub fn cpu_streamer_block(preset: EnginePreset, base_ep: &str, requested_block_ms: f64) -> EnginePreset {
@@ -426,7 +426,7 @@ mod tests {
             let want = cpu_streamer_block_for_cores(cores);
             assert_eq!(on(auto, "cpu", 0.0, cores), want, "{cores} cores");
             assert_eq!(on(auto, " CPU ", -1.0, cores), want, "{cores} cores, rung and block as written by the setting");
-            // An explicit Block size, or Autotune's pick (both arrive as a block above 0), wins at any size of PC.
+            // An explicit Chunk size, or Autotune's pick (both arrive as a block above 0), wins at any size of PC.
             for explicit in [20.0, 40.0, 80.0, 120.0, 160.0, 200.0] {
                 assert_eq!(on(derived(explicit, 512), "cpu", explicit, cores), explicit, "block {explicit} on {cores} cores");
             }

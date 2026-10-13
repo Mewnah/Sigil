@@ -7,6 +7,7 @@
 //! playout of its converted copy: waiting input, processing, the harness's algorithmic delay, a
 //! denoiser's delay, the output queue and one device period).
 
+use super::block_buffer::CALL_TICK_CHUNKS;
 use super::state::{lock, VoiceChangerState};
 use crate::services::diagnostics::EpOutcome;
 use crate::services::neural_audio::vc::engine::options::EffectiveLevers;
@@ -28,6 +29,8 @@ pub(super) struct ProcessTimeWindow {
     next: usize,
     filled: usize,
     since_update: usize,
+    /// The percentiles are recomputed every this many pushes.
+    refresh_every: usize,
     scratch: Vec<u32>,
     p50_us: u32,
     p95_us: u32,
@@ -42,11 +45,17 @@ fn rank(len: usize, q: usize) -> usize {
 
 impl ProcessTimeWindow {
     pub(super) fn new() -> Self {
+        Self::refreshing_every(P99_EVERY)
+    }
+
+    /// A window whose percentiles are recomputed every `every` pushes (at least 1).
+    pub(super) fn refreshing_every(every: usize) -> Self {
         Self {
             times_us: vec![0; P99_WINDOW],
             next: 0,
             filled: 0,
             since_update: 0,
+            refresh_every: every.max(1),
             scratch: Vec::with_capacity(P99_WINDOW),
             p50_us: 0,
             p95_us: 0,
@@ -61,7 +70,7 @@ impl ProcessTimeWindow {
         self.next = (self.next + 1) % P99_WINDOW;
         self.filled = (self.filled + 1).min(P99_WINDOW);
         self.since_update += 1;
-        if self.since_update >= P99_EVERY || self.filled < P99_EVERY {
+        if self.since_update >= self.refresh_every || self.filled < self.refresh_every {
             self.since_update = 0;
             self.scratch.clear();
             self.scratch.extend_from_slice(&self.times_us[..self.filled]);
@@ -89,8 +98,82 @@ impl ProcessTimeWindow {
         self.p50_us
     }
 
+    pub(super) fn p99(&self) -> u32 {
+        self.p99_us
+    }
+
+    /// Values in the window.
+    pub(super) fn len(&self) -> usize {
+        self.filled
+    }
+
+    /// Forget every value.
+    pub(super) fn clear(&mut self) {
+        self.next = 0;
+        self.filled = 0;
+        self.since_update = 0;
+        self.p50_us = 0;
+        self.p95_us = 0;
+        self.p99_us = 0;
+    }
+
     pub(super) fn p95(&self) -> u32 {
         self.p95_us
+    }
+}
+
+/// An engine block (see [`engine_block_us`]) must be at least this many device chunks long for the per-call timings
+/// ([`CallTimes`]) to be kept: below it a good share of the ticks run the model and the per-tick percentiles already
+/// describe the calls, and a short call can cost less than [`CALL_TICK_CHUNKS`] chunks and so could not be told from the ticks
+/// between calls. At 6 chunks any call that matters (half a block or more) is at least 3 chunks long.
+pub(super) const CALL_STATS_MIN_BLOCK_CHUNKS: f64 = 6.0;
+/// Calls the window needs before its percentiles are reported (about a second of 120 ms blocks).
+pub(super) const CALL_STATS_MIN_CALLS: usize = 8;
+
+/// The model calls of the playing voice, timed apart from the ticks between them.
+///
+/// The percentiles above are per device tick. A voice that converts blocks much longer than the device buffer runs its
+/// model on one tick in several (a 200 ms block on 10.7 ms ticks: 5 %), so the slow tail of its calls is invisible to
+/// them: 10 % of the calls over the block leave the tick p95 near the quickest calls and the tick p99 below the block.
+/// This window keeps only the ticks that ran a call, found the way `block_buffer::StoredBufferProof` finds them (a tick
+/// that cost [`CALL_TICK_CHUNKS`] device chunks or more: the ticks between two calls cost a few hundred microseconds),
+/// and only for a voice whose block is [`CALL_STATS_MIN_BLOCK_CHUNKS`] chunks or longer. It starts over when another
+/// voice plays or the block changes. Worker-owned; allocation-free after construction.
+pub(super) struct CallTimes {
+    window: ProcessTimeWindow,
+    /// The voice (a serial that changes on a voice switch) and the engine block (us) the window is about.
+    voice: u64,
+    block_us: u32,
+}
+
+impl CallTimes {
+    pub(super) fn new() -> Self {
+        // Calls are few (a handful a second), so the percentiles are recomputed on every one.
+        Self { window: ProcessTimeWindow::refreshing_every(1), voice: 0, block_us: METRIC_UNSET }
+    }
+
+    /// One tick of the playing voice `voice` that cost `tick_us` in all, with the voice's engine block `block_us`
+    /// ([`METRIC_UNSET`]: none) on device chunks of `chunk_ms`. Returns whether the tick was kept as a model call.
+    pub(super) fn note_tick(&mut self, voice: u64, tick_us: u32, block_us: u32, chunk_ms: f64) -> bool {
+        if voice != self.voice || block_us != self.block_us {
+            self.voice = voice;
+            self.block_us = block_us;
+            self.window.clear();
+        }
+        if block_us == METRIC_UNSET || !(chunk_ms.is_finite() && chunk_ms > 0.0) {
+            return false;
+        }
+        let (block_ms, tick_ms) = (f64::from(block_us) / 1000.0, f64::from(tick_us) / 1000.0);
+        if block_ms < CALL_STATS_MIN_BLOCK_CHUNKS * chunk_ms || tick_ms < CALL_TICK_CHUNKS * chunk_ms {
+            return false;
+        }
+        self.window.push(tick_us.max(1));
+        true
+    }
+
+    /// p50 and p99 of the calls (us), once there are [`CALL_STATS_MIN_CALLS`] of them.
+    pub(super) fn stats_us(&self) -> Option<(u32, u32)> {
+        (self.window.len() >= CALL_STATS_MIN_CALLS).then(|| (self.window.p50().max(1), self.window.p99().max(1)))
     }
 }
 
@@ -134,6 +217,16 @@ pub struct VoiceChangerMetrics {
     /// settings when nothing was raised; `null` while stopped.
     pub buffer_prefill_ms: Option<f64>,
     pub buffer_max_queue_ms: Option<f64>,
+    /// The engine block in ms the playing voice converts per model call: what the Chunk size setting
+    /// (`block_ms`) resolved to (a size you set planned to whole 20 ms, or Auto's block for this PC), or a
+    /// family voice's own. `null` while stopped and for a voice with no fixed block.
+    pub engine_block_ms: Option<f64>,
+    /// p50 / p99 of the model calls of a voice that converts a long block per call (an engine block of
+    /// [`CALL_STATS_MIN_BLOCK_CHUNKS`] device chunks or more), over the recent window: the per-tick percentiles above
+    /// cannot see its slow calls, as only a few ticks in a hundred run the model. `null` while stopped, for any other
+    /// voice, and until the window holds [`CALL_STATS_MIN_CALLS`] calls.
+    pub call_p50_ms: Option<f64>,
+    pub call_p99_ms: Option<f64>,
 }
 
 /// Frames at `rate` Hz in ms (0 while not running).
@@ -200,7 +293,33 @@ pub(super) fn collect_metrics(state: &VoiceChangerState) -> VoiceChangerMetrics 
             let c = state.metrics_limit_queue_us.load(Ordering::Relaxed);
             (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
         },
+        engine_block_ms: {
+            let c = state.metrics_engine_block_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
+        call_p50_ms: {
+            let c = state.metrics_call_p50_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
+        call_p99_ms: {
+            let c = state.metrics_call_p99_us.load(Ordering::Relaxed);
+            (running && c != METRIC_UNSET).then(|| f64::from(c) / 1000.0)
+        },
     }
+}
+
+/// [`VoiceChangerState::metrics_engine_block_us`] for a voice whose harness runs fixed blocks of
+/// `block_16k` samples at 16 kHz (`VcStreamHarness::fixed_shape`): microseconds, [`METRIC_UNSET`] for a
+/// voice with none.
+pub(super) fn engine_block_us(block_16k: Option<usize>) -> u32 {
+    block_16k
+        .filter(|&b| b > 0)
+        .map_or(METRIC_UNSET, |b| u32::try_from(b * 1000 / 16).map_or(METRIC_UNSET, |us| us.min(METRIC_UNSET - 1)))
+}
+
+/// The engine block (ms) a [`VoiceChangerState::metrics_engine_block_us`] value holds, `None` for [`METRIC_UNSET`].
+pub(super) fn engine_block_ms_of(us: u32) -> Option<f64> {
+    (us != METRIC_UNSET).then(|| f64::from(us) / 1000.0)
 }
 
 #[command]
@@ -291,6 +410,151 @@ mod tests {
         st.reset_run_metrics();
         let m = collect_metrics(&st);
         assert_eq!((m.buffer_prefill_ms, m.buffer_max_queue_ms), (None, None), "a new run starts unmeasured");
+    }
+
+    /// The engine block the playing voice converts per model call (what the Chunk size setting resolved to) is
+    /// reported while running, from the harness's 16 kHz block; stopped, before a voice is published and for a
+    /// voice with no fixed block it is null, and a new run starts unmeasured.
+    #[test]
+    fn the_engine_block_is_reported_while_running() {
+        assert_eq!(engine_block_us(Some(320)), 20_000);
+        assert_eq!(engine_block_us(Some(1_920)), 120_000);
+        assert_eq!(engine_block_us(Some(2_560)), 160_000);
+        assert_eq!(engine_block_us(Some(3_200)), 200_000);
+        assert_eq!(engine_block_us(Some(0)), METRIC_UNSET, "no block");
+        assert_eq!(engine_block_us(None), METRIC_UNSET, "a voice with no fixed block");
+
+        let st = VoiceChangerState::new();
+        assert_eq!(collect_metrics(&st).engine_block_ms, None, "never published");
+        st.metrics_engine_block_us.store(engine_block_us(Some(2_560)), Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).engine_block_ms, None, "stopped");
+        st.capture_sample_rate.store(48_000, Ordering::Relaxed);
+        st.is_running.store(true, Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).engine_block_ms, Some(160.0));
+        let json = serde_json::to_value(collect_metrics(&st)).unwrap();
+        assert_eq!(json["engine_block_ms"].as_f64(), Some(160.0));
+        // Another voice is published (a hot switch): the new voice's block.
+        st.metrics_engine_block_us.store(engine_block_us(Some(1_920)), Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).engine_block_ms, Some(120.0));
+        st.metrics_engine_block_us.store(engine_block_us(None), Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).engine_block_ms, None, "a voice with no fixed block");
+        st.metrics_engine_block_us.store(engine_block_us(Some(2_560)), Ordering::Relaxed);
+        st.reset_run_metrics();
+        st.capture_sample_rate.store(48_000, Ordering::Relaxed);
+        st.is_running.store(true, Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).engine_block_ms, None, "a new run starts unmeasured");
+    }
+
+    /// Plays `n` model calls of `block_ms` ms with the given cost each through `calls`, on 10.667 ms ticks (the default
+    /// 512-frame device buffer): between two calls (a block / chunk apart) the ticks cost 0.3 ms.
+    fn run_calls(calls: &mut CallTimes, voice: u64, block_ms: f64, n: usize, cost_ms: impl Fn(usize) -> f64) {
+        let chunk_ms = 512.0 * 1000.0 / 48_000.0;
+        let between = (block_ms / chunk_ms).round() as usize - 1;
+        let block_us = engine_block_us(Some((block_ms * 16.0) as usize));
+        for i in 0..n {
+            for _ in 0..between {
+                assert!(!calls.note_tick(voice, 300, block_us, chunk_ms), "a cheap tick is not a call");
+            }
+            assert!(calls.note_tick(voice, (cost_ms(i) * 1000.0) as u32, block_us, chunk_ms), "call {i}");
+        }
+    }
+
+    /// The per-tick percentiles cannot see the slow calls of a long block: 10 % of the calls of 200 ms blocks overrun
+    /// (230 ms) and the tick p95 / p99 of the same run still read below the block, while the call window's p99 shows it.
+    #[test]
+    fn the_call_window_sees_the_overruns_the_tick_percentiles_miss() {
+        let block_ms = 200.0;
+        let cost = |i: usize| if i % 10 == 9 { 230.0 } else { 150.0 };
+        // The per-tick view of that run (what the old judgement used): 19 ticks between calls.
+        let mut ticks = ProcessTimeWindow::new();
+        let mut last = 0;
+        for i in 0..40 {
+            for _ in 0..18 {
+                ticks.push(300);
+            }
+            last = ticks.push((cost(i) * 1000.0) as u32);
+        }
+        assert!(last < 200_000, "the tick p99 ({last} us) reads below the 200 ms block");
+        assert!(ticks.p95() < 200_000, "and so does the tick p95 ({} us)", ticks.p95());
+        // The call window: only the calls, so the overruns are 10 % of what it holds.
+        let mut calls = CallTimes::new();
+        run_calls(&mut calls, 1, block_ms, 40, cost);
+        let (p50, p99) = calls.stats_us().expect("40 calls");
+        assert_eq!(p50, 150_000, "a typical call");
+        assert!(p99 as f64 / 1000.0 >= block_ms, "the p99 call ({p99} us) is over the {block_ms} ms block");
+    }
+
+    /// Calls are only kept for a voice with a long block (6 device chunks or more), only the ticks that cost 3 chunks
+    /// or more, nothing is reported before 8 calls, and a voice switch or another block starts the window over.
+    #[test]
+    fn the_call_window_keeps_only_the_calls_of_a_long_block_and_starts_over_with_the_voice() {
+        let chunk_ms = 512.0 * 1000.0 / 48_000.0;
+        let long = engine_block_us(Some(1_920)); // 120 ms
+        let mut calls = CallTimes::new();
+        assert_eq!(calls.stats_us(), None, "nothing yet");
+        // A tick under 3 chunks is no call, whatever the block.
+        assert!(!calls.note_tick(1, 31_000, long, chunk_ms));
+        assert!(calls.note_tick(1, 33_000, long, chunk_ms));
+        // Too few calls: not reported.
+        for _ in 0..(CALL_STATS_MIN_CALLS - 2) {
+            calls.note_tick(1, 90_000, long, chunk_ms);
+        }
+        assert_eq!(calls.stats_us(), None, "{} calls", CALL_STATS_MIN_CALLS - 1);
+        calls.note_tick(1, 90_000, long, chunk_ms);
+        assert_eq!(calls.stats_us().map(|(p50, _)| p50), Some(90_000));
+
+        // Another voice: the window is empty again.
+        calls.note_tick(2, 90_000, long, chunk_ms);
+        assert_eq!(calls.stats_us(), None, "a voice switch starts over");
+        // The same voice with another block starts over too.
+        for _ in 0..CALL_STATS_MIN_CALLS {
+            calls.note_tick(2, 90_000, long, chunk_ms);
+        }
+        assert!(calls.stats_us().is_some());
+        assert!(calls.note_tick(2, 90_000, engine_block_us(Some(2_560)), chunk_ms));
+        assert_eq!(calls.stats_us(), None, "another block starts over");
+
+        // A short block (under 6 chunks: 40 ms is 3.75) keeps nothing: the per-tick percentiles describe its calls.
+        let mut short = CallTimes::new();
+        for _ in 0..20 {
+            assert!(!short.note_tick(1, 90_000, engine_block_us(Some(640)), chunk_ms));
+        }
+        assert_eq!(short.stats_us(), None);
+        // No fixed block (a bring-your-own voice) or a device without a chunk length: nothing.
+        let mut none = CallTimes::new();
+        for _ in 0..20 {
+            assert!(!none.note_tick(1, 90_000, METRIC_UNSET, chunk_ms));
+            assert!(!none.note_tick(1, 90_000, long, 0.0));
+        }
+        assert_eq!(none.stats_us(), None);
+    }
+
+    /// The call percentiles are reported while running (null stopped, before enough calls and on a new run) under their names.
+    #[test]
+    fn the_call_percentiles_are_reported_while_running() {
+        let st = VoiceChangerState::new();
+        let m = collect_metrics(&st);
+        assert_eq!((m.call_p50_ms, m.call_p99_ms), (None, None), "never measured");
+        st.metrics_call_p50_us.store(150_000, Ordering::Relaxed);
+        st.metrics_call_p99_us.store(230_000, Ordering::Relaxed);
+        let m = collect_metrics(&st);
+        assert_eq!((m.call_p50_ms, m.call_p99_ms), (None, None), "stopped");
+        st.capture_sample_rate.store(48_000, Ordering::Relaxed);
+        st.is_running.store(true, Ordering::Relaxed);
+        let m = collect_metrics(&st);
+        assert_eq!((m.call_p50_ms, m.call_p99_ms), (Some(150.0), Some(230.0)));
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!((json["call_p50_ms"].as_f64(), json["call_p99_ms"].as_f64()), (Some(150.0), Some(230.0)));
+        st.metrics_call_p50_us.store(METRIC_UNSET, Ordering::Relaxed);
+        st.metrics_call_p99_us.store(METRIC_UNSET, Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).call_p99_ms, None, "too few calls");
+        st.metrics_call_p99_us.store(230_000, Ordering::Relaxed);
+        st.reset_run_metrics();
+        st.capture_sample_rate.store(48_000, Ordering::Relaxed);
+        st.is_running.store(true, Ordering::Relaxed);
+        assert_eq!(collect_metrics(&st).call_p99_ms, None, "a new run starts unmeasured");
+        assert_eq!(engine_block_ms_of(METRIC_UNSET), None);
+        assert_eq!(engine_block_ms_of(120_000), Some(120.0));
     }
 
     /// Every P0 metrics field of the contract is serialized under its contract name.

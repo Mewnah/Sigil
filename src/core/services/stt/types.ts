@@ -100,6 +100,13 @@ export interface ISTTReceiver {
    */
   onStatus(text: string, options?: SttStatusOptions): void;
   /**
+   * The microphone delivers only digital silence (`silent` true; `device` names it, "" when unknown), or real signal
+   * came back (`silent` false). UI only, never published, and a state of its own beside the status line, so no other
+   * status replaces it: Service_STT shows it as `serviceState.silentInput` until signal returns, the session ends or
+   * a new one starts. Optional: only engines that capture through the Rust speech pipeline can tell.
+   */
+  onInputSilence?(silent: boolean, device?: string): void;
+  /**
    * True while STT is muted: engines may skip work that would only be thrown away (e.g. billed requests). A pending
    * unmute (the user unmuted while an interim sentence was open) is not muted here: engines keep working so the
    * sentence can end, and engines without interims never get stuck waiting for one.

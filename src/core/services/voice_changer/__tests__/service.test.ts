@@ -34,6 +34,8 @@ let capsReply: unknown = null;
 /** `voice_changer_list_slots` reply. */
 let slotRows: Record<string, unknown>[] = [];
 let onSet: (p: VoiceChangerParamsRust) => VoiceChangerParamsRust | Promise<VoiceChangerParamsRust> = (p) => p;
+/** `get_voice_changer_metrics` reply: the 10.7 ms device buffer of a bring-your-own voice unless a test sets an engine block. */
+let metricsReply: Record<string, unknown> = { buffer_ms: 1, process_ms: 2, chunk_ms: 10.67 };
 
 function rustDefaults(): VoiceChangerParamsRust {
     return toRustParams(VoiceChangerStateSchema.parse({}));
@@ -57,7 +59,7 @@ function installBackend() {
                 running = false;
                 return null;
             case "plugin:voice-changer|get_voice_changer_metrics":
-                return { buffer_ms: 1, process_ms: 2, chunk_ms: 10 };
+                return structuredClone(metricsReply);
             case "plugin:voice-changer|voice_changer_get_capabilities":
                 if (capsReply === null) throw new Error("not allowed");
                 return structuredClone(capsReply);
@@ -96,6 +98,7 @@ beforeEach(() => {
     capsReply = null;
     slotRows = [];
     onSet = (p) => p;
+    metricsReply = { buffer_ms: 1, process_ms: 2, chunk_ms: 10.67 };
     storage = new MemStorage();
     vi.stubGlobal("localStorage", storage);
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -656,6 +659,119 @@ describe("P3: settings changes while running (restart only when the engine shape
         expect(stored).toMatchObject({ rvc_execution_provider: "cuda", block_ms: 40, mode: "rvc", rvc_slot_dir: "C:/m/alto" });
         expect(calls("stop_voice_changer")).toBe(2);
         expect(await s.applyTuning({ unknown: 1 })).toBe(false);
+    });
+});
+
+describe("committing a crossfade (the harness reads it only at construction)", () => {
+    const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === `plugin:voice-changer|${cmd}`).length;
+
+    async function runningRvc() {
+        stored = { ...rustDefaults(), mode: "rvc", rvc_consent_acknowledged: true, rvc_slot_dir: "C:/m/alto", slot_id: "alto", crossfade_ms: 20 };
+        running = true;
+        return started();
+    }
+
+    it("on a template voice the overlap is clamped to its engine block, so 20 -> 60 ms on 120 ms blocks restarts once", async () => {
+        metricsReply = { buffer_ms: 40, process_ms: 3, chunk_ms: 10.67, engine_block_ms: 120 };
+        const s = await runningRvc();
+        s.state.voiceChanger.crossfadeMs = 60;
+        await s.commitHarnessParams();
+        expect(stored.crossfade_ms).toBe(60);
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(calls("start_voice_changer")).toBe(1);
+    });
+
+    it("beyond the engine block is the same sound: 150 -> 200 ms on 120 ms blocks sends the value and does not restart", async () => {
+        metricsReply = { buffer_ms: 40, process_ms: 3, chunk_ms: 10.67, engine_block_ms: 120 };
+        const s = await runningRvc();
+        s.state.voiceChanger.crossfadeMs = 150;
+        await s.commitHarnessParams();
+        expect(calls("stop_voice_changer")).toBe(1);
+        emit("voice_changer:started", null);
+        s.state.voiceChanger.crossfadeMs = 200;
+        await s.commitHarnessParams();
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(stored.crossfade_ms).toBe(200);
+    });
+
+    it("a bring-your-own voice (no engine block) keeps the device chunk as its clamp: 20 -> 30 ms is no change, 20 -> 5 ms is", async () => {
+        const s = await runningRvc();
+        s.state.voiceChanger.crossfadeMs = 30;
+        await s.commitHarnessParams();
+        expect(calls("stop_voice_changer")).toBe(0);
+        // Rust still gets the value, and a later change is not flagged as a pending restart because of it.
+        expect(stored.crossfade_ms).toBe(30);
+        await s.update({ rmsMix: 0.3 });
+        expect(calls("stop_voice_changer")).toBe(0);
+        s.state.voiceChanger.crossfadeMs = 5;
+        await s.commitHarnessParams();
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(stored.crossfade_ms).toBe(5);
+    });
+
+    it("the same value committed again changes nothing", async () => {
+        metricsReply = { buffer_ms: 40, process_ms: 3, chunk_ms: 10.67, engine_block_ms: 120 };
+        const s = await runningRvc();
+        const before = setCalls().length;
+        await s.commitHarnessParams();
+        expect(calls("stop_voice_changer")).toBe(0);
+        expect(setCalls().length).toBe(before);
+    });
+});
+
+describe("the Chunk size (block_ms)", () => {
+    const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === `plugin:voice-changer|${cmd}`).length;
+
+    async function runningRvc() {
+        stored = { ...rustDefaults(), mode: "rvc", rvc_consent_acknowledged: true, rvc_slot_dir: "C:/m/alto", slot_id: "alto" };
+        running = true;
+        return started();
+    }
+
+    it("a size you set reaches Rust and restarts the running engine once; the same size again changes nothing", async () => {
+        const s = await runningRvc();
+        expect(s.state.voiceChanger.blockMs).toBe(0);
+        await s.update({ blockMs: 160 });
+        expect(stored.block_ms).toBe(160);
+        expect(calls("stop_voice_changer")).toBe(1);
+        expect(calls("start_voice_changer")).toBe(1);
+        emit("voice_changer:started", null);
+        await s.update({ blockMs: 160 });
+        expect(calls("stop_voice_changer")).toBe(1);
+        // Back to Auto is a size too.
+        await s.update({ blockMs: 0 });
+        expect(stored.block_ms).toBe(0);
+        expect(calls("stop_voice_changer")).toBe(2);
+    });
+
+    it("a preset, another voice and a provider change leave the size alone, and Rust's reply keeps it", async () => {
+        const s = await runningRvc();
+        await s.update({ blockMs: 120 });
+        emit("voice_changer:started", null);
+        for (const step of [
+            () => s.applyRvcProfile("quality"),
+            () => s.applyRvcProfile("streamer"),
+            () => s.selectVoice({ id: "bass", path: "C:/m/bass" }),
+            () => s.update({ rvcExecutionProvider: "dml" }),
+        ]) {
+            await step();
+            emit("voice_changer:started", null);
+            expect(stored.block_ms).toBe(120);
+            expect(s.state.voiceChanger.blockMs).toBe(120);
+        }
+        // Every payload the service sent after the size was set carried it.
+        const sent = setCalls().map(([, args]) => (args as { params: VoiceChangerParamsRust }).params.block_ms);
+        expect(sent.length).toBeGreaterThan(4);
+        expect(sent.slice(-4).every((v) => v === 120)).toBe(true);
+    });
+
+    it("a restart of the app reads the size back, Auto included, and keeps one the list no longer offers", async () => {
+        for (const block_ms of [0, 20, 120, 200, 30, 50]) {
+            handlers.clear();
+            stored = { ...rustDefaults(), block_ms };
+            const s = await started();
+            expect(s.state.voiceChanger.blockMs, `${block_ms}`).toBe(block_ms);
+        }
     });
 });
 

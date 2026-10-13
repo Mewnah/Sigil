@@ -14,7 +14,7 @@ import {
 } from "@/core/services/voice_changer/contract";
 import { showsControl } from "@/core/services/voice_changer/families";
 import type { VcFamilyControl, VcSlotInfo } from "@/core/services/voice_changer/ipc";
-import { pitchExtractorOptions, profileOptions, streamerFewCoresNote } from "@/core/services/voice_changer/options";
+import { pitchExtractorOptions, profileOptions } from "@/core/services/voice_changer/options";
 import { voiceModelIds } from "@/core/services/voice_changer/requirements";
 import { isTemplateSlot } from "@/core/services/voice_changer/slots";
 import { FC } from "react";
@@ -23,7 +23,8 @@ import { useSnapshot } from "valtio";
 import { ModelRequirement } from "../components/ModelRequirement";
 import { BenchmarkPanel } from "./BenchmarkPanel";
 import { VcChoiceSelect, VcDetails, VcNote, VcNumberSlider, VcPathField, VcSliderField, VcSubHeader } from "./common";
-import { BlockMsSelect, EngineSection, LookaheadMsSelect } from "./EngineSection";
+import { ChunkSizeSelect } from "./ChunkSize";
+import { EngineSection, LookaheadMsSelect } from "./EngineSection";
 import { FamilySection } from "./FamilySection";
 import { useSelectedVoice, useVoiceFamily } from "./hooks";
 import { VoiceLibrary } from "./VoiceLibrary";
@@ -35,18 +36,10 @@ const PresetSelect: FC = () => {
     const { t } = useTranslation();
     const snap = useSnapshot(window.ApiServer.voiceChanger.state);
     const vc = snap.voiceChanger;
-    const sysinfo = useSnapshot(window.ApiServer.sysinfo.state);
     const options = profileOptions(snap.capabilities as typeof window.ApiServer.voiceChanger.state.capabilities, vc.rvcProfile);
     const current = options.find((o) => o.value === vc.rvcProfile);
-    // The Streamer runs on the processor. On Auto the engine takes the block this PC's cores keep up with (120 ms from 7
-    // physical cores, 160 ms with 6, 200 ms with 5 or fewer); the note is for a Block size set by hand (or by Autotune) that
-    // is shorter than THIS PC's block, on a PC with 6 or fewer physical cores, and it names both sizes.
-    const fewCores = streamerFewCoresNote({
-        profile: vc.rvcProfile,
-        ep: vc.rvcExecutionProvider,
-        physicalCores: sysinfo.info?.cpu.physical_cores,
-        blockMs: vc.blockMs,
-    });
+    // The few-cores warning about a Chunk size set shorter than the Streamer keeps up with on this PC is part of the
+    // Chunk size control (`ChunkSize.tsx`), right under the size it is about.
     return (
         <>
             <VcChoiceSelect
@@ -66,11 +59,6 @@ const PresetSelect: FC = () => {
             />
             {vc.rvcProfile === "quality" || vc.rvcProfile === "studio_trt" ? (
                 <div className="alert alert-info alert-soft text-xs leading-snug">{t("voice_changer.rvc_quality_banner")}</div>
-            ) : null}
-            {fewCores ? (
-                <div className="alert alert-warning alert-soft text-xs leading-snug">
-                    {t("voice_changer.rvc_streamer_few_cores_note", { cores: fewCores.cores, block: fewCores.blockMs, current: fewCores.currentMs })}
-                </div>
             ) : null}
         </>
     );
@@ -273,16 +261,16 @@ export const RvcSection: FC<{ crossfadeMaxMs: number; crossfadeShownMs: number; 
 
             <VcSubHeader titleKey="voice_changer.section_preset" infoKey="voice_changer.section_preset_info" />
             <PresetSelect />
+            <ChunkSizeSelect voice={voice} metrics={metrics} />
 
             <VcSubHeader titleKey="voice_changer.section_voice_settings" infoKey="voice_changer.section_voice_settings_info" />
             <VoiceSettings voice={voice} />
 
             <VcDetails
                 titleKey="voice_changer.section_rvc_tuning"
-                infoKey="voice_changer.section_rvc_tuning_info"
+                infoKey="voice_changer.section_rvc_tuning_info_v2"
                 defaultOpen={voiceChanger.rvcProfile === "quality"}
             >
-                <BlockMsSelect template={kind !== "legacy"} family={kind === "family"} />
                 <LookaheadMsSelect template={kind !== "legacy"} family={kind === "family"} />
                 <VcSliderField
                     labelKey="voice_changer.extra_context_ms"

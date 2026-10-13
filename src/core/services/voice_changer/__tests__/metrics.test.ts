@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
     assessMetrics,
     epDisplayName,
+    effectiveLatencyBudgetMs,
     epStatus,
+    formatChunkMs,
     formatMs,
     isVoiceChangerEpComponent,
     normalizeMetrics,
@@ -30,6 +32,9 @@ const sample = (over: Partial<VoiceChangerMetrics> = {}): VoiceChangerMetrics =>
     cushion_ms: null,
     buffer_prefill_ms: null,
     buffer_max_queue_ms: null,
+    engine_block_ms: null,
+    call_p50_ms: null,
+    call_p99_ms: null,
     ...over,
 });
 
@@ -53,7 +58,33 @@ describe("metrics normalization", () => {
             cushion_ms: null,
             buffer_prefill_ms: null,
             buffer_max_queue_ms: null,
+            engine_block_ms: null,
+            call_p50_ms: null,
+            call_p99_ms: null,
         });
+    });
+
+    it("reads the model-call percentiles of a long-block voice and drops nonsense", () => {
+        const read = (v: unknown) => {
+            const m = normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, call_p50_ms: v, call_p99_ms: v });
+            return [m?.call_p50_ms, m?.call_p99_ms];
+        };
+        expect(read(150)).toEqual([150, 150]);
+        expect(read(null)).toEqual([null, null]);
+        expect(read(undefined)).toEqual([null, null]);
+        expect(read("150")).toEqual([null, null]);
+        expect(read(Number.NaN)).toEqual([null, null]);
+    });
+
+    it("reads the engine block the playing voice converts per call and drops nonsense", () => {
+        const read = (v: unknown) => normalizeMetrics({ buffer_ms: 1, process_ms: 2, chunk_ms: 10, engine_block_ms: v })?.engine_block_ms;
+        expect(read(160)).toBe(160);
+        expect(read(20)).toBe(20);
+        expect(read(null)).toBeNull();
+        expect(read(undefined)).toBeNull();
+        expect(read("160")).toBeNull();
+        expect(read(Number.NaN)).toBeNull();
+        expect(read(-5)).toBe(0);
     });
 
     it("reads the output buffer in force and drops nonsense", () => {
@@ -189,6 +220,70 @@ describe("metrics assessment", () => {
         expect(assessMetrics(sample({ process_p99_ms: 12 }), 300).realtime).toBe("spikes");
         expect(assessMetrics(sample({ process_ms: 11, process_p99_ms: 15 }), 300).realtime).toBe("slow");
         expect(assessMetrics(sample({ process_p99_ms: null }), 300).realtime).toBe("ok");
+    });
+
+    it("judges a voice that converts long blocks by its block, not by the 10 ms device tick", () => {
+        // The Streamer on the processor, 160 ms chunks: the tick that calls the model takes ~100 ms, the ticks between
+        // cost almost nothing, and the moving average spikes right after each call.
+        const burst = (over: Partial<VoiceChangerMetrics> = {}) =>
+            sample({ engine_block_ms: 160, chunk_ms: 10.67, process_ms: 22, process_p50_ms: 0.4, process_p95_ms: 98, process_p99_ms: 112, ...over });
+        // Healthy: calls finish well inside the block. Judged by the device tick this said "slow" after every call.
+        expect(assessMetrics(sample({ chunk_ms: 10.67, process_ms: 22, process_p95_ms: 98, process_p99_ms: 112 }), 300).realtime).toBe("slow");
+        expect(assessMetrics(burst(), 300).realtime).toBe("ok");
+        // The typical call takes the whole block or more: it falls behind.
+        expect(assessMetrics(burst({ process_p95_ms: 160 }), 300).realtime).toBe("slow");
+        expect(assessMetrics(burst({ process_p95_ms: 175, process_p99_ms: 190 }), 300).realtime).toBe("slow");
+        // Only the slowest calls overrun: spikes.
+        expect(assessMetrics(burst({ process_p95_ms: 120, process_p99_ms: 165 }), 300).realtime).toBe("spikes");
+        // An older backend without the percentiles: the p99 / the average stand in.
+        expect(assessMetrics(burst({ process_p95_ms: null, process_p99_ms: 120 }), 300).realtime).toBe("ok");
+        expect(assessMetrics(burst({ process_p95_ms: null, process_p99_ms: 170 }), 300).realtime).toBe("slow");
+        // A block no longer than one device tick (the app's 20 ms against a 21 ms buffer), no engine block (a
+        // bring-your-own voice, a backend without it): the per-tick rules.
+        expect(assessMetrics(sample({ engine_block_ms: 10.7, process_ms: 11, process_p99_ms: 15 }), 300).realtime).toBe("slow");
+        expect(assessMetrics(sample({ engine_block_ms: 10, process_p99_ms: 12 }), 300).realtime).toBe("spikes");
+        expect(assessMetrics(sample({ engine_block_ms: null, process_ms: 11, process_p99_ms: 15 }), 300).realtime).toBe("slow");
+        // Still starting while nothing was converted.
+        expect(assessMetrics(burst({ process_ms: 0, process_p99_ms: 0, process_p95_ms: 0, buffer_ms: 0 }), 300).starting).toBe(true);
+    });
+
+    it("judges a long block by its model calls when the backend times them: 10 % overrunning calls read 'ok' by the ticks and 'spikes' by the calls", () => {
+        // The 4-core Streamer on the processor: 200 ms blocks on 10.7 ms ticks. One tick in nineteen runs the model, so
+        // the tick p95 sits among the quickest calls and the tick p99 below the block; 10 % of the calls take 230 ms.
+        const ticks = sample({ engine_block_ms: 200, chunk_ms: 10.67, process_ms: 8, process_p50_ms: 0.3, process_p95_ms: 40, process_p99_ms: 150 });
+        expect(assessMetrics(ticks, 300)).toMatchObject({ realtime: "ok", byCalls: false });
+        const calls = { ...ticks, call_p50_ms: 150, call_p99_ms: 230 };
+        expect(assessMetrics(calls, 300)).toMatchObject({ realtime: "spikes", byCalls: true });
+        // Healthy calls: the median and the p99 both inside the block.
+        expect(assessMetrics({ ...ticks, call_p50_ms: 130, call_p99_ms: 190 }, 300)).toMatchObject({ realtime: "ok", byCalls: true });
+        // The typical call takes the whole block: it falls behind for good.
+        expect(assessMetrics({ ...ticks, call_p50_ms: 205, call_p99_ms: 260 }, 300).realtime).toBe("slow");
+        // One without the other, or no long block: the per-tick judgement stays.
+        expect(assessMetrics({ ...ticks, call_p50_ms: 150, call_p99_ms: null }, 300)).toMatchObject({ realtime: "ok", byCalls: false });
+        expect(assessMetrics({ ...calls, engine_block_ms: null }, 300).byCalls).toBe(false);
+        expect(assessMetrics({ ...calls, engine_block_ms: 10.5 }, 300).byCalls).toBe(false);
+    });
+
+    it("keeps the latency budget at least one engine block plus two device buffers, as Rust does", () => {
+        const long = sample({ engine_block_ms: 120, chunk_ms: 10.67 });
+        // Stored 100 ms: raised to 120 + 21.3.
+        expect(effectiveLatencyBudgetMs(100, long)).toBeCloseTo(141.34, 2);
+        expect(effectiveLatencyBudgetMs(300, long)).toBe(300);
+        expect(effectiveLatencyBudgetMs(100, sample({ engine_block_ms: null, chunk_ms: 10.67 }))).toBe(100);
+        expect(effectiveLatencyBudgetMs(100, null)).toBe(100);
+        expect(effectiveLatencyBudgetMs(5, sample({ engine_block_ms: null, chunk_ms: 10.67 }))).toBe(10.67);
+        // A backlog of one call's worth (~130 ms) is no warning against a 100 ms budget with 120 ms blocks, nor is 112 ms.
+        expect(assessMetrics(sample({ ...long, backlog_ms: 112 }), 100).backlogHigh).toBe(false);
+        // It is once it nears the budget in force.
+        expect(assessMetrics(sample({ ...long, backlog_ms: 115 }), 100).backlogHigh).toBe(true);
+        expect(assessMetrics(sample({ engine_block_ms: null, chunk_ms: 10.67, backlog_ms: 85 }), 100).backlogHigh).toBe(true);
+    });
+
+    it("formats a chunk in whole ms when it is one", () => {
+        expect([20, 80, 100, 160, 200, 19.98, 20.03].map(formatChunkMs)).toEqual(["20", "80", "100", "160", "200", "20", "20"]);
+        expect(formatChunkMs(10.67)).toBe("10.7");
+        expect(formatChunkMs(83.3)).toBe("83.3");
+        expect(formatChunkMs(Number.NaN)).toBe("–");
     });
 
     it("flags a backlog near the budget (never below one block)", () => {

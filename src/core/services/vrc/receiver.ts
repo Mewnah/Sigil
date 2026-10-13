@@ -4,6 +4,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { effectiveOscHost, rustTreatsAsThisPc } from "../../ui/inspector/vrc/rustHost";
 import type { VRC_State } from "./schema";
 import {
   OSC_EVENTS,
@@ -22,12 +23,12 @@ export function parseListenPort(raw: unknown): number {
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : DEFAULT_LISTEN_PORT;
 }
 
-/** Whether the VRChat host setting means this PC (as Rust's `is_loopback_host`; empty = the default 127.0.0.1). */
+/**
+ * Whether the VRChat host setting means this PC: Rust's `is_loopback_host` (`rustTreatsAsThisPc`, checked against the same table
+ * as osc.rs), an empty setting meaning the default 127.0.0.1.
+ */
 export function isLoopbackHost(raw: unknown): boolean {
-  const host = String(raw ?? "").trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
-  if (host === "" || host === "localhost" || host === "::1") return true;
-  const v4 = host.replace(/^::ffff:/, "");
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
+  return rustTreatsAsThisPc(effectiveOscHost(raw));
 }
 
 /**
@@ -38,7 +39,7 @@ export function listenOptionsFor(
   state: Pick<VRC_State, "enable" | "muteSync" | "oscQuery" | "oscListenPort" | "oscHost">,
 ): RustOscListenOptions | null {
   if (!state.enable || !state.muteSync) return null;
-  const host = String(state.oscHost ?? "").trim() || "127.0.0.1";
+  const host = effectiveOscHost(state.oscHost);
   return {
     host,
     port: parseListenPort(state.oscListenPort),

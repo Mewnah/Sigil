@@ -12,6 +12,7 @@ use crate::services::AppConfiguration;
 mod exit_guard;
 mod port_precheck;
 mod services;
+mod webview_recovery;
 mod window_size;
 
 #[derive(Parser, Debug)]
@@ -115,6 +116,8 @@ fn main() {
             if start_minimized {
                 show_minimized_without_focus(&window);
             }
+            // A renderer failure of the host page reloads it (captions pass through that page).
+            webview_recovery::watch(&window);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

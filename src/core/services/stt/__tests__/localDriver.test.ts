@@ -560,6 +560,9 @@ describe("local backend settings → Rust", () => {
     ]);
     expect(speechStatusLine(ev("backlog_dropped", { level: "warning" }), title)?.[1]).toMatchObject({ level: "warning", expireMs: expect.any(Number) });
     expect(speechStatusLine(ev("capture_gap", { level: "warning" }), title)?.[0]).toBe("stt.local_status_capture_gap");
+    // A silent microphone is a state of its own (the receiver's onInputSilence), never a line the next status replaces.
+    expect(speechStatusLine(ev("no_signal", { detail: "Headset Mic", level: "warning" }), title)).toBeNull();
+    expect(speechStatusLine(ev("signal_restored"), title)).toBeNull();
     expect(speechStatusLine(ev("something_new", { detail: "hi", level: "warning" }), title)?.[0]).toBe("stt.local_status_warning");
     expect(speechStatusLine(ev("something_new"), title)).toBeNull();
   });
@@ -774,6 +777,7 @@ function harness(opts: { installed?: string[]; consent?: ConsentChoice; automati
     onInterim: vi.fn(),
     onFinal: vi.fn(),
     onStatus: vi.fn(),
+    onInputSilence: vi.fn(),
     isMuted: vi.fn(() => false),
   };
   const svc = new STT_LocalService(receiver as unknown as ISTTReceiver, deps);
@@ -836,6 +840,50 @@ describe("STT_LocalService", () => {
     h.emit("speech:partial", { pipelineId: "mic", epoch: e, segmentId: 2, revision: 0, text: "after stop", lang: "en" });
     expect(h.receiver.onInterim).toHaveBeenCalledTimes(interims);
     expect(localSpeechState.plan).toBeNull();
+  });
+
+  describe("a microphone that delivers digital silence", () => {
+    const silence = (epoch: number, code: "no_signal" | "signal_restored", detail = "") => ({
+      pipelineId: "mic", epoch, state: "listening", code, detail, progress: null,
+      level: code === "no_signal" ? "warning" : "info", modelId: null, engine: null, device: null,
+    });
+
+    it("goes to the receiver's own channel with the device name, never to the status line, and ends when signal returns", async () => {
+      const h = harness();
+      await h.svc.start(params());
+      const e = h.epoch;
+      const report = h.receiver.onInputSilence!;
+      report.mockClear();
+      h.receiver.onStatus.mockClear();
+      h.emit("speech:status", silence(e, "no_signal", "Headset Mic"));
+      expect(report).toHaveBeenLastCalledWith(true, "Headset Mic");
+      h.emit("speech:status", silence(e - 1, "no_signal", "Old Mic")); // an older session
+      expect(report).toHaveBeenCalledTimes(1);
+      h.emit("speech:status", silence(e, "signal_restored"));
+      expect(report).toHaveBeenLastCalledWith(false, "");
+      expect(report).toHaveBeenCalledTimes(2);
+      expect(h.receiver.onStatus).not.toHaveBeenCalled();
+      await h.svc.stop();
+    });
+
+    it("ends with the session: a Stop, and a session that failed and restarts", async () => {
+      const h = harness();
+      await h.svc.start(params());
+      const report = h.receiver.onInputSilence!;
+      h.emit("speech:status", silence(h.epoch, "no_signal", "Headset Mic"));
+      report.mockClear();
+      // The pipeline ends itself with an error a restart can fix: the silence of that session is over.
+      h.emit("speech:status", { ...silence(h.epoch, "no_signal"), state: "error", code: "capture_error", detail: "audio device error: gone", level: "error" });
+      expect(report).toHaveBeenLastCalledWith(false);
+
+      const stopped = harness();
+      await stopped.svc.start(params());
+      stopped.emit("speech:status", silence(stopped.epoch, "no_signal", "Headset Mic"));
+      stopped.receiver.onInputSilence!.mockClear();
+      await stopped.svc.stop();
+      expect(stopped.receiver.onInputSilence).toHaveBeenLastCalledWith(false);
+      await h.svc.stop();
+    });
   });
 
   describe("interim results switch", () => {

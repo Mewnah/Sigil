@@ -45,6 +45,12 @@ describe("isLoopbackHost", () => {
     }
     for (const h of ["192.168.1.20", "vrchat-pc", "10.0.0.127", "1270.0.0.1"]) expect(isLoopbackHost(h), h).toBe(false);
   });
+
+  it("agrees with Rust on the spellings the old check got wrong", () => {
+    // osc.rs binds the loopback for these (the OSCQuery switch must show), and an address Rust cannot parse is another PC.
+    for (const h of ["0:0:0:0:0:0:0:1", "::ffff:7f00:1", "[::FFFF:7F00:1]"]) expect(isLoopbackHost(h), h).toBe(true);
+    expect(isLoopbackHost("127.999.0.1")).toBe(false);
+  });
 });
 
 describe("OscReceiverClient", () => {
