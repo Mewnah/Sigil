@@ -344,7 +344,7 @@
       "title": "Magpie TTS v2602 text tokenizer",
       "description": "Pronunciation dictionaries and settings of the Magpie v2602 voices, the members of NVIDIA's .nemo archive. About 10 MB.",
       "license": "NVIDIA Open Model License",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "1d848e67f9454a73af772cc26f21d0db_heteronyms-052722",
@@ -469,7 +469,7 @@
       "title": "Magpie TTS v2607 text tokenizer",
       "description": "Pronunciation data and settings of the Magpie v2607 voices (adds Korean, Arabic and Brazilian Portuguese): the tokenizer members of NVIDIA's v2607 .nemo archive, as NeMo-Speech.cpp 0.2.0's own model index lists them. About 6 MB.",
       "license": "NVIDIA Open Model License",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "magpie-tts-357m-v2607-tokenizer.zip",
@@ -496,7 +496,7 @@
       "title": "NVIDIA Magpie TTS Multilingual 357M (v2607)",
       "description": "The newer Magpie checkpoint: the same five voices, plus Korean, Arabic and Brazilian Portuguese. NVIDIA's own file, used as it is. Runs on the NeMo-Speech.cpp 0.2.0 server above. About 570 MB download; uses about 1.5 GB of video memory.",
       "license": "NVIDIA Open Model License",
-      "status": "unpublished",
+      "status": "published",
       "min_vram_mb": 1500,
       "requires": [
         "tts/magpie-tts-357m-v2607-tokenizer",

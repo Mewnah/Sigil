@@ -16,7 +16,7 @@
       "title": "transcribe.cpp speech engine (CUDA 13)",
       "description": "Runs GGUF speech-to-text models (Qwen3-ASR, Cohere Transcribe, Voxtral, Parakeet, Whisper and more) on NVIDIA GPUs through CUDA 13. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU; installs the NVIDIA GPU runtime with it.",
       "license": "AGPL-3.0-only AND MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cuda13",
       "requires": [
         "runtime/nvidia-cuda13"
@@ -88,7 +88,7 @@
       "title": "transcribe.cpp speech engine (AVX-512)",
       "description": "Runs GGUF speech-to-text models on processors with AVX-512.",
       "license": "AGPL-3.0-only AND MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cpu-avx512",
       "files": [
         {
@@ -123,7 +123,7 @@
       "title": "transcribe.cpp speech engine (AVX2)",
       "description": "Runs GGUF speech-to-text models on processors with AVX2 (most PCs from 2015 on).",
       "license": "AGPL-3.0-only AND MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cpu-avx2",
       "files": [
         {
@@ -158,7 +158,7 @@
       "title": "transcribe.cpp speech engine (CPU)",
       "description": "Runs GGUF speech-to-text models on any 64-bit processor.",
       "license": "AGPL-3.0-only AND MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cpu",
       "files": [
         {

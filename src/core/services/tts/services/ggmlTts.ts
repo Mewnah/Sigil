@@ -147,15 +147,11 @@ export const GGML_ENGINES: Readonly<Record<GgmlTtsEngine, GgmlEngineFacts>> = {
 };
 
 /**
- * Catalog entries the app cannot download (Import until they are published): the Sigil-hosted Magpie tokenizers and the
- * v2607 checkpoint (NVIDIA's own GGUF, pinned, published together with its tokenizer once `real_ggml_engine_speaks` has
- * passed on the v0.2.0 packs), and the Sigil-built s2 packs. A test keeps every id here `unpublished` in the catalog, so
- * publishing one means removing it from this set.
+ * Catalog entries the app cannot download (Import until they are published): the Sigil-built s2 packs. The Magpie
+ * tokenizers (Mewnah/Sigil-assets) and the v2607 checkpoint (NVIDIA's own GGUF) are published. A test keeps every id
+ * here `unpublished` in the catalog, so publishing one means removing it from this set.
  */
 export const GGML_LOCAL_ONLY_IDS: ReadonlySet<string> = new Set([
-  MAGPIE_TOKENIZER_V2602,
-  MAGPIE_TOKENIZER_V2607,
-  "tts/magpie-tts-357m-v2607",
   ...GGML_ENGINES.s2.packs.map((p) => p.runtime),
 ]);
 

@@ -42,7 +42,7 @@
       "title": "FCPE pitch",
       "description": "Fast pitch tracking for the voice changer (FCPE). About 44 MB.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.onnx",

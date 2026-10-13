@@ -14,7 +14,7 @@
       "title": "Sigil-ZS zero-shot voice engine (Seed-VC real-time)",
       "description": "Content encoder, flow-matching DiT, HiFT vocoder and CAM++ speaker encoder for zero-shot voices made from a 3-10 s reference clip. Runs on CUDA or DirectML.",
       "license": "GPL-3.0 AND Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "min_vram_mb": 1400,
       "files": [
         {
@@ -159,7 +159,7 @@
       "title": "Sigil-ZS fp16 content encoder and DiT",
       "description": "Optional half-precision XLS-R and DiT graphs for Sigil-ZS voices (less VRAM; their waveform differs from the fp32 graphs).",
       "license": "GPL-3.0 AND Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "requires": [
         "vc/zs-seed-vc"
       ],

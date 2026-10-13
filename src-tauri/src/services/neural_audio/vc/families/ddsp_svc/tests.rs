@@ -454,7 +454,9 @@ fn catalog_entries_match_the_embedded_layout() {
     let find = |id: &str| entries.iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("{id} in vc-ddsp.json"));
     let layout = DdspLayout::embedded().unwrap();
     let t = find(TEMPLATE_ID);
-    assert_eq!(t["status"], "unpublished");
+    // Hosted on Mewnah/Sigil-assets and published; every published file carries its pin.
+    assert_eq!(t["status"], "published");
+    assert!(t["files"].as_array().unwrap().iter().all(|f| f["sha256"].is_string() && f["size"].as_u64().unwrap_or(0) > 0));
     for g in ["ddsp", "reflow_step"] {
         let info = &layout.graphs[g];
         let file = t["files"].as_array().unwrap().iter().find(|f| f["path"] == info.file.as_str()).unwrap();

@@ -88,13 +88,13 @@ afterEach(() => {
 });
 
 describe("<GgmlTts> panel", () => {
-  it("shows Magpie's voices, languages and downloads, with the tokenizer hint", () => {
+  it("shows Magpie's voices, languages and downloads; no import hint now that the tokenizers are published", () => {
     const html = render();
     expect(html).toContain('data-requirement="tts/magpie-tts-357m-v2602,tts/magpie-tts-357m-v2602-tokenizer,tts/nemo-nano-codec-22khz,runtime/nemo-speech-vulkan"');
     for (const v of ["John", "Sofia", "Aria", "Jason", "Leo"]) expect(html).toContain(`value="${v}"`);
     expect(html).toContain('<option value="de">German</option>');
     expect(html).not.toContain('<option value="ja">');
-    expect(html).toContain("tts.ggml_magpie_tokenizer_hint");
+    expect(html).not.toContain("tts.ggml_magpie_tokenizer_hint");
     expect(html).toContain("tts.ggml_magpie_languages_hint");
     expect(html).not.toContain("data-picker");
     // Magpie has CUDA, Vulkan and processor packs; no CUDA 13 one.

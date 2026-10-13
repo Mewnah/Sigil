@@ -597,10 +597,16 @@ fn catalog_lists_every_transcribe_variant_as_a_local_pack() {
         assert!(variants.contains(&v), "runtime/sigil-transcribe-{} missing", v.as_str());
     }
     for p in &packs {
-        assert!(!p.published, "{} must stay unpublished (local build)", p.id);
         let entry = catalog.get(&p.id).unwrap();
         assert_eq!(entry.kind, EntryKind::Runtime);
-        assert_eq!(entry.status, PublishStatus::Unpublished);
+        // Sigil-built packs are hosted on Mewnah/Sigil-assets: the built ones are published and pinned;
+        // Vulkan stays unpublished until a pack is built (it needs the Vulkan SDK).
+        let vulkan = p.variant.as_str() == "vulkan";
+        assert_eq!(p.published, !vulkan, "{} published", p.id);
+        assert_eq!(entry.status, if vulkan { PublishStatus::Unpublished } else { PublishStatus::Published });
+        if p.published {
+            assert!(entry.files.iter().all(|f| f.sha256.is_some() && f.size > 0), "{} must be hash-pinned", p.id);
+        }
         assert_eq!(entry.files.len(), 1);
         let archive = entry.files[0].archive.as_ref().expect("zip pack");
         assert!(archive.include.iter().any(|g| g == "sigil-pack.json"));

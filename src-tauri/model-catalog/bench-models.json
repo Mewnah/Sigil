@@ -76,7 +76,7 @@
       "title": "CAM++ speaker embedding (exact pooling)",
       "description": "Speaker-similarity model of the voice-changer benchmark's scorer v2.",
       "license": "Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.onnx",
@@ -100,7 +100,7 @@
       "title": "GPU load generator",
       "description": "A fixed convolution workload the benchmark runs next to the voice changer to simulate a game.",
       "license": "AGPL-3.0-or-later",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.onnx",

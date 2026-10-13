@@ -13,7 +13,7 @@
       "title": "MeanVC2 voice graphs",
       "description": "Zero-shot voice conversion on the CPU (MeanVC2, experimental): the content encoder, the DiT and the vocoder. About 182 MB.",
       "license": "Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "fbank.onnx",

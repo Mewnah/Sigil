@@ -43,7 +43,7 @@
       "title": "Qwen3-TTS server (CUDA 13)",
       "description": "Runs Qwen3-TTS voices on NVIDIA graphics cards through CUDA 13. Needs driver R580 or newer and a Turing (GTX 16 / RTX 20) or newer GPU; installs the NVIDIA GPU runtime with it.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cuda13",
       "requires": ["runtime/nvidia-cuda13"],
       "files": [
@@ -73,7 +73,7 @@
       "title": "Qwen3-TTS server (processor)",
       "description": "Runs Qwen3-TTS voices on the processor, for PCs without a suitable graphics card. Slower than real time on most processors: Kokoro is the better voice there.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "variant": "cpu",
       "files": [
         {

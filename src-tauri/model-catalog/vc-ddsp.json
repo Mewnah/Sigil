@@ -14,7 +14,7 @@
       "title": "DDSP-SVC 6.3 graphs",
       "description": "Sigil's DDSP-SVC 6.3 graphs without weights (the DDSP synthesiser and one rectified-flow step). Imported DDSP-SVC singing voices run on them.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "requires": ["vc/vocoder-pc-nsf-hifigan-44k", "vc/embedder-contentvec"],
       "files": [
         {
@@ -63,7 +63,7 @@
       "title": "PC-NSF-HiFiGAN 44.1 kHz",
       "description": "openvpi's pitch-controllable NSF-HiFiGAN vocoder (44.1 kHz, hop 512, 128 mel bins, release 2025.02), exported with a continuous-phase input. The vocoder of DDSP-SVC 6.3 voices.",
       "license": "CC-BY-NC-SA-4.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.onnx",

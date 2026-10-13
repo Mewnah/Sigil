@@ -15,7 +15,7 @@
       "title": "ContentVec (768)",
       "description": "Content encoder for RVC v2 voices (HuBERT-base ContentVec, layer 12). The default for most voices.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -75,7 +75,7 @@
       "title": "ContentVec (256, RVC v1)",
       "description": "Content encoder for RVC v1 voices (ContentVec layer 9 through its 256-channel projection).",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -135,7 +135,7 @@
       "title": "SPIN v2",
       "description": "Content encoder for voices trained with Applio's SPIN v2 embedder.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -183,7 +183,7 @@
       "title": "SPIN",
       "description": "Content encoder for voices trained with Applio's SPIN embedder.",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -231,7 +231,7 @@
       "title": "Japanese HuBERT",
       "description": "Content encoder for voices trained with the Japanese HuBERT base embedder (rinna).",
       "license": "Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -279,7 +279,7 @@
       "title": "Korean HuBERT",
       "description": "Content encoder for voices trained with the Korean HuBERT base embedder (team-lucid).",
       "license": "Apache-2.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",
@@ -327,7 +327,7 @@
       "title": "Chinese HuBERT",
       "description": "Content encoder for voices trained with the Chinese HuBERT base embedder (TencentGameMate).",
       "license": "MIT",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "model.fp32.onnx",

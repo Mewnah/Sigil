@@ -87,7 +87,7 @@
       "title": "NLLB-200 1.3B (offline translation, 200 languages, higher quality)",
       "description": "The larger NLLB-200 translator: better translations than the 600M model for the same 200 languages, still offline on the processor, about twice as slow. About 1.7 GB download.",
       "license": "CC-BY-NC-4.0",
-      "status": "unpublished",
+      "status": "published",
       "files": [
         {
           "path": "nllb-200-distilled-1.3b-int8.zip",
