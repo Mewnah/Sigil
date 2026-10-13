@@ -131,7 +131,7 @@ const ActionBarDragGhost: FC<{ label: string; icon: React.ReactNode; x: number; 
     hint,
 }) => (
     <div
-        className="fixed z-[100] pointer-events-none flex flex-col gap-0.5 px-3 py-2 w-[min(240px,calc(100vw-32px))] rounded-lg bg-base-300/95 backdrop-blur-sm border-2 border-primary shadow-2xl shadow-primary/15"
+        className="fixed z-[100] pointer-events-none flex flex-col gap-0.5 px-3 py-2 w-[min(15rem,calc(100vw-2rem))] rounded-lg bg-base-300/95 backdrop-blur-sm border-2 border-primary shadow-2xl shadow-primary/15"
         style={{ left: x + 14, top: y + 14, transform: "rotate(1.5deg)" }}
         role="status"
         aria-live="polite"
@@ -149,7 +149,7 @@ const ActionBarDragGhost: FC<{ label: string; icon: React.ReactNode; x: number; 
 const InsertionMarker: FC<{ leftPx: number }> = ({ leftPx }) => (
     <div
         className="absolute top-1/2 -translate-y-1/2 w-1 rounded-full bg-primary pointer-events-none z-20 h-11 shadow-lg shadow-primary/50 ring-2 ring-primary/20 transition-[left] duration-75 ease-out"
-        style={{ left: leftPx, marginLeft: -2 }}
+        style={{ left: leftPx, marginLeft: "-0.125rem" }}
         aria-hidden
     />
 );
@@ -219,7 +219,7 @@ const StatusCard: FC<StatusCardProps> = ({
     return (
         <div
             data-action-bar-card={serviceId}
-            className={`bg-base-300 border p-2 rounded-lg flex items-center gap-2 transition-[opacity,transform,box-shadow] duration-150 group h-14 flex-shrink-0 min-w-[200px] border-base-content/10 ${
+            className={`bg-base-300 border p-2 rounded-lg flex items-center gap-2 transition-[opacity,transform,box-shadow] duration-150 group h-14 flex-shrink-0 min-w-50 border-base-content/10 ${
                 isReorderSource
                     ? "opacity-40 scale-[0.97] shadow-inner ring-2 ring-dashed ring-primary/35 border-primary/20"
                     : ""

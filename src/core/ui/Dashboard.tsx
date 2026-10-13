@@ -128,7 +128,7 @@ const QuickAction: FC<QuickActionProps> = ({ label, icon, onClick, variant = "gh
 
 // Kick logo
 const KickIcon: FC = () => (
-    <svg width={20} height={20} viewBox="0 0 512 512" fill="currentColor">
+    <svg width="1.25rem" height="1.25rem" viewBox="0 0 512 512" fill="currentColor">
         <path d="M115.2 0h76.8v204.8L345.6 0H448L268.8 230.4 460.8 512H345.6L192 281.6V512h-76.8V0z" />
     </svg>
 );
@@ -166,7 +166,7 @@ const Dashboard: FC = memo(() => {
                 {/* Service Cards Grid */}
                 <section className="space-y-3">
                     <h2 className="text-lg font-semibold text-base-content/80">Services</h2>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 ui-sm:grid-cols-2 ui-lg:grid-cols-4 gap-4">
                         <ServiceCard
                             title="Speech to Text"
                             icon={<RiUserVoiceFill />}

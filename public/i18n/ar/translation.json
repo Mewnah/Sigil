@@ -1592,7 +1592,10 @@
     "web_server_status_stopped": "Stopped: {{error}}. Starting again.",
     "lan_off_hint": "To use a phone or a second PC, set {{field}} to {{option}} (Settings, {{section}}).",
     "lan_mode_localhost_turn_on": "To allow a phone, a second PC or Link apps, choose {{option}} above.",
-    "lan_mode_firewall_note": "Windows may ask once to allow Sigil on the network when LAN access is turned on."
+    "lan_mode_firewall_note": "Windows may ask once to allow Sigil on the network when LAN access is turned on.",
+    "ui_scale_auto": "Auto",
+    "ui_scale_auto_hint": "Auto picks {{size}} for the monitor Sigil is on.",
+    "ui_scale_auto_unknown": "Sigil could not read this monitor, so Auto stays at 100%."
   },
   "word_replacements": {
     "title": "بدائل الكلمات",

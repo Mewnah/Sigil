@@ -162,7 +162,7 @@ export const SigilLayout: FC<{ blocked?: boolean }> = memo(({ blocked = false })
                             <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-end p-3">
                                 {/* TTS Input (Bottom-Center - Floating above Bottom Panel) */}
                                 <div className="flex-none flex justify-center mt-2 pointer-events-auto mb-2">
-                                    <div className="w-[600px] max-w-full bg-base-100/80 backdrop-blur-xl rounded-lg shadow-2xl border border-white/10 p-1">
+                                    <div className="w-150 max-w-full bg-base-100/80 backdrop-blur-xl rounded-lg shadow-2xl border border-white/10 p-1">
                                         <TTSInputBar />
                                     </div>
                                 </div>
@@ -189,7 +189,7 @@ export const SigilLayout: FC<{ blocked?: boolean }> = memo(({ blocked = false })
                     <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: "22rem" }}
-                        className="flex-none h-full z-40 relative shadow-lg border-l border-base-content/5 bg-base-100 hidden lg:block overflow-hidden"
+                        className="flex-none h-full z-40 relative shadow-lg border-l border-base-content/5 bg-base-100 hidden ui-lg:block overflow-hidden"
                     >
                         <div className="w-88 h-full flex flex-col">
                             <ErrorBoundary

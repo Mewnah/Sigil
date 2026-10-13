@@ -73,7 +73,7 @@ export const LogsSidebar: FC<LogsSidebarProps> = memo(({ isOpen, onToggle }) => 
                 {isOpen && (
                     <motion.div
                         initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 280, opacity: 1 }}
+                        animate={{ width: "17.5rem", opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.2 }}
                         className="flex-shrink-0 bg-base-200 border-l border-base-content/5 flex flex-col overflow-hidden"
@@ -94,7 +94,7 @@ export const LogsSidebar: FC<LogsSidebarProps> = memo(({ isOpen, onToggle }) => 
                 onClick={onToggle}
                 title={isOpen ? "Hide logs" : "Show logs"}
                 className="absolute top-1/2 -translate-y-1/2 bg-base-300 border border-base-content/10 rounded-l-md p-1 hover:bg-primary/20 transition-colors z-20"
-                style={{ right: isOpen ? 280 : 0 }}
+                style={{ right: isOpen ? "17.5rem" : 0 }}
             >
                 {isOpen ? <RiArrowRightSLine className="text-lg" /> : <RiArrowLeftSLine className="text-lg" />}
             </button>

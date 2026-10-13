@@ -94,7 +94,21 @@ export const BackendSchema = z.object({
   /** Parallel model downloads: 1 (default, router-friendly) or 2 (never two on one host). */
   modelMaxConcurrentDownloads: zSafe(z.number().int().min(1).max(2), 1),
   clientTheme: zSafe(z.string(), "sigil"),
+  /**
+   * Interface size, MANUAL value (the S/M/L/XL chips: 0.8, 1, 1.2, 1.4; clamped to 0.8-1.5). It is the size in effect only
+   * while `uiScaleAuto` is off; use `effectiveUiScale` (`core/ui/uiScale.ts`) for the size in effect, never this key alone.
+   */
   uiScale: zSafe(z.number(), 1),
+  /**
+   * Interface size Auto (the default): the size follows the monitor the window is on (`autoUiScale`). Picking S/M/L/XL
+   * turns it off, picking Auto turns it on; `uiScale` keeps the manual size meanwhile.
+   */
+  uiScaleAuto: zSafe(z.boolean(), true),
+  /**
+   * The Auto decision was taken (`state/uiScaleAuto.ts`): a profile that had picked S, L or XL (`uiScale` not 1) keeps its
+   * manual size (Auto off), any other profile, including a new install, uses Auto. Written once, never reset.
+   */
+  uiScaleAutoDecided: zSafe(z.boolean(), false),
   uiLanguage: zSafe(z.string(), "en"),
   showOverlay: zSafe(z.coerce.boolean(), false),
   showLogs: zSafe(z.coerce.boolean(), false),

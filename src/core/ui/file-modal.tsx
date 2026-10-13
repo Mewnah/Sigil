@@ -44,7 +44,7 @@ const FilesModal: FC = () => {
       {!args?.select && <button className=" absolute end-4 top-4 btn btn-accent btn-sm" onClick={() => window.ApiClient.files.addFile()}>{t('files.add_file')}</button>}
     </Modal.Header>
     <Modal.Content>
-      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="p-5 grid grid-cols-1 ui-md:grid-cols-2 gap-4">
         {data.map(file => <FileElement key={file.id} data={file} actions={args?.select ? selectActions.current : fileActions.current} />)}
       </div>
     </Modal.Content>

@@ -53,7 +53,7 @@ export const LevelsSection: FC = () => {
     return (
         <>
             <VcSubHeader titleKey="voice_changer.section_levels" />
-            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                 <InputContainer label="voice_changer.input_gain">
                     <input
                         type="number"

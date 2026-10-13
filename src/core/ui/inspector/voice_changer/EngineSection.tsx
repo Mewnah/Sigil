@@ -293,7 +293,7 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
                 />
             ) : null}
 
-            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                 <VcChoiceSelect
                     labelKey="voice_changer.hot_slots"
                     infoKey="voice_changer.hot_slots_info"
@@ -321,7 +321,7 @@ export const EngineSection: FC<{ voice: VcSlotInfo | undefined; metrics: VoiceCh
             </div>
             {vc.hotSlots > 1 && base === "cpu" ? <VcNote>{t("voice_changer.hot_slots_cpu_note")}</VcNote> : null}
 
-            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                 <InputContainer label="voice_changer.speaker_id" vertical>
                     <input
                         type="number"

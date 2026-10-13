@@ -256,7 +256,7 @@ export const HelpManualModal: FC<HelpManualModalProps> = memo(({ open, onClose }
           </button>
         </div>
         <div className="flex flex-1 min-h-0">
-          <nav className="w-48 flex-none border-r border-base-content/10 overflow-y-auto p-2 hidden sm:block">
+          <nav className="w-48 flex-none border-r border-base-content/10 overflow-y-auto p-2 hidden ui-sm:block">
             {MANUAL_PAGES.map((p) => (
               <button
                 key={p.file}

@@ -13,7 +13,7 @@ const WordsReplacementModal: FC = () => {
 
     const up = <K extends keyof STT_State>(key: K, v: STT_State[K]) => window.ApiServer.patchService("stt", s => s.data[key] = v);
 
-    return <Modal.Body width={420}>
+    return <Modal.Body width={26.25}>
         <Modal.Header>{t('word_replacements.title')}</Modal.Header>
         <Modal.Content>
             <div className="p-4 flex flex-col space-y-2">

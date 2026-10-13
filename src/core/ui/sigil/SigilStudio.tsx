@@ -44,7 +44,7 @@ const ElementRow: FC<ElementRowProps> = memo(({ id, name, type, isActive, index,
             <RiDragMoveFill className="text-sm text-base-content/30 cursor-grab active:cursor-grabbing flex-shrink-0" />
             <ElementTypeIcon type={type} className="text-base flex-shrink-0" />
             <span className="flex-1 truncate font-medium text-xs">{name}</span>
-            <span className="hidden sm:block text-[10px] text-base-content/30 uppercase flex-shrink-0">{type}</span>
+            <span className="hidden ui-sm:block text-[10px] text-base-content/30 uppercase flex-shrink-0">{type}</span>
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
                 <Tooltip content="Duplicate" placement="top">
                     <button
@@ -444,7 +444,7 @@ const SigilStudio: FC<SigilStudioProps> = memo(({ slots }) => {
         if (!isElementSelected) return null;
 
         return (
-            <div className="w-[400px] h-full bg-base-200 flex flex-col overflow-hidden pointer-events-auto border-l border-base-content/10">
+            <div className="w-100 h-full bg-base-200 flex flex-col overflow-hidden pointer-events-auto border-l border-base-content/10">
                 {/* Properties Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-base-content/5 bg-base-200 flex-shrink-0">
                     <div className="flex items-center gap-2">

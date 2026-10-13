@@ -1,4 +1,5 @@
 import { useGetState } from "@/client";
+import classNames from "classnames";
 import { ServiceNetworkState } from "@/types";
 import { isTauri } from "@tauri-apps/api/core";
 import { getVersion } from '@tauri-apps/api/app';
@@ -25,10 +26,11 @@ import ServiceButton from "../service-button";
 import Inspector from "./components";
 import { webServerStatusLine } from "./webServerStatus";
 import { LanOffHint } from "./lanAccessHints";
-import { InputCheckbox, InputChips, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
+import { InputCheckbox, InputContainer, InputNativeAudioOutput, InputNetworkStatus, InputRustAudioInput, InputSelect, InputShortcut, InputText, InputWebAudioInput } from "./components/input";
 import DiagnosticsPanel from "@/core/services/diagnostics/DiagnosticsPanel";
 import { useTranslation } from "react-i18next";
 import { i18nLanguages, loadLanguageFile } from "@/i18n";
+import { uiScaleAutoHint, uiScaleChipOptions, uiScaleChipPick, uiScaleChipValue } from "../uiScale";
 // 1. Core & Tech
 const themesCore = [
   'sigil-dark',
@@ -72,9 +74,6 @@ const themesSpace = [
   'nebula',
   'monochrome',
 ]
-
-const UI_SCALE_MIN = 0.8;
-const UI_SCALE_MAX = 1.5;
 
 const languageOptions = i18nLanguages.map(({ code, name }) => ({ label: name, value: code }));
 
@@ -278,6 +277,35 @@ export const LinkAppsSection: FC = () => {
   </>;
 };
 
+/**
+ * Interface size: Auto, S, M, L, XL. The chips wrap inside the row (no fixed width: the other chip rows are 9rem wide, which
+ * five chips do not fit, and a longer translation would not either), and the size Auto picked is the line below.
+ */
+export const InterfaceSizeSection: FC = () => {
+  const { t } = useTranslation();
+  const { uiScale, uiScaleAuto } = useSnapshot(window.ApiServer.state);
+  // What Auto picks for the monitor the window is on (not saved).
+  const detected = useSnapshot(window.ApiServer.uiScale.detected);
+  const lit = uiScaleChipValue({ auto: uiScaleAuto, manual: uiScale });
+
+  // Auto turns Auto on; S, M, L and XL turn it off and set the (clamped) manual size.
+  const handlePick = (value: string | number) => {
+    const pick = uiScaleChipPick(value);
+    if (pick.auto) window.ApiServer.changeScaleAuto();
+    else window.ApiServer.changeScale(pick.manual);
+  };
+
+  return <>
+    <InputContainer label="settings.field_ui_scale">
+      <div role="group" aria-label={t("settings.field_ui_scale")} className="flex flex-wrap justify-end gap-1 min-w-0">
+        {uiScaleChipOptions(t).map(option =>
+          <button key={option.value} type="button" aria-pressed={option.value === lit} className={classNames("btn btn-sm flex-grow", { "btn-active": option.value === lit })} onClick={() => handlePick(option.value)}>{option.label}</button>)}
+      </div>
+    </InputContainer>
+    <Inspector.Description>{uiScaleAutoHint(detected, t)}</Inspector.Description>
+  </>;
+};
+
 const Inspector_Settings: FC = memo(() => {
   const { t } = useTranslation();
   const themeSelectOptions = useMemo(
@@ -290,7 +318,7 @@ const Inspector_Settings: FC = memo(() => {
     ],
     [t],
   );
-  const { clientTheme, uiScale, uiLanguage, backgroundInputTimer, audioInputDevice, audioInputDeviceNative, audioOutputDevice } = useSnapshot(window.ApiServer.state);
+  const { clientTheme, uiLanguage, backgroundInputTimer, audioInputDevice, audioInputDeviceNative, audioOutputDevice } = useSnapshot(window.ApiServer.state);
   const author = useGetState(state => state.author);
 
   const [version, setVersion] = useState("")
@@ -300,11 +328,6 @@ const Inspector_Settings: FC = memo(() => {
 
   const handleChangeTheme = (v: string) => window.ApiServer.changeTheme(v);
   const handleChangeLanguage = (v: string) => window.ApiServer.changeLanguage(v);
-
-  const handleChangeScale = (v: string | number) => {
-    const _v = typeof v === "string" ? parseFloat(v) : v;
-    window.ApiServer.changeScale(Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, _v)));
-  }
 
   return <Inspector.Body>
     <Inspector.Header><RiSettings2Fill /> {t('settings.title')}</Inspector.Header>
@@ -347,12 +370,7 @@ const Inspector_Settings: FC = memo(() => {
       <div className="divider"></div>
       <Inspector.SubHeader>{t("settings.section_application")}</Inspector.SubHeader>
       <InputSelect label="settings.field_app_theme" options={themeSelectOptions} value={clientTheme} onValueChange={handleChangeTheme} />
-      <InputChips label="settings.field_ui_scale" value={uiScale} onChange={e => handleChangeScale(e)} options={[
-        { label: t("settings.ui_scale_s"), value: .8 },
-        { label: t("settings.ui_scale_m"), value: 1 },
-        { label: t("settings.ui_scale_l"), value: 1.2 },
-        { label: t("settings.ui_scale_x"), value: 1.4 },
-      ]} />
+      <InterfaceSizeSection />
       <InputSelect label="settings.field_language" options={languageOptions} value={uiLanguage} onValueChange={handleChangeLanguage} />
       <Inspector.Description><span className="text-primary font-semibold mt-2" onClick={loadLanguageFile}>{t('settings.btn_import_translation')}</span></Inspector.Description>
 

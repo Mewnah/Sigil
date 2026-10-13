@@ -85,9 +85,9 @@ const handleSwitchTransform = () => {
 }
 
 const ActionBar: FC = () => {
-  return <div data-tauri-drag-region className="relative w-full py-1 flex items-center space-x-1 sm:space-x-2 px-2">
+  return <div data-tauri-drag-region className="relative w-full py-1 flex items-center space-x-1 ui-sm:space-x-2 px-2">
     <div className="w-full pointer-events-none font-black text-2xl align-middle leading-tight font-header">
-      <span className="hidden sm:block text-sm">
+      <span className="hidden ui-sm:block text-sm">
         <Logo />
       </span>
     </div>
@@ -111,7 +111,7 @@ const AppActions: FC = () => {
   const { showActionButton: translationButton } = useSnapshot(window.ApiServer.state.services.translation);
   const { showActionButton: transformButton } = useSnapshot(window.ApiServer.state.services.transform);
 
-  return <div className="flex flex-none items-center space-x-0 sm:space-x-2">
+  return <div className="flex flex-none items-center space-x-0 ui-sm:space-x-2">
     {showLogs ?
       <Button tooltip={t('main.btn_show_canvas')} onClick={handleSwitchLogs} ><RiStackFill /></Button> :
       <Button tooltip={t('main.btn_show_logs')} onClick={handleSwitchLogs} ><RiFileListLine /></Button>

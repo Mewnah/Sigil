@@ -3,7 +3,9 @@ import { motion, AnimatePresence, useDragControls, PanInfo } from "framer-motion
 import classNames from "classnames";
 import { RiCloseLine } from "react-icons/ri";
 import SimpleBar from "simplebar-react";
+import { screenPxToRem } from "./uiUnits";
 
+/** `width`, `minWidth` and `maxWidth` are rem (so the drawer grows with Interface size); 21.875 is the 350 px of size 1. */
 interface DrawerProps {
     open: boolean;
     onClose: () => void;
@@ -20,9 +22,9 @@ export const Drawer: FC<DrawerProps> = memo(({
     onClose,
     title,
     position = "right",
-    width: initialWidth = 350,
-    minWidth = 280,
-    maxWidth = 600,
+    width: initialWidth = 21.875,
+    minWidth = 17.5,
+    maxWidth = 37.5,
     children
 }) => {
     const [width, setWidth] = useState(initialWidth);
@@ -36,9 +38,9 @@ export const Drawer: FC<DrawerProps> = memo(({
         if (!isResizing) return;
 
         const handleMouseMove = (e: MouseEvent) => {
-            const newWidth = isRight
+            const newWidth = screenPxToRem(isRight
                 ? window.innerWidth - e.clientX
-                : e.clientX;
+                : e.clientX);
             setWidth(Math.min(maxWidth, Math.max(minWidth, newWidth)));
         };
 
@@ -72,7 +74,7 @@ export const Drawer: FC<DrawerProps> = memo(({
                         animate={{ x: 0 }}
                         exit={{ x: isRight ? "100%" : "-100%" }}
                         transition={{ type: "spring", damping: 30, stiffness: 300 }}
-                        style={{ width }}
+                        style={{ width: `${width}rem` }}
                         className={classNames(
                             "fixed top-0 bottom-0 z-50 bg-base-100 shadow-2xl flex flex-col",
                             isRight ? "right-0 rounded-l-2xl" : "left-0 rounded-r-2xl"
@@ -133,9 +135,9 @@ export const InspectorDrawer: FC<InspectorDrawerProps> = memo(({
         onClose={onClose}
         title={title}
         position="right"
-        width={380}
-        minWidth={320}
-        maxWidth={500}
+        width={23.75}
+        minWidth={20}
+        maxWidth={31.25}
     >
         {children}
     </Drawer>

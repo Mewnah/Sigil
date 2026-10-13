@@ -1,6 +1,6 @@
 # Operator reference
 
-Detailed reference for **choosing engines for your PC**, **STT/TTS backends**, **reliability**, **voice changer** behavior, the **streamer features** and **local ONNX speech packages**. User-facing walkthroughs live in the [user manual](manual/README.md).
+Detailed reference for **choosing engines for your PC**, **STT/TTS backends**, **reliability**, **voice changer** behavior, the **streamer features**, **interface size and the window** and **local ONNX speech packages**. User-facing walkthroughs live in the [user manual](manual/README.md).
 
 ## Table of contents
 
@@ -16,6 +16,7 @@ Detailed reference for **choosing engines for your PC**, **STT/TTS backends**, *
 - [Translation and Rewrite](#translation-and-rewrite)
 - [Streamer features and extended voices](#streamer-features-and-extended-voices)
 - [Local web server and LAN pages](#local-web-server-and-lan-pages)
+- [Interface size and the window](#interface-size-and-the-window)
 - [Local speech package (ONNX)](#local-speech-package-onnx)
 - [Sidecar scripts (repo)](#sidecar-scripts-repo)
 
@@ -972,6 +973,45 @@ The embedded web server (default port **3030**) serves `/client`, the OBS pages,
 - **New token** disconnects everything that used the old one; copy the links again. The token is shown masked (**Show**, **Copy token**).
 - **Allow devices without the token (legacy)** is a temporary escape hatch, off by default, shown with a caution.
 - Refused pages say why (missing or old token, or This PC only); the host shows a "Refused a device on your network" toast. The token travels unencrypted on your network: use it on a trusted network, make a new token if a link leaked, and never tunnel the port to the internet.
+
+---
+
+## Interface size and the window
+
+**Settings → Interface size** sets how large every menu, label and panel of the Sigil window is. The choices are **Auto** (the default), **S**, **M**, **L** and **X**. A line under the row says what **Auto** picked ("Auto picks 150% for the monitor Sigil is on.") or, when Windows would not describe the monitor, "Sigil could not read this monitor, so Auto stays at 100%." Only the Sigil window follows it: the OBS pages (`/client`, `obs-captions.html`), the caption window and the other browser pages keep their own sizes.
+
+| Choice | Size | Notes |
+|--------|------|-------|
+| **Auto** | 100% to 200%, from the monitor Sigil is on | The default. Never below 100%, so it only ever enlarges |
+| **S** | 80% | Fixed |
+| **M** | 100% | Fixed; the size before Auto existed |
+| **L** | 120% | Fixed |
+| **X** (extra large) | 140% | Fixed |
+
+What **Auto** picks for some monitors (the rule is the first bullet below):
+
+| Monitor and Windows scale | Auto |
+|---------------------------|------|
+| 1080p, 1440p, 3440 x 1440 and 5120 x 1440 ultrawides, a 1366 x 768 laptop, all at 100% | 100% |
+| 4K (3840 x 2160) at 100% | 150% |
+| 4K at 125% | 120% |
+| 4K at 150% or 200% | 100% |
+| 3200 x 1800 at 100% | 125% |
+| 3840 x 1600 at 100% | 110% |
+| 5K at 100% | 200% |
+| 8K at 100% | 200% (the cap) |
+
+- **The Auto rule.** Windows' display scale already scales the interface (a 4K monitor at 150% looks like 1440p), so Auto works on the logical desktop: logical size = monitor pixels / Windows scale. The size is the smaller of (short side / 1440) and (long side / 2560), kept between 100% and 200% and rounded to the nearest 5%, so a logical 2560 x 1440 desktop is 100%. A monitor that cannot be read counts as 100%.
+- **Auto follows the window.** Sigil reads the monitor before anything is drawn (so the setup wizard already has the right size), and again about a quarter of a second after the window moves to another monitor, is resized, or the Windows scale or desktop resolution changes. The browser build has no monitor and stays at 100%.
+- **Picking a size.** **S** to **X** turn Auto off and keep that size until you pick **Auto** again (the fixed size is remembered meanwhile). Fixed sizes are held between 80% and 150%.
+- **Existing profiles.** The first launch of this version decides once: a profile that had picked **S**, **L** or **X** keeps it with Auto off; a profile on **M**, and every new install, uses **Auto**. Where Auto is 100% (1080p, 1440p, a 4K monitor that Windows scales to 150% or more) nothing looks different.
+- **What scales.** Everything sized in `rem` (all text, buttons and most panels, the small 10 and 11 px labels included). A few side panels and dialogs have a fixed pixel width and do not grow with it; they are listed in the [developer guide](DEVELOPER_GUIDE.md#interface-size-auto).
+
+### The window
+
+- **First launch.** A launch with no saved window for the main window (a new install, or after you remove it as described below) opens at **960 x 720** logical pixels times the Auto size, at most 90% of the monitor's work area (the screen without the taskbar), at least 800 x 600, and centred. That is 960 x 720 on 1080p or 1440p and 1440 x 1080 on a 4K monitor at 100%; it used to be a fixed 800 x 600.
+- **Later launches** restore the size and place you left (`%APPDATA%\com.sigil.app\.window-state.json`), then check them once. A window larger than the work area of the monitor it comes back on (an undocked laptop, another Windows scale) is cut to fit. With **Auto** above 100%, a window smaller than 800 x 600 interface units (800 x 600 times the Auto size: 1200 x 900 on a 4K monitor at 100%) is made that large, because the menus would not fit in it. The same floor applies while Sigil runs, when you move the window to another monitor or switch to **Auto**. A window you made small stays small at an Auto size of 100% or with a fixed size, and a maximized, minimized or full-screen window is never resized.
+- **See the first-launch window again.** Close Sigil and remove only the `"main"` entry from `.window-state.json`. Deleting the whole file also forgets where the caption window was put (**Reset position** in its panel brings that window back instead).
 
 ---
 

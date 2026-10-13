@@ -10,6 +10,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { RiInformationLine } from "react-icons/ri";
 import Inspector from "../components";
+import { uiPx } from "../../uiUnits";
 
 /** Set a field that needs an engine restart, then sync (and restart when running). */
 export const patchVcStructural = async <K extends keyof VoiceChangerState>(key: K, v: VoiceChangerState[K]) => {
@@ -50,20 +51,22 @@ export const InspectorInfoButton: FC<{ text: string }> = ({ text }) => {
         const place = () => {
             const br = el.getBoundingClientRect();
             const clip = getInspectorPopoverClip(el);
-            const margin = 8;
-            const width = Math.max(160, Math.min(280, clip.width - margin * 2));
+            // Pixels the popover is measured in: px at Interface size 1, scaled with it (its text is rem).
+            const margin = uiPx(8);
+            const minHeight = uiPx(100);
+            const width = Math.max(uiPx(160), Math.min(uiPx(280), clip.width - margin * 2));
             let left = br.right - width;
             left = Math.max(clip.left + margin, Math.min(left, clip.right - margin - width));
 
-            const capH = Math.min(320, Math.floor(window.innerHeight * 0.55));
+            const capH = Math.min(uiPx(320), Math.floor(window.innerHeight * 0.55));
             let top = br.bottom + margin;
             let maxHeight = Math.min(capH, clip.bottom - margin - top);
-            if (maxHeight < 100) {
+            if (maxHeight < minHeight) {
                 maxHeight = Math.min(capH, br.top - clip.top - margin * 2);
                 top = Math.max(clip.top + margin, br.top - margin - maxHeight);
                 maxHeight = Math.min(maxHeight, clip.bottom - margin - top);
             }
-            maxHeight = Math.max(100, maxHeight);
+            maxHeight = Math.max(minHeight, maxHeight);
             setBox({ top, left, width, maxHeight });
         };
         place();

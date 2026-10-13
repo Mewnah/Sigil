@@ -3,7 +3,7 @@
 | Document | Audience |
 |----------|----------|
 | [manual/README.md](manual/README.md) | End users — chapters under **manual/** |
-| [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md) | Choosing engines for your PC (by hardware tier, with what each costs), STT/TTS backends, speech on this PC (automatic STT, local voices), Models & Runtimes and runtime packs, translation backends and Rewrite, reliability, voice changer (presets, defaults and opt-ins, another voice changer over a virtual cable), streamer features (VRChat quick start), GPU packs and logs, speech package |
+| [OPERATOR_REFERENCE.md](OPERATOR_REFERENCE.md) | Choosing engines for your PC (by hardware tier, with what each costs), STT/TTS backends, speech on this PC (automatic STT, local voices), Models & Runtimes and runtime packs, translation backends and Rewrite, reliability, voice changer (presets, defaults and opt-ins, another voice changer over a virtual cable), streamer features (VRChat quick start), GPU packs and logs, interface size and the window, speech package |
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Architecture, the `--headless` commands, host services, connectivity audit, speech stack internals (including the speech benchmark runner), `src/client` rules |
 | [RELEASE_AND_ENGINEERING.md](RELEASE_AND_ENGINEERING.md) | Release QA, clean-machine and GPU EP smoke, optional checks (VR, SteamVR, two-PC, friends' PCs), the P0 to P7 exit matrices, threat model, audits, third-party components, performance, upgrade backlog |
 | [benchmarks/README.md](benchmarks/README.md) | Contributors — the benchmark harness (`--headless bench`, specs, metrics, perf gate) |

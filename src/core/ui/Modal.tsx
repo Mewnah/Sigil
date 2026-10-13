@@ -1,6 +1,7 @@
 import NiceModal, { useModal } from "@ebay/nice-modal-react";
 import { FC, PropsWithChildren } from "react";
 import SimpleBar from "simplebar-react";
+import { cssLength } from "./uiUnits";
 
 const Base = NiceModal.create<PropsWithChildren<{}>>(({ children }) => {
   const modal = useModal();
@@ -15,9 +16,9 @@ const Base = NiceModal.create<PropsWithChildren<{}>>(({ children }) => {
   </div>;
 });
 
-// limit height
-const Body: FC<PropsWithChildren<{width?: number | "auto"}>> = ({ children, width = 500 }) => {
-  return <div style={{width}} className="flex flex-col relative bg-base-100 max-h-[90vh] shadow-2xl rounded-box">
+// limit height. `width`: a number is rem (31.25 is the 500 px of Interface size 1 and grows with it), a string is any CSS width.
+const Body: FC<PropsWithChildren<{ width?: number | string }>> = ({ children, width = 31.25 }) => {
+  return <div style={{ width: cssLength(width) }} className="flex flex-col relative bg-base-100 max-h-[90vh] shadow-2xl rounded-box">
     {children}
   </div>
 }

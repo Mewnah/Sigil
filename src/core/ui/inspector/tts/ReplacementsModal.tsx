@@ -13,7 +13,7 @@ const WordsReplacementModal: FC = () => {
   const data = useSnapshot(window.ApiServer.state.services.tts);
   const up = <K extends keyof TTS_State>(key: K, v: TTS_State[K]) => window.ApiServer.patchService("tts", s => s.data[key] = v);
 
-  return <Modal.Body width={420}>
+  return <Modal.Body width={26.25}>
     <Modal.Header>{t('word_replacements.title')}</Modal.Header>
     <Modal.Content>
       <div className="p-4">

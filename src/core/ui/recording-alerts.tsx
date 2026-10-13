@@ -53,8 +53,8 @@ const RecordingAlerts: FC = () => {
   return (
     <div className="flex space-x-2">
       <AnimatePresence>
-        {showTwitch && <StatusButton key="twitch" tooltip="Twitch Chat integration" animKey="twitch" onClick={handleStopTwitch }><SiTwitch size={20} /></StatusButton>}
-        {showDiscord && <StatusButton key="discord" tooltip="Discord integration" animKey="discord" onClick={handleStopDiscord }><SiDiscord size={20} /></StatusButton>}
+        {showTwitch && <StatusButton key="twitch" tooltip="Twitch Chat integration" animKey="twitch" onClick={handleStopTwitch }><SiTwitch size="1.25rem" /></StatusButton>}
+        {showDiscord && <StatusButton key="discord" tooltip="Discord integration" animKey="discord" onClick={handleStopDiscord }><SiDiscord size="1.25rem" /></StatusButton>}
       </AnimatePresence>
     </div>
   );

@@ -12,6 +12,7 @@ use crate::services::AppConfiguration;
 mod exit_guard;
 mod port_precheck;
 mod services;
+mod window_size;
 
 #[derive(Parser, Debug)]
 struct InitArguments {
@@ -122,9 +123,18 @@ fn main() {
             app_close,
             services::oauth_loopback::oauth_loopback_start
         ])
+        // First launch only (no saved state for `main`): size the window from its monitor instead of the
+        // fixed 800 x 600. Registered BEFORE the window-state plugin on purpose: both hook the new
+        // window in registration order, so this runs first and a saved state is restored over it. Does
+        // nothing for SIGIL_START_MINIMIZED runs (see `window_size`).
+        .plugin(window_size::init(!start_minimized))
         // The caption window (P6-B) restores its own position and size without show()/set_focus(),
         // so it never steals the foreground from a game; saving still goes through this plugin.
         .plugin(window_state.build())
+        // After a restore: grow a window that is too small for Interface size Auto, cut one that is too big
+        // for its monitor. Registered AFTER the window-state plugin on purpose, so it sees the restored
+        // size. Does nothing for SIGIL_START_MINIMIZED runs (see `window_size`).
+        .plugin(window_size::init_after_restore(!start_minimized))
         .manage(AppConfiguration { port: args.port })
         .plugin(services::osc::init())
         .plugin(services::web::init())

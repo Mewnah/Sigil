@@ -333,12 +333,14 @@ export const SttStep: FC<StepProps & { answers?: SttAnswers; onAnswers?: (answer
         onNext();
     };
 
-    // `space-y-3`, not 6: this is the tallest step. A new install opens at 800 x 600 (560 px below the title bar); the
-    // dots, the step and Skip are stacked in the wizard (it scrolls rather than overlap), and the icon is dropped on a
-    // window that short. Measured 2026-10-12 in a browser at 800 x 600: everything fits without scrolling.
+    // `space-y-3`, not 6: this is the tallest step. Nothing here assumes a window size: the sizes are rem, so the step
+    // grows with Interface size (Auto picks it from the monitor) and has to fit whatever window it is shown in. The dots,
+    // the step and Skip are stacked in the wizard, which scrolls rather than overlap when the step is taller than the
+    // window. The icon is dropped when the window is under 42.5 interface-rem tall (`ui-short`, 680 px at size 1; a px
+    // media query would not move with Interface size).
     return (
         <div className="flex flex-col items-center space-y-3 w-full max-w-md">
-            <div className="text-5xl text-primary [@media(max-height:680px)]:hidden" aria-hidden="true"><RiUserVoiceFill /></div>
+            <div className="text-5xl text-primary ui-short:hidden" aria-hidden="true"><RiUserVoiceFill /></div>
             <StepHeading className="text-2xl font-bold font-header">{t("onboarding.stt_title")}</StepHeading>
             <p className="text-base-content/70 text-center">{t("onboarding.stt_body")}</p>
 
@@ -381,7 +383,7 @@ export const SendStep: FC<StepProps & { onPick: (tab: Services) => void }> = ({ 
 
     return (
         <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-            <div className="text-5xl text-primary [@media(max-height:680px)]:hidden" aria-hidden="true"><RiMessage2Fill /></div>
+            <div className="text-5xl text-primary ui-short:hidden" aria-hidden="true"><RiMessage2Fill /></div>
             <StepHeading className="text-2xl font-bold font-header">{t("onboarding.send_title")}</StepHeading>
             <p className="text-base-content/70 text-center">{t("onboarding.send_body")}</p>
 

@@ -7,6 +7,7 @@ import { BackendState, BackendSchema } from "../../schema";
 import { AtomicJsonFile, JsonFileFs } from "../diagnostics/atomicJsonFile";
 import { pushSystemLog } from "../systemLog";
 import { applyFirstRunDecision, isFreshProfile } from "./firstRun";
+import { applyUiScaleAutoDecision } from "./uiScaleAuto";
 
 /** Persisted settings, relative to the app-data directory (`%APPDATA%\com.sigil.app`). */
 const SETTINGS_PATH = "user/settings";
@@ -54,11 +55,13 @@ class Service_State implements IServiceInterface {
     }
     // No settings file means a new install (the setup wizard); any profile that existed never sees it.
     const decided = applyFirstRunDecision(parsed, fresh);
+    // Interface size Auto: a profile that picked S, L or XL keeps it, every other one (and a new install) uses Auto.
+    const scaleDecided = applyUiScaleAutoDecision(parsed);
     this.state = proxy(parsed);
     // Write immediately unless the main file is the good one we just read and nothing changed: first run, the
     // settings were recovered from the backup / reset to defaults (replaces the damaged file, which was preserved
-    // first), or the first-run decision was just recorded.
-    if (loaded.source !== "primary" || decided) void this.#save();
+    // first), or the first-run or Interface size decision was just recorded.
+    if (loaded.source !== "primary" || decided || scaleDecided) void this.#save();
     subscribe(this.state, () => this.#debouncedSave());
   }
 

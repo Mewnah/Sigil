@@ -47,8 +47,8 @@ const StatsPanel: FC = memo(() => {
     if (collapsed) {
         return (
             <motion.aside
-                initial={{ width: 40 }}
-                animate={{ width: 40 }}
+                initial={{ width: "2.5rem" }}
+                animate={{ width: "2.5rem" }}
                 className="flex-none h-full bg-transparent border-l border-base-content/10 flex flex-col items-center justify-center bg-base-200/50"
             >
                 <button
@@ -65,7 +65,7 @@ const StatsPanel: FC = memo(() => {
     return (
         <motion.aside
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 380, opacity: 1 }}
+            animate={{ width: "23.75rem", opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.3 }}
             className="flex-none h-full bg-transparent border-l border-base-content/10 flex flex-col overflow-hidden"

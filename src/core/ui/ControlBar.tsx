@@ -78,7 +78,7 @@ const ServiceCard: FC<ServiceCardProps> = memo(({
             </div>
 
             {/* Label */}
-            <span className="text-sm font-medium min-w-[50px]">{label}</span>
+            <span className="text-sm font-medium min-w-[3.125rem]">{label}</span>
 
             {/* Connecting status (model download / load) */}
             {(detail || percent !== null) && (

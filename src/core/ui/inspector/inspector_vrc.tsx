@@ -166,7 +166,7 @@ const Inspector_VRC: FC = () => {
     <Inspector.Content>
       <Inspector.SubHeader>VRChat Integration</Inspector.SubHeader>
       <div className="p-2 border-2 border-primary rounded-lg text-xs flex space-x-2 items-center text-primary">
-        <RiAlertFill className="text-primary" size={24} />
+        <RiAlertFill className="text-primary" size="1.5rem" />
         <div className="flex flex-col gap-1">
           <span className="font-bold">{t('vrc.notice_title')}</span>
           <span className="font-medium">{t('vrc.notice_desc')}</span>

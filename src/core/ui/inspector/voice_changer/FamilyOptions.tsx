@@ -114,7 +114,7 @@ const DdspFields: FC<{ form: DdspSvcForm; onChange: (f: DdspSvcForm) => void; di
                 onChange={(v) => onChange({ ...form, preset: v as DdspSvcForm["preset"] })}
             />
             <VcDetails titleKey="voice_changer.family_options_advanced">
-                <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                     <OptionalNumberField
                         labelKey="voice_changer.family_steps"
                         infoKey="voice_changer.family_ddsp_steps_info"
@@ -157,7 +157,7 @@ const ZsFields: FC<{ form: SigilZsForm; onChange: (f: SigilZsForm) => void; disa
                 onChange={(v) => onChange({ ...form, preset: v as SigilZsForm["preset"] })}
             />
             <VcDetails titleKey="voice_changer.family_options_advanced">
-                <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-3">
                     <OptionalNumberField
                         labelKey="voice_changer.family_steps"
                         infoKey="voice_changer.family_zs_steps_info"
@@ -222,7 +222,7 @@ const ZsFields: FC<{ form: SigilZsForm; onChange: (f: SigilZsForm) => void; disa
 const MeanVcFields: FC<{ form: MeanVcForm; onChange: (f: MeanVcForm) => void; disabled?: boolean }> = ({ form, onChange, disabled }) => {
     const { t } = useTranslation();
     return (
-        <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
             <VcChoiceSelect
                 labelKey="voice_changer.family_steps"
                 infoKey="voice_changer.family_meanvc_steps_info"

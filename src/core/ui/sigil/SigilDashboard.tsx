@@ -12,7 +12,7 @@ const DashboardCard: FC<{
     onClick={onClick}
     className={`btn btn-outline h-auto py-8 flex flex-col gap-4 hover:bg-${color} hover:text-white border-2`}
   >
-    <Icon size={40} />
+    <Icon size="2.5rem" />
     <span className="text-lg font-bold">{title}</span>
   </button>
 );
@@ -39,7 +39,7 @@ export const SigilDashboard: FC<any> = memo(() => {
             <code className="text-xs">.sigiltmp</code> or Curses <code className="text-xs">.cursestmp</code> backup, a legacy{" "}
             <code className="text-xs">.json</code> export — or reset to a fresh template.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 ui-sm:grid-cols-2 gap-6">
             <DashboardCard
               title="Reset template"
               icon={RiFileAddLine}

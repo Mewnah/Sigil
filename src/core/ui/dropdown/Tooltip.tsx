@@ -2,6 +2,7 @@ import { Placement } from "@floating-ui/react-dom";
 import { arrow, autoUpdate, flip, FloatingPortal, offset, shift, useFloating, useHover, useInteractions } from "@floating-ui/react-dom-interactions";
 import { AnimatePresence, motion } from "framer-motion";
 import { FC, HtmlHTMLAttributes, memo, PropsWithChildren, ReactNode, useRef, useState } from "react";
+import { uiPx } from "../uiUnits";
 
 interface Props {
   enable?: boolean,
@@ -21,8 +22,8 @@ const Tooltip: FC<PropsWithChildren<HtmlHTMLAttributes<HTMLSpanElement> & Props>
     open,
     onOpenChange: setOpen,
     middleware: [
-      shift({padding: 8}),
-      offset(8),
+      shift({ padding: uiPx(8) }),
+      offset(uiPx(8)),
       flip(),
       arrow({ element: arrowRef }),
     ]

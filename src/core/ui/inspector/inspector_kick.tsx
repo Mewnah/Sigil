@@ -9,7 +9,7 @@ import Modal from "../Modal";
 import { useTranslation } from "react-i18next";
 
 // Kick logo as inline SVG component
-const KickLogo: FC<{ size?: number, className?: string }> = ({ size = 20, className }) => (
+const KickLogo: FC<{ size?: number | string, className?: string }> = ({ size = "1.25rem", className }) => (
     <svg
         width={size}
         height={size}
@@ -22,7 +22,7 @@ const KickLogo: FC<{ size?: number, className?: string }> = ({ size = 20, classN
 );
 
 // Simpler Kick "K" logo
-const KickIcon: FC<{ size?: number }> = ({ size = 20 }) => (
+const KickIcon: FC<{ size?: number | string }> = ({ size = "1.25rem" }) => (
     <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor">
         <path d="M115.2 0h76.8v204.8L345.6 0H448L268.8 230.4 460.8 512H345.6L192 281.6V512h-76.8V0z" />
     </svg>
@@ -31,7 +31,7 @@ const KickIcon: FC<{ size?: number }> = ({ size = 20 }) => (
 const KickEmotesModal: FC = () => {
     const { t } = useTranslation();
     return (
-        <Modal.Body width={420}>
+        <Modal.Body width={26.25}>
             <Modal.Header>Kick Emotes</Modal.Header>
             <Modal.Content>
                 <div className="p-4 flex flex-col space-y-2">
@@ -50,7 +50,7 @@ const KickEmotesMapModal: FC = () => {
     const pr = useSnapshot(kickData);
     const up = <K extends keyof Kick_State>(key: K, v: Kick_State[K]) => window.ApiServer.patchService("kick", s => s.data[key] = v);
     return (
-        <Modal.Body width={420}>
+        <Modal.Body width={26.25}>
             <Modal.Header>{t('twitch_emotes_remap.title')}</Modal.Header>
             <Modal.Content>
                 <div className="p-4">
@@ -105,7 +105,7 @@ const Inspector_Kick: FC = () => {
                 </div>
             </div>}
 
-            {!user && <button className="btn gap-2 border-none bg-[#53fc18] text-black hover:bg-[#42ca13]" onClick={handleLogin}><KickIcon size={20} /> Login with Kick</button>}
+            {!user && <button className="btn gap-2 border-none bg-[#53fc18] text-black hover:bg-[#42ca13]" onClick={handleLogin}><KickIcon size="1.25rem" /> Login with Kick</button>}
 
             <Inspector.Switchable visible={!!user}>
                 <InputNetworkStatus label="twitch.status_stream" value={liveStatus} />

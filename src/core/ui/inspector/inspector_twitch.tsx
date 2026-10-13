@@ -26,7 +26,7 @@ const EmotesInspector: FC = () => {
 
 const EmotesModal: FC = () => {
   return (
-    <Modal.Body width={420}>
+    <Modal.Body width={26.25}>
       <Modal.Header>Emotes</Modal.Header>
       <Modal.Content>
         <div className="p-4 flex flex-col space-y-2">
@@ -48,7 +48,7 @@ const EmotesMapModal: FC = () => {
   const pr = useSnapshot(window.ApiServer.state.services.twitch.data);
   const up = <K extends keyof Twitch_State>(key: K, v: Twitch_State[K]) => window.ApiServer.patchService("twitch", s => s.data[key] = v);
   return (
-    <Modal.Body width={420}>
+    <Modal.Body width={26.25}>
       <Modal.Header>{t('twitch_emotes_remap.title')}</Modal.Header>
       <Modal.Content>
         <div className="p-4">
@@ -83,7 +83,7 @@ const Inspector_Twitch: FC = () => {
       </div>}
 
       {/* eslint-disable-next-line */}
-      {!user && <button className="btn gap-2 border-none bg-[#9147ff] text-white hover:bg-[#772ce8]" onClick={handleLogin}><SiTwitch size={20} /> {t('twitch.btn_login')}</button>}
+      {!user && <button className="btn gap-2 border-none bg-[#9147ff] text-white hover:bg-[#772ce8]" onClick={handleLogin}><SiTwitch size="1.25rem" /> {t('twitch.btn_login')}</button>}
       <Inspector.Switchable visible={!!user}>
         <InputNetworkStatus label="twitch.status_stream" value={liveStatus} />
         <InputNetworkStatus label="twitch.status_chat" value={chatState.connection} />

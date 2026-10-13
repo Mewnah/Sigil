@@ -142,7 +142,7 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
                     onValueChange={(v) => void onChunkFramesChange(v)}
                     options={chunkOptions}
                 />
-                <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                     <InputContainer label="voice_changer.output_prefill_ms">
                         <input
                             type="number"
@@ -193,7 +193,7 @@ export const TimingSection: FC<{ metrics?: VoiceChangerMetrics | null }> = ({ me
                     />
                     <span className="label-text text-sm">{t("voice_changer.buffer_truncate_enable")}</span>
                 </label>
-                <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid w-full min-w-0 grid-cols-1 gap-2 ui-sm:grid-cols-2">
                     <InputContainer label="voice_changer.buffer_truncate_rms">
                         <input
                             type="number"

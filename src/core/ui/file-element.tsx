@@ -76,7 +76,7 @@ const FileAudio: FC = () => {
   }
   return <>
     <audio className="hidden" ref={audioRef} src={fileBlobs[file!.data.id]} />
-    <RiMusic2Fill size={42} />
+    <RiMusic2Fill size="2.625rem" />
     <button className="absolute bottom-2 right-2 btn btn-xs btn-circle btn-accent" onClick={handleSwitchPlay}>{isPlaying ? <RiPauseMiniFill /> : <RiPlayFill />}</button>
   </>
 }
@@ -118,7 +118,7 @@ const FileImage: FC = () => {
 }
 
 const FileFont: FC = () => {
-  return <RiFontSize size={48} />
+  return <RiFontSize size="3rem" />
 }
 
 

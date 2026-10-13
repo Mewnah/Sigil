@@ -30,7 +30,7 @@ const BackgroundInput: FC = memo(() => {
         </div>
         <button className="btn btn-sm btn-ghost gap-2 leading-none items-center" onClick={() => window.ApiServer.keyboard.stopBackgroundInput()}>Cancel</button>
       </div>
-      <div className={cx("font-header text-2xl sm:text-3xl outline-none font-medium", { "opacity-50": !backgroundInputValue })}>{backgroundInputValue || "Listening for input.."}</div>
+      <div className={cx("font-header text-2xl ui-sm:text-3xl outline-none font-medium", { "opacity-50": !backgroundInputValue })}>{backgroundInputValue || "Listening for input.."}</div>
     </motion.div>}
   </AnimatePresence>
 });

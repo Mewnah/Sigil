@@ -5,10 +5,29 @@
 @source not "../scripts";
 @source not "../src-tauri";
 @source not "../tools";
+/* Unit tests carry class names as test data (src/core/ui/__tests__/uiScale.layout.test.ts writes bad ones on purpose);
+   they must not end up as rules in the app's CSS. */
+@source not "./**/__tests__";
 
 @plugin "daisyui" {
   themes: all;
 }
+
+/* --- INTERFACE-SIZE BREAKPOINTS (host UI) ---
+   Interface size (core/ui/uiScale.ts) scales the root font-size, so every rem size follows it. Tailwind's sm: md: lg:
+   xl: 2xl: are MEDIA queries, and rem in a media query is always the initial 16px: they ignore Interface size (a
+   1440 px window at 150% is 960 interface px wide and must not get the 1024 px layout). The host UI uses these variants
+   instead. They query the size container set on `body` below, and in a container query rem is the root's computed
+   font-size, so they follow Interface size by themselves: ui-lg is "at least 64rem wide", the same 1024 px as lg: at
+   size 1. Same thresholds as Tailwind's defaults. Keep them in ascending order (a later rule wins). ui-short is the
+   height twin: the viewport is under 42.5rem tall (680 px at size 1). Never use sm: md: lg: xl: 2xl: or a px
+   @media in host UI (src/core/ui/__tests__/uiScale.layout.test.ts fails on them). */
+@custom-variant ui-sm (@container sigil-ui (min-width: 40rem));
+@custom-variant ui-md (@container sigil-ui (min-width: 48rem));
+@custom-variant ui-lg (@container sigil-ui (min-width: 64rem));
+@custom-variant ui-xl (@container sigil-ui (min-width: 80rem));
+@custom-variant ui-2xl (@container sigil-ui (min-width: 96rem));
+@custom-variant ui-short (@container sigil-ui (max-height: 42.5rem));
 
 /* --- CORE & TECH --- */
 
@@ -605,10 +624,10 @@
   --toastify-icon-color-warning: var(--toastify-color-warning);
   --toastify-icon-color-error: var(--toastify-color-error);
 
-  --toastify-toast-width: 320px;
+  --toastify-toast-width: 20rem;
   --toastify-toast-background: var(--color-base-100);
   --toastify-toast-min-height: 2rem;
-  --toastify-toast-max-height: 800px;
+  --toastify-toast-max-height: 50rem;
   --toastify-font-family: sans-serif;
   --toastify-z-index: 9999;
 
@@ -632,6 +651,34 @@
   --toastify-color-progress-error: var(--toastify-color-error);
 }
 
+/* react-toastify's own px sizes, re-declared in rem so that the icon, the close button and the spinner grow with the toast
+   text and width above (same px at Interface size 1). `.toasts` is the container's class; the extra class makes these win
+   over the vendor sheet in whichever order the two load. Not touched: the container's 4px padding and the 4px corner
+   radius (hairlines), which the vendor's `max-width: 480px` media rule sets to 0 and must keep doing. The test in
+   src/core/ui/__tests__/uiScale.layout.test.ts reads the vendor sheet and fails on a px size that is not covered here. */
+.toasts .Toastify__toast {
+  padding: 0.5rem;
+}
+
+.toasts .Toastify__toast-body {
+  padding: 0.375rem;
+}
+
+.toasts .Toastify__toast-icon {
+  width: 1.25rem;
+  margin-inline-end: 0.625rem;
+}
+
+.toasts .Toastify__close-button > svg {
+  width: 0.875rem;
+  height: 1rem;
+}
+
+.toasts .Toastify__spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
 
 
 html.host,
@@ -639,6 +686,21 @@ html.host body,
 html.host #root {
   /* color: #34f09f; */
   @apply !bg-base-300;
+}
+
+/* The size container the ui-* variants (top of this file) query: the whole host window. Host only: the /client pages,
+   the caption window and the public/*.html pages never get `.host`, and they use no ui-* class. `body`, not `#root`,
+   so that the portals that go to `document.body` (tooltips, dropdowns, Radix selects, the info popovers) are inside it
+   too. `size`, not `inline-size`, because ui-short reads the height; html, body and #root all have an explicit
+   100vw x 100vh below, so size containment cannot collapse it (keep it that way). Checked in Chromium 145: unlike
+   container-type in older drafts, it does not make body the containing block of position:fixed descendants (modals,
+   drawers, tooltips still cover the viewport), and backdrop blur, mix-blend-mode and z-order of the portals are
+   unchanged. Cost: a style read right after a DOM write (getComputedStyle, offsetWidth) now has to lay out the body
+   container, measured about 10x slower (0.05 -> 0.5 ms on a 6,000-node page), so keep such reads out of per-frame loops.
+   Reading the root font-size (`uiPx` / `remPx`) stays cheap. */
+html.host body {
+  container-type: size;
+  container-name: sigil-ui;
 }
 
 .dot {
@@ -693,6 +755,17 @@ body,
   -moz-osx-font-smoothing: grayscale;
   font-size: calc(16px * var(--uiscale));
   transition: font-size .1s ease-in-out;
+}
+
+/* Interface size: the two small text sizes the shells write in px follow it like every rem size does (at size 1 these
+   are the same 10px and 11px). Unlayered on purpose: it wins over the `text-[10px]` / `text-[11px]` utilities. A new
+   `text-[Npx]` needs a line here (src/core/ui/__tests__/uiScale.style.test.ts) or should be written in rem. */
+.text-\[10px\] {
+  font-size: 0.625rem;
+}
+
+.text-\[11px\] {
+  font-size: 0.6875rem;
 }
 
 * {
@@ -758,8 +831,8 @@ fieldset>input[type="color"]::-webkit-color-swatch {
   z-index: 1000;
   @apply bg-base-100;
   position: absolute;
-  width: 10px;
-  height: 10px;
+  width: 0.625rem;
+  height: 0.625rem;
   transform: rotate(45deg);
 }
 
@@ -781,8 +854,30 @@ fieldset>input[type="color"]::-webkit-color-swatch {
   color: rgb(255, 234, 234);
 }
 
+/* SimpleBar's own px sizes (the 11px tracks and the thumb minimums), in rem so that the scrollbar keeps its proportions
+   when the interface grows (same px at Interface size 1). Not .hs-dummy-scrollbar-size: SimpleBar measures the native
+   scrollbar with that invisible element. The vendor sheet is imported first, so these win at equal specificity. */
+.simplebar-scrollbar {
+  min-height: 0.625rem;
+}
+
+.simplebar-track.simplebar-vertical {
+  width: 0.6875rem;
+}
+
+.simplebar-track.simplebar-horizontal {
+  height: 0.6875rem;
+}
+
+.simplebar-track.simplebar-horizontal .simplebar-scrollbar {
+  height: 0.4375rem;
+  min-width: 0.625rem;
+}
+
 .colorPicker .react-colorful {
   @apply w-full space-y-4;
+  /* react-colorful's own 200px, in rem so that the picker keeps its proportions when the dropdown grows */
+  height: 12.5rem;
 }
 
 .colorPicker .react-colorful__saturation {
@@ -790,8 +885,8 @@ fieldset>input[type="color"]::-webkit-color-swatch {
 }
 
 .colorPicker .react-colorful__pointer {
-  height: 10px;
-  width: 10px;
+  height: 0.625rem;
+  width: 0.625rem;
 }
 
 .colorPicker .react-colorful__pointer {

@@ -47,8 +47,8 @@ const Logs: FC<{ onFillRequest: (value: string) => void }> = ({ onFillRequest })
       <span className="px-2 text-sm font-semibold">Text events</span>
       <span className="opacity-50 px-2 text-xs font-medium">ℹ Doubleclick event to insert it into text field</span>
       {list.map(event => <div key={event.id} onDoubleClick={() => onFillRequest(event.value)} className="flex flex-col rounded-md bg-neutral/10 hover:bg-neutral/30 transition-colors p-2 cursor-pointer">
-        <div className="hidden sm:block text-xs opacity-50 font-semibold">from {event.event}</div>
-        <div className="text-sm sm:text-lg font-bold !leading-none">{event.value}</div>
+        <div className="hidden ui-sm:block text-xs opacity-50 font-semibold">from {event.event}</div>
+        <div className="text-sm ui-sm:text-lg font-bold !leading-none">{event.value}</div>
       </div>)}
     </div>
   </div>
@@ -102,14 +102,14 @@ const OverlayInput: FC<{ onClose: () => void }> = forwardRef(({ onClose }, ref: 
           autoFocus
           onKeyDown={handleKey}
           autoComplete="false"
-          className="absolute font-header inset-0 bg-transparent resize-none text-2xl sm:text-5xl pt-4 px-6 outline-none font-medium focus:placeholder-base-content/10 placeholder-base-content/30"
+          className="absolute font-header inset-0 bg-transparent resize-none text-2xl ui-sm:text-5xl pt-4 px-6 outline-none font-medium focus:placeholder-base-content/10 placeholder-base-content/30"
           value={inputValue}
           onChange={e => handleChange(e.target.value)}></textarea>
 
         <div className="flex absolute bottom-4 right-4 space-x-2 items-center">
           <RecordingAlerts />
-          <button className="hidden sm:flex btn btn-xl text-xl btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
-          <button className="flex sm:hidden btn btn-sm btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
+          <button className="hidden ui-sm:flex btn btn-xl text-xl btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
+          <button className="flex ui-sm:hidden btn btn-sm btn-primary gap-2" onClick={submit}>Send <RiSendPlaneFill /></button>
         </div>
 
         <Tooltip content={showOverlayLogs ? "Hide Logs" : "Show Logs"} className="absolute right-2 top-2">

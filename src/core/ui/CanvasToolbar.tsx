@@ -68,12 +68,12 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={handleZoomOut}
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors"
                     >
-                        <RiSubtractLine size={14} />
+                        <RiSubtractLine size="0.875rem" />
                     </button>
                 </Tooltip>
                 <button
                     onClick={handleZoomReset}
-                    className="px-2 h-6 text-xs font-medium text-base-content/60 hover:text-base-content hover:bg-base-content/10 rounded transition-colors min-w-[48px]"
+                    className="px-2 h-6 text-xs font-medium text-base-content/60 hover:text-base-content hover:bg-base-content/10 rounded transition-colors min-w-12"
                 >
                     {state.zoom}%
                 </button>
@@ -82,7 +82,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={handleZoomIn}
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors"
                     >
-                        <RiAddLine size={14} />
+                        <RiAddLine size="0.875rem" />
                     </button>
                 </Tooltip>
             </div>
@@ -96,7 +96,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => window.ApiClient.document.undo()}
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors disabled:opacity-25 disabled:pointer-events-none"
                     >
-                        <RiArrowGoBackLine size={14} />
+                        <RiArrowGoBackLine size="0.875rem" />
                     </button>
                 </Tooltip>
                 <Tooltip content="Redo (Ctrl+Y / Ctrl+Shift+Z)" placement="bottom">
@@ -106,7 +106,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => window.ApiClient.document.redo()}
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-base-content/10 text-base-content/60 hover:text-base-content transition-colors disabled:opacity-25 disabled:pointer-events-none"
                     >
-                        <RiArrowGoForwardLine size={14} />
+                        <RiArrowGoForwardLine size="0.875rem" />
                     </button>
                 </Tooltip>
             </div>
@@ -122,7 +122,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                             : "text-base-content/60 hover:text-base-content hover:bg-base-content/10"
                     )}
                 >
-                    <RiGridLine size={14} />
+                    <RiGridLine size="0.875rem" />
                 </button>
             </Tooltip>
 
@@ -136,7 +136,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                     onClick={() => onDuplicateSelection?.()}
                     className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors disabled:opacity-25 disabled:pointer-events-none"
                 >
-                    <RiFileCopyLine size={14} />
+                    <RiFileCopyLine size="0.875rem" />
                 </button>
             </Tooltip>
 
@@ -149,7 +149,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('left')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignLeft size={14} />
+                        <RiAlignLeft size="0.875rem" />
                     </button>
                 </Tooltip>
                 <Tooltip content="Align center" placement="bottom">
@@ -157,7 +157,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('center')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignCenter size={14} />
+                        <RiAlignCenter size="0.875rem" />
                     </button>
                 </Tooltip>
                 <Tooltip content="Align right" placement="bottom">
@@ -165,7 +165,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('right')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignRight size={14} />
+                        <RiAlignRight size="0.875rem" />
                     </button>
                 </Tooltip>
                 <div className="w-px h-4 bg-base-content/10 mx-0.5" />
@@ -174,7 +174,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('top')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignTop size={14} />
+                        <RiAlignTop size="0.875rem" />
                     </button>
                 </Tooltip>
                 <Tooltip content="Align middle" placement="bottom">
@@ -182,7 +182,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('middle')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignVertically size={14} />
+                        <RiAlignVertically size="0.875rem" />
                     </button>
                 </Tooltip>
                 <Tooltip content="Align bottom" placement="bottom">
@@ -190,7 +190,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                         onClick={() => onAlignElements?.('bottom')}
                         className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                     >
-                        <RiAlignBottom size={14} />
+                        <RiAlignBottom size="0.875rem" />
                     </button>
                 </Tooltip>
             </div>
@@ -210,7 +210,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                             : "text-base-content/60 hover:text-base-content hover:bg-base-content/10"
                     )}
                 >
-                    <RiHistoryLine size={14} />
+                    <RiHistoryLine size="0.875rem" />
                 </button>
             </Tooltip>
 
@@ -221,7 +221,7 @@ const CanvasToolbar: FC<CanvasToolbarProps> = memo(({ onZoomChange, onAlignEleme
                     onClick={togglePresentationMode}
                     className="w-6 h-6 flex items-center justify-center rounded text-base-content/60 hover:text-base-content hover:bg-base-content/10 transition-colors"
                 >
-                    <RiFullscreenLine size={14} />
+                    <RiFullscreenLine size="0.875rem" />
                 </button>
             </Tooltip>
         </div>

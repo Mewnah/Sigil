@@ -4,6 +4,7 @@ import { InspectorTabPath } from "@/types";
 import { toast } from "react-toastify";
 import { BackendState } from "./schema";
 import { useAppUIStore } from "./ui/store";
+import { UiScaleController, applyUiScaleToDocument, clampManualUiScale, tauriWindowDeps } from "./ui/uiScale";
 import Service_Discord from "./services/discord";
 import Service_Keyboard from "./services/keyboard";
 import Service_OBS from "./services/obs";
@@ -62,6 +63,15 @@ class ApiServer {
   public readonly overlay = new Service_Overlay();
   /** Japanese / Chinese readings of captions on `readings.stt` (P6-L; settings `readings`). */
   public readonly readings = new Service_Readings();
+  /**
+   * Interface size in effect: Auto (from the monitor the window is on) or the manual size. Host only: the /client pages
+   * and the caption window never create an ApiServer. `uiScale` in the settings is the MANUAL size, not this.
+   */
+  public readonly uiScale = new UiScaleController({
+    ...tauriWindowDeps(),
+    getSettings: () => ({ auto: this.state.uiScaleAuto, manual: this.state.uiScale }),
+    apply: (value, first) => applyUiScaleToDocument(document.documentElement, value, first),
+  });
 
   get state() {
     return this._state.state;
@@ -87,9 +97,16 @@ class ApiServer {
     document.body.setAttribute("data-theme", value);
   }
 
+  /** Interface size: a manual size (S, M, L, XL). Turns Auto off; the size is clamped. */
   public changeScale(value: number) {
-    this.state.uiScale = value;
-    document.documentElement.style.setProperty("--uiscale", value.toString());
+    this.state.uiScale = clampManualUiScale(value);
+    this.state.uiScaleAuto = false;
+    this.uiScale.refresh();
+  }
+  /** Interface size: Auto. The size follows the monitor the window is on; the manual size is kept for when Auto is turned off. */
+  public changeScaleAuto() {
+    this.state.uiScaleAuto = true;
+    this.uiScale.refresh();
   }
   public changeLanguage(value: string) {
     this.state.uiLanguage = value;
@@ -100,6 +117,11 @@ class ApiServer {
     if (window.Config.isClient())
       return;
     await this._state.init();
+    // Interface size comes first after the settings load, before anything else is awaited: nothing is rendered until
+    // init() returns (src/index.tsx), so the first-run wizard and the editor never paint at the wrong size.
+    await this.uiScale.start();
+    // The window listeners go when the page does (a webview reload, the window closing).
+    window.addEventListener("pagehide", () => this.uiScale.stop(), { once: true });
     await window.ApiShared.peer.startServer();
 
     window.ApiShared.pubsub.setExternalSttHandler((event) => {
@@ -133,7 +155,6 @@ class ApiServer {
       );
     }
     this.changeTheme(this.state.clientTheme);
-    this.changeScale(this.state.uiScale);
     void this.runSpeechDefaultOffers();
 
     window.ApiShared.pubsub.setTextEmoteEnricher((data) => {

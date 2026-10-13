@@ -155,7 +155,7 @@ const SelectItem = forwardRef<HTMLDivElement, PropsWithChildren<any>>(({ childre
             <RadixSelect.ItemIndicator className="absolute left-1 inline-flex items-center justify-center opacity-50">
                 {/* • */}
                 <RiCheckboxCircleFill color="current" />
-                {/* <IconCheck size={18}/> */}
+                {/* <IconCheck size="1.125rem"/> */}
             </RadixSelect.ItemIndicator>
         </RadixSelect.Item>
     );
@@ -446,7 +446,7 @@ export const InputMapObject: FC<ObjectProps> = memo(({ label, onChange, value, .
             <div className="flex space-x-2">
                 <InputBaseText fieldWidth={false} className="w-full" placeholder={rest.keyPlaceholder || "Key"} value={newKey} onChange={e => setNewKey(e.target.value)} />
                 <InputBaseText fieldWidth={false} className="w-full" placeholder={rest.valuePlaceholder || "Value"} value={newValue} onChange={e => setNewValue(e.target.value)} />
-                <button className="btn btn-sm btn-primary btn-outline flex-nowrap whitespace-nowrap gap-1" onClick={handleAdd}><RiAddCircleFill size={18} /> {t('common.btn_add')}</button>
+                <button className="btn btn-sm btn-primary btn-outline flex-nowrap whitespace-nowrap gap-1" onClick={handleAdd}><RiAddCircleFill size="1.125rem" /> {t('common.btn_add')}</button>
             </div>
         </div>
     </InputContainer>
@@ -480,11 +480,11 @@ const MapRow: FC<MapRowProps> = memo(({ keyValue, keyPlaceholder, valuePlacehold
         <InputBaseText fieldWidth={false} className="w-full" disabled={!edit} placeholder={keyPlaceholder || "Key"} value={newKey} onChange={v => setNewKey(v.target.value)} />
         <InputBaseText fieldWidth={false} className="w-full" disabled={!edit} placeholder={valuePlaceholder || "Value"} value={newValue} onChange={v => setNewValue(v.target.value)} />
         {edit ? <>
-            <Tooltip placement="top" content="Save"><button aria-label="Save" className="btn btn-sm btn-circle btn-success" onClick={handleSave}><RiCheckboxCircleFill size={18} /></button></Tooltip>
-            <Tooltip placement="top" content="Cancel"><button aria-label="Cancel" className="btn btn-sm btn-circle btn-ghost" onClick={handleCancel}><RiCloseCircleFill size={18} /></button></Tooltip>
+            <Tooltip placement="top" content="Save"><button aria-label="Save" className="btn btn-sm btn-circle btn-success" onClick={handleSave}><RiCheckboxCircleFill size="1.125rem" /></button></Tooltip>
+            <Tooltip placement="top" content="Cancel"><button aria-label="Cancel" className="btn btn-sm btn-circle btn-ghost" onClick={handleCancel}><RiCloseCircleFill size="1.125rem" /></button></Tooltip>
         </> : <>
-            <Tooltip placement="top" content="Edit"><button aria-label="Edit" className="btn btn-sm btn-circle btn-ghost" onClick={() => setEdit(true)}><RiEdit2Fill size={18} /></button></Tooltip>
-            <Tooltip placement="top" content="Delete"><button aria-label="Delete" className="btn btn-sm btn-circle btn-ghost text-error" onClick={onRemove}><RiDeleteBin3Fill size={18} /></button></Tooltip>
+            <Tooltip placement="top" content="Edit"><button aria-label="Edit" className="btn btn-sm btn-circle btn-ghost" onClick={() => setEdit(true)}><RiEdit2Fill size="1.125rem" /></button></Tooltip>
+            <Tooltip placement="top" content="Delete"><button aria-label="Delete" className="btn btn-sm btn-circle btn-ghost text-error" onClick={onRemove}><RiDeleteBin3Fill size="1.125rem" /></button></Tooltip>
         </>
         }
     </div>

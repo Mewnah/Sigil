@@ -2183,7 +2183,7 @@
     "btn_export_template": "Export",
     "btn_copy_address": "Copy my address",
     "field_app_theme": "App theme",
-    "field_ui_scale": "UI scale",
+    "field_ui_scale": "Interface size",
     "field_language": "Language",
     "field_ip_address": "IP address",
     "credits_mmpneo": "Huge thanks to mmpneo for creating and open-sourcing Curses. Sigil wouldn't exist without that foundation.",
@@ -2251,7 +2251,10 @@
     "web_server_status_stopped": "Stopped: {{error}}. Starting again.",
     "lan_off_hint": "To use a phone or a second PC, set {{field}} to {{option}} (Settings, {{section}}).",
     "lan_mode_localhost_turn_on": "To allow a phone, a second PC or Link apps, choose {{option}} above.",
-    "lan_mode_firewall_note": "Windows may ask once to allow Sigil on the network when LAN access is turned on."
+    "lan_mode_firewall_note": "Windows may ask once to allow Sigil on the network when LAN access is turned on.",
+    "ui_scale_auto": "Auto",
+    "ui_scale_auto_hint": "Auto picks {{size}} for the monitor Sigil is on.",
+    "ui_scale_auto_unknown": "Sigil could not read this monitor, so Auto stays at 100%."
   },
   "word_replacements": {
     "title": "Word replacements",

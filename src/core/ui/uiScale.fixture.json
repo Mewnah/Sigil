@@ -1,0 +1,22 @@
+{
+  "rule": "Interface size Auto: logical = physical / Windows scale factor; s = min(shortSide / 1440, longSide / 2560), clamped to [1, 2], rounded to the nearest 0.05. Zero or invalid sizes give 1.",
+  "cases": [
+    { "name": "1080p at 100%", "width": 1920, "height": 1080, "scaleFactor": 1, "expected": 1 },
+    { "name": "1440p at 100%", "width": 2560, "height": 1440, "scaleFactor": 1, "expected": 1 },
+    { "name": "ultrawide 1440p at 100%", "width": 3440, "height": 1440, "scaleFactor": 1, "expected": 1 },
+    { "name": "super ultrawide at 100%", "width": 5120, "height": 1440, "scaleFactor": 1, "expected": 1 },
+    { "name": "4K at 100%", "width": 3840, "height": 2160, "scaleFactor": 1, "expected": 1.5 },
+    { "name": "4K at 125%", "width": 3840, "height": 2160, "scaleFactor": 1.25, "expected": 1.2 },
+    { "name": "4K at 150%", "width": 3840, "height": 2160, "scaleFactor": 1.5, "expected": 1 },
+    { "name": "4K at 200%", "width": 3840, "height": 2160, "scaleFactor": 2, "expected": 1 },
+    { "name": "4K portrait at 100%", "width": 2160, "height": 3840, "scaleFactor": 1, "expected": 1.5 },
+    { "name": "3200x1800 at 100%", "width": 3200, "height": 1800, "scaleFactor": 1, "expected": 1.25 },
+    { "name": "3840x1600 at 100%", "width": 3840, "height": 1600, "scaleFactor": 1, "expected": 1.1 },
+    { "name": "5K at 100%", "width": 5120, "height": 2880, "scaleFactor": 1, "expected": 2 },
+    { "name": "8K at 100% (capped)", "width": 7680, "height": 4320, "scaleFactor": 1, "expected": 2 },
+    { "name": "laptop 1366x768", "width": 1366, "height": 768, "scaleFactor": 1, "expected": 1 },
+    { "name": "laptop 2880x1800 at 200%", "width": 2880, "height": 1800, "scaleFactor": 2, "expected": 1 },
+    { "name": "unknown monitor", "width": 0, "height": 0, "scaleFactor": 1, "expected": 1 },
+    { "name": "bad scale factor", "width": 3840, "height": 2160, "scaleFactor": 0, "expected": 1 }
+  ]
+}

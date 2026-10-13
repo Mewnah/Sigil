@@ -2,10 +2,12 @@ import { createContext, FC, HtmlHTMLAttributes, memo, PropsWithChildren, ReactNo
 import { arrow, offset, autoUpdate, flip, safePolygon, shift, useClick, useDismiss, useFloating, useHover, useInteractions, FloatingPortal } from "@floating-ui/react-dom-interactions";
 import { Placement } from "@floating-ui/react-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { uiPx } from "../uiUnits";
 interface Props {
   content: ReactNode,
   interact?: "hover" | "click" | "context",
   placement?: Placement
+  /** Gap to the button in px at Interface size 1 (scaled with it). */
   targetOffset?: number
 }
 
@@ -28,10 +30,10 @@ const Dropdown: FC<PropsWithChildren<Omit<HtmlHTMLAttributes<HTMLSpanElement>, "
     open,
     onOpenChange: setOpen,
     middleware: [
-      shift({padding: 8}),
-      offset(targetOffset),
+      shift({ padding: uiPx(8) }),
+      offset(uiPx(targetOffset)),
       flip(),
-      arrow({ element: arrowRef, padding: 20 })
+      arrow({ element: arrowRef, padding: uiPx(20) })
     ]
   });
   const { getReferenceProps, getFloatingProps } = useInteractions([
@@ -59,7 +61,7 @@ const Dropdown: FC<PropsWithChildren<Omit<HtmlHTMLAttributes<HTMLSpanElement>, "
           exit={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className="z-50 shadow-lg rounded-box" {...getFloatingProps()} ref={floating} style={{margin: 0,position: strategy,top: y ?? 0,left: x ?? 0,}}>
-          <div style={{ top: arrowY ?? 0, left: arrowX ?? -5 }} className="dropdown-arrow" ref={arrowRef} />
+          <div style={{ top: arrowY ?? 0, left: arrowX ?? "-0.3125rem" }} className="dropdown-arrow" ref={arrowRef} />
           {content}
         </motion.span>
         }

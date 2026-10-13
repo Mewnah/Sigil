@@ -82,11 +82,11 @@ const Inspector_OBS: FC = () => {
       <Inspector.SubHeader>{t('obs.section_browser_source')}</Inspector.SubHeader>
       <p className="text-xs text-base-content/70 leading-snug mb-2">{t("obs.quick_start")}</p>
 
-      <button type="button" onClick={copyObsBrowserSourceLink} className="btn btn-sm btn-primary gap-2 w-full sm:w-auto">
+      <button type="button" onClick={copyObsBrowserSourceLink} className="btn btn-sm btn-primary gap-2 w-full ui-sm:w-auto">
         <RiFileCopyLine /> {t("obs.btn_copy_browser_source_link")}
       </button>
       {lanAccess.mode === "lan" && (
-        <button type="button" onClick={copyObsLanLink} className="btn btn-sm btn-ghost gap-2 w-full sm:w-auto sm:ms-2">
+        <button type="button" onClick={copyObsLanLink} className="btn btn-sm btn-ghost gap-2 w-full ui-sm:w-auto ui-sm:ms-2">
           <RiFileCopyLine /> {t("obs.btn_copy_lan_browser_source_link")}
         </button>
       )}
