@@ -9,6 +9,7 @@
 | [benchmarks/README.md](benchmarks/README.md) | Contributors — the benchmark harness (`--headless bench`, specs, metrics, perf gate) |
 | [benchmarks/SPEECH_BENCHMARKS.md](benchmarks/SPEECH_BENCHMARKS.md) | Contributors — Sigil's own STT / TTS / machine-translation speed, quality, latency and VRAM measurements |
 | [benchmarks/VC_BENCHMARKS.md](benchmarks/VC_BENCHMARKS.md) | Contributors — the Sigil Voice Engine scorecard against the plan's targets T1–T10 (latency, per-block compute, VRAM, CPU, fidelity, autotuner) |
+| [VOICE_ENGINE_ROADMAP.md](VOICE_ENGINE_ROADMAP.md) | Contributors — what would move the voice engine's quality, latency, similarity and pitch accuracy beyond preset tuning: ranked items with their evidence, expected effect and the smallest test each needs, the first step, and what is not worth doing |
 | [SPEECH_STACK_IMPLEMENTATION_PLAN.md](SPEECH_STACK_IMPLEMENTATION_PLAN.md) | Contributors — phased plan for the speech stack (STT, TTS, translation, voice engine) |
 | [SPEECH_STACK_RESEARCH_2026-09.md](SPEECH_STACK_RESEARCH_2026-09.md) | Contributors — the research the plan is based on |
 | [adr/README.md](adr/README.md) | Architecture decision records |
