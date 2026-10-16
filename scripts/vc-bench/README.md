@@ -200,7 +200,10 @@ then run `python scripts/vc-bench/fcpe_check.py <dir>/report.json` in an environ
   drivers ran once here (2026-10-12, 5 clips, 250 ms block; `rvc_offline_reference.py` reads
   `vc_single`'s signature by name for that build's layout), and the result is the one-run
   [quick head-to-head](../../docs/benchmarks/VC_BENCHMARKS.md#quick-head-to-head-one-run), not the
-  statistical T6. The drivers were written against RVC WebUI `81eed5e8` (2026-08) and Applio `c7665ac9`;
+  statistical T6. It ran again on 2026-10-16 with `--sweep 40,60,80,100` (and a 200 ms block) at two
+  context lengths, against Sigil at matched latency: the
+  [matched comparison](../../docs/benchmarks/VC_BENCHMARKS.md#matched-comparison-one-run), also 5 clips.
+  Run RVC's own Python with `-I -B` there. The drivers were written against RVC WebUI `81eed5e8` (2026-08) and Applio `c7665ac9`;
   the Applio driver has not run here. On the first real run, check the output length against the input,
   and check the printed notes.
 - The neutral references, the public corpus download, the live captures (the dev PC's virtual-cable

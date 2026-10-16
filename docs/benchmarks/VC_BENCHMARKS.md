@@ -1065,7 +1065,7 @@ How it got there:
 
 ## Competitors (T6)
 
-T6 is defined statistically since P3B ([README → compare v2](README.md#modes)): a corpus of loudness-normalised clips, paired per-clip statistics, DNSMOS +0.05 at matched latency with the lower confidence bound above 0, GPE and MCD non-inferiority under every analyzer against EGG or consensus truth, and latency at most 0.7x as a Pareto row against each competitor's operating points, its minimum stable chunk on the same rig included. It is **undecided**: no corpus-scale competitor renditions exist (the installs and captures are manual, [Still to run](#still-to-run-manual)); the one-run [quick head-to-head](#quick-head-to-head-one-run) below is five clips against one competitor and decides nothing. P7-B left it pending; the exact steps, in order, are the [T6 checklist](../../scripts/vc-bench/README.md#t6-checklist-what-is-left-to-do-in-order-p7-b). The published per-chunk figures are reference rows from other PCs, so they bound rather than rank:
+T6 is defined statistically since P3B ([README → compare v2](README.md#modes)): a corpus of loudness-normalised clips, paired per-clip statistics, DNSMOS +0.05 at matched latency with the lower confidence bound above 0, GPE and MCD non-inferiority under every analyzer against EGG or consensus truth, and latency at most 0.7x as a Pareto row against each competitor's operating points, its minimum stable chunk on the same rig included. It is **undecided**: no corpus-scale competitor renditions exist (the installs and captures are manual, [Still to run](#still-to-run-manual)); the one-run [quick head-to-head](#quick-head-to-head-one-run) below is five clips against one competitor and decides nothing, and neither does the [matched-latency comparison](#matched-comparison-one-run) after it (the same five clips with each side at the same algorithmic latency: a tie on DNSMOS at about 95 ms and about 255 ms). P7-B left it pending; the exact steps, in order, are the [T6 checklist](../../scripts/vc-bench/README.md#t6-checklist-what-is-left-to-do-in-order-p7-b). The published per-chunk figures are reference rows from other PCs, so they bound rather than rank:
 
 | System | Per-chunk compute | Chunk | Compute / chunk | GPU and method |
 |---|---|---|---|---|
@@ -1082,7 +1082,7 @@ The 4090 and the 3060 Ti differ by roughly 1.5x to 5x depending on the workload,
 A one-time check on 2026-10-12 of Sigil against the RVC WebUI realtime loop on this rig (RTX 4090, Ryzen 7 7800X3D, driver 617.14). It is **not the statistical T6** and decides no T6 row: the compare tool prints "T6: fail" for it, but that line comes from 5 clips where the DNSMOS row alone needs 86 (50 % power) to 175 (80 %) at the measured paired SD of 0.236, so read the table, not the verdict.
 
 - **Same inputs, same voice.** The MIT default voice (`default.pth`, sha256 `c9d6b0ac7aa8df91…`; the slot's `source_sha256` matches), transpose 0, index rate 0, and 5 of the 10 local dev-cache clips (`jfk`, `ja-short`, `ko-short`, `ru-short`, `join-en-yue`; 11.0-12.6 s, 16 kHz mono, -26 LUFS, sha256-checked). MCD is scored against RVC WebUI's own whole-utterance fp32 renders (two seeds, RMVPE, protect 0.33, `rvc_offline_reference.py`), so those references are RVC's output and favour RVC on that row; the seed-to-seed floor is 1.18 dB.
-- **Each side at its own defaults, so the shapes differ.** Sigil: the Low latency preset on CUDA with RMVPE, as the GPU preset button applies it (a new install runs the CPU Streamer instead), the app's stream: 512-frame (10.7 ms) device block and engine block, 96 ms of extra context, 20 ms crossfade. RVC WebUI (build 20260718 Nvidia, `realtime_gui.py`'s block loop run offline by `rvc_webui_offline.py`, fp16, RMVPE): 250 ms block, 2.5 s of extra context, 50 ms crossfade, SOLA 40 + 10 ms, RMS mix 1. The 23-fold difference in block size and 26-fold in context is the main confound: this run cannot say how much of the quality gap is the engine and how much is the shape.
+- **Each side at its own defaults, so the shapes differ.** Sigil: the Low latency preset on CUDA with RMVPE, as the GPU preset button applies it (a new install runs the CPU Streamer instead), the app's stream: a 512-frame (10.7 ms) device block, which the engine rounds up to 20 ms blocks, 96 ms of extra context, 20 ms crossfade. RVC WebUI (build 20260718 Nvidia, `realtime_gui.py`'s block loop run offline by `rvc_webui_offline.py`, fp16, RMVPE): 250 ms block, 2.5 s of extra context, 50 ms crossfade, SOLA 40 + 10 ms, RMS mix 1. The 12-fold difference in block size (250 ms against 20 ms) and 26-fold in context is the main confound: this run cannot say how much of the quality gap is the engine and how much is the shape (the [matched comparison](#matched-comparison-one-run) below does).
 - **Offline tier only.** No end-to-end latency (the virtual cables are disabled on the dev PC); the latencies below are algorithmic. w-okada VCClient was left out because it opens its own window and takes focus on the user's PC; Applio was not run.
 - **One run, 5 clips, not significant** except where an interval is given. The GPU was shared and clocked down (SM 1155 MHz at the run's summary, other processes used it in some samples: a browser, the desktop, an RGB-lighting service), so Sigil's compute is, if anything, pessimistic. The RVC WebUI renditions came from an earlier run (same session, different load); its 35 ms p99 is the first clip's cold start (the other four clips read p99 16.4-16.7 ms).
 
@@ -1095,12 +1095,106 @@ A one-time check on 2026-10-12 of Sigil against the RVC WebUI realtime loop on t
 | Gross pitch error, CREPE-tiny | 15.0 % | 12.4 % |
 | Fine pitch error (RMVPE analyzer) | 23.0 cents | 17.1 cents |
 | Envelope MCD to RVC's reference | 2.71 dB | 1.90 dB |
-| Compute per block p50 / p95 / p99 | 6.89 / 8.16 / 8.51 ms per 10.7 ms block | 15.3 / 21.9 / 35.2 ms per 250 ms block |
-| Compute per second of audio (p50) | 0.65 s | 0.06 s |
+| Compute per block p50 / p95 / p99 | 6.89 / 8.16 / 8.51 ms per 20 ms block | 15.3 / 21.9 / 35.2 ms per 250 ms block |
+| Compute per second of audio (p50) | 0.34 s | 0.06 s |
 
-How to read it. RVC WebUI's long-block defaults score higher on DNSMOS: the paired difference (Sigil minus RVC) is -0.54 [-0.83, -0.25] and RVC is higher on all 5 clips; the envelope MCD to the reference is 0.81 dB worse for Sigil [+0.49, +1.13] (also 5 of 5). Speaker similarity and pitch error are close (the pitch truth covers only 28-451 consensus frames per clip, so GPE is 0 under three analyzers for both). That is the direction the T6 dry run found for the shape alone (DNSMOS 3.11-3.14 at a GUI-like 200 ms block against 2.71-2.79 at 40 ms), so it does not show the engine is worse at a matched shape. What the run does show is the trade the Low latency preset makes: about a fifth of RVC WebUI's latency for roughly half a DNSMOS point at these settings, and about ten times the GPU time per second of audio (it converts 94 blocks a second, each with its context), still under the block period at p99 (0.80 of 10.7 ms). A matched-latency comparison, RVC WebUI at its 40-100 ms blocks (`--sweep`) against Sigil's Quality preset, is a T6 step this run did not do.
+How to read it. RVC WebUI's long-block defaults score higher on DNSMOS: the paired difference (Sigil minus RVC) is -0.54 [-0.83, -0.25] and RVC is higher on all 5 clips; the envelope MCD to the reference is 0.81 dB worse for Sigil [+0.49, +1.13] (also 5 of 5). Speaker similarity and pitch error are close (the pitch truth covers only 28-451 consensus frames per clip, so GPE is 0 under three analyzers for both). That is the direction the T6 dry run found for the shape alone (DNSMOS 3.11-3.14 at a GUI-like 200 ms block against 2.71-2.79 at 40 ms), so it does not show the engine is worse at a matched shape. What the run does show is the trade the Low latency preset makes: about a fifth of RVC WebUI's latency for roughly half a DNSMOS point at these settings, and about six times the GPU time per second of audio (it converts 50 blocks a second, each with its context), still under the block period at p99 (0.43 of 20 ms). The compute rows of this table first divided by the 10.7 ms device block; the engine runs one model call per 20 ms block (the plan's `block_16k` is 320), so they were corrected on 2026-10-16. A matched-latency comparison, RVC WebUI at its 40-100 ms blocks (`--sweep`) against Sigil's Quality preset, is the next subsection.
 
 Reproduce (the audio stays in the scratch folder; nothing here is committed): `rvc_offline_reference.py` for the references, `rvc_webui_offline.py --block-time 0.25 --crossfade-time 0.05 --extra-time 2.5 --f0method rmvpe --index-rate 0 --rms-mix-rate 1` for the renditions, a corpus manifest with one `rvc_webui` point, and a spec with `compare.sigil.configs: ["low_latency"]` on `execution_provider: cuda`, `block_ms: 0` ([README section 4](../../scripts/vc-bench/README.md#4-score)), run as `Sigil.exe --headless bench <spec> --out <dir>` under `scripts/bench/gpu-lock.ps1`.
+
+### Matched comparison (one run)
+
+The step the quick head-to-head left open: put both sides at the same algorithmic latency instead of at their own defaults, so the block and the context stop being the main difference. Run on 2026-10-16 on the same rig (RTX 4090, Ryzen 7 7800X3D, driver 617.14), offline tier, with the same 5 clips, the same MIT default voice (`default.pth`, transpose 0, index rate 0), the same RVC neutral references (the 2026-10-12 renders, reused) and the same scoring (compare v2). Sigil is the 0.5.0 release build of 2026-10-13 (`Sigil.exe` sha256 `b80c9264573bcf48…`), RVC WebUI the 20260718 Nvidia build (fp16, RMVPE). It is still **not the statistical T6**: 5 clips, one run per point, nobody listened.
+
+**What each point is.**
+
+- **RVC WebUI** (`rvc_webui_offline.py`, the block loop of `realtime_gui.py`): blocks of 40, 60, 80 and 100 ms (`--sweep`), a 200 ms block, and the 250 ms render of 2026-10-12. Crossfade 50 ms but never more than half the block (20, 30, 40, 50, 50 ms), SOLA search 10 ms, RMVPE, index 0, volume envelope off. The extra context is the GUI's default 2.5 s: past audio adds no latency to RVC, and its compute barely moves with it (a 40 ms block took p50 9.5 ms with 2.5 s and 8.9 ms with 0.5 s), so a shorter one would only handicap it. A second sweep at 0.5 s (about the 10-to-1 context-to-block ratio of the GUI's own defaults) shows what the context is worth. Every block from 40 ms up kept up with real time on this GPU (per-block p99 under the block period; the 40 ms block's first clip read 26-29 ms from a cold start, the other clips 9-12 ms), so RVC's smallest clean block is 40 ms at 62 ms of latency, and the 60 ms block is the one at about 95 ms.
+- **Sigil** (`Sigil.exe --headless bench`, CUDA, RMVPE, 512-frame device block, 20 ms crossfade): the Quality preset as the app applies it (192 ms extra context, 20 ms lookahead, Chunk size on Auto, which the engine runs as 20 ms blocks); the same with Chunk size 40, 60 and 200 ms; the same with 2000 ms of extra context, the most the app's slider and the benchmark's stream spec accept (the engine plans up to 3.8 s at a 200 ms chunk, but nothing can set it, so RVC's 2.5 s could not be matched); and Low latency again for the first table. Quality's index rate of 0.5 does nothing here: the default voice has no index file, and a control row with index 0 scored the same (DNSMOS 2.96 against 2.95).
+- **Latency** is the algorithmic one on both sides, read two ways: what the producer computes (Sigil: the identity probe plus one device block; RVC: block + SOLA buffer + SOLA search - mean SOLA offset) and what the scorer measures from the renditions. Neither counts the context, which is past audio.
+
+**Operating point A: about 95 ms.** RVC's 60 ms block is at 92 ms. Sigil's Quality preset as shipped is at 80 ms (13 % lower), and with a 40 ms Chunk size at 98 ms (6 % higher), so the two bracket it. Latency cells read "Sigil: probe / measured; RVC: measured / driver".
+
+| Mean over 5 clips | Sigil Quality, Auto chunk | Sigil Quality, Chunk 40 ms | Sigil Quality, Chunk 40 ms, 2000 ms extra | RVC 60 ms block, 2.5 s extra | RVC 60 ms block, 0.5 s extra |
+|---|---|---|---|---|---|
+| Algorithmic latency, ms | 80.4 / 78.7 | 98.3 / 96.2 | 98.3 / 95.5 | 92.2 / 94.8 | 94.6 / 94.7 |
+| DNSMOS OVRL (SIG / BAK) | 2.95 (3.24 / 3.99) | 2.97 (3.22 / 4.02) | 2.85 (3.14 / 3.96) | 2.86 (3.15 / 3.98) | 2.78 (3.09 / 3.92) |
+| Speaker similarity (CAM++ cosine) | 0.696 | 0.714 | 0.726 | 0.742 | 0.726 |
+| Gross pitch error, RMVPE / SwiftF0 / DIO | 0 / 0 / 0.21 % | 0 / 0 / 0.07 % | 0 / 0 / 0.79 % | 0 / 0 / 0.53 % | 0 / 0 / 0.59 % |
+| Gross pitch error, CREPE-tiny | 13.7 % | 15.2 % | 12.5 % | 13.6 % | 16.3 % |
+| Fine pitch error (RMVPE analyzer) | 16.1 cents | 16.3 cents | 15.1 cents | 20.6 cents | 17.0 cents |
+| Envelope MCD to RVC's reference | 2.49 dB | 2.42 dB | 2.33 dB | 2.21 dB | 2.21 dB |
+| Compute per block, p50 / p99 | 5.9-9.2 / 7.7-16.5 ms per 20 ms | 6.1-6.2 / 8.0-8.1 ms per 40 ms | 8.7 / 10.6-11.0 ms per 40 ms | 10.9 / 13.5 ms per 60 ms | 10.5 / 13.4 ms per 60 ms |
+| Compute per second of audio (p50) | 0.30-0.46 s | 0.15 s | 0.22 s | 0.18 s | 0.18 s |
+
+Sigil minus RVC, paired over the 5 clips (mean and 95 % interval; positive DNSMOS and CAM++ favour Sigil, negative pitch error and MCD favour Sigil):
+
+| Sigil row against RVC 60 ms, 2.5 s extra | DNSMOS OVRL | Speaker similarity | Fine pitch error | Envelope MCD to RVC's reference |
+|---|---|---|---|---|
+| Quality, Auto chunk (80 ms) | +0.09 [-0.08, +0.26], 3 of 5 clips higher | -0.046 [-0.073, -0.019], 0 of 5 | -4.5 [-10.7, +1.8] cents | +0.29 [-0.06, +0.64] dB, 4 of 5 farther |
+| Quality, Chunk 40 ms (98 ms) | +0.10 [-0.13, +0.34], 4 of 5 | -0.028 [-0.036, -0.020], 0 of 5 | -4.3 [-9.9, +1.3] cents | +0.21 [-0.14, +0.57] dB, 4 of 5 |
+| Quality, Chunk 40 ms, 2000 ms extra (98 ms) | -0.02 [-0.26, +0.23], 2 of 5 | -0.016 [-0.037, +0.005], 1 of 5 | -5.4 [-15.3, +4.5] cents | +0.12 [-0.14, +0.38] dB, 3 of 5 |
+
+Against the 0.5 s RVC row the DNSMOS differences are +0.17 [-0.08, +0.41], +0.18 [-0.09, +0.45] and +0.06 [-0.23, +0.36] in the same order.
+
+**Result at A: no side wins on DNSMOS.** Sigil is ahead on the mean in two of the three rows and level in the third, and every interval includes 0. The one difference that resolves is speaker similarity, where RVC is higher by 0.03-0.05 (all 5 clips in the first two rows). Gross pitch error is 0 under RMVPE and SwiftF0 for both; Sigil's fine pitch error is 4-5 cents lower but does not resolve under RMVPE (it does under the DIO analyzer: -9.3 [-17.1, -1.5] cents for the first row).
+
+**Operating point B: about 255-305 ms.** Sigil's 200 ms Chunk size (the engine's maximum) is at 258 ms. RVC's 200 ms block is at 253 ms and is the closest match; the 250 ms block of the first table (304 ms, 46 ms more than Sigil) is kept as asked.
+
+| Mean over 5 clips | Sigil Quality, Chunk 200 ms | Sigil Quality, Chunk 200 ms, 2000 ms extra | RVC 200 ms block, 2.5 s extra | RVC 250 ms block, 2.5 s extra (2026-10-12) |
+|---|---|---|---|---|
+| Algorithmic latency, ms | 258.3 / 257.2 | 258.3 / 255.4 | 252.9 / 244.9 | 303.8 / 294.6 |
+| DNSMOS OVRL (SIG / BAK) | 3.09 (3.36 / 4.04) | 3.14 (3.39 / 4.10) | 3.10 (3.37 / 4.07) | 3.18 (3.44 / 4.10) |
+| Speaker similarity (CAM++ cosine) | 0.740 | 0.749 | 0.739 | 0.729 |
+| Gross pitch error, RMVPE / SwiftF0 / DIO | 0 / 0 / 0.32 % | 0 / 0 / 0 % | 0 / 0 / 0.14 % | 0 / 0 / 0.14 % |
+| Gross pitch error, CREPE-tiny | 13.0 % | 11.7 % | 14.0 % | 12.4 % |
+| Fine pitch error (RMVPE analyzer) | 13.9 cents | 15.9 cents | 17.7 cents | 17.1 cents |
+| Envelope MCD to RVC's reference | 2.17 dB | 2.09 dB | 1.97 dB | 1.90 dB |
+| Compute per block, p50 / p99 | 6.8-12.1 / 7.4-21.0 ms per 200 ms | 9.3-16.7 / 11.6-22.8 ms per 200 ms | 21.5 / 40.9 ms per 200 ms | 15.3 / 35.2 ms per 250 ms |
+| Compute per second of audio (p50) | 0.03-0.06 s | 0.05-0.08 s | 0.11 s | 0.06 s |
+
+| Sigil row against | DNSMOS OVRL | Speaker similarity | Fine pitch error | Envelope MCD to RVC's reference |
+|---|---|---|---|---|
+| Chunk 200, 192 ms extra, against RVC 200 ms | -0.02 [-0.24, +0.21], 2 of 5 clips higher | +0.001 [-0.061, +0.064], 2 of 5 | -3.8 [-7.6, +0.0] cents | +0.20 [-0.03, +0.43] dB, 4 of 5 farther |
+| Chunk 200, 2000 ms extra, against RVC 200 ms | +0.04 [-0.09, +0.17], 3 of 5 | +0.010 [-0.028, +0.047], 3 of 5 | -1.8 [-7.2, +3.5] cents | +0.12 [-0.02, +0.25] dB, 5 of 5 |
+| Chunk 200, 192 ms extra, against RVC 250 ms | -0.09 [-0.38, +0.20], 1 of 5 | +0.011 [-0.052, +0.075], 3 of 5 | -3.1 [-5.5, -0.8] cents | +0.27 [+0.03, +0.52] dB, 5 of 5 |
+| Chunk 200, 2000 ms extra, against RVC 250 ms | -0.04 [-0.28, +0.20], 2 of 5 | +0.020 [-0.027, +0.067], 3 of 5 | -1.2 [-5.1, +2.7] cents | +0.19 [+0.05, +0.33] dB, 5 of 5 |
+
+**Result at B: a tie.** Against the closest match (RVC 200 ms) Sigil is +0.04 [-0.09, +0.17] on DNSMOS with the long context and -0.02 [-0.24, +0.21] without it. Against the 250 ms block, which has 46 ms more latency, it is -0.04 [-0.28, +0.20] and -0.09 [-0.38, +0.20]. Speaker similarity is level, and Sigil's fine pitch error is again a few cents lower (only the 192 ms row against 250 ms resolves). Gross pitch error is 0 under RMVPE and SwiftF0 for both.
+
+**DNSMOS against latency, every point of the run** (algorithmic latency in ms, then the mean over the 5 clips):
+
+| System, extra context | Latency (ms) → DNSMOS OVRL |
+|---|---|
+| Sigil, 96-192 ms | 60 → 2.63 (Low latency) · 80 → 2.95 (Quality, Auto chunk) · 98 → 2.97 (Chunk 40) · 120 → 3.08 (Chunk 60) · 258 → 3.09 (Chunk 200) |
+| Sigil, 2000 ms | 98 → 2.85 · 120 → 2.93 · 258 → 3.14 |
+| RVC WebUI, 2.5 s | 62 → 2.70 · 92 → 2.86 · 122 → 3.09 · 152 → 3.02 · 253 → 3.10 · 304 → 3.18 |
+| RVC WebUI, 0.5 s | 63 → 2.59 · 95 → 2.78 · 123 → 3.01 · 152 → 3.07 |
+
+**How to read it.**
+
+- **Shape was most of the first table's gap.** The first table compared Low latency (60 ms, 2.64) with RVC's 250 ms block (304 ms, 3.18). At 60 ms, Low latency against RVC's 40 ms block (62 ms) is -0.07 [-0.25, +0.10] on DNSMOS, and the curves above sit on top of each other. Both engines gain about 0.3 DNSMOS from 60-90 ms to about 250 ms (RVC 60 ms to 250 ms: +0.32 [+0.09, +0.54]; Sigil Low latency to Quality at Chunk 200: +0.46 [+0.34, +0.57], which also changes the lookahead and the context).
+- **Extra context did not help Sigil at small chunks.** 2000 ms against 192 ms: -0.12 [-0.26, +0.02] at Chunk 40 and -0.15 [-0.37, +0.08] at Chunk 60 (1 clip of 5 higher in each), then +0.05 [-0.12, +0.23] at Chunk 200. That agrees with the offline-ceiling note that long windows hurt after silence. RVC gained +0.08 [-0.11, +0.27] from 2.5 s over 0.5 s at its 60 ms block, also unresolved.
+- **What the 5 clips can and cannot say.** The intervals are Student t over 5 clips. The paired SD of the pairs shown is 0.10-0.24 (median 0.19 over all pairs in the run), so a +0.05 DNSMOS difference would need about 17-86 clips to resolve at 50 % power (34-175 at 80 %); the report's own sizing line says 249 and 509 because it takes the widest pair of the run (SD 0.40). A tie here is "not resolved", not "equal".
+- **The MCD row favours RVC by construction.** It measures distance to RVC's own offline render, and every Sigil-minus-RVC value is positive (Sigil farther on 3 to 5 of the 5 clips); read the sign as expected.
+
+**What limits it.**
+
+- Sigil's extra context stops at 2000 ms, RVC's runs at 2.5 s, so the "same context" rows are 0.5 s short on Sigil's side.
+- Compute is indicative only. The GPU was idle at the start (2535 MHz) but shared during the run (SM clock median 780-885 MHz, other processes up to 56-70 % SM: desktop apps, a lighting service, a browser, the Claude and Gemini apps), Sigil's per-call time moved by up to 1.7x between two passes of the same spec (Quality p50 5.9 against 9.2 ms; the cells show both), and the RVC rows came from separate sessions (the 250 ms render is from 2026-10-12), which is why RVC's 200 ms block (21.5 ms) reads slower than its 250 ms one (15.3 ms). The per-second rows divide by the block the model really runs (Sigil Auto: 20 ms). The compare report's real-time flag for an Auto row still uses the 10.7 ms device block, so Quality read "not real time" in the second pass (p99 16.5 ms); against its 20 ms block that is 0.82 of the period.
+- Sigil's renditions repeated well: two passes of the same spec gave row-mean DNSMOS within 0.02, but single clips moved by up to 0.10 DNSMOS and 0.06 CAM++, so the Quality row reads -0.046 against RVC's 60 ms block here and -0.034 in the first pass. The RVC renditions were rendered once.
+- RVC WebUI's realtime loop has no protect control while Sigil applies 0.33, so the report flags "protect not stated" on every RVC point (as in the first table). The renditions were not listened to; the blind A/B kit is still the way to a quality claim.
+
+Reproduce (the audio stays in the scratch folder; nothing here is committed). RVC's renditions, in RVC's own runtime Python, one GPU job at a time under `scripts/bench/gpu-lock.ps1`:
+
+```
+<RVC>/runtime/python.exe -I -B scripts/vc-bench/rvc_webui_offline.py --rvc-root <RVC> --pth <default.pth> \
+    --corpus <corpus>/corpus.json --out-dir <corpus>/out/rvc_x2500 --sweep 40,60,80,100 \
+    --crossfade-time 0.05 --extra-time 2.5 --f0method rmvpe --index-rate 0 --rms-mix-rate 1 --point-name rvc_x2500
+# again with --extra-time 0.5 --out-dir <corpus>/out/rvc_x500 --point-name rvc_x500,
+# and with --sweep 200 --extra-time 2.5 --out-dir <corpus>/out/rvc_x2500b200
+```
+
+Then a corpus manifest with the 2026-10-12 clips and references, one `points` entry per RVC folder (`wav: out/rvc_x2500/b60/{clip}.wav`, `config.block_ms`, and the 250 ms render), and Sigil's extra rows as `sigil.points` patches of the spec's engine and stream, for example `{"name": "q_b40_x2000", "engine": {"block_ms": 40}, "stream": {"extra_context_ms": 2000}}` ([README section 4](../../scripts/vc-bench/README.md#4-score)). The spec's own `engine` carries the Quality preset's settings so those patches start from it (`preset: quality`, `execution_provider: cuda`, `pitch_extractor: rmvpe`, `lookahead_ms: 20`, `vram_cap_mb: 1536`, `block_ms: 0`, `stream.extra_context_ms: 192`), with `compare.sigil.configs: ["low_latency", "quality"]` and `scoring: {"f0_method": "auto", "analysis_ep": "cpu"}`. Run it as `pwsh -NoProfile -File scripts/bench/gpu-lock.ps1 -Run matched -Command '& <exe>\Sigil.exe --headless bench spec.json --out <dir>'` with `SIGIL_APP_DATA_DIR` and `SIGIL_TEST_MODELS_DIR` set as the final scorecard does.
 
 ## Scorers and how to read them
 
