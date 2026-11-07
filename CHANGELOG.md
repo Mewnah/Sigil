@@ -299,7 +299,7 @@ Reference stack: [w-okada/voice-changer](https://github.com/w-okada/voice-change
 
 ---
 
-## [0.3.1](https://github.com/Mewnah/Sigil/releases/tag/v0.3.1) - 2026-03-31
+## [0.3.1](https://github.com/Mewnah/Sigil/releases/tag/v0.3.1) - 2026-04-02
 
 ### Internationalization
 
