@@ -686,7 +686,7 @@ pub fn external_weights_image(template: &GraphInfo, weights_file: &str, source: 
         kept.clear();
         kept.extend(
             kept_bytes
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
         );
         if kept.len() * 2 != dst.len() {
@@ -698,7 +698,7 @@ pub fn external_weights_image(template: &GraphInfo, weights_file: &str, source: 
             use half::slice::HalfFloatSliceExt;
             halves.convert_from_f32_slice(&kept);
         }
-        for ((out, h), v) in dst.chunks_exact_mut(2).zip(&halves).zip(&kept) {
+        for ((out, h), v) in dst.as_chunks_mut::<2>().0.iter_mut().zip(&halves).zip(&kept) {
             if v.is_finite() && !h.is_finite() {
                 return Err(format!("'{}': {v} overflows fp16", t.name));
             }
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(len, 48);
         let raw = &bytes[off as usize..(off + len) as usize];
         let back: Vec<f32> = raw
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         assert_eq!(back, w);
@@ -1037,7 +1037,7 @@ mod tests {
         assert_eq!((image.tensors, image.centre_rows, image.to_f16), (3, 1, 1));
         assert_eq!(image.bytes.len(), 104);
         let f = |b: &[u8]| {
-            b.chunks_exact(4)
+            b.as_chunks::<4>().0.iter()
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect::<Vec<f32>>()
         };
@@ -1049,7 +1049,7 @@ mod tests {
         assert_eq!(f(&image.bytes[32..80]), want);
         assert_eq!(&image.bytes[24..32], &[0u8; 8], "gaps stay zero");
         let h: Vec<f32> = image.bytes[96..104]
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32())
             .collect();
         assert_eq!(

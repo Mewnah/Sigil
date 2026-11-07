@@ -23,7 +23,7 @@ fn render_through_harness(engine: SigilRvcEngine, index_rate: f32) -> Vec<f32> {
     h.set_controls(2.0, index_rate, 0.33, 1);
     let input: Vec<f32> = voice_16k(16_000 * 2).iter().flat_map(|&x| [x, x, x]).collect();
     let mut out = Vec::new();
-    for chunk in input.chunks_exact(1_920) {
+    for chunk in input.as_chunks::<1_920>().0 {
         out.extend(h.push_and_convert(chunk).unwrap());
     }
     out
@@ -226,7 +226,7 @@ fn engine_streams_through_the_fixed_block_harness() {
             .flat_map(|&x| [x, x, x])
             .collect();
         let mut out = Vec::new();
-        for chunk in input.chunks_exact(1_920) {
+        for chunk in input.as_chunks::<1_920>().0 {
             let o = h
                 .push_and_convert(chunk)
                 .unwrap_or_else(|e| panic!("levers {on}: {e}"));
@@ -253,7 +253,7 @@ fn fixture_render_is_bit_reproducible() {
         h.set_controls(2.0, 0.0, 0.33, 1);
         let input: Vec<f32> = voice_16k(16_000 * 2).iter().flat_map(|&x| [x, x, x]).collect();
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
-        for chunk in input.chunks_exact(1_920) {
+        for chunk in input.as_chunks::<1_920>().0 {
             for x in h.push_and_convert(chunk).unwrap() {
                 for b in x.to_bits().to_le_bytes() {
                     hash = (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);

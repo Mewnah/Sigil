@@ -467,7 +467,7 @@ pub mod v2 {
             pitch: f32::from_le_bytes([data[16], data[17], data[18], data[19]]),
         };
         let pcm = data[HEADER_LEN..]
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
         Ok((header, pcm))

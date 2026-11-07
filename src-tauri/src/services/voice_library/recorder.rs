@@ -191,7 +191,7 @@ pub fn capture(
             if let (Some(r), Some(vad)) = (resampler.as_mut(), vad.as_deref_mut()) {
                 if r.push_interleaved(fresh, &mut pending16k).is_ok() {
                     let whole = pending16k.len() / VAD_N * VAD_N;
-                    for frame in pending16k[..whole].chunks_exact(VAD_N) {
+                    for frame in pending16k[..whole].as_chunks::<VAD_N>().0 {
                         if vad.prob(frame).unwrap_or(0.0) >= 0.5 {
                             voiced_frames += 1;
                         }

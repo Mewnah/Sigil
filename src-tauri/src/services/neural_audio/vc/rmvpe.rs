@@ -1703,7 +1703,7 @@ fn build_core(spec: &CoreSpec<'_>) -> Result<SharedCore, String> {
 /// Append the F0, confidence (peak salience) and salience of salience rows (`k × 360`, row-major).
 /// Allocation-free within the buffers' capacity.
 fn decode_salience_rows(rows: &[f32], out: &mut Vec<f32>, confidence: &mut Vec<f32>, salience: &mut Vec<f32>) {
-    for row in rows.chunks_exact(N_BINS) {
+    for row in rows.as_chunks::<N_BINS>().0 {
         // A NaN near the peak (or an overflowing weighted mean) is unvoiced, never NaN F0.
         let f = salience_to_f0(row);
         let peak = row
@@ -3844,7 +3844,7 @@ mod tests {
             t32.f0(slice).unwrap();
             full.f0(slice).unwrap();
             let (sa, sb) = (t32.last_salience().unwrap().0, full.last_salience().unwrap().0);
-            for (ra, rb) in sa.chunks_exact(N_BINS).zip(sb.chunks_exact(N_BINS)) {
+            for (ra, rb) in sa.as_chunks::<N_BINS>().0.iter().zip(sb.as_chunks::<N_BINS>().0) {
                 rows += 1;
                 if am(ra) != am(rb) && ra.iter().copied().fold(0.0f32, f32::max) > SALIENCE_THRESHOLD {
                     argmax += 1;

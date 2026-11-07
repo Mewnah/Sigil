@@ -6,7 +6,7 @@ authors = ["Sigil contributors", "Mewnah"]
 license = "AGPL-3.0-only"
 repository = "https://github.com/Mewnah/Sigil"
 edition = "2021"
-rust-version = "1.89" # cosmic-text 0.19 (P6-B SteamVR overlay text) declares MSRV 1.89
+rust-version = "1.95" # AtomicX::try_update (1.95); cosmic-text 0.19 needs 1.89; rust-toolchain.toml pins the build compiler
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

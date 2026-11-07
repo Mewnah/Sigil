@@ -269,7 +269,7 @@ impl AudioDecoder {
         if data.len() % 2 == 1 {
             self.carry = data.pop();
         }
-        let samples: Vec<f32> = data.chunks_exact(2).map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32_768.0).collect();
+        let samples: Vec<f32> = data.as_chunks::<2>().0.iter().map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32_768.0).collect();
         Ok((!samples.is_empty()).then_some(Block { samples, rate, channels: 1 }))
     }
 }

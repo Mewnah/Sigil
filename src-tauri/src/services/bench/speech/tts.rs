@@ -266,7 +266,7 @@ pub enum Format {
 
 /// 16-bit little-endian PCM bytes to f32 (a trailing odd byte is dropped).
 pub fn pcm16_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(2).map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0).collect()
+    bytes.as_chunks::<2>().0.iter().map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0).collect()
 }
 
 /// Decode a WAV body (a complete file, or a streamed one with placeholder sizes): mono f32 and the rate.

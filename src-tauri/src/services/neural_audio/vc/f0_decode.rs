@@ -407,7 +407,7 @@ mod tests {
 
     /// The extractor's contour of rows: argmax local average, unvoiced at or under 0.03.
     fn own(sal: &[f32]) -> Vec<f32> {
-        sal.chunks_exact(SALIENCE_BINS)
+        sal.as_chunks::<SALIENCE_BINS>().0.iter()
             .map(|r| {
                 let (hz, peak) = super::super::pitch_onnx::local_average_f0(r);
                 if peak <= 0.03 {

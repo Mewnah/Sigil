@@ -111,7 +111,7 @@ fn parse_v4(table: &[u32]) -> Vec<Listener> {
     table
         .get(1..)
         .unwrap_or_default()
-        .chunks_exact(ROW4_WORDS)
+        .as_chunks::<ROW4_WORDS>().0.iter()
         .take(n)
         .map(|r| Listener {
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::from(r[1].to_ne_bytes())), row_port(r[2])),
@@ -125,7 +125,7 @@ fn parse_v6(table: &[u32]) -> Vec<Listener> {
     table
         .get(1..)
         .unwrap_or_default()
-        .chunks_exact(ROW6_WORDS)
+        .as_chunks::<ROW6_WORDS>().0.iter()
         .take(n)
         .map(|r| {
             let mut octets = [0u8; 16];

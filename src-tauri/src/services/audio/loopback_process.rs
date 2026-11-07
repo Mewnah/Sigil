@@ -248,7 +248,7 @@ pub(crate) fn build_list(
         }
     }
     let mut list: Vec<LoopbackProcess> = rows.into_values().collect();
-    list.sort_by(|a, b| (!a.audio, a.exe.to_lowercase()).cmp(&(!b.audio, b.exe.to_lowercase())));
+    list.sort_by_key(|a| (!a.audio, a.exe.to_lowercase()));
     list.truncate(MAX_LIST);
     list
 }

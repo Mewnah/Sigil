@@ -1303,7 +1303,7 @@ impl AudioDecoder {
                     let whole = self.buf.len() & !1;
                     if whole > 0 {
                         let samples = self.buf[..whole]
-                            .chunks_exact(2)
+                            .as_chunks::<2>().0.iter()
                             .map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32_768.0)
                             .collect();
                         out.push(Block { samples, rate: *rate, channels: 1 });

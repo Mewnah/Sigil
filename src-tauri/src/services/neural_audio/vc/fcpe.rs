@@ -302,7 +302,7 @@ fn decode_mel_output(dims: &[usize], data: &[f32], kind: MelOutput, fed: usize) 
         }
         let table = cent_table();
         return Ok(data[..t * LATENT_BINS]
-            .chunks_exact(LATENT_BINS)
+            .as_chunks::<LATENT_BINS>().0.iter()
             .map(|row| latent_to_f0(row, &table, FCPE_THRESHOLD))
             .collect());
     }

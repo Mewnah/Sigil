@@ -204,7 +204,7 @@ fn ranged(data: Arc<Vec<u8>>, range: Option<&str>, mode: Mode, counters: &Counte
 }
 
 fn take_one(n: &AtomicUsize) -> bool {
-    n.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1)).is_ok()
+    n.try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1)).is_ok()
 }
 
 fn respond(b: Option<Behavior>, range: Option<String>, counters: &Counters) -> Response<Body> {

@@ -1597,8 +1597,8 @@ async fn real_ggml_engine_speaks() {
             };
             let path = out_dir.join(format!("{engine}-{}.wav", i + 1));
             let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
-            for pair in pcm.chunks_exact(2) {
-                w.write_sample(i16::from_le_bytes([pair[0], pair[1]])).map_err(|e| e.to_string())?;
+            for pair in pcm.as_chunks::<2>().0 {
+                w.write_sample(i16::from_le_bytes(*pair)).map_err(|e| e.to_string())?;
             }
             w.finalize().map_err(|e| e.to_string())?;
             println!("  -> {}", path.display());

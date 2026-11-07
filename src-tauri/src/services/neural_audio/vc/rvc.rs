@@ -1183,7 +1183,7 @@ impl RvcModel {
         let emb = self.manifest.emb_channels as usize;
 
         let mut feats = self.run_hubert(&padded)?;
-        let frames_50hz = if emb > 0 { feats.len() / emb } else { 0 };
+        let frames_50hz = feats.len().checked_div(emb).unwrap_or(0);
         if frames_50hz == 0 {
             return Err(format!("HuBERT produced empty features (len={}, emb={})", feats.len(), emb));
         }
@@ -1388,7 +1388,7 @@ mod tests {
         // 3 frames of dim 2 onto 7 hops: 0,0,1,1,2,2,2 (last frame duplicated).
         let feats = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
         let up = upsample_to_hops(&feats, 2, 7);
-        let firsts: Vec<f32> = up.chunks_exact(2).map(|f| f[0]).collect();
+        let firsts: Vec<f32> = up.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
         assert_eq!(firsts, vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
         // HuBERT frame count for a hop-aligned input always covers p_len after duplication.
         for p_len in (MIN_CONTEXT_16K / HOP_16K)..40 {

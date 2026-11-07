@@ -792,7 +792,7 @@ fn probe_algorithmic_latency(
 
 /// Store a latency probe's result (us) unless a newer probe superseded `generation`.
 fn store_probe(out: &AtomicU64, generation: u64, us: u64) -> bool {
-    out.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+    out.try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
         (cur >> 32 == generation).then_some((generation << 32) | (us & 0xffff_ffff))
     })
     .is_ok()
@@ -1428,7 +1428,7 @@ pub(super) fn run_voice_changer_loop<R: Runtime>(
                 sola_search_ms: rvc_settings.sola_search_ms,
             };
             let key = desired_key(&rvc_settings, &base);
-            let mut request = voice_request(rvc_settings.clone(), &base, &levers).map_err(&rvc_load_err)?;
+            let mut request = voice_request(rvc_settings.clone(), &base, &levers).map_err(rvc_load_err)?;
             // Stop (or a newer start) during this load calls it off: the family stops waiting for
             // a sidecar helper, the factory at its next stage.
             let cancel = Arc::new(AtomicBool::new(false));

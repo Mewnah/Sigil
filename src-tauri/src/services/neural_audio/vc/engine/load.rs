@@ -483,16 +483,16 @@ impl SigilRvcEngine {
                 .as_deref()
                 .unwrap_or(super::super::import::WEIGHTS_FILE),
         )
-        .map_err(&fail)?;
-        let speakers_file = slot_file(&slot_dir, manifest.speakers.as_deref().unwrap_or(SPEAKERS_FILE)).map_err(&fail)?;
-        let speakers = SpeakerTable::load(&speakers_file, layout.speakers.dim).map_err(&fail)?;
+        .map_err(fail)?;
+        let speakers_file = slot_file(&slot_dir, manifest.speakers.as_deref().unwrap_or(SPEAKERS_FILE)).map_err(fail)?;
+        let speakers = SpeakerTable::load(&speakers_file, layout.speakers.dim).map_err(fail)?;
         if let Some(n) = manifest
             .speaker_count
             .filter(|&n| n as usize != speakers.count())
         {
             warnings.push(format!("manifest.json lists {n} speakers, the speaker table holds {}", speakers.count()));
         }
-        let embedder = EmbedderKind::from_manifest(manifest.embedder.as_deref(), arch.emb_channels).map_err(&fail)?;
+        let embedder = EmbedderKind::from_manifest(manifest.embedder.as_deref(), arch.emb_channels).map_err(fail)?;
         let ep = normalize_ep(&ep).to_string();
         let gpu = ep != "cpu";
         let out_sr = arch.upp * 100;
@@ -514,7 +514,7 @@ impl SigilRvcEngine {
         let partial_decode = levers.levers.get(Lever::PartialDecode);
         let final_shapes = params.final_shapes.unwrap_or_else(Self::final_shapes_enabled);
         let (plan_lookahead, plan_stream) = if final_shapes { (lookahead_frames_of(lookahead_ms), stream.as_ref()) } else { (0, None) };
-        let mut plan = load_plan(&layout.streaming, &preset, out_sr, partial_decode, plan_lookahead, plan_stream).map_err(&fail)?;
+        let mut plan = load_plan(&layout.streaming, &preset, out_sr, partial_decode, plan_lookahead, plan_stream).map_err(fail)?;
 
         // fp16 weights only when a GPU (or an explicit fp16 request) will use them.
         let wants_fp16 = match levers.precision {
@@ -550,7 +550,7 @@ impl SigilRvcEngine {
         if ep == "dml" {
             let out = acquire_content(embedder, explicit, &slot_dir, &ep, &session, &levers, &plan, content_context_16k)?;
             if plan.lookahead_frames > 0 && !Self::content_shape_is_fixed(&out.encoder, &ep) {
-                plan = load_plan(&layout.streaming, &preset, out_sr, partial_decode, 0, plan_stream).map_err(&fail)?;
+                plan = load_plan(&layout.streaming, &preset, out_sr, partial_decode, 0, plan_stream).map_err(fail)?;
                 levers
                     .notes
                     .push("lookahead: not used while the content encoder runs on DirectML (it would cost 35-49 ms per block there)".to_string());
@@ -629,15 +629,15 @@ impl SigilRvcEngine {
         }
         // The first failure in P5's order: pitch bank, generator, content encoder.
         let pitch = match pitch_res {
-            Some(r) => r.map_err(&fail)?,
+            Some(r) => r.map_err(fail)?,
             None => pitch,
         };
-        let (generator, generator_notes) = generator_res.map_err(&fail)?;
+        let (generator, generator_notes) = generator_res.map_err(fail)?;
         let ContentOut {
             encoder,
             warnings: content_warnings,
             prebuilt,
-        } = content_res.map_err(&fail)?;
+        } = content_res.map_err(fail)?;
         warnings.extend(content_warnings);
         let encoder_outcome = encoder
             .lock()
@@ -648,7 +648,7 @@ impl SigilRvcEngine {
         // Retrieval (P3-D backends behind one API).
         let mut retrieval = None;
         if let Some(r) = retrieval_out {
-            let r = r.map_err(&fail)?;
+            let r = r.map_err(fail)?;
             levers.notes.extend(r.notes);
             warnings.extend(r.warnings);
             retrieval = r.retrieval;

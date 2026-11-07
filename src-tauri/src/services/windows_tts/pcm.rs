@@ -88,9 +88,9 @@ impl Pcm16Decoder {
                 }
             }
         }
-        let mut pairs = rest.chunks_exact(2);
-        out.extend(pairs.by_ref().map(|p| sample(p[0], p[1])));
-        self.carry = pairs.remainder().first().copied();
+        let (pairs, odd) = rest.as_chunks::<2>();
+        out.extend(pairs.iter().map(|p| sample(p[0], p[1])));
+        self.carry = odd.first().copied();
     }
 
     /// Whether half a sample is waiting for its second byte.

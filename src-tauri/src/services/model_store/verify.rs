@@ -208,11 +208,10 @@ impl Sha1 {
             compress(&mut self.state, &block);
             self.block_len = 0;
         }
-        let mut chunks = data.chunks_exact(64);
-        for block in &mut chunks {
-            compress(&mut self.state, block.try_into().expect("64-byte chunk"));
+        let (blocks, rest) = data.as_chunks::<64>();
+        for block in blocks {
+            compress(&mut self.state, block);
         }
-        let rest = chunks.remainder();
         self.block[..rest.len()].copy_from_slice(rest);
         self.block_len = rest.len();
     }

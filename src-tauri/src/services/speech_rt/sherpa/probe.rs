@@ -402,12 +402,11 @@ fn apply_overrides(model: &mut SherpaModel, extra: &Extra) -> Result<(), String>
                         *language = lang;
                     }
                 }
-                OfflineModel::Canary { src_lang, tgt_lang, .. } => {
-                    if lang.is_some() {
+                OfflineModel::Canary { src_lang, tgt_lang, .. }
+                    if lang.is_some() => {
                         src_lang.clone_from(&lang);
                         *tgt_lang = lang;
                     }
-                }
                 _ => {}
             }
         }

@@ -167,7 +167,7 @@ fn lookahead_decodes_future_context_and_keeps_lengths() {
     let mut h = VcStreamHarness::new(Box::new(e), 48_000, 48_000, 1, 1, 1_600, 320, 1_920).unwrap();
     let input: Vec<f32> = voice_16k(16_000).iter().flat_map(|&x| [x, x, x]).collect();
     let mut total = 0;
-    for chunk in input.chunks_exact(1_920) {
+    for chunk in input.as_chunks::<1_920>().0 {
         total += h.push_and_convert(chunk).unwrap().len();
     }
     assert_eq!(total, input.len());

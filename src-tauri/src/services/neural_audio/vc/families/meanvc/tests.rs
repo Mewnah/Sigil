@@ -408,7 +408,7 @@ fn a_cold_stream_reaches_one_block_per_block_after_its_first_call() {
     stream.reset_cold();
     let x = signal(TICK_16K * 6);
     let mut produced = Vec::new();
-    for chunk in x.chunks_exact(TICK_16K) {
+    for chunk in x.as_chunks::<TICK_16K>().0 {
         let mut out = Vec::new();
         produced.push(stream.process(chunk, &mut out).unwrap());
         assert_eq!(out.len(), *produced.last().unwrap());
@@ -517,7 +517,7 @@ fn every_mel_frames_noise_is_drawn_once_and_reused_when_it_becomes_current() {
         let mut stream = MeanVcStream::new(Box::new(graphs), &spks(0.0), 2, seed).unwrap();
         stream.reset_cold();
         let mut out = Vec::new();
-        for chunk in signal(TICK_16K * 4).chunks_exact(TICK_16K) {
+        for chunk in signal(TICK_16K * 4).as_chunks::<TICK_16K>().0 {
             stream.process(chunk, &mut out).unwrap();
         }
         let log = log.lock().unwrap();
@@ -569,7 +569,7 @@ fn returned_chunks_overlap_sample_for_sample() {
     let x = signal(TICK_16K * 8);
     let mut ring = vec![0.0f32; want];
     let mut previous: Option<Vec<f32>> = None;
-    for (i, chunk) in x.chunks_exact(TICK_16K).enumerate() {
+    for (i, chunk) in x.as_chunks::<TICK_16K>().0.iter().enumerate() {
         ring.drain(..TICK_16K);
         ring.extend_from_slice(chunk);
         let ctx = ConversionCtx {
@@ -601,7 +601,7 @@ fn the_production_harness_joins_meanvc_blocks_at_offset_zero_with_exact_lengths(
         let x = signal(48_000 * 3);
         let mut total = 0;
         let mut joins = Vec::new();
-        for chunk in x.chunks_exact(480) {
+        for chunk in x.as_chunks::<480>().0 {
             let out = harness.push_and_convert(chunk).unwrap();
             assert_eq!(out.len(), harness.last_owed_frames());
             total += out.len();
@@ -1202,7 +1202,7 @@ fn a_voice_folder_with_its_own_graphs_and_speaker_npy_loads_through_the_family()
     };
     let mut harness = VcStreamHarness::with_context(engine.model, 48_000, 48_000, 2, 2, 0, 320, 960, context).unwrap();
     let x: Vec<f32> = signal(48_000 * 2).iter().flat_map(|&v| [v, v]).collect();
-    for chunk in x.chunks_exact(960 * 2) {
+    for chunk in x.as_chunks::<{ 960 * 2 }>().0 {
         let out = harness.push_and_convert(chunk).unwrap();
         assert_eq!(out.len(), harness.last_owed_frames() * 2);
     }
@@ -1526,7 +1526,7 @@ fn real_model_meanvc2_runs_in_real_time_on_one_cpu_thread() {
         calls.lock().unwrap().clear();
         let mut out = Vec::new();
         let t_run = std::time::Instant::now();
-        for chunk in device.chunks_exact(480) {
+        for chunk in device.as_chunks::<480>().0 {
             out.extend(harness.push_and_convert(chunk).unwrap());
         }
         let wall = t_run.elapsed().as_secs_f64() * 1000.0;
@@ -1606,7 +1606,7 @@ fn real_model_matches_the_python_reference_loop() {
     let read_f32 = |p: &Path| -> Vec<f32> {
         std::fs::read(p)
             .unwrap()
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect()
     };
@@ -1620,7 +1620,7 @@ fn real_model_matches_the_python_reference_loop() {
     let mut stream = MeanVcStream::new(Box::new(graphs), &spk, steps, seed).unwrap();
     stream.reset_cold();
     let mut out = vec![0.0f32; 960];
-    for chunk in input.chunks_exact(TICK_16K) {
+    for chunk in input.as_chunks::<TICK_16K>().0 {
         stream.process(chunk, &mut out).unwrap();
     }
     assert_eq!(out.len(), reference.len());
@@ -1721,7 +1721,7 @@ fn real_model_stream_costs() {
             stream.reset_cold();
             let mut out = Vec::new();
             let v = times.entry(steps).or_default();
-            for chunk in speech.chunks_exact(TICK_16K) {
+            for chunk in speech.as_chunks::<TICK_16K>().0 {
                 let t = std::time::Instant::now();
                 stream.process(chunk, &mut out).unwrap();
                 v.push(t.elapsed().as_secs_f64() * 1000.0);

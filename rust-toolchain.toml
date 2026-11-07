@@ -1,0 +1,6 @@
+# Pinned so a new Rust release cannot change builds or clippy lints on a release day (1.99 added 113
+# warnings overnight). Bump it on purpose and fix the new lints in the same commit.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

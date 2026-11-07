@@ -296,7 +296,7 @@ pub fn plan(knobs: &Knobs, env: &Env) -> Plan {
     let rec_size = Size::from_policy_id(&rec.choice).unwrap_or(Size::Small);
     let rec_cpu = rec.device == "cpu";
     let installed = |id: &str| (env.installed)(id);
-    let ready = |size: Size| talker_id(size, knobs.mode).is_some_and(&installed) && installed(TOKENIZER_ID);
+    let ready = |size: Size| talker_id(size, knobs.mode).is_some_and(installed) && installed(TOKENIZER_ID);
 
     let (size, size_why) = match (knobs.mode, knobs.size) {
         (Mode::Design, _) => (Size::Large, "voice design needs the 1.7B model".to_string()),

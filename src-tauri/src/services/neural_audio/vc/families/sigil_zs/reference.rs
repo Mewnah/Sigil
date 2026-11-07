@@ -67,7 +67,7 @@ pub fn select_prompt(wav: &[f32], prompt_s: f32) -> (usize, usize) {
         return (0, want);
     }
     let db: Vec<f64> = wav
-        .chunks_exact(SEL_FRAME)
+        .as_chunks::<SEL_FRAME>().0.iter()
         .map(|f| {
             let ms = f.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / SEL_FRAME as f64;
             10.0 * (ms + 1e-12).log10()

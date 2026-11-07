@@ -57,11 +57,7 @@ struct Vectors {
 
 impl Vectors {
     fn len(&self) -> usize {
-        if self.dim == 0 {
-            0
-        } else {
-            self.data.len() / self.dim
-        }
+        self.data.len().checked_div(self.dim).unwrap_or(0)
     }
 
     fn rows(&self) -> std::slice::ChunksExact<'_, f32> {
@@ -293,7 +289,7 @@ impl FaissIndex {
     pub fn blend_parallel(&self, features: &mut [f32], frames: usize, index_rate: f32, threads: usize) {
         let rate = index_rate.clamp(0.0, 1.0);
         let dim = self.dim;
-        let frames = frames.min(if dim == 0 { 0 } else { features.len() / dim });
+        let frames = frames.min(features.len().checked_div(dim).unwrap_or(0));
         let threads = threads.clamp(1, frames.max(1));
         if threads == 1 || rate <= 0.0 || self.ntotal == 0 || dim == 0 {
             self.blend_inplace(features, frames, index_rate);
@@ -354,16 +350,16 @@ fn top_insert(items: &mut Vec<(f32, usize, usize)>, k: usize, badness: f32, list
 
 fn squared_l2(a: &[f32], b: &[f32]) -> f32 {
     let mut acc = [0.0f32; 8];
-    let mut ca = a.chunks_exact(8);
-    let mut cb = b.chunks_exact(8);
-    for (x, y) in (&mut ca).zip(&mut cb) {
+    let (ca, ra) = a.as_chunks::<8>();
+    let (cb, rb) = b.as_chunks::<8>();
+    for (x, y) in ca.iter().zip(cb) {
         for ((acc_j, &xj), &yj) in acc.iter_mut().zip(x).zip(y) {
             let d = xj - yj;
             *acc_j += d * d;
         }
     }
     let mut sum: f32 = acc.iter().sum();
-    for (x, y) in ca.remainder().iter().zip(cb.remainder().iter()) {
+    for (x, y) in ra.iter().zip(rb) {
         let d = x - y;
         sum += d * d;
     }
@@ -372,15 +368,15 @@ fn squared_l2(a: &[f32], b: &[f32]) -> f32 {
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut acc = [0.0f32; 8];
-    let mut ca = a.chunks_exact(8);
-    let mut cb = b.chunks_exact(8);
-    for (x, y) in (&mut ca).zip(&mut cb) {
+    let (ca, ra) = a.as_chunks::<8>();
+    let (cb, rb) = b.as_chunks::<8>();
+    for (x, y) in ca.iter().zip(cb) {
         for ((acc_j, &xj), &yj) in acc.iter_mut().zip(x).zip(y) {
             *acc_j += xj * yj;
         }
     }
     let mut sum: f32 = acc.iter().sum();
-    for (x, y) in ca.remainder().iter().zip(cb.remainder().iter()) {
+    for (x, y) in ra.iter().zip(rb) {
         sum += x * y;
     }
     sum
@@ -500,7 +496,7 @@ impl<'a> Reader<'a> {
                 .ok_or_else(|| "FAISS vector size overflows".to_string())?,
         )?;
         Ok(bytes
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect())
     }

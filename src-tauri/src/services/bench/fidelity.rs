@@ -2376,7 +2376,7 @@ mod tests {
         )
         .unwrap();
         let mut out = Vec::new();
-        for block in voice.chunks_exact(1_920) {
+        for block in voice.as_chunks::<1_920>().0 {
             out.extend(h.push_and_convert(block).unwrap());
         }
         let rec = lock(&rec);
@@ -2891,7 +2891,7 @@ mod tests {
         let rec = Arc::new(Mutex::new(StreamRecorder::default()));
         let mut h = VcStreamHarness::new(Box::new(PlantedPopper { rec: rec.clone(), popper, calls: 0 }), 48_000, 48_000, 1, 1, 1_024, 400, 1_920).unwrap();
         let mut out = Vec::new();
-        for block in voice.chunks_exact(1_920) {
+        for block in voice.as_chunks::<1_920>().0 {
             out.extend(h.push_and_convert(block).unwrap());
             lock(&rec).note_join(h.last_join(), 40_000);
         }

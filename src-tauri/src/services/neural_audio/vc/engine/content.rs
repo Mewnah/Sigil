@@ -231,7 +231,7 @@ pub fn read_conv0(path: &Path) -> Result<Vec<f32>, String> {
         return Err(format!("{} holds {} bytes, expected {} (512 x 10 f32)", path.display(), bytes.len(), NORM_CHANNELS * 40));
     }
     Ok(bytes
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect())
 }

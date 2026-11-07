@@ -347,15 +347,15 @@ impl SolaStitcher {
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut acc = [0.0f32; 8];
-    let mut ca = a.chunks_exact(8);
-    let mut cb = b.chunks_exact(8);
-    for (x, y) in (&mut ca).zip(&mut cb) {
+    let (ca, ra) = a.as_chunks::<8>();
+    let (cb, rb) = b.as_chunks::<8>();
+    for (x, y) in ca.iter().zip(cb) {
         for ((acc_j, &xj), &yj) in acc.iter_mut().zip(x).zip(y) {
             *acc_j += xj * yj;
         }
     }
     let mut sum: f32 = acc.iter().sum();
-    for (x, y) in ca.remainder().iter().zip(cb.remainder().iter()) {
+    for (x, y) in ra.iter().zip(rb) {
         sum += x * y;
     }
     sum

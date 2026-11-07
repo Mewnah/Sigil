@@ -777,7 +777,7 @@ impl Retrieval {
     /// Blend `features` (`frames × dim`) toward their nearest index rows by `index_rate`.
     pub fn blend(&mut self, features: &mut [f32], frames: usize, index_rate: f32) -> Result<(), String> {
         let rate = if index_rate.is_finite() { index_rate.clamp(0.0, 1.0) } else { 0.0 };
-        let frames = frames.min(if self.dim == 0 { 0 } else { features.len() / self.dim });
+        let frames = frames.min(features.len().checked_div(self.dim).unwrap_or(0));
         if rate <= 0.0 || frames == 0 {
             return Ok(());
         }

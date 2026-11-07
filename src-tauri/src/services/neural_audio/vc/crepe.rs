@@ -174,7 +174,7 @@ fn frame_windows(audio: &[f32], frames: &mut Vec<f32>, levels: &mut Vec<f32>) ->
     frames.resize(n * CREPE_WINDOW, 0.0);
     levels.clear();
     let half = CREPE_WINDOW / 2;
-    for (j, window) in frames.chunks_exact_mut(CREPE_WINDOW).enumerate() {
+    for (j, window) in frames.as_chunks_mut::<CREPE_WINDOW>().0.iter_mut().enumerate() {
         let origin = (j * HOP) as isize - half as isize;
         for (k, dst) in window.iter_mut().enumerate() {
             let i = origin + k as isize;
@@ -302,7 +302,7 @@ impl PitchExtractor for CrepePitchExtractor {
                 .iter()
                 .map(|&v| if v.is_finite() { v } else { 0.0 }),
         );
-        for row in prob[..rows * SALIENCE_BINS].chunks_exact(SALIENCE_BINS) {
+        for row in prob[..rows * SALIENCE_BINS].as_chunks::<SALIENCE_BINS>().0 {
             let (hz, peak) = local_average_f0(row);
             self.raw_f0.push(hz);
             self.periodicity

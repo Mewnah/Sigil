@@ -78,7 +78,7 @@ impl SpeakerTable {
             ));
         }
         let rows: Vec<f32> = bytes
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         Self::from_rows(rows, dim).map_err(|e| format!("speaker table {}: {e}", path.display()))
@@ -96,11 +96,7 @@ impl SpeakerTable {
     }
 
     pub fn count(&self) -> usize {
-        if self.dim == 0 {
-            0
-        } else {
-            self.rows.len() / self.dim
-        }
+        self.rows.len().checked_div(self.dim).unwrap_or(0)
     }
 
     pub fn dim(&self) -> usize {

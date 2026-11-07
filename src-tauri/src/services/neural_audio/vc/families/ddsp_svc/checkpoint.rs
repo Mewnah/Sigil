@@ -256,16 +256,16 @@ impl<R: Read + Seek> DdspCheckpoint<R> {
         let mut out = vec![0f32; n];
         match t.storage.dtype {
             StorageDtype::F32 => {
-                for (o, c) in out.iter_mut().zip(raw.chunks_exact(4)) {
-                    *o = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+                for (o, c) in out.iter_mut().zip(raw.as_chunks::<4>().0) {
+                    *o = f32::from_le_bytes(*c);
                 }
             }
             StorageDtype::F16 => {
-                let bits: Vec<half::f16> = raw.chunks_exact(2).map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]]))).collect();
+                let bits: Vec<half::f16> = raw.as_chunks::<2>().0.iter().map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]]))).collect();
                 bits.convert_to_f32_slice(&mut out);
             }
             StorageDtype::Bf16 => {
-                let bits: Vec<half::bf16> = raw.chunks_exact(2).map(|c| half::bf16::from_bits(u16::from_le_bytes([c[0], c[1]]))).collect();
+                let bits: Vec<half::bf16> = raw.as_chunks::<2>().0.iter().map(|c| half::bf16::from_bits(u16::from_le_bytes([c[0], c[1]]))).collect();
                 bits.convert_to_f32_slice(&mut out);
             }
             StorageDtype::I64 | StorageDtype::I32 => unreachable!("checked above"),

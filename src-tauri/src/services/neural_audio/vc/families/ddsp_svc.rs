@@ -262,7 +262,7 @@ fn read_speakers(slot_dir: &Path, record: &DdspRecord, dim: usize) -> Result<Opt
     if bytes.is_empty() || bytes.len() % (4 * dim) != 0 || bytes.len() > MAX_SPEAKER_TABLE_BYTES {
         return Err(format!("{}: {} bytes is not a table of {dim}-wide speaker rows", path.display(), bytes.len()));
     }
-    let rows: Vec<f32> = bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    let rows: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
     if rows.iter().any(|v| !v.is_finite()) {
         return Err(format!("{}: non-finite values", path.display()));
     }

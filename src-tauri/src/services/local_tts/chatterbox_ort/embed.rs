@@ -316,7 +316,7 @@ fn read_table(graph: &Path, init: &Initializer, max_rows: Option<usize>) -> Resu
     f.read_exact(&mut raw)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let data = raw
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     Ok(Table {

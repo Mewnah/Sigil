@@ -760,7 +760,7 @@ fn merge_input(models_dir: &Path, id: &str) -> Result<MergeInput, String> {
 }
 
 fn f32s(bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
-    bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
 }
 
 /// Weighted merge of two imported voices of the same template and embedder into a new slot (done in

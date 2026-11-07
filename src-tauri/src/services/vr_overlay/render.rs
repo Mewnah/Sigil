@@ -629,7 +629,7 @@ mod tests {
         // White text over a translucent black box: some pixels are bright and opaque.
         let bright = t
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .filter(|p| p[0] > 200 && p[3] > 200)
             .count();
         assert!(bright > 50, "{bright}");
@@ -672,7 +672,7 @@ mod tests {
         };
         let max_alpha = |kind| {
             let t = with_renderer(|r| r.render(&caption(&[("Interim test", kind, None)]), &clear));
-            t.rgba.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0)
+            t.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).max().unwrap_or(0)
         };
         let fin = max_alpha(VrOverlayLineKind::Final);
         let interim = max_alpha(VrOverlayLineKind::Interim);

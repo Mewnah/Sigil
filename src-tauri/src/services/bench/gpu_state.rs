@@ -1242,7 +1242,7 @@ mod imp {
                         if size > 0 && size < 4096 {
                             let mut buf = vec![0u8; size as usize];
                             if friendly(std::ptr::null_mut(), &guid, std::ptr::null(), std::ptr::null(), buf.as_mut_ptr(), &mut size) == 0 {
-                                let wide: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
+                                let wide: Vec<u16> = buf.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
                                 plan.name = Some(String::from_utf16_lossy(&wide));
                             }
                         }

@@ -503,7 +503,7 @@ impl MusicGate {
             return Err(format!("unexpected output shape {dims:?} for {frames} frames"));
         }
         let probs = values
-            .chunks_exact(N_CLASSES)
+            .as_chunks::<N_CLASSES>().0.iter()
             .map(|c| [c[SPEECH], c[SINGING], c[MUSIC]].map(|p| if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 }))
             .collect();
         Ok(probs)

@@ -387,7 +387,7 @@ fn convert<R: Read + Seek>(reader: R, config: DdspConfig, source: SourceRecord, 
         }
         let section = layout.section(&t.graph).ok_or_else(|| ImportError::new(ErrorCode::LayoutInvalid, format!("no section {}", t.graph)))?;
         let at = (section.offset + t.offset) as usize;
-        for (dst, v) in image[at..at + t.bytes as usize].chunks_exact_mut(4).zip(&values) {
+        for (dst, v) in image[at..at + t.bytes as usize].as_chunks_mut::<4>().0.iter_mut().zip(&values) {
             dst.copy_from_slice(&v.to_le_bytes());
         }
         ckpt.release_storages();

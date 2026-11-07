@@ -1545,8 +1545,8 @@ fn named_config(name: &str, spec: &BenchSpec, transpose: f32, app_data: Option<&
     e.silence_skip = true;
     let mut s = app_stream(&spec.stream, transpose);
     let gpu_ep = if r.execution_provider.trim().is_empty() { String::new() } else { r.execution_provider.clone() };
-    let label;
-    match name {
+    
+    let label = match name {
         "shipping_default" => {
             e.preset = "streamer".into();
             e.execution_provider = "cpu".into();
@@ -1555,7 +1555,7 @@ fn named_config(name: &str, spec: &BenchSpec, transpose: f32, app_data: Option<&
             e.vram_cap_mb = None;
             s.extra_context_ms = 64.0;
             s.index_rate = 0.0;
-            label = "what a new install runs: Streamer preset, CPU, FCPE, the app's default stream (512-frame device block, 64 ms extra, 20 ms crossfade)".to_string();
+            "what a new install runs: Streamer preset, CPU, FCPE, the app's default stream (512-frame device block, 64 ms extra, 20 ms crossfade)".to_string()
         }
         "low_latency" => {
             e.preset = "low_latency".into();
@@ -1564,7 +1564,7 @@ fn named_config(name: &str, spec: &BenchSpec, transpose: f32, app_data: Option<&
             e.vram_cap_mb = Some(768);
             s.extra_context_ms = 96.0;
             s.index_rate = 0.0;
-            label = format!("the Low latency preset (RMVPE, 96 ms extra) on the spec's EP, engine block {} ms", fmt_block(e.block_ms));
+            format!("the Low latency preset (RMVPE, 96 ms extra) on the spec's EP, engine block {} ms", fmt_block(e.block_ms))
         }
         "quality" => {
             e.preset = "quality".into();
@@ -1574,7 +1574,7 @@ fn named_config(name: &str, spec: &BenchSpec, transpose: f32, app_data: Option<&
             e.vram_cap_mb = Some(1536);
             s.extra_context_ms = 192.0;
             s.index_rate = 0.5;
-            label = format!("the Quality preset (RMVPE, 192 ms extra, 20 ms lookahead, index 0.5) on the spec's EP, engine block {} ms", fmt_block(e.block_ms));
+            format!("the Quality preset (RMVPE, 192 ms extra, 20 ms lookahead, index 0.5) on the spec's EP, engine block {} ms", fmt_block(e.block_ms))
         }
         "autotuned" => {
             let dir = app_data.ok_or("autotuned: no app data folder (SIGIL_APP_DATA_DIR)")?;
@@ -1619,15 +1619,15 @@ fn named_config(name: &str, spec: &BenchSpec, transpose: f32, app_data: Option<&
                     _ => {}
                 }
             }
-            label = format!(
+            format!(
                 "the autotuner's stored result ({} {}, {})",
                 t.gpu.as_deref().unwrap_or("?"),
                 t.driver.as_deref().unwrap_or("?"),
                 t.sigil_version
-            );
+            )
         }
         other => return Err(format!("sigil.configs: unknown configuration '{other}'")),
-    }
+    };
     let mut point = Point::new(name, "sigil", Tier::Offline, PointRole::Sigil, "in_process");
     point.label = label;
     Ok(SigilBuild {

@@ -1099,7 +1099,7 @@ mod tests {
         assert_eq!(&wav[8..16], b"WAVEfmt ");
         assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 16_000);
         assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 10);
-        let s: Vec<i16> = wav[44..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+        let s: Vec<i16> = wav[44..].as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
         assert_eq!(s, vec![0, 32767, -32767, 32767, 0]);
         let reader = hound::WavReader::new(std::io::Cursor::new(wav)).unwrap();
         assert_eq!(reader.spec().sample_rate, 16_000);

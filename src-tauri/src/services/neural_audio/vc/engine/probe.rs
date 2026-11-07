@@ -434,7 +434,7 @@ mod tests {
             h.set_controls(12.0, 0.0, 0.33, 0);
             let input: Vec<f32> = voice_16k(16_000 * 2).iter().flat_map(|&x| [x, x, x]).collect();
             let mut out = Vec::new();
-            for chunk in input.chunks_exact(1_920) {
+            for chunk in input.as_chunks::<1_920>().0 {
                 out.extend(h.push_and_convert(chunk).unwrap());
             }
             let e = shared.lock().unwrap();

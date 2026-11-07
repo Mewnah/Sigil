@@ -417,7 +417,7 @@ mod tests {
         let v = [0.5f32, -1.0, 0.25];
         let b = f32_to_le_bytes(&v);
         assert_eq!(b.len(), 12);
-        let back: Vec<f32> = b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        let back: Vec<f32> = b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
         assert_eq!(back, v);
         assert_eq!(samples_to_ms(16_000), 1000);
     }

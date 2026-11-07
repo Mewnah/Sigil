@@ -243,7 +243,7 @@ impl ReferenceEmbedding {
             let n = t.shape.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d)).ok_or_else(|| bad("shape overflows"))?;
             total = total.checked_add(n).filter(|&v| v <= MAX_EMBEDDING_VALUES).ok_or_else(|| bad("too many values"))?;
             let end = n.checked_mul(4).and_then(|b| pos.checked_add(b)).filter(|&e| e <= bytes.len()).ok_or_else(|| bad("truncated data"))?;
-            let data = bytes[pos..end].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            let data = bytes[pos..end].as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
             pos = end;
             tensors.push(ReferenceTensor { name: t.name, shape: t.shape, data });
         }

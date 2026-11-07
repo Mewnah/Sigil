@@ -107,7 +107,7 @@ fn reference() -> (serde_json::Value, Vec<f32>) {
     let dir = tiny_dir();
     let json: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("reference.json")).unwrap()).unwrap();
     let bin = std::fs::read(dir.join("reference.bin")).unwrap();
-    let floats = bin.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    let floats = bin.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
     (json, floats)
 }
 

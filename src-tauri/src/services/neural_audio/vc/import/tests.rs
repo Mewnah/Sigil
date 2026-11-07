@@ -61,13 +61,13 @@ impl Bundle {
     fn f32(&self, name: &str) -> (Vec<usize>, Vec<f32>) {
         let (shape, raw, dtype) = self.entry(name);
         assert_eq!(dtype, "float32", "{name}");
-        (shape, raw.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        (shape, raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
     }
 
     fn i64(&self, name: &str) -> (Vec<usize>, Vec<i64>) {
         let (shape, raw, dtype) = self.entry(name);
         assert_eq!(dtype, "int64", "{name}");
-        (shape, raw.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect())
+        (shape, raw.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(*c)).collect())
     }
 }
 
@@ -1037,7 +1037,7 @@ fn imported_voices_merge_by_weight() {
     // Make B's weights different: every weight doubled.
     let wb: Vec<u8> = std::fs::read(models.join("b").join(WEIGHTS_FILE))
         .unwrap()
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .flat_map(|c| (2.0 * f32::from_le_bytes([c[0], c[1], c[2], c[3]])).to_le_bytes())
         .collect();
     std::fs::write(models.join("b").join(WEIGHTS_FILE), &wb).unwrap();
@@ -1048,7 +1048,7 @@ fn imported_voices_merge_by_weight() {
     let merged = std::fs::read(models.join("blend").join(WEIGHTS_FILE)).unwrap();
     assert_eq!(merged.len(), wa.len());
     let f = |c: &[u8]| f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-    for ((m, a), b) in merged.chunks_exact(4).zip(wa.chunks_exact(4)).zip(wb.chunks_exact(4)).take(5000) {
+    for ((m, a), b) in merged.as_chunks::<4>().0.iter().zip(wa.as_chunks::<4>().0).zip(wb.as_chunks::<4>().0).take(5000) {
         let want = (0.25 * f(a) as f64 + 0.75 * f(b) as f64) as f32;
         assert_eq!(f(m), want);
     }

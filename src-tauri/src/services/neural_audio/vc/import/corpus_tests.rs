@@ -282,8 +282,10 @@ fn community_corpus_report() {
                     let weights = std::fs::read(slot_dir.join(super::WEIGHTS_FILE)).map_err(|e| e.to_string())?;
                     let speakers: Vec<f32> = std::fs::read(slot_dir.join(super::SPEAKERS_FILE))
                         .map_err(|e| e.to_string())?
-                        .chunks_exact(4)
-                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|c| f32::from_le_bytes(*c))
                         .collect();
                     let dim = r["speakers"]["dim"].as_u64().unwrap_or(0) as usize;
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| super::tests::chain_rel_l2(&template, &weights, &speakers, dim, &bundle)))

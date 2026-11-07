@@ -189,7 +189,7 @@ pub(crate) mod tests {
 
     fn frame_probs(vad: &mut SileroVad, audio: &[f32]) -> Vec<f32> {
         audio
-            .chunks_exact(VAD_FRAME_SAMPLES)
+            .as_chunks::<VAD_FRAME_SAMPLES>().0.iter()
             .map(|f| vad.predict(f).expect("predict"))
             .collect()
     }

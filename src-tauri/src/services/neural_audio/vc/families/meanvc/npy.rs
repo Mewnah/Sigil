@@ -67,11 +67,11 @@ pub fn parse_vector(bytes: &[u8], len: usize) -> Result<Vec<f32>, String> {
         return Err(format!("the .npy data is {} bytes, the header says {}", data.len(), count * width));
     }
     let values: Vec<f32> = if width == 4 {
-        data.chunks_exact(4)
+        data.as_chunks::<4>().0.iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect()
     } else {
-        data.chunks_exact(8)
+        data.as_chunks::<8>().0.iter()
             .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]) as f32)
             .collect()
     };

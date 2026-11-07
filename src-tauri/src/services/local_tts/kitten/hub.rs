@@ -306,7 +306,7 @@ pub fn split_voices_bin(bytes: &[u8], speakers: &[String], dim: usize) -> Result
         bail!("voices.bin is not a whole number of f32 values ({} bytes)", bytes.len());
     }
     let floats: Vec<f32> = bytes
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
     let per_voice = floats.len() / speakers.len();

@@ -90,7 +90,7 @@ pub fn build<R: Read + Seek>(layout: &Layout, ckpt: &mut TorchCheckpoint<R>) -> 
             return Err(ImportError::new(ErrorCode::NonFinite, format!("{} holds a non-finite value at {bad}", e.name)));
         }
         let dst = &mut image[e.offset as usize..(e.offset + e.bytes) as usize];
-        for (d, v) in dst.chunks_exact_mut(4).zip(&values) {
+        for (d, v) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&values) {
             d.copy_from_slice(&v.to_le_bytes());
         }
     }
@@ -137,7 +137,7 @@ fn count_f16_overflows(f32_image: &[u8]) -> usize {
     const LIMIT: u32 = 0x477F_F000; // 65520.0
     const INF: u32 = 0x7F80_0000;
     f32_image
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0x7FFF_FFFF)
         .filter(|&b| (LIMIT..INF).contains(&b))
         .count()
@@ -145,9 +145,8 @@ fn count_f16_overflows(f32_image: &[u8]) -> usize {
 
 /// `half`'s conversion of every word, in little-endian bytes.
 fn convert_f16_scalar(f32_image: &[u8], out: &mut [u8]) {
-    for (c, o) in f32_image.chunks_exact(4).zip(out.chunks_exact_mut(2)) {
-        let x = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-        o.copy_from_slice(&half::f16::from_f32(x).to_bits().to_le_bytes());
+    for (c, o) in f32_image.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<2>().0) {
+        *o = half::f16::from_f32(f32::from_le_bytes(*c)).to_bits().to_le_bytes();
     }
 }
 
@@ -196,7 +195,7 @@ mod tests {
         let img = f32_bytes(&[1.0, -2.5, 0.1, 0.0]);
         let h = f16_image(&img).unwrap();
         assert_eq!(h.len(), 8);
-        let back: Vec<f32> = h.chunks_exact(2).map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect();
+        let back: Vec<f32> = h.as_chunks::<2>().0.iter().map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect();
         assert_eq!(back[..2], [1.0, -2.5]);
         assert!((back[2] - 0.1).abs() < 1e-4);
         assert!(f16_image(&f32_bytes(&[1.0e6])).is_err());
@@ -241,7 +240,7 @@ mod tests {
         // Non-finite weights convert like `half` (the importer rejects them earlier).
         let img = f32_bytes(&[f32::INFINITY, f32::NEG_INFINITY, f32::NAN]);
         let h = f16_image(&img).expect("not an overflow");
-        let back: Vec<f32> = h.chunks_exact(2).map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect();
+        let back: Vec<f32> = h.as_chunks::<2>().0.iter().map(|c| half::f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect();
         assert_eq!((back[0], back[1]), (f32::INFINITY, f32::NEG_INFINITY));
         assert!(back[2].is_nan());
     }
