@@ -68,6 +68,10 @@ Rewrite or style transcribed text with a language model: **OpenAI**, **OpenRoute
 - **System logs** — in-app log panel for service diagnostics
 - Legacy **audio visualizer** elements from older projects are stripped on load; see [src/client/migrate/legacyDocument.ts](src/client/migrate/legacyDocument.ts)
 
+## Download
+
+**Windows 10 / 11 (64-bit):** get `Sigil_<version>_x64-setup.exe` (or the `.msi`) from the [latest release](https://github.com/Mewnah/Sigil/releases/latest). The installers are not code-signed yet, so Windows SmartScreen may warn the first time: choose **More info** → **Run anyway**. Speech models and runtimes download inside the app (**Models & Runtimes**) when you first need them; a GPU is optional.
+
 ## Getting started
 
 ### Prerequisites
@@ -101,7 +105,7 @@ SIGIL_KICK_CLIENT_SECRET=your_client_secret
 ```
 
 - **Public ids vs secrets.** Only the client ids and redirect overrides (`scripts/release/env-classification.json`, `public`) go into the frontend bundle. Client secrets and API keys (`SIGIL_KICK_CLIENT_SECRET`, `SIGIL_TWITCH_CLIENT_SECRET`, `SIGIL_GOOGLE_FONTS_API_KEY`, the older `VITE_GOOGLE_FONTS_API_KEY`; legacy `CURSES_*` names work) are read by `src-tauri/build.rs` and compiled into `Sigil.exe` only, lightly obfuscated, which is **not** protection. Kick has no public-client flow, so its secret has to ship inside the app; rotate it in the Kick developer portal if it is abused. Kick sign-in therefore needs the desktop app. After creating `.env` the first time, touch `src-tauri/build.rs` once so Cargo notices it. `node scripts/release/check-no-secrets.mjs` checks a build (`dist/`, `Sigil.exe`) for leaked values.
-- **GitHub Actions:** the `release` workflow passes `SIGIL_TWITCH_CLIENT_ID` from the repository secret of the same name (or legacy `CURSES_TWITCH_CLIENT_ID`).
+- **GitHub Actions:** the manual `release` workflow reads the same names from repository secrets (`SIGIL_TWITCH_CLIENT_ID`, `SIGIL_KICK_CLIENT_ID`, `SIGIL_KICK_CLIENT_SECRET`, `SIGIL_GOOGLE_FONTS_API_KEY`; legacy `CURSES_*` names work) and fails its bundle check when the secrets are missing.
 
 ### Documentation
 
