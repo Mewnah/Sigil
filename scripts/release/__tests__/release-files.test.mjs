@@ -760,9 +760,9 @@ describe("the Visual C++ runtime is app-local and every place that lists it agre
   });
 
   it("is staged by the release workflow's compile through the same overlay, found before the compile, and zipped into the portable build", () => {
-    expect(WORKFLOW).toContain("--config scripts/release/tauri.release.conf.json");
+    expect(WORKFLOW).toContain("run: pnpm tauri:release"); // package.json's tauri:release applies the overlay (--config)
     expect(WORKFLOW).toContain("stage-native-dlls.mjs --check-vc");
-    expect(WORKFLOW.indexOf("run: node scripts/release/stage-native-dlls.mjs --check-vc")).toBeLessThan(WORKFLOW.indexOf("run: pnpm tauri build --config"));
+    expect(WORKFLOW.indexOf("run: node scripts/release/stage-native-dlls.mjs --check-vc")).toBeLessThan(WORKFLOW.indexOf("run: pnpm tauri:release"));
     expect(WORKFLOW).toContain("src-tauri/target/native-bundle");
   });
 });

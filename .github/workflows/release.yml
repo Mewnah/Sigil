@@ -104,7 +104,7 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
       - name: compile
-        run: pnpm tauri build --config scripts/release/tauri.release.conf.json
+        run: pnpm tauri:release
         env:
           SIGIL_TWITCH_CLIENT_ID: ${{ secrets.SIGIL_TWITCH_CLIENT_ID || secrets.CURSES_TWITCH_CLIENT_ID }}
           SIGIL_TWITCH_CLIENT_SECRET: ${{ secrets.SIGIL_TWITCH_CLIENT_SECRET || secrets.CURSES_TWITCH_CLIENT_SECRET }}

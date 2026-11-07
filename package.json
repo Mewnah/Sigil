@@ -19,7 +19,7 @@
     "test:e2e:install": "playwright install chromium",
     "check:sw-kill": "node scripts/check-sw-kill-switch.mjs",
     "tauri": "tauri",
-    "tauri:release": "tauri build --config scripts/release/tauri.release.conf.json"
+    "tauri:release": "node scripts/release/tauri-release.mjs --config scripts/release/tauri.release.conf.json"
   },
   "dependencies": {
     "@ebay/nice-modal-react": "^1.2.13",

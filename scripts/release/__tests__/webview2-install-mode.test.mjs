@@ -93,7 +93,7 @@ describe("the release overlay's WebView2 install mode", () => {
   it("is applied to the shipped installers by every release path", () => {
     const pkg = JSON.parse(read(ROOT, "package.json"));
     expect(pkg.scripts["tauri:release"]).toContain("--config scripts/release/tauri.release.conf.json");
-    expect(read(ROOT, ".github", "workflows", "release.yml")).toContain("pnpm tauri build --config scripts/release/tauri.release.conf.json");
+    expect(read(ROOT, ".github", "workflows", "release.yml")).toContain("run: pnpm tauri:release");
   });
 });
 

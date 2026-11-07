@@ -12,7 +12,7 @@ Sigil is a Tauri 2 (Rust shell) + Vite/React 18/TypeScript desktop app for voice
 pnpm install
 pnpm tauri dev            # full desktop app (Rust + Vite) — the real runtime
 pnpm tauri build          # Windows NSIS/MSI under src-tauri/target/ (no staged GPU provider DLLs)
-pnpm tauri:release        # release build: overlay scripts/release/tauri.release.conf.json stages the ORT CUDA/DirectML DLLs
+pnpm tauri:release        # release build: overlay scripts/release/tauri.release.conf.json stages the ORT CUDA/DirectML DLLs; strips the builder's home folder from embedded paths
 pwsh scripts/release/verify-bundle.ps1          # after tauri:release: DLLs in both installers, no new load-time imports
 pnpm dev                  # Vite only (web, no Tauri) — runs scripts/sync-manual.mjs first
 pnpm build && pnpm preview  # static web build + serve; no native features

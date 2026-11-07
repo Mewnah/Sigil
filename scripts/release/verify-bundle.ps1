@@ -212,6 +212,19 @@ $exe = Join-Path $profileDir 'Sigil.exe'
 if (-not (Test-Path -LiteralPath $exe)) { Fail "Sigil.exe not found at $exe"; Write-Host "`nFAILED"; exit 1 }
 Pass "Sigil.exe $([math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 1)) MB"
 
+# The paths compilers embed (Rust panic locations, C/C++ __FILE__, the PDB path) must not name the builder's user folder:
+# pnpm tauri:release (scripts/release/tauri-release.mjs) remaps it; a plain `tauri build` leaves it in.
+$homeDir = [Environment]::GetFolderPath('UserProfile')
+$latin1 = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
+$homeHits = 0
+foreach ($needle in @($homeDir, (-join ($homeDir.ToCharArray() | ForEach-Object { "$_`0" })))) {
+  $at = $latin1.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase)
+  while ($at -ge 0) { $homeHits++; $at = $latin1.IndexOf($needle, $at + $needle.Length, [StringComparison]::OrdinalIgnoreCase) }
+}
+$latin1 = $null
+if ($homeHits -gt 0) { Fail "Sigil.exe names the build machine's user folder $homeHits times (paths the compilers embedded): build with pnpm tauri:release" }
+else { Pass "Sigil.exe does not name the build machine's user folder" }
+
 $staged = @{}
 if (-not (Test-Path -LiteralPath $manifestPath)) {
   Fail "staging manifest missing ($manifestPath): build with --config scripts/release/tauri.release.conf.json"
