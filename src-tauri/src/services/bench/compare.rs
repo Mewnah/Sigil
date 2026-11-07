@@ -4531,7 +4531,10 @@ mod tests {
         std::fs::write(&mpath, manifest.to_string()).unwrap();
         let spec = BenchSpec::from_value(serde_json::json!({
             "name": "cmp2", "seed": 5,
-            "engine": {"kind": "stub"},
+            // A 200 ms block keeps the Sigil row real-time on a busy or slow CI machine: its per-call
+            // time is the debug harness's wall clock (61 ms p99 under a parallel test run against the
+            // 10.7 ms device block), and an infeasible row empties the listening manifest asserted below.
+            "engine": {"kind": "stub", "fixed_block_ms": 200},
             "input": {"kind": "synthetic", "signal": "voice", "seconds": 4, "level_dbfs": -12},
             "runs": [
                 {"mode": "compare", "name": "h2h", "corpus": mpath,
