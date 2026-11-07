@@ -351,7 +351,7 @@ From the P7 prefetch manifest; each blocks only its own rows.
 
 ### MetricX on the dev PC (checked by P7-S0, 2026-10-03)
 
-`score/metricx.py --check --python C:\Users\chris\AppData\Local\Programs\Python\Python312\python.exe`
+`score/metricx.py --check --python %USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe`
 is ready (Python 3.12.10, torch 2.3.1+cu121, transformers 4.39.3, the prefetched checkpoint,
 tokenizer and code), and `--self-test --threads 2` on the CPU took 10 s: the correct German
 translation scored 0.14, a wrong one 9.06 (0-25, lower is better). The P7 venv has no torch, so
