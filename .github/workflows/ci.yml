@@ -7,7 +7,9 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # shortcut: Playwright 1.58 cannot install Chromium on ubuntu-26.04 (ubuntu-latest since 2026-11);
+    # go back to ubuntu-latest together with a Playwright upgrade that supports it.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v2
